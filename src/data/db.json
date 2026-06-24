@@ -1,0 +1,158 @@
+{
+  "users": [
+    {
+      "id": "admin-rosco",
+      "email": "admin@example.com",
+      "password": "AdminSecurePassword123",
+      "name": "System Administrator",
+      "avatar": "👑",
+      "referralCode": "ADMIN-ROSCO",
+      "isAdmin": true,
+      "stats": {
+        "balance": 0,
+        "lifetimeEarnings": 0,
+        "completedTasksCount": 0,
+        "dailyCheckInDate": null
+      },
+      "withdrawals": [],
+      "activityLogs": [
+        {
+          "id": "log-seed-admin",
+          "type": "bonus",
+          "title": "System Initialized",
+          "amount": 0,
+          "timestamp": "6/21/2026, 10:47:28 PM",
+          "details": "Naka-online na ang GCash Click-Earn Cloud Server. Handa nang subaybayan ang aktibidad ng mga mamamayan!"
+        }
+      ],
+      "referredFriends": [
+        {
+          "id": "user-clara",
+          "name": "Maria Clara Santos",
+          "avatar": "👩‍⚕️",
+          "currentEarnings": 530,
+          "bonusClaimed": false,
+          "joinedAt": "Hun 9, 2026"
+        }
+      ]
+    },
+    {
+      "id": "user-juan",
+      "email": "juan@example.ph",
+      "password": "Password123",
+      "name": "Juan Dela Cruz",
+      "avatar": "👨‍💻",
+      "referralCode": "REF-JUAN77",
+      "isAdmin": false,
+      "stats": {
+        "balance": 345,
+        "lifetimeEarnings": 345,
+        "completedTasksCount": 16,
+        "dailyCheckInDate": "6/21/2026"
+      },
+      "withdrawals": [
+        {
+          "id": "with-seed-1",
+          "accountName": "Juan Dela Cruz",
+          "gcashNumber": "09171234567",
+          "amount": 200,
+          "status": "failed",
+          "createdAt": "6/20/2026, 10:47:28 AM",
+          "referenceNo": "REF7867907259"
+        }
+      ],
+      "activityLogs": [
+        {
+          "id": "admin-action-1782082740184",
+          "type": "withdraw",
+          "title": "GCash Cashout Tinanggihan (Refunded)",
+          "amount": 200,
+          "timestamp": "6/21/2026, 10:59:00 PM",
+          "details": "Tinanggihan ng Admin ang iyong withdrawal request para sa ₱200.00. Binalik ang pera sa iyong balance."
+        },
+        {
+          "id": "log-seed-juan-1",
+          "type": "withdraw",
+          "title": "Nagsumite ng GCash Cashout",
+          "amount": 200,
+          "timestamp": "6/20/2026, 10:47:28 AM",
+          "details": "Humihiling ng ₱200.00 cashout sa GCash number 09171234567. Naghihintay ng pag-approve ng admin."
+        },
+        {
+          "id": "log-seed-juan-2",
+          "type": "reward",
+          "title": "Shopee PH Tipid Hacks 2026 Completed",
+          "amount": 12.5,
+          "timestamp": "6/19/2026, 10:47:28 PM",
+          "details": "Nanood ng website upang matutunan ang Piso deals at libreng shipping guide."
+        }
+      ],
+      "referredFriends": []
+    },
+    {
+      "id": "user-clara",
+      "email": "clara@example.ph",
+      "password": "Password123",
+      "name": "Maria Clara Santos",
+      "avatar": "👩‍⚕️",
+      "referralCode": "REF-CLARAS",
+      "invitedBy": "ADMIN-ROSCO",
+      "isAdmin": false,
+      "stats": {
+        "balance": 280,
+        "lifetimeEarnings": 530,
+        "completedTasksCount": 25,
+        "dailyCheckInDate": null
+      },
+      "withdrawals": [
+        {
+          "id": "with-seed-2",
+          "accountName": "Maria Clara Santos",
+          "gcashNumber": "09187654321",
+          "amount": 250,
+          "status": "success",
+          "createdAt": "6/11/2026, 10:47:28 PM",
+          "referenceNo": "REF5830184321"
+        }
+      ],
+      "activityLogs": [
+        {
+          "id": "log-seed-clara-1",
+          "type": "withdraw",
+          "title": "GCash Cashout Approved",
+          "amount": 250,
+          "timestamp": "6/11/2026, 10:47:28 PM",
+          "details": "Nabayaran na ang ₱250.00 cashout sa iyong GCash wallet."
+        }
+      ],
+      "referredFriends": []
+    },
+    {
+      "id": "user-api-1782082780362",
+      "email": "jerrielroyate@gmail.com",
+      "password": "Titanvhpn/10",
+      "name": "Jeryan royate",
+      "avatar": "👤",
+      "referralCode": "REF-W4DU0M",
+      "isAdmin": false,
+      "stats": {
+        "balance": 25,
+        "lifetimeEarnings": 25,
+        "completedTasksCount": 0,
+        "dailyCheckInDate": null
+      },
+      "withdrawals": [],
+      "activityLogs": [
+        {
+          "id": "log-welcome-1782082780362",
+          "type": "bonus",
+          "title": "Salamat sa pagre-register! Libreng Pang-umpisang Pera",
+          "amount": 25,
+          "timestamp": "6/21/2026, 10:59:40 PM",
+          "details": "Nakatanggap ka ng libreng ₱25.00 bilang Welcome Gift."
+        }
+      ],
+      "referredFriends": []
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Represents a GCash Click-Earn user profile with their sub status and statistics.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "avatar": { "type": "string" },
+        "referralCode": { "type": "string" },
+        "invitedBy": { "type": "string" },
+        "isAdmin": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "subscription": { "type": "object" },
+        "stats": { "type": "object" },
+        "lastActivities": { "type": "array" }
+      }
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User records mapping to individual user profiles."
+    }
+  }
+}
