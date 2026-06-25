@@ -85,5 +85,15 @@ export interface ZonePost {
   comments: ZoneComment[];
   createdAt: string;
   isFlagged?: boolean;
+  sharedPost?: {
+    id: string;
+    userId: string;
+    userName: string;
+    userAvatar: string;
+    text: string;
+    mediaUrl?: string;
+    mediaType?: 'image' | 'video';
+    createdAt: string;
+  };
 }
 

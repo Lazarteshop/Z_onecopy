@@ -1774,21 +1774,10 @@ function isUserBanned(db: DBStructure, userId: string): boolean {
 app.get('/api/zone/posts', (req, res) => {
   const db = loadDB();
   const posts = db.posts || [];
-  
   const userId = req.headers.authorization;
-  const user = userId ? db.users.find(u => u.id === userId) : null;
-  const zonedUsers = user?.zonedUsers || [];
 
-  // Sort posts: priority to zonedUsers, then by newest first
+  // Sort posts: always newest first
   const sortedPosts = [...posts].sort((a, b) => {
-    const aFollowed = zonedUsers.includes(a.userId) ? 1 : 0;
-    const bFollowed = zonedUsers.includes(b.userId) ? 1 : 0;
-
-    if (aFollowed !== bFollowed) {
-      return bFollowed - aFollowed; // Followed users come first
-    }
-
-    // Secondary sort: newest first
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
 
@@ -1931,6 +1920,68 @@ app.post('/api/zone/posts/:postId/comment', (req, res) => {
   saveDB(db);
 
   res.json({ success: true, comments: post.comments });
+});
+
+// 4b. SHARE POST
+app.post('/api/zone/posts/:postId/share', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang makapag-share.' });
+  }
+
+  const { postId } = req.params;
+  const { text } = req.body; // Optional text caption when sharing
+  const db = loadDB();
+
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa Z-one.' });
+  }
+
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  if (!db.posts) db.posts = [];
+  const originalPost = db.posts.find(p => p.id === postId);
+  if (!originalPost) {
+    return res.status(404).json({ error: 'Hindi mahanap ang post na ishe-share.' });
+  }
+
+  // Auto-delete / Reject inappropriate captions
+  const cleanedText = text ? filterSwearWords(text) : '';
+  if (text && containsInappropriateContent(text)) {
+    return res.status(400).json({ 
+      error: '⚠️ [AUTO-DELETE]: Ang share caption ay hinarang dahil naglalaman ito ng malalaswang salita.' 
+    });
+  }
+
+  // Create new post representing the share
+  const newPost = {
+    id: 'post-' + Date.now(),
+    userId: user.id,
+    userName: user.name,
+    userAvatar: user.avatar || '👤',
+    text: cleanedText,
+    likes: [],
+    comments: [],
+    createdAt: new Date().toISOString(),
+    sharedPost: {
+      id: originalPost.sharedPost ? originalPost.sharedPost.id : originalPost.id,
+      userId: originalPost.sharedPost ? originalPost.sharedPost.userId : originalPost.userId,
+      userName: originalPost.sharedPost ? originalPost.sharedPost.userName : originalPost.userName,
+      userAvatar: originalPost.sharedPost ? originalPost.sharedPost.userAvatar : originalPost.userAvatar,
+      text: originalPost.sharedPost ? originalPost.sharedPost.text : originalPost.text,
+      mediaUrl: originalPost.sharedPost ? originalPost.sharedPost.mediaUrl : originalPost.mediaUrl,
+      mediaType: originalPost.sharedPost ? originalPost.sharedPost.mediaType : originalPost.mediaType,
+      createdAt: originalPost.sharedPost ? originalPost.sharedPost.createdAt : originalPost.createdAt
+    }
+  };
+
+  db.posts.push(newPost);
+  saveDB(db);
+
+  res.json({ success: true, post: newPost, message: 'Matagumpay na na-share ang post!' });
 });
 
 // 5. TOGGLE ZONE (FOLLOW)

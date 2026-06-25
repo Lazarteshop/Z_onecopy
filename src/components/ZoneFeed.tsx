@@ -178,6 +178,11 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
   const [submittingCommentId, setSubmittingCommentId] = useState<string | null>(null);
 
+  // Share post state
+  const [sharingPostId, setSharingPostId] = useState<string | null>(null);
+  const [shareCaptionText, setShareCaptionText] = useState('');
+  const [isSharingPost, setIsSharingPost] = useState(false);
+
   // Moderation tab / list for admin
   const [modUsers, setModUsers] = useState<any[]>([]);
   const [showModPanel, setShowModPanel] = useState(false);
@@ -363,6 +368,37 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleSharePost = async (postId: string, customCaption: string) => {
+    setIsSharingPost(true);
+    try {
+      const res = await fetch(`/api/zone/posts/${postId}/share`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ text: customCaption })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        triggerNotification(
+          language === 'tl' ? 'Matagumpay na na-share ang post! 📢' : 'Successfully shared the post! 📢',
+          'success'
+        );
+        setSharingPostId(null);
+        setShareCaptionText('');
+        fetchPosts();
+      } else {
+        triggerNotification(data.error || 'Hindi ma-share ang post.', 'error');
+      }
+    } catch (err) {
+      triggerNotification('Koneksyon error sa pag-share.', 'error');
+    } finally {
+      setIsSharingPost(false);
     }
   };
 
@@ -861,9 +897,77 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
 
                     {/* Body */}
                     <div className="p-4 space-y-3">
-                      <p className="text-slate-800 text-xs font-semibold leading-relaxed whitespace-pre-wrap">
-                        {post.text}
-                      </p>
+                      {post.text && (
+                        <p className="text-slate-800 text-xs font-semibold leading-relaxed whitespace-pre-wrap">
+                          {post.text}
+                        </p>
+                      )}
+
+                      {/* Render Shared Post Reference */}
+                      {post.sharedPost && (
+                        <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50 space-y-3 shadow-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="leading-none shrink-0 select-none block">
+                              {renderFeedAvatar(post.sharedPost.userAvatar, post.sharedPost.userName, "w-8 h-8", "text-sm")}
+                            </span>
+                            <div>
+                              <div className="font-extrabold text-slate-850 text-[11px] leading-tight flex items-center gap-1.5">
+                                <span>{post.sharedPost.userName}</span>
+                                {post.sharedPost.userId === 'admin-rosco' && (
+                                  <span className="bg-blue-500 text-white text-[7px] font-black px-1.5 py-0.5 rounded-full uppercase">Admin</span>
+                                )}
+                              </div>
+                              <span className="text-[8px] text-slate-400 block font-mono">
+                                {new Date(post.sharedPost.createdAt).toLocaleString('fil-PH', { hour12: true, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                              </span>
+                            </div>
+                          </div>
+                          
+                          {post.sharedPost.text && (
+                            <p className="text-slate-700 text-xs font-semibold leading-relaxed whitespace-pre-wrap">
+                              {post.sharedPost.text}
+                            </p>
+                          )}
+
+                          {post.sharedPost.mediaUrl && (
+                            <>
+                              {isBasicMode && !revealedMedia.has(post.sharedPost.id) ? (
+                                <div className="bg-slate-100/50 border border-slate-200 rounded-xl p-3 text-center space-y-2">
+                                  <p className="text-[10px] font-black text-slate-600">
+                                    {post.sharedPost.mediaType === 'image' ? '📷 Larawan (Naitago sa Basic Mode)' : '🎥 Video (Naitago sa Basic Mode)'}
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setRevealedMedia(prev => {
+                                        const next = new Set(prev);
+                                        next.add(post.sharedPost!.id);
+                                        return next;
+                                      });
+                                    }}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white font-black text-[9px] px-2.5 py-1 rounded-lg cursor-pointer transition"
+                                  >
+                                    👁️ Load Photo/Video
+                                  </button>
+                                </div>
+                              ) : (
+                                <>
+                                  {post.sharedPost.mediaType === 'image' && (
+                                    <div className="rounded-xl overflow-hidden border border-slate-200">
+                                      <img src={post.sharedPost.mediaUrl} alt="Shared Attachment" className="w-full max-h-60 object-cover" referrerPolicy="no-referrer" />
+                                    </div>
+                                  )}
+                                  {post.sharedPost.mediaType === 'video' && (
+                                    <div className="rounded-xl overflow-hidden border border-slate-200">
+                                      <video src={post.sharedPost.mediaUrl} controls className="w-full max-h-60 object-cover" />
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
 
                       {/* Attached Media Render */}
                       {post.mediaUrl && (
@@ -961,6 +1065,17 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                         <MessageSquare className="w-4 h-4 text-slate-500" />
                         <span>Comment</span>
                       </button>
+
+                      <button
+                        onClick={() => {
+                          setSharingPostId(post.id);
+                          setShareCaptionText('');
+                        }}
+                        className="flex-1 py-2 rounded-xl text-xs font-black text-slate-650 hover:bg-slate-100 cursor-pointer transition flex items-center justify-center gap-1.5"
+                      >
+                        <Share2 className="w-4 h-4 text-slate-500" />
+                        <span>{language === 'tl' ? 'I-share' : 'Share'}</span>
+                      </button>
                     </div>
 
                     {/* Comments section */}
@@ -993,9 +1108,9 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                         </div>
                       </div>
 
-                      {/* Comments list */}
+                      {/* Comments list - Scrollable Facebook Style */}
                       {post.comments && post.comments.length > 0 && (
-                        <div className="space-y-2 pt-2 border-t border-slate-100">
+                        <div className="space-y-2 pt-2 border-t border-slate-100 max-h-64 overflow-y-auto pr-1">
                           {post.comments.map((comm) => (
                             <div key={comm.id} className="flex gap-2.5 items-start">
                               <span className="leading-none shrink-0 select-none block">
@@ -1016,8 +1131,8 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                           ))}
                         </div>
                       )}
-
                     </div>
+
                   </motion.div>
                 );
               })}
@@ -1027,6 +1142,92 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
         </div>
 
       </div>
+
+      {/* 🔄 SHARING POST DIALOG / MODAL */}
+      <AnimatePresence>
+        {sharingPostId && (() => {
+          const targetPost = posts.find(p => p.id === sharingPostId);
+          if (!targetPost) return null;
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 space-y-4 text-slate-800"
+              >
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                    <Share2 className="w-4 h-4 text-blue-600" />
+                    <span>{language === 'tl' ? 'I-share ang Post na Ito' : 'Share This Post'}</span>
+                  </h3>
+                  <button 
+                    onClick={() => setSharingPostId(null)}
+                    className="text-slate-400 hover:text-slate-600 font-extrabold text-xs bg-slate-100 hover:bg-slate-200 p-1.5 rounded-full px-3 cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider block">
+                    {language === 'tl' ? 'Magdagdag ng Caption o Reaksyon (Opsyonal)' : 'Add a Caption or Thoughts (Optional)'}
+                  </label>
+                  <textarea
+                    value={shareCaptionText}
+                    onChange={(e) => setShareCaptionText(e.target.value)}
+                    placeholder={language === 'tl' ? 'Ano ang masasabi mo sa post na ito?' : 'What do you think about this post?'}
+                    className="w-full text-xs font-semibold p-3 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none h-20 resize-none text-slate-800 bg-slate-50"
+                  />
+                </div>
+
+                {/* Preview of what is being shared */}
+                <div className="border border-slate-100 rounded-2xl p-3 bg-slate-50/50 space-y-2 text-left">
+                  <div className="flex items-center gap-2">
+                    <span className="leading-none shrink-0 select-none block">
+                      {renderFeedAvatar(targetPost.userAvatar, targetPost.userName, "w-6 h-6", "text-xs")}
+                    </span>
+                    <div>
+                      <span className="font-extrabold text-slate-800 text-[10px] leading-tight block">{targetPost.userName}</span>
+                      <span className="text-[8px] text-slate-400 font-mono">
+                        {new Date(targetPost.createdAt).toLocaleDateString('fil-PH', { month: 'short', day: 'numeric' })}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-slate-650 text-[11px] font-semibold line-clamp-2 leading-relaxed">
+                    {targetPost.text}
+                  </p>
+                </div>
+
+                <div className="flex gap-2 justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setSharingPostId(null)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black rounded-xl cursor-pointer transition"
+                  >
+                    {language === 'tl' ? 'Kanselahin' : 'Cancel'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSharingPost}
+                    onClick={() => handleSharePost(targetPost.id, shareCaptionText)}
+                    className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-black rounded-xl cursor-pointer shadow-sm transition flex items-center gap-1.5"
+                  >
+                    {isSharingPost ? (
+                      <span>{language === 'tl' ? 'Sineshare...' : 'Sharing...'}</span>
+                    ) : (
+                      <>
+                        <Share2 className="w-3.5 h-3.5" />
+                        <span>{language === 'tl' ? 'I-share Ngayon' : 'Share Now'}</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
+      </AnimatePresence>
 
     </div>
   );
