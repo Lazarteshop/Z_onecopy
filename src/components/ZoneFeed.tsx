@@ -188,8 +188,8 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
   const [showModPanel, setShowModPanel] = useState(false);
   const [loadingModUsers, setLoadingModUsers] = useState(false);
 
-  const fetchPosts = async () => {
-    setLoadingPosts(true);
+  const fetchPosts = async (silent: boolean = false) => {
+    if (!silent) setLoadingPosts(true);
     try {
       const res = await fetch('/api/zone/posts', {
         headers: {
@@ -203,7 +203,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
     } catch (err) {
       console.error('Failed to load posts', err);
     } finally {
-      setLoadingPosts(false);
+      if (!silent) setLoadingPosts(false);
     }
   };
 
@@ -223,7 +223,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
     } catch (err) {
       console.error('Failed to load moderation users', err);
     } finally {
-      setLoadingModUsers(false);
+      if (!loadingModUsers) setLoadingModUsers(false);
     }
   };
 
@@ -232,6 +232,13 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
     if (user.isAdmin) {
       fetchModUsers();
     }
+
+    // Auto-refresh the feed every 15 seconds silently like Facebook
+    const interval = setInterval(() => {
+      fetchPosts(true);
+    }, 15000);
+
+    return () => clearInterval(interval);
   }, [token]);
 
   const handleCreatePost = async (e: React.FormEvent) => {
@@ -279,7 +286,14 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
         setSelectedVideo(null);
         setCustomMediaUrl('');
         setShowMediaSelect(false);
-        fetchPosts();
+        
+        // Optimistically prepend the new post to the local state list immediately
+        if (data.post) {
+          setPosts(prev => [data.post, ...prev]);
+        }
+        
+        // Fetch silently in the background
+        fetchPosts(true);
       } else {
         triggerNotification(data.error || 'Naglalaman ng bawal na salita.', 'error');
       }
@@ -391,7 +405,14 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
         );
         setSharingPostId(null);
         setShareCaptionText('');
-        fetchPosts();
+        
+        // Optimistically prepend the new shared post to the local state list immediately
+        if (data.post) {
+          setPosts(prev => [data.post, ...prev]);
+        }
+        
+        // Fetch silently in the background
+        fetchPosts(true);
       } else {
         triggerNotification(data.error || 'Hindi ma-share ang post.', 'error');
       }
