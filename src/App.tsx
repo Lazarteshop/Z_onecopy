@@ -54,6 +54,7 @@ import GCashCashout from './components/GCashCashout';
 import ReferralPanel from './components/ReferralPanel';
 import AdminPanel from './components/AdminPanel';
 import ZoneFeed from './components/ZoneFeed';
+import ZonePromoVideo from './components/ZonePromoVideo';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -1991,52 +1992,60 @@ export default function App() {
 
                 {/* TAB 3: FAQ GUIDE */}
                 {activeTab === 'guide' && (
-                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6 animate-fadeIn text-xs leading-relaxed text-slate-600">
-                    
-                    <div className="border-b border-slate-150 pb-4">
-                      <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
-                        <HelpCircle className="w-5 h-5 text-indigo-600" />
-                        <span>Gabay at FAQs sa Pag-open ng Homepage Simulator</span>
-                      </h2>
-                      <p className="text-slate-400 font-bold mt-1">Dito nakasaad ang detalyadong mekanismo kung paano gumagana ang aming real-time system.</p>
-                    </div>
+                  <div className="space-y-6 animate-fadeIn">
+                    {/* Interactive Animated Promo Video / Presentation */}
+                    <ZonePromoVideo 
+                      language={language} 
+                      onNavigateTab={(tab) => setActiveTab(tab)} 
+                    />
 
-                    <div className="space-y-4 font-semibold">
+                    <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6 text-xs leading-relaxed text-slate-600">
                       
-                      <div className="space-y-1.5 border-b border-slate-100 pb-3">
-                        <h4 className="font-extrabold text-[#0F172A] text-sm">💡 1. Paano ako makaka-ipon ng totoong pera sa app na ito?</h4>
-                        <p>
-                          Ang bawat kumpanya ay nangangailangan ng 'Traffic Value' o pagbisita sa kanilang homepage upang mapataas ang kanilang ranking sa search engines. Binabayaran nila ang simulator upang maikalat ang kanilang Links. Sa pamamagitan ng pagbukas at pananatili sa links nang ilang segundo, nakakatulong ka sa kanilang analytics at binibigyan ka ng gantimpalang pondo.
-                        </p>
+                      <div className="border-b border-slate-150 pb-4">
+                        <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                          <HelpCircle className="w-5 h-5 text-indigo-600" />
+                          <span>Gabay at FAQs sa Pag-open ng Homepage Simulator</span>
+                        </h2>
+                        <p className="text-slate-400 font-bold mt-1">Dito nakasaad ang detalyadong mekanismo kung paano gumagana ang aming real-time system.</p>
                       </div>
 
-                      <div className="space-y-1.5 border-b border-slate-100 pb-3">
-                        <h4 className="font-extrabold text-[#0F172A] text-sm">💡 2. Pwede ko ba talagang i-withdraw ang naipon ko sa pamamagitan ng GCash?</h4>
-                        <p>
-                          Oo, handog ng interface ang interactive simulated GCash payout workflow! Kapag umabot sa minimum limit na ₱100.00 ang inyong balance, magpunta sa "GCash Cash-Out" tab, ilagay ang iyong GCash details at sumite. Kapag inaprubahan ito ng administrative system sa server, kaagad itong sasalamin sa iyong logs, at sasagutin ng simulated network SMS confirmation!
-                        </p>
-                      </div>
+                      <div className="space-y-4 font-semibold">
+                        
+                        <div className="space-y-1.5 border-b border-slate-100 pb-3">
+                          <h4 className="font-extrabold text-[#0F172A] text-sm">💡 1. Paano ako makaka-ipon ng totoong pera sa app na ito?</h4>
+                          <p>
+                            Ang bawat kumpanya ay nangangailangan ng 'Traffic Value' o pagbisita sa kanilang homepage upang mapataas ang kanilang ranking sa search engines. Binabayaran nila ang simulator upang maikalat ang kanilang Links. Sa pamamagitan ng pagbukas at pananatili sa links nang ilang segundo, nakakatulong ka sa kanilang analytics at binibigyan ka ng gantimpalang pondo.
+                          </p>
+                        </div>
 
-                      <div className="space-y-1.5 border-b border-slate-100 pb-3">
-                        <h4 className="font-extrabold text-[#0F172A] text-sm">
-                          {language === 'tl' ? "💡 3. Paano pinoproseso ang administrative dashboard?" : "💡 3. How is the administrative dashboard processed?"}
-                        </h4>
-                        <p>
-                          {language === 'tl' 
-                            ? "Ang bawat rehistradong transaksyon ay ipinapadala sa aming administrative system. Ang mga awtorisadong system administrators lamang ang may ganap na kapangyarihan upang pumasok at mag-suri ng registered users, tignan ang kanilang wallet balance, at mag-approve o mag-decline ng withdrawals nang manu-mano sa server."
-                            : "Every registered transaction is sent to our administrative system. Only authorized system administrators have the permission to enter and review registered users, check wallet balances, and manually approve or decline withdrawals securely on the server."}
-                        </p>
-                      </div>
+                        <div className="space-y-1.5 border-b border-slate-100 pb-3">
+                          <h4 className="font-extrabold text-[#0F172A] text-sm">💡 2. Pwede ko ba talagang i-withdraw ang naipon ko sa pamamagitan ng GCash?</h4>
+                          <p>
+                            Oo, handog ng interface ang interactive simulated GCash payout workflow! Kapag umabot sa minimum limit na ₱100.00 ang inyong balance, magpunta sa "GCash Cash-Out" tab, ilagay ang iyong GCash details at sumite. Kapag inaprubahan ito ng administrative system sa server, kaagad itong sasalamin sa iyong logs, at sasagutin ng simulated network SMS confirmation!
+                          </p>
+                        </div>
 
-                      <div className="space-y-1.5 pb-2">
-                        <h4 className="font-extrabold text-[#0F172A] text-sm">💡 4. Bakit kailangang mag-antay ng "Admin Approval" sa withdrawals?</h4>
-                        <p>
-                          Ito ay para mapigilan ang mga mapagsamantalang gumagamit ng auto-clicker scripts o bots. Ang administrative approval system ay ang opisyal na tagasubaybay ng bawat activity logs bago tuluyang maproseso ang transaksyon papasok sa mock GCash core network.
-                        </p>
+                        <div className="space-y-1.5 border-b border-slate-100 pb-3">
+                          <h4 className="font-extrabold text-[#0F172A] text-sm">
+                            {language === 'tl' ? "💡 3. Paano pinoproseso ang administrative dashboard?" : "💡 3. How is the administrative dashboard processed?"}
+                          </h4>
+                          <p>
+                            {language === 'tl' 
+                              ? "Ang bawat rehistradong transaksyon ay ipinapadala sa aming administrative system. Ang mga awtorisadong system administrators lamang ang may ganap na kapangyarihan upang pumasok at mag-suri ng registered users, tignan ang kanilang wallet balance, at mag-approve o mag-decline ng withdrawals nang manu-mano sa server."
+                              : "Every registered transaction is sent to our administrative system. Only authorized system administrators have the permission to enter and review registered users, check wallet balances, and manually approve or decline withdrawals securely on the server."}
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5 pb-2">
+                          <h4 className="font-extrabold text-[#0F172A] text-sm">💡 4. Bakit kailangang mag-antay ng "Admin Approval" sa withdrawals?</h4>
+                          <p>
+                            Ito ay para mapigilan ang mga mapagsamantalang gumagamit ng auto-clicker scripts o bots. Ang administrative approval system ay ang opisyal na tagasubaybay ng bawat activity logs bago tuluyang maproseso ang transaksyon papasok sa mock GCash core network.
+                          </p>
+                        </div>
+
                       </div>
 
                     </div>
-
                   </div>
                 )}
 

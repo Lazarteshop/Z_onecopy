@@ -1359,6 +1359,7 @@ app.get('/api/admin/dashboard', (req, res) => {
     isAdmin: u.isAdmin,
     stats: u.stats,
     withdrawalsCount: u.withdrawals.length,
+    withdrawals: u.withdrawals,
     referralCode: u.referralCode,
     referredFriendsCount: u.referredFriends.length,
     lastActivities: u.activityLogs.slice(0, 10), // last 10 activities

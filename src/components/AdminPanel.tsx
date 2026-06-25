@@ -27,6 +27,7 @@ interface AdminDashboardData {
     isAdmin: boolean;
     stats: UserStats;
     withdrawalsCount: number;
+    withdrawals?: WithdrawalRequest[];
     referralCode: string;
     referredFriendsCount: number;
     lastActivities: ActivityLog[];
@@ -56,6 +57,25 @@ export default function AdminPanel({
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'subscriptions' | 'users'>('overview');
+
+  // Helper function to render avatar gracefully regardless of type (emoji or base64 or URL)
+  const renderAvatar = (avatar: string | undefined, sizeClass: string = "w-6 h-6") => {
+    const avatarStr = avatar || '👤';
+    if (avatarStr.startsWith('http') || avatarStr.startsWith('data:') || avatarStr.startsWith('blob:')) {
+      return (
+        <img 
+          src={avatarStr} 
+          alt="Avatar" 
+          className={`${sizeClass} rounded-full object-cover border border-slate-200/60 shadow-xs shrink-0`} 
+          referrerPolicy="no-referrer" 
+        />
+      );
+    }
+    if (avatarStr.length > 100) {
+      return <span className="text-sm shrink-0">👤</span>;
+    }
+    return <span className="shrink-0">{avatarStr}</span>;
+  };
 
   // Load dashboard data
   const fetchAdminData = async () => {
@@ -381,7 +401,9 @@ export default function AdminPanel({
                     <div className="space-y-3 flex-1">
                       {/* USER INFO & AMOUNT */}
                       <div className="flex items-center gap-2">
-                        <span className="text-xl bg-indigo-50 p-1.5 rounded-full shrink-0">{item.userAvatar}</span>
+                        <div className="bg-indigo-50 border border-indigo-100 p-1 rounded-full shrink-0 flex items-center justify-center w-9 h-9">
+                          {renderAvatar(item.userAvatar, "w-7 h-7")}
+                        </div>
                         <div>
                           <h4 className="font-black text-slate-900 text-xs leading-none">{item.userName}</h4>
                           <p className="text-[10px] text-slate-450 font-bold">{item.request.createdAt}</p>
@@ -439,7 +461,9 @@ export default function AdminPanel({
                 {withdrawals.filter(w => w.request.status !== 'pending' && w.request.status !== 'processing').slice(0, 5).map((item) => (
                   <div key={item.request.id} className="p-3.5 flex items-center justify-between text-xs gap-3">
                     <div className="flex items-center gap-2">
-                      <span className="text-base">{item.userAvatar}</span>
+                      <div className="bg-slate-50 border border-slate-100 p-0.5 rounded-full shrink-0 flex items-center justify-center w-7 h-7">
+                        {renderAvatar(item.userAvatar, "w-6 h-6")}
+                      </div>
                       <div>
                         <h5 className="font-extrabold text-slate-800 leading-tight">{item.userName}</h5>
                         <p className="text-[10px] text-slate-400">{item.request.createdAt}</p>
@@ -480,8 +504,10 @@ export default function AdminPanel({
                   .slice(0, 15)
                   .map((log) => (
                     <div key={log.id} className="text-[11px] leading-relaxed border-l-2 border-slate-200 pl-2.5 space-y-0.5">
-                      <div className="flex items-center gap-1">
-                        <span className="font-bold text-slate-500">{log.userAvatar}</span>
+                      <div className="flex items-center gap-1.5">
+                        <div className="shrink-0 flex items-center justify-center w-5 h-5">
+                          {renderAvatar(log.userAvatar, "w-4 h-4")}
+                        </div>
                         <span className="font-black text-slate-800">{log.userName}</span>
                         <span className="text-[9px] text-slate-400 ml-auto font-mono">{log.timestamp.split(',')[1] || log.timestamp}</span>
                       </div>
@@ -541,7 +567,9 @@ export default function AdminPanel({
                     >
                       <div className="space-y-3 flex-1 w-full">
                         <div className="flex items-center gap-2.5">
-                          <span className="text-xl bg-orange-50 border border-orange-100 p-2 rounded-full shrink-0">{u.avatar || '👤'}</span>
+                          <div className="bg-orange-50 border border-orange-100 p-1 rounded-full shrink-0 flex items-center justify-center w-10 h-10">
+                            {renderAvatar(u.avatar, "w-8 h-8")}
+                          </div>
                           <div>
                             <h4 className="font-black text-slate-900 text-xs leading-none">{u.name}</h4>
                             <p className="text-[10px] text-slate-450 font-bold mt-1.5 font-mono">{u.email}</p>
@@ -605,7 +633,9 @@ export default function AdminPanel({
                   return (
                     <div key={u.id} className="p-3.5 flex items-center justify-between text-xs gap-3">
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-base shrink-0">{u.avatar || '👤'}</span>
+                        <div className="bg-slate-50 border border-slate-100 p-0.5 rounded-full shrink-0 flex items-center justify-center w-7 h-7">
+                          {renderAvatar(u.avatar, "w-6 h-6")}
+                        </div>
                         <div className="min-w-0">
                           <h5 className="font-extrabold text-slate-800 leading-tight truncate">{u.name}</h5>
                           <p className="text-[9px] text-slate-450 font-bold mt-0.5 truncate">{u.email}</p>
@@ -660,7 +690,9 @@ export default function AdminPanel({
                 >
                   <div className="flex justify-between items-start gap-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-2xl bg-indigo-50 p-1.5 rounded-full">{u.avatar}</span>
+                      <div className="bg-indigo-50 border border-indigo-100 p-1 rounded-full shrink-0 flex items-center justify-center w-11 h-11">
+                        {renderAvatar(u.avatar, "w-9 h-9")}
+                      </div>
                       <div>
                         <h4 className="font-extrabold text-slate-950 leading-tight flex items-center gap-1.5">
                           <span>{u.name}</span>
@@ -685,7 +717,16 @@ export default function AdminPanel({
                     </div>
                   </div>
 
-                  <div className="text-[9px] font-bold text-slate-450 flex items-center justify-between pt-0.5 border-t border-slate-50">
+                  {u.withdrawals && u.withdrawals.some(w => w.status === 'pending' || w.status === 'processing') && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-2 text-[10px] flex items-center justify-between text-amber-800 font-extrabold animate-pulse">
+                      <span>May {u.withdrawals.filter(w => w.status === 'pending' || w.status === 'processing').length} pending cashout:</span>
+                      <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded-lg text-xs font-black">
+                        ₱{u.withdrawals.filter(w => w.status === 'pending' || w.status === 'processing').reduce((sum, w) => sum + w.amount, 0).toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="text-[9px] font-bold text-slate-455 flex items-center justify-between pt-0.5 border-t border-slate-50">
                     <span>Code: <strong className="font-mono text-slate-800">{u.referralCode}</strong></span>
                     <span className="flex items-center gap-0.5 font-black text-indigo-600">
                       View Profile Details <ArrowRight className="w-3 h-3" />
@@ -713,7 +754,9 @@ export default function AdminPanel({
             {selectedUserInfo ? (
               <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-5">
                 <div className="text-center space-y-2 border-b border-slate-100 pb-4">
-                  <span className="text-4xl inline-block bg-slate-50 p-3 rounded-full shadow-inner">{selectedUserInfo.avatar}</span>
+                  <div className="inline-flex bg-slate-50 p-2 rounded-full shadow-inner justify-center items-center w-16 h-16 border border-slate-100">
+                    {renderAvatar(selectedUserInfo.avatar, "w-12 h-12")}
+                  </div>
                   <div>
                     <h4 className="text-base font-black text-slate-950 leading-tight">{selectedUserInfo.name}</h4>
                     <p className="text-xs text-slate-400 font-semibold">{selectedUserInfo.email}</p>
@@ -748,6 +791,41 @@ export default function AdminPanel({
                       <span>Daily Check-In Date</span>
                       <span className="text-slate-500">{selectedUserInfo.stats.dailyCheckInDate || 'Hindi pa nag-checheck-In'}</span>
                     </div>
+                  </div>
+                </div>
+
+                {/* WITHDRAWAL HISTORY OF THE INDIVIDUAL */}
+                <div className="space-y-2 border-t border-slate-100 pt-3">
+                  <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center justify-between">
+                    <span>Mga Withdrawal Request ({selectedUserInfo.withdrawals?.length || 0})</span>
+                  </h5>
+                  <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
+                    {selectedUserInfo.withdrawals && selectedUserInfo.withdrawals.length > 0 ? (
+                      selectedUserInfo.withdrawals.map((w) => (
+                        <div key={w.id} className="bg-slate-50 border border-slate-150 p-2 rounded-xl text-[10px] font-semibold space-y-1">
+                          <div className="flex justify-between items-center">
+                            <span className="font-mono text-slate-500 font-bold">{w.createdAt}</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${
+                              w.status === 'success' ? 'bg-emerald-100 text-emerald-800' :
+                              w.status === 'failed' || w.status === 'failed' ? 'bg-rose-100 text-rose-800' :
+                              'bg-amber-100 text-amber-800 animate-pulse'
+                            }`}>
+                              {w.status.toUpperCase()}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center text-slate-700">
+                            <span>Amount:</span>
+                            <span className="font-extrabold text-slate-950 text-xs">₱{w.amount.toFixed(2)}</span>
+                          </div>
+                          <div className="text-[9px] text-slate-500 font-medium">
+                            <div>GCash: <strong className="text-slate-700 font-bold">{w.accountName}</strong> ({w.gcashNumber})</div>
+                            <div className="font-mono mt-0.5">Ref: {w.referenceNo}</div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-center py-2 text-slate-400 text-[10px]">Walang nahanap na withdrawal request.</p>
+                    )}
                   </div>
                 </div>
 
