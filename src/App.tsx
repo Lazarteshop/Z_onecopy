@@ -285,7 +285,7 @@ export default function App() {
     if (!token) return;
     const interval = setInterval(() => {
       fetchUserProfile(token);
-    }, 10000); // Poll every 10 seconds to align with admin approvals/declines instantly
+    }, 60000); // Poll every 60 seconds to align with admin approvals/declines instantly
     return () => clearInterval(interval);
   }, [token, activeTab]);
 
