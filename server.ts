@@ -9,7 +9,8 @@ import { INITIAL_CAMPAIGNS } from './src/data/campaigns';
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 const DB_FILE_PATH = path.join(process.cwd(), 'src', 'data', 'db.json');
 
@@ -395,26 +396,46 @@ async function uploadToFirestore(data: DBStructure) {
   }
   try {
     const batchValues = data.users.map(async (u) => {
-      const uDocRef = firestore.collection('users').doc(u.id);
-      const { id, ...uWithoutId } = u;
-      await uDocRef.set(uWithoutId);
+      try {
+        const uDocRef = firestore.collection('users').doc(u.id);
+        const { id, ...uWithoutId } = u;
+        // Safeguard Firestore 1MB limit for user documents by replacing huge base64 avatars with a standard emoji
+        if (uWithoutId.avatar && uWithoutId.avatar.startsWith('data:') && uWithoutId.avatar.length > 500000) {
+          uWithoutId.avatar = '👤';
+        }
+        await uDocRef.set(uWithoutId);
+      } catch (userErr) {
+        console.error(`Error saving user ${u.id} to Firestore:`, userErr);
+      }
     });
 
     let campPromises: Promise<any>[] = [];
     if (data.campaigns) {
       campPromises = data.campaigns.map(async (c) => {
-        const cDocRef = firestore.collection('campaigns').doc(c.id);
-        const { id, ...cWithoutId } = c;
-        await cDocRef.set(cWithoutId);
+        try {
+          const cDocRef = firestore.collection('campaigns').doc(c.id);
+          const { id, ...cWithoutId } = c;
+          await cDocRef.set(cWithoutId);
+        } catch (campErr) {
+          console.error(`Error saving campaign ${c.id} to Firestore:`, campErr);
+        }
       });
     }
 
     let postPromises: Promise<any>[] = [];
     if (data.posts) {
       postPromises = data.posts.map(async (p) => {
-        const pDocRef = firestore.collection('posts').doc(p.id);
-        const { id, ...pWithoutId } = p;
-        await pDocRef.set(pWithoutId);
+        try {
+          const pDocRef = firestore.collection('posts').doc(p.id);
+          const { id, ...pWithoutId } = p;
+          // Safeguard Firestore 1MB limit for posts by replacing huge base64 media with a standard placeholder
+          if (pWithoutId.mediaUrl && pWithoutId.mediaUrl.startsWith('data:') && pWithoutId.mediaUrl.length > 500000) {
+            pWithoutId.mediaUrl = 'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=800&auto=format&fit=crop&q=60';
+          }
+          await pDocRef.set(pWithoutId);
+        } catch (postErr) {
+          console.error(`Error saving post ${p.id} to Firestore:`, postErr);
+        }
       });
     }
 
@@ -1793,7 +1814,10 @@ app.post('/api/zone/posts', (req, res) => {
   }
 
   // Auto-delete / Reject inappropriate posts (porn, nude, bastos)
-  if (containsInappropriateContent(text) || containsInappropriateContent(mediaUrl || '')) {
+  const isBase64Media = mediaUrl && (mediaUrl.startsWith('data:') || mediaUrl.startsWith('blob:'));
+  const isMediaInappropriate = mediaUrl && !isBase64Media && containsInappropriateContent(mediaUrl);
+
+  if (containsInappropriateContent(text) || isMediaInappropriate) {
     return res.status(400).json({ 
       error: '⚠️ [AUTO-DELETE]: Ang post na ito ay hinarang at hindi inilathala dahil naglalaman ito ng malalaswang salita o pornographic content (Nude/Porn content are strictly forbidden!).' 
     });
