@@ -54,6 +54,70 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
   const [posts, setPosts] = useState<ZonePost[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
 
+  // Z-one Social Free/Basic Mode State
+  const [isBasicMode, setIsBasicMode] = useState<boolean>(() => {
+    return localStorage.getItem('zone_basic_mode') === 'true';
+  });
+  const [revealedMedia, setRevealedMedia] = useState<Set<string>>(new Set());
+
+  const handleToggleBasicMode = (val: boolean) => {
+    setIsBasicMode(val);
+    localStorage.setItem('zone_basic_mode', String(val));
+    if (val) {
+      triggerNotification(
+        language === 'tl'
+          ? 'Naka-ON na ang Basic Mode (Libre)! Itinago muna ang mga larawan at video para makatipid sa load.'
+          : 'Basic Mode is ON! Photos and videos are temporarily hidden to save mobile data.',
+        'info'
+      );
+    } else {
+      triggerNotification(
+        language === 'tl'
+          ? 'Naka-OFF na ang Basic Mode. Ilo-load na muli ang lahat ng larawan at video.'
+          : 'Basic Mode is OFF. All images and videos will load normally.',
+        'success'
+      );
+    }
+  };
+
+  const renderFeedAvatar = (avatarUrl: string | undefined, name: string, sizeClass: string = "w-10 h-10", textClass: string = "text-base") => {
+    const fallbackChar = name ? name.charAt(0).toUpperCase() : '👤';
+    const isEmoji = avatarUrl && avatarUrl.length <= 4;
+    
+    if (isBasicMode) {
+      // In Basic Mode, skip base64/url images to simulate saving data, but allow emojis
+      if (isEmoji) {
+        return (
+          <div className={`${sizeClass} bg-slate-100 rounded-full flex items-center justify-center border border-slate-200 shrink-0`}>
+            <span className={textClass}>{avatarUrl}</span>
+          </div>
+        );
+      }
+      return (
+        <div className={`${sizeClass} rounded-full bg-blue-100 text-blue-800 flex items-center justify-center font-black select-none border border-blue-200 shrink-0 ${textClass}`}>
+          {fallbackChar}
+        </div>
+      );
+    }
+
+    if (avatarUrl && (avatarUrl.startsWith('http') || avatarUrl.startsWith('data:') || avatarUrl.startsWith('blob:'))) {
+      return (
+        <img 
+          src={avatarUrl} 
+          alt={name} 
+          className={`${sizeClass} rounded-full object-cover border border-slate-200 shadow-sm shrink-0`} 
+          referrerPolicy="no-referrer" 
+        />
+      );
+    }
+
+    return (
+      <div className={`${sizeClass} rounded-full bg-slate-100 flex items-center justify-center border border-slate-200 shrink-0`}>
+        <span className={`select-none ${textClass}`}>{avatarUrl || '👤'}</span>
+      </div>
+    );
+  };
+
   // New Post state
   const [postText, setPostText] = useState('');
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
@@ -329,6 +393,58 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
 
   return (
     <div id="z-one-container" className="space-y-6">
+
+      {/* 📶 PHILIPPINE FREE/BASIC MODE CONTROL BAR */}
+      <div className={`rounded-3xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 border shadow-xs transition-all duration-300 ${
+        isBasicMode 
+          ? 'bg-slate-900 border-slate-800 text-white' 
+          : 'bg-indigo-50 border-indigo-100 text-indigo-950'
+      }`}>
+        <div className="flex items-center gap-3">
+          <span className="flex h-3 w-3 relative shrink-0">
+            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isBasicMode ? 'bg-amber-400' : 'bg-emerald-400'}`}></span>
+            <span className={`relative inline-flex rounded-full h-3 w-3 ${isBasicMode ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
+          </span>
+          <div className="text-xs space-y-0.5">
+            {isBasicMode ? (
+              <>
+                <p className="font-extrabold text-amber-400 uppercase tracking-wider text-[10px] sm:text-xs">
+                  🇵🇭 Naka-Basic Mode Ka (Free Data)
+                </p>
+                <p className="text-[10px] sm:text-xs text-slate-300 font-semibold">
+                  Naitago ang mga payout screenshot, preset photos, at videos para makatipid sa mobile load/data. Libreng mag-post at mag-interact!
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-extrabold text-indigo-800 uppercase tracking-wider text-[10px] sm:text-xs">
+                  🌐 Naka-Normal Mode Ka (With Data)
+                </p>
+                <p className="text-[10px] sm:text-xs text-indigo-900/85 font-semibold">
+                  Ilo-load ang lahat ng profile pics at payout screenshots. Lumipat sa Basic Mode kung ubos na ang iyong mobile internet load.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="flex gap-2 shrink-0 w-full sm:w-auto justify-end">
+          {isBasicMode ? (
+            <button
+              onClick={() => handleToggleBasicMode(false)}
+              className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] sm:text-xs px-4 py-2 rounded-xl cursor-pointer shadow-md transition"
+            >
+              🌐 Use Normal Mode
+            </button>
+          ) : (
+            <button
+              onClick={() => handleToggleBasicMode(true)}
+              className="w-full sm:w-auto bg-slate-800 hover:bg-slate-700 text-white font-black text-[10px] sm:text-xs px-4 py-2 rounded-xl cursor-pointer shadow-md transition"
+            >
+              📶 Go to Basic Mode (Libre)
+            </button>
+          )}
+        </div>
+      </div>
       
       {/* 👑 BRAND HEADER */}
       <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 rounded-3xl p-6 text-white shadow-md relative overflow-hidden">
@@ -688,12 +804,8 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                     {/* Header */}
                     <div className="p-4 flex items-center justify-between gap-3 border-b border-slate-50">
                       <div className="flex items-center gap-3">
-                        <span className="text-3xl leading-none shrink-0 select-none block">
-                          {post.userAvatar && (post.userAvatar.startsWith('http') || post.userAvatar.startsWith('data:')) ? (
-                            <img src={post.userAvatar} alt={post.userName} className="w-10 h-10 rounded-full object-cover border border-slate-200 shadow-sm" referrerPolicy="no-referrer" />
-                          ) : (
-                            <span className="text-3xl bg-slate-100 p-1 rounded-full">{post.userAvatar || '👤'}</span>
-                          )}
+                        <span className="leading-none shrink-0 select-none block">
+                          {renderFeedAvatar(post.userAvatar, post.userName, "w-10 h-10", "text-xl")}
                         </span>
                         <div>
                           <div className="font-extrabold text-slate-900 text-xs flex items-center gap-1.5">
@@ -754,16 +866,64 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                       </p>
 
                       {/* Attached Media Render */}
-                      {post.mediaUrl && post.mediaType === 'image' && (
-                        <div className="rounded-2xl overflow-hidden border border-slate-100">
-                          <img src={post.mediaUrl} alt="Post Attachment" className="w-full max-h-80 object-cover" referrerPolicy="no-referrer" />
-                        </div>
-                      )}
+                      {post.mediaUrl && (
+                        <>
+                          {isBasicMode && !revealedMedia.has(post.id) ? (
+                            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center space-y-3">
+                              <div className="space-y-1">
+                                <p className="text-xs font-black text-slate-700">
+                                  {post.mediaType === 'image' ? '📷 Larawan (Naitago sa Basic Mode)' : '🎥 Video (Naitago sa Basic Mode)'}
+                                </p>
+                                <p className="text-[10px] text-slate-450 font-semibold">
+                                  {language === 'tl' 
+                                    ? 'I-click ang button upang ipakita ang larawang ito gamit ang iyong mobile data.' 
+                                    : 'Click the button below to load this media using standard data.'}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRevealedMedia(prev => {
+                                    const next = new Set(prev);
+                                    next.add(post.id);
+                                    return next;
+                                  });
+                                  triggerNotification(
+                                    language === 'tl' ? 'Niloload na ang larawan gamit ang normal data...' : 'Loading media using standard data...',
+                                    'info'
+                                  );
+                                }}
+                                className="bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] px-3.5 py-1.5 rounded-xl cursor-pointer shadow-xs transition"
+                              >
+                                {language === 'tl' ? '👁️ Panoorin ang Larawan' : '👁️ Load Photo/Video'}
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              {post.mediaType === 'image' && (
+                                <div className="rounded-2xl overflow-hidden border border-slate-100 relative">
+                                  <img src={post.mediaUrl} alt="Post Attachment" className="w-full max-h-80 object-cover" referrerPolicy="no-referrer" />
+                                  {isBasicMode && (
+                                    <span className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[9px] font-black px-2 py-0.5 rounded-full">
+                                      Loaded via Mobile Data
+                                    </span>
+                                  )}
+                                </div>
+                              )}
 
-                      {post.mediaUrl && post.mediaType === 'video' && (
-                        <div className="rounded-2xl overflow-hidden border border-slate-100">
-                          <video src={post.mediaUrl} controls className="w-full max-h-80 object-cover" />
-                        </div>
+                              {post.mediaType === 'video' && (
+                                <div className="rounded-2xl overflow-hidden border border-slate-100 relative">
+                                  <video src={post.mediaUrl} controls className="w-full max-h-80 object-cover" />
+                                  {isBasicMode && (
+                                    <span className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[9px] font-black px-2 py-0.5 rounded-full">
+                                      Loaded via Mobile Data
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </>
                       )}
                     </div>
 
@@ -807,13 +967,9 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                     <div className="bg-slate-50/30 p-4 space-y-3">
                       
                       {/* Comment input form */}
-                      <div className="flex gap-2">
-                        <span className="text-xl shrink-0">
-                          {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:')) ? (
-                            <img src={user.avatar} alt="Profile" className="w-7 h-7 rounded-full object-cover border border-slate-200 shadow-xs" referrerPolicy="no-referrer" />
-                          ) : (
-                            <span className="text-xl shrink-0">{user.avatar || '👤'}</span>
-                          )}
+                      <div className="flex gap-2 items-center">
+                        <span className="leading-none shrink-0 select-none block">
+                          {renderFeedAvatar(user.avatar, user.name, "w-7 h-7", "text-xs")}
                         </span>
                         <div className="flex-1 flex gap-1 bg-white border border-slate-200 rounded-xl p-1 focus-within:ring-2 focus-within:ring-blue-500">
                           <input
@@ -842,12 +998,8 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                         <div className="space-y-2 pt-2 border-t border-slate-100">
                           {post.comments.map((comm) => (
                             <div key={comm.id} className="flex gap-2.5 items-start">
-                              <span className="text-lg shrink-0 block">
-                                {comm.userAvatar && (comm.userAvatar.startsWith('http') || comm.userAvatar.startsWith('data:')) ? (
-                                  <img src={comm.userAvatar} alt={comm.userName} className="w-6 h-6 rounded-full object-cover border border-slate-200 shadow-xs" referrerPolicy="no-referrer" />
-                                ) : (
-                                  <span className="text-lg bg-slate-100 p-0.5 rounded-full shrink-0">{comm.userAvatar || '👤'}</span>
-                                )}
+                              <span className="leading-none shrink-0 select-none block">
+                                {renderFeedAvatar(comm.userAvatar, comm.userName, "w-6 h-6", "text-[10px]")}
                               </span>
                               <div className="bg-slate-100 p-2.5 rounded-2xl flex-1 space-y-0.5">
                                 <div className="flex items-center justify-between gap-2">
