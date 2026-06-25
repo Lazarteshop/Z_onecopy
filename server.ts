@@ -1745,7 +1745,7 @@ const PROHIBITED_PORN_WORDS = [
 ];
 
 const SWEAR_WORDS = [
-  "gago", "putangina", "tangina", "putang ina", "tang ina", "pukinangina", "tarantado", "ulol", "pakyaw", "pakyu", "fuck", "shit", "bitch", "asshole"
+  "gago", "putangina", "tangina", "putang ina", "tang ina", "pukinangina", "tarantado", "ulol", "pakyu", "fuck", "shit", "mamatay ka na", "kantutan", kantotin", "subo mo titi ko", "fuckyou", "tanga", "demonyo", "devil", "bitch", "asshole"
 ];
 
 function containsInappropriateContent(text: string): boolean {
