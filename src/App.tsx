@@ -37,7 +37,15 @@ import {
   RefreshCw,
   Shield,
   Award,
-  Trash2
+  Trash2,
+  Heart,
+  MessageSquare,
+  ThumbsUp,
+  Camera,
+  Tv,
+  Users,
+  Ban,
+  Upload
 } from 'lucide-react';
 import { INITIAL_CAMPAIGNS } from './data/campaigns';
 import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend } from './types';
@@ -45,6 +53,7 @@ import BrowserSimulator from './components/BrowserSimulator';
 import GCashCashout from './components/GCashCashout';
 import ReferralPanel from './components/ReferralPanel';
 import AdminPanel from './components/AdminPanel';
+import ZoneFeed from './components/ZoneFeed';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -53,6 +62,8 @@ interface UserSession {
   name: string;
   avatar: string;
   isAdmin: boolean;
+  isBanned?: boolean;
+  zonedUsers?: string[];
   referralCode: string;
   stats: UserStats;
   withdrawals: WithdrawalRequest[];
@@ -64,6 +75,10 @@ export default function App() {
   // --- AUTHENTICATION & SYNC STATES ---
   const [token, setToken] = useState<string | null>(localStorage.getItem('gcash_click_earn_token'));
   const [user, setUser] = useState<UserSession | null>(null);
+  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
+  const [newAvatar, setNewAvatar] = useState('👤');
+  const [newName, setNewName] = useState('');
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
 
   // Form states
@@ -89,7 +104,7 @@ export default function App() {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [referredFriends, setReferredFriends] = useState<ReferralFriend[]>([]);
   
-  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'guide' | 'admin'>('earn');
+  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin'>('earn');
   const [currentViewingCampaign, setCurrentViewingCampaign] = useState<WebsiteCampaign | null>(null);
 
   // Add custom campaigns state
@@ -806,6 +821,50 @@ export default function App() {
     triggerNotification('🔒 Ligtas kang naka-logout sa controller.', 'info');
   };
 
+  const openEditProfileModal = () => {
+    if (user) {
+      setNewAvatar(user.avatar || '👤');
+      setNewName(user.name || '');
+      setShowEditProfileModal(true);
+    }
+  };
+
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim()) {
+      triggerNotification(language === 'tl' ? 'Mangyaring ilagay ang iyong pangalan.' : 'Please enter your name.', 'error');
+      return;
+    }
+
+    setIsUpdatingProfile(true);
+    try {
+      const res = await fetch('/api/user/update-profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token || ''
+        },
+        body: JSON.stringify({
+          avatar: newAvatar,
+          name: newName
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setUser(data.user);
+        triggerNotification(language === 'tl' ? 'Matagumpay na na-update ang iyong profile! 🎉' : 'Profile updated successfully! 🎉', 'success');
+        setShowEditProfileModal(false);
+      } else {
+        triggerNotification(data.error || 'May error sa pag-update.', 'error');
+      }
+    } catch (err) {
+      triggerNotification(language === 'tl' ? 'Koneksyon error.' : 'Connection error.', 'error');
+    } finally {
+      setIsUpdatingProfile(false);
+    }
+  };
+
   // --- FILTERS LOGIC ---
   const filteredCampaigns = campaigns.filter((c) => {
     if (campaignFilter === 'high') return c.reward >= 1.00;
@@ -859,6 +918,182 @@ export default function App() {
               <div className="text-xl font-black mt-1 font-mono">+₱{floatingCoinReward.toFixed(2)}</div>
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 👤 EDIT PROFILE PIC & NAME MODAL */}
+      <AnimatePresence>
+        {showEditProfileModal && user && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden flex flex-col"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-5 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="bg-white/20 p-2 rounded-xl">
+                    <User className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-sm tracking-wide uppercase">
+                      {language === 'tl' ? '⚙️ I-edit ang Profile' : '⚙️ Edit Profile'}
+                    </h3>
+                    <p className="text-[10px] text-white/90 font-semibold">
+                      {language === 'tl' ? 'Baguhin ang iyong pangalan at profile pic' : 'Customize your name and profile pic'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowEditProfileModal(false)}
+                  className="text-white hover:text-blue-100 transition text-xs font-bold cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Form Content */}
+              <form onSubmit={handleUpdateProfile} className="p-6 space-y-5">
+                {/* Profile Pic Preview & Current Status */}
+                <div className="flex flex-col items-center justify-center space-y-2 py-2">
+                  <div className="relative">
+                    <div className="w-20 h-20 rounded-full bg-slate-100 flex items-center justify-center shadow-lg border-2 border-indigo-250 overflow-hidden">
+                      {newAvatar && (newAvatar.startsWith('http') || newAvatar.startsWith('data:')) ? (
+                        <img src={newAvatar} alt="New Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <span className="text-5xl leading-none">{newAvatar || '👤'}</span>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-slate-450 font-black uppercase tracking-wider">Live Profile Picture Preview</span>
+                </div>
+
+                {/* Name field */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
+                    {language === 'tl' ? 'Pangalan (Full Name)' : 'Name (Full Name)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    required
+                    maxLength={35}
+                    placeholder="E.g., Juan Dela Cruz"
+                    className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none rounded-2xl px-4 py-3 text-xs font-bold text-slate-800 transition"
+                  />
+                </div>
+
+                {/* Avatar Presets Selection */}
+                <div className="space-y-2">
+                  <label className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
+                    {language === 'tl' ? 'Pumili sa aming Presets (Choose Preset Emoji)' : 'Choose Preset Emoji'}
+                  </label>
+                  <div className="grid grid-cols-6 gap-2 bg-slate-50 border border-slate-150 p-3 rounded-2xl max-h-[110px] overflow-y-auto">
+                    {['👤', '👨‍💻', '👩‍💻', '🦁', '🦉', '🐱', '🐶', '🦊', '🦄', '🐼', '🤖', '👑', '💼', '🚀', '⭐', '🌈', '🔥', '💖', '🍀', '🍕', '😎', '🎮', '💡', '🎵'].map(preset => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setNewAvatar(preset)}
+                        className={`text-2xl p-1 rounded-xl hover:bg-slate-200 transition cursor-pointer select-none text-center ${
+                          newAvatar === preset ? 'bg-indigo-100 border-2 border-indigo-400 scale-110' : 'border border-transparent'
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Custom Avatar Upload from Gallery */}
+                <div className="space-y-1.5 border-t border-slate-100 pt-3">
+                  <label className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
+                    {language === 'tl' ? 'O Kumuha sa Phone Gallery (Upload)' : 'Or Upload From Phone Gallery'}
+                  </label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    id="profile-pic-upload"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (file.size > 15 * 1024 * 1024) {
+                        triggerNotification(
+                          language === 'tl' 
+                            ? 'Masyadong malaki ang file. Dapat mas maliit sa 15MB.' 
+                            : 'File too large. Must be smaller than 15MB.',
+                          'error'
+                        );
+                        return;
+                      }
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                        setNewAvatar(reader.result as string);
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                  <label
+                    htmlFor="profile-pic-upload"
+                    className="w-full border border-dashed border-indigo-300 hover:border-indigo-500 hover:bg-indigo-50/20 p-2.5 rounded-2xl text-[11px] text-indigo-750 font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5"
+                  >
+                    <Upload className="w-4 h-4 text-indigo-600" />
+                    <span>{language === 'tl' ? 'Mag-upload ng Larawan mula sa Gallery' : 'Upload Image from Gallery'}</span>
+                  </label>
+                </div>
+
+                {/* Custom Avatar URL or Custom Emoji */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
+                    {language === 'tl' ? 'O Maglagay ng Sariling Image URL' : 'Or Paste Custom Image URL'}
+                  </label>
+                  <input
+                    type="text"
+                    value={newAvatar.startsWith('http') || newAvatar.startsWith('data:') ? newAvatar : ''}
+                    onChange={(e) => {
+                      const val = e.target.value.trim();
+                      if (val) {
+                        setNewAvatar(val);
+                      } else {
+                        setNewAvatar('👤');
+                      }
+                    }}
+                    placeholder="I-paste ang link (https://...) para sa tunay na profile pic"
+                    className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none rounded-2xl px-4 py-3 text-xs font-semibold text-slate-700 transition font-mono"
+                  />
+                  <p className="text-[10px] text-slate-455 leading-normal font-semibold">
+                    💡 Maari kang mag-paste ng link ng larawan mula sa internet (tulad ng Facebook, Imgur, o Unsplash) upang ito ang maging larawan ng iyong profile.
+                  </p>
+                </div>
+
+                {/* Footer buttons */}
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditProfileModal(false)}
+                    className="flex-1 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 transition py-3 rounded-2xl text-slate-700 font-black text-xs cursor-pointer text-center"
+                  >
+                    {language === 'tl' ? 'I-cancel' : 'Cancel'}
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isUpdatingProfile}
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 active:bg-indigo-800 transition py-3 rounded-2xl text-white font-black text-xs cursor-pointer flex items-center justify-center gap-2 shadow-md"
+                  >
+                    {isUpdatingProfile ? (
+                      <span className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    ) : (
+                      <span>{language === 'tl' ? 'I-save ang Profile' : 'Save Profile'}</span>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
@@ -1136,35 +1371,35 @@ export default function App() {
         /* 📱 GATEWAY 2: AUTHENTICATED SYSTEM DASHBOARD */
         <>
           {/* HEADER BAR */}
-          <header id="dashboard-header" className="bg-slate-900 border-b border-slate-800 text-white py-4 shadow-md sticky top-0 z-40">
-            <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <header id="dashboard-header" className="bg-slate-900 border-b border-slate-800 text-white py-3 sm:py-4 shadow-md">
+            <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
               
               {/* BRAND / IDENTITY */}
-              <div className="flex items-center gap-3">
-                <span className="p-2.5 bg-blue-600 rounded-2xl shadow-md flex items-center justify-center animate-pulse">
-                  <Coins className="w-6 h-6 text-yellow-300" />
+              <div className="flex items-center gap-2 sm:gap-3">
+                <span className="p-2 bg-blue-600 rounded-xl sm:rounded-2xl shadow-md flex items-center justify-center animate-pulse shrink-0">
+                  <Coins className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-300" />
                 </span>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h1 className="font-black text-lg tracking-tight">Earning Dashboard</h1>
+                  <div className="flex items-center gap-1.5 sm:gap-2">
+                    <h1 className="font-black text-sm sm:text-lg tracking-tight">Earning Dashboard</h1>
                     {user.isAdmin && (
-                      <span className="bg-red-500 text-white text-[9px] font-black tracking-widest uppercase px-2 py-0.5 rounded flex items-center gap-1">
-                        <Shield className="w-3 h-3 text-yellow-250 animate-bounce" />
+                      <span className="bg-red-500 text-white text-[8px] sm:text-[9px] font-black tracking-widest uppercase px-1.5 sm:px-2 py-0.5 rounded flex items-center gap-1">
+                        <Shield className="w-2.5 h-2.5 text-yellow-250 animate-bounce" />
                         <span>OWNER ADMIN</span>
                       </span>
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-400 font-semibold">Explore featured websites and participate in platform activities to enjoy available PPV rewards, subject to our terms and guidelines.</p>
+                  <p className="text-[10px] sm:text-[11px] text-slate-400 font-semibold hidden md:block">Explore featured websites and participate in platform activities to enjoy available PPV rewards, subject to our terms and guidelines.</p>
                 </div>
               </div>
 
               {/* USER PROFILE CARD AND METRICS */}
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto justify-between sm:justify-end">
                 {/* 🌍 LANGUAGE SELECT SWITCH */}
-                <div className="flex items-center gap-1 bg-slate-950/65 border border-slate-800 p-1.5 rounded-2xl shadow-inner shrink-0">
+                <div className="flex items-center gap-0.5 sm:gap-1 bg-slate-950/65 border border-slate-800 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl shadow-inner shrink-0">
                   <button
                     onClick={() => setLanguage('en')}
-                    className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-xl transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                    className={`px-2 py-1 sm:px-3 sm:py-1.5 text-[9px] sm:text-[10px] font-black uppercase rounded-lg sm:rounded-xl transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
                       language === 'en'
                         ? 'bg-slate-700 text-white shadow font-black scale-105'
                         : 'text-slate-400 hover:text-white'
@@ -1175,7 +1410,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => setLanguage('tl')}
-                    className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-xl transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                    className={`px-2 py-1 sm:px-3 sm:py-1.5 text-[9px] sm:text-[10px] font-black uppercase rounded-lg sm:rounded-xl transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
                       language === 'tl'
                         ? 'bg-indigo-600 text-white shadow font-black scale-105'
                         : 'text-slate-400 hover:text-white'
@@ -1186,19 +1421,40 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="bg-slate-850 hover:bg-slate-800 border border-slate-800 p-2.5 rounded-2xl flex items-center gap-2.5 transition">
-                  <span className="text-2xl bg-slate-900 leading-none p-1 rounded-full shrink-0 select-none shadow-inner">{user.avatar}</span>
+                <div className="bg-slate-850 border border-slate-800 p-1.5 sm:p-2.5 rounded-xl sm:rounded-2xl flex items-center gap-2 sm:gap-2.5 shadow-sm min-w-0">
+                  {/* Clickable Avatar to edit profile picture */}
+                  <button
+                    onClick={openEditProfileModal}
+                    title={language === 'tl' ? 'I-edit ang iyong Profile at Larawan' : 'Edit your Profile and Picture'}
+                    className="relative group cursor-pointer focus:outline-none shrink-0"
+                  >
+                    <div className="text-xl sm:text-2xl leading-none select-none flex items-center justify-center">
+                      {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:')) ? (
+                        <img src={user.avatar} alt="Profile" className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover border border-slate-700 shadow-inner group-hover:opacity-85 transition" referrerPolicy="no-referrer" />
+                      ) : (
+                        <span className="text-xl sm:text-2xl bg-slate-900 p-1 sm:p-1.5 rounded-full shadow-inner group-hover:scale-105 transition block">{user.avatar || '👤'}</span>
+                      )}
+                    </div>
+                    <span className="absolute -bottom-1 -right-1 bg-blue-600 text-[8px] text-white font-black p-0.5 rounded-full border border-slate-900 group-hover:bg-blue-500 transition scale-90">
+                      ✎
+                    </span>
+                  </button>
+
                   <div className="min-w-0 pr-1">
-                    <h5 className="font-black text-xs leading-none text-white truncate max-w-[130px]" title={user.name}>
+                    <button
+                      onClick={openEditProfileModal}
+                      title={language === 'tl' ? 'I-edit ang iyong Profile at Larawan' : 'Edit your Profile and Picture'}
+                      className="text-left font-black text-[10px] sm:text-xs leading-none text-white truncate max-w-[80px] xs:max-w-[120px] sm:max-w-[130px] hover:text-blue-400 cursor-pointer transition block"
+                    >
                       Mabuhay, {user.name}!
-                    </h5>
-                    <p className="text-[9px] text-slate-400 mt-1 font-semibold truncate max-w-[130px]" title={user.email}>
+                    </button>
+                    <p className="text-[8px] sm:text-[9px] text-slate-400 mt-0.5 sm:mt-1 font-semibold truncate max-w-[80px] xs:max-w-[120px] sm:max-w-[130px]" title={user.email}>
                       {user.email}
                     </p>
                     {!user.isAdmin && (
                       <button
                         onClick={handleSimulateTrialExpiration}
-                        className="text-[8px] bg-red-650 hover:bg-red-600 hover:scale-105 active:scale-95 text-white font-black py-0.5 px-1.5 rounded-sm mt-1 transition leading-none select-none cursor-pointer"
+                        className="text-[7px] sm:text-[8px] bg-red-650 hover:bg-red-600 hover:scale-105 active:scale-95 text-white font-black py-0.5 px-1 sm:px-1.5 rounded-sm mt-0.5 sm:mt-1 transition leading-none select-none cursor-pointer inline-block"
                         title="Isimula ang 1-Day Trial Expiration para sa pagsusulit!"
                       >
                         ⚡ Sim Expire
@@ -1211,9 +1467,9 @@ export default function App() {
                     onClick={handleLogout}
                     title="Log-out safe"
                     id="user-logout-btn"
-                    className="p-1.5 hover:bg-slate-700/60 transition rounded-xl text-slate-400 hover:text-red-400 cursor-pointer"
+                    className="p-1 sm:p-1.5 hover:bg-slate-700/60 transition rounded-lg sm:rounded-xl text-slate-400 hover:text-red-400 cursor-pointer shrink-0"
                   >
-                    <LogOut className="w-4 h-4" />
+                    <LogOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   </button>
                 </div>
               </div>
@@ -1281,11 +1537,12 @@ export default function App() {
           <div id="dashboard-navigation-tabs" className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
             <div className="max-w-7xl mx-auto px-4 flex items-center justify-between gap-4">
               
-              <div className={`w-full grid py-2.5 gap-1 shrink-0 ${user.isAdmin ? 'grid-cols-4' : 'grid-cols-3'} md:flex md:w-auto md:py-3 md:gap-1`}>
+              <div className={`w-full grid py-2.5 gap-1 shrink-0 ${user.isAdmin ? 'grid-cols-5' : 'grid-cols-4'} md:flex md:w-auto md:py-3 md:gap-1`}>
                 {[
-                  { id: 'earn', textMobile: 'Mag-ipon ng Pera', textDesktop: ' (Website Lists)', icon: Globe },
+                  { id: 'earn', textMobile: 'Mag-ipon', textDesktop: ' (Website Lists)', icon: Globe },
                   { id: 'cashout', textMobile: 'GCash Cash-Out', textDesktop: ' (Withdraw)', icon: Wallet },
-                  { id: 'guide', textMobile: 'Gabay sa Paggamit', textDesktop: ' (FAQs)', icon: HelpCircle },
+                  { id: 'zone', textMobile: 'Z-one Social', textDesktop: ' (Community Feed)', icon: Users },
+                  { id: 'guide', textMobile: 'Gabay', textDesktop: ' (FAQs)', icon: HelpCircle },
                   // Dynamic Admin tab if the session yields an admin role
                   ...(user.isAdmin ? [{ id: 'admin', textMobile: 'Admin Control', textDesktop: ' Panel', icon: Shield }] : [])
                 ].map((tab) => {
@@ -1464,6 +1721,16 @@ export default function App() {
                   </div>
                 )}
 
+              </div>
+            ) : activeTab === 'zone' && user ? (
+              <div className="animate-fadeIn w-full">
+                <ZoneFeed
+                  token={token || ''}
+                  user={user}
+                  triggerNotification={triggerNotification}
+                  onRefreshProfile={() => fetchUserProfile(token || '')}
+                  language={language}
+                />
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
@@ -1719,6 +1986,8 @@ export default function App() {
                     />
                   </div>
                 )}
+
+
 
                 {/* TAB 3: FAQ GUIDE */}
                 {activeTab === 'guide' && (

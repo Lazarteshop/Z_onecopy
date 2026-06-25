@@ -121,6 +121,8 @@ interface UserSession {
   referralCode: string;
   invitedBy?: string; // referralCode of referrer
   isAdmin: boolean;
+  isBanned?: boolean; // banned from Z-one or app
+  zonedUsers?: string[]; // userIds followed/zoned
   createdAt?: string;
   subscription?: Subscription;
   completedCampaignIds?: string[]; // track completed campaigns centrally
@@ -160,6 +162,7 @@ interface UserSession {
 interface DBStructure {
   users: UserSession[];
   campaigns?: any[];
+  posts?: any[];
 }
 
 // --- HELPER TO INITIALIZE AND GET DATABASE ---
@@ -188,6 +191,31 @@ function loadDB(): DBStructure {
       if (!loaded.campaigns || loaded.campaigns.length === 0) {
         loaded.campaigns = INITIAL_CAMPAIGNS;
       }
+      if (!loaded.posts) {
+        loaded.posts = [
+          {
+            id: 'post-welcome',
+            userId: 'admin-rosco',
+            userName: 'System Administrator',
+            userAvatar: '👑',
+            text: 'Welcome sa Z-one! Ang pinakabagong social media portal kung saan pwede kayong mag-post, mag-like, mag-comment, at mag-Zone (Follow) sa bawat isa. Iwasan po natin ang bastos/pornographic na content at bad words upang maiwasan ang ma-banned. Happy Click-Earning!',
+            mediaUrl: 'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=800&auto=format&fit=crop&q=60',
+            mediaType: 'image',
+            likes: [],
+            comments: [
+              {
+                id: 'comment-seed-1',
+                userId: 'user-juan',
+                userName: 'Juan Dela Cruz',
+                userAvatar: '👨‍💻',
+                text: 'Wow, napakagandang platform naman nito! Salamat admin!',
+                createdAt: new Date(Date.now() - 3600000).toISOString()
+              }
+            ],
+            createdAt: new Date(Date.now() - 7200000).toISOString()
+          }
+        ];
+      }
       return loaded;
     } catch (e) {
       console.error('Error reading database file, resetting...', e);
@@ -199,6 +227,29 @@ function loadDB(): DBStructure {
 
   // Create default seed database
   const defaultDB: DBStructure = {
+    posts: [
+      {
+        id: 'post-welcome',
+        userId: 'admin-rosco',
+        userName: 'System Administrator',
+        userAvatar: '👑',
+        text: 'Welcome sa Z-one! Ang pinakabagong social media portal kung saan pwede kayong mag-post, mag-like, mag-comment, at mag-Zone (Follow) sa bawat isa. Iwasan po natin ang bastos/pornographic na content at bad words upang maiwasan ang ma-banned. Happy Click-Earning!',
+        mediaUrl: 'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=800&auto=format&fit=crop&q=60',
+        mediaType: 'image',
+        likes: [],
+        comments: [
+          {
+            id: 'comment-seed-1',
+            userId: 'user-juan',
+            userName: 'Juan Dela Cruz',
+            userAvatar: '👨‍💻',
+            text: 'Wow, napakagandang platform naman nito! Salamat admin!',
+            createdAt: new Date(Date.now() - 3600000).toISOString()
+          }
+        ],
+        createdAt: new Date(Date.now() - 7200000).toISOString()
+      }
+    ],
     users: [
       // 1. Core Admin Account
       {
@@ -358,7 +409,16 @@ async function uploadToFirestore(data: DBStructure) {
       });
     }
 
-    await Promise.all([...batchValues, ...campPromises]);
+    let postPromises: Promise<any>[] = [];
+    if (data.posts) {
+      postPromises = data.posts.map(async (p) => {
+        const pDocRef = firestore.collection('posts').doc(p.id);
+        const { id, ...pWithoutId } = p;
+        await pDocRef.set(pWithoutId);
+      });
+    }
+
+    await Promise.all([...batchValues, ...campPromises, ...postPromises]);
     console.log('☁️ GCash Click-Earn: Firebase Firestore cloud backup completed successfully.');
   } catch (err) {
     console.error('❌ Failed background write to Firestore:', err);
@@ -396,11 +456,19 @@ async function syncFromFirestore() {
       dbCampaigns.push({ id: docSnap.id, ...docSnap.data() });
     });
 
+    const postsColRef = firestore.collection('posts');
+    const pSnapshot = await postsColRef.get();
+    const dbPosts: any[] = [];
+    pSnapshot.forEach((docSnap) => {
+      dbPosts.push({ id: docSnap.id, ...docSnap.data() });
+    });
+
     if (dbUsers.length > 0) {
       console.log(`📱 Found ${dbUsers.length} users in Firestore. Overwriting local cache...`);
       const loadedDB: DBStructure = { 
         users: dbUsers,
-        campaigns: dbCampaigns.length > 0 ? dbCampaigns : INITIAL_CAMPAIGNS
+        campaigns: dbCampaigns.length > 0 ? dbCampaigns : INITIAL_CAMPAIGNS,
+        posts: dbPosts.length > 0 ? dbPosts : undefined
       };
       
       // Update/synchronize admin details if needed
@@ -409,6 +477,10 @@ async function syncFromFirestore() {
         admin.email = envAdminEmail;
         admin.password = envAdminPassword;
         admin.name = envAdminName;
+      }
+      if (!loadedDB.posts) {
+        const temp = loadDB();
+        loadedDB.posts = temp.posts;
       }
       fs.writeFileSync(DB_FILE_PATH, JSON.stringify(loadedDB, null, 2), 'utf-8');
     } else {
@@ -432,7 +504,16 @@ async function syncFromFirestore() {
         });
       }
 
-      await Promise.all([...batchPromises, ...seedCampPromises]);
+      let seedPostPromises: Promise<any>[] = [];
+      if (localDB.posts) {
+        seedPostPromises = localDB.posts.map(async (p) => {
+          const pDocRef = firestore.collection('posts').doc(p.id);
+          const { id, ...pWithoutId } = p;
+          await pDocRef.set(pWithoutId);
+        });
+      }
+
+      await Promise.all([...batchPromises, ...seedCampPromises, ...seedPostPromises]);
       console.log('✅ Seeding of Firestore complete.');
     }
   } catch (err) {
@@ -591,6 +672,10 @@ app.post('/api/auth/login', (req, res) => {
 
   if (!user || user.password !== password) {
     return res.status(401).json({ error: 'Maling email o password. Pakisubukang muli.' });
+  }
+
+  if (user.isBanned) {
+    return res.status(403).json({ error: '🔴 Ang iyong account ay banned ng administrator dahil sa paglabag sa Community Rules ng Z-one.' });
   }
 
   const { password: _, ...userSafe } = user as any;
@@ -825,6 +910,51 @@ app.get('/api/user/profile', (req, res) => {
 
   const { password: _, ...userSafe } = user as any;
   res.json({ user: userSafe });
+});
+
+// UPDATE USER PROFILE PIC / DETAILS
+app.post('/api/user/update-profile', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const { avatar, name } = req.body;
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang gumagamit.' });
+  }
+
+  if (avatar) {
+    user.avatar = avatar;
+  }
+  if (name && name.trim()) {
+    user.name = name.trim();
+  }
+
+  // Also update all posts of this user with the new avatar and name
+  if (db.posts) {
+    db.posts.forEach(p => {
+      if (p.userId === userId) {
+        if (avatar) p.userAvatar = avatar;
+        if (name) p.userName = name.trim();
+      }
+      // Also comments
+      if (p.comments) {
+        p.comments.forEach(c => {
+          if (c.userId === userId) {
+            if (avatar) c.userAvatar = avatar;
+            if (name) c.userName = name.trim();
+          }
+        });
+      }
+    });
+  }
+
+  saveDB(db);
+  const { password: _, ...userSafe } = user as any;
+  res.json({ success: true, user: userSafe, message: 'Matagumpay na na-update ang iyong profile!' });
 });
 
 // --- CAMPAIGNS ENDPOINTS ---
@@ -1582,6 +1712,311 @@ app.post('/api/admin/subscription/:userId/decline', (req, res) => {
   saveDB(db);
   res.json({ success: true, message: `Subscription ay matagumpay na tinanggihan.` });
 });
+
+
+// ============================================
+//            Z-ONE SOCIAL PLATFORM APIs
+// ============================================
+
+const PROHIBITED_PORN_WORDS = [
+  "porn", "pornography", "sex", "nude", "naked", "bold", "x-rated", "pussy", "dick", "tits", "suso", "kantutan", "kantot", "puke", "titi", "pepe", "pekpek", "bastos"
+];
+
+const SWEAR_WORDS = [
+  "gago", "putangina", "tangina", "putang ina", "tang ina", "pukinangina", "tarantado", "ulol", "pakyaw", "pakyu", "fuck", "shit", "bitch", "asshole"
+];
+
+function containsInappropriateContent(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return PROHIBITED_PORN_WORDS.some(word => lower.includes(word));
+}
+
+function filterSwearWords(text: string): string {
+  if (!text) return text;
+  let filtered = text;
+  for (const word of SWEAR_WORDS) {
+    const regex = new RegExp(`\\b${word}\\b`, 'gi');
+    filtered = filtered.replace(regex, '*'.repeat(word.length));
+  }
+  return filtered;
+}
+
+// Check if user is banned helper
+function isUserBanned(db: DBStructure, userId: string): boolean {
+  const user = db.users.find(u => u.id === userId);
+  return !!(user && user.isBanned);
+}
+
+// 1. GET ALL POSTS
+app.get('/api/zone/posts', (req, res) => {
+  const db = loadDB();
+  const posts = db.posts || [];
+  
+  const userId = req.headers.authorization;
+  const user = userId ? db.users.find(u => u.id === userId) : null;
+  const zonedUsers = user?.zonedUsers || [];
+
+  // Sort posts: priority to zonedUsers, then by newest first
+  const sortedPosts = [...posts].sort((a, b) => {
+    const aFollowed = zonedUsers.includes(a.userId) ? 1 : 0;
+    const bFollowed = zonedUsers.includes(b.userId) ? 1 : 0;
+
+    if (aFollowed !== bFollowed) {
+      return bFollowed - aFollowed; // Followed users come first
+    }
+
+    // Secondary sort: newest first
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+
+  res.json({ posts: sortedPosts });
+});
+
+// 2. CREATE A NEW POST
+app.post('/api/zone/posts', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang makapag-post.' });
+  }
+
+  const { text, mediaUrl, mediaType } = req.body;
+  const db = loadDB();
+
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Ang iyong account ay banned sa system. Hindi ka pwedeng mag-post.' });
+  }
+
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  // Auto-delete / Reject inappropriate posts (porn, nude, bastos)
+  if (containsInappropriateContent(text) || containsInappropriateContent(mediaUrl || '')) {
+    return res.status(400).json({ 
+      error: '⚠️ [AUTO-DELETE]: Ang post na ito ay hinarang at hindi inilathala dahil naglalaman ito ng malalaswang salita o pornographic content (Nude/Porn content are strictly forbidden!).' 
+    });
+  }
+
+  // Clean swear words
+  const cleanedText = filterSwearWords(text);
+
+  const newPost = {
+    id: 'post-' + Date.now(),
+    userId: user.id,
+    userName: user.name,
+    userAvatar: user.avatar || '👤',
+    text: cleanedText,
+    mediaUrl: mediaUrl || undefined,
+    mediaType: mediaType || undefined,
+    likes: [],
+    comments: [],
+    createdAt: new Date().toISOString()
+  };
+
+  if (!db.posts) {
+    db.posts = [];
+  }
+  db.posts.push(newPost);
+  saveDB(db);
+
+  res.json({ success: true, post: newPost, message: 'Matagumpay na na-post sa Z-one!' });
+});
+
+// 3. TOGGLE LIKE
+app.post('/api/zone/posts/:postId/like', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login upang mag-like.' });
+  }
+
+  const { postId } = req.params;
+  const db = loadDB();
+
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa Z-one.' });
+  }
+
+  if (!db.posts) db.posts = [];
+  const post = db.posts.find(p => p.id === postId);
+  if (!post) {
+    return res.status(404).json({ error: 'Hindi mahanap ang post.' });
+  }
+
+  const likeIndex = post.likes.indexOf(userId);
+  if (likeIndex > -1) {
+    post.likes.splice(likeIndex, 1); // Unlike
+  } else {
+    post.likes.push(userId); // Like
+  }
+
+  saveDB(db);
+  res.json({ success: true, likes: post.likes });
+});
+
+// 4. POST COMMENT
+app.post('/api/zone/posts/:postId/comment', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login upang mag-comment.' });
+  }
+
+  const { postId } = req.params;
+  const { text } = req.body;
+  const db = loadDB();
+
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa Z-one.' });
+  }
+
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  if (!text || text.trim() === '') {
+    return res.status(400).json({ error: 'Walang nilalaman ang iyong comment.' });
+  }
+
+  if (containsInappropriateContent(text)) {
+    return res.status(400).json({ 
+      error: '⚠️ [AUTO-DELETE COMMENT]: Hinarang ang iyong comment dahil naglalaman ito ng bastos o malalaswang salita.' 
+    });
+  }
+
+  const cleanedComment = filterSwearWords(text);
+
+  if (!db.posts) db.posts = [];
+  const post = db.posts.find(p => p.id === postId);
+  if (!post) {
+    return res.status(404).json({ error: 'Hindi mahanap ang post.' });
+  }
+
+  const newComment = {
+    id: 'comment-' + Date.now(),
+    userId: user.id,
+    userName: user.name,
+    userAvatar: user.avatar || '👤',
+    text: cleanedComment,
+    createdAt: new Date().toISOString()
+  };
+
+  post.comments.push(newComment);
+  saveDB(db);
+
+  res.json({ success: true, comments: post.comments });
+});
+
+// 5. TOGGLE ZONE (FOLLOW)
+app.post('/api/zone/users/:targetUserId/toggle-zone', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const { targetUserId } = req.params;
+  if (userId === targetUserId) {
+    return res.status(400).json({ error: 'Hindi mo pwedeng i-Zone ang iyong sarili!' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  const targetUser = db.users.find(u => u.id === targetUserId);
+
+  if (!user || !targetUser) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  if (!user.zonedUsers) {
+    user.zonedUsers = [];
+  }
+
+  const zonedIndex = user.zonedUsers.indexOf(targetUserId);
+  let isZoned = false;
+  if (zonedIndex > -1) {
+    user.zonedUsers.splice(zonedIndex, 1); // Unzone
+  } else {
+    user.zonedUsers.push(targetUserId); // Zone
+    isZoned = true;
+  }
+
+  saveDB(db);
+  res.json({ success: true, isZoned, zonedUsersCount: user.zonedUsers.length, zonedUsers: user.zonedUsers });
+});
+
+// 6. ADMIN GET ALL USERS FOR MODERATION
+app.get('/api/admin/moderation/users', (req, res) => {
+  const adminId = req.headers.authorization;
+  if (!adminId) {
+    return res.status(401).json({ error: 'Admin access required.' });
+  }
+
+  const db = loadDB();
+  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na tingnan ito.' });
+  }
+
+  const safeUsers = db.users.map(u => ({
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    avatar: u.avatar,
+    isBanned: !!u.isBanned,
+    isAdmin: !!u.isAdmin,
+    createdAt: u.createdAt,
+    zonedUsersCount: (u.zonedUsers || []).length
+  }));
+
+  res.json({ users: safeUsers });
+});
+
+// 7. ADMIN BAN/UNBAN USER
+app.post('/api/admin/moderation/users/:userId/toggle-ban', (req, res) => {
+  const adminId = req.headers.authorization;
+  if (!adminId) {
+    return res.status(401).json({ error: 'Admin access required.' });
+  }
+
+  const { userId } = req.params;
+  const db = loadDB();
+  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na gawin ito.' });
+  }
+
+  if (userId === adminId) {
+    return res.status(400).json({ error: 'Hindi mo pwedeng i-ban ang iyong sarili.' });
+  }
+
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  user.isBanned = !user.isBanned;
+
+  if (!user.activityLogs) {
+    user.activityLogs = [];
+  }
+
+  // Add notification inside user activity log
+  user.activityLogs.unshift({
+    id: 'ban-toggle-' + Date.now(),
+    type: 'bonus',
+    title: user.isBanned ? '🔴 ACCOUNT BANNED' : '🟢 ACCOUNT UNBANNED',
+    amount: 0,
+    timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+    details: user.isBanned 
+      ? 'Ika-banned ng administrator ang iyong account dahil sa paglabag sa Community Rules ng Z-one.'
+      : 'Binawi ng administrator ang pagka-ban sa iyong account. Sumunod po tayo sa community rules.'
+  });
+
+  saveDB(db);
+  res.json({ success: true, isBanned: user.isBanned, message: `Matagumpay na ${user.isBanned ? 'banned' : 'unbanned'} ang user.` });
+});
+
 
 // SIMULATE TRIAL EXPIRATION FOR QUICK TESTING & DEMONSTRATION
 app.post('/api/user/simulate-expire', (req, res) => {

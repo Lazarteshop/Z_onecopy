@@ -64,3 +64,26 @@ export interface Subscription {
   expiresAt?: string | null;
 }
 
+export interface ZoneComment {
+  id: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  text: string;
+  createdAt: string;
+}
+
+export interface ZonePost {
+  id: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  text: string;
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video';
+  likes: string[]; // List of user IDs who liked
+  comments: ZoneComment[];
+  createdAt: string;
+  isFlagged?: boolean;
+}
+
