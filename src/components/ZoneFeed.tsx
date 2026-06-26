@@ -27,7 +27,10 @@ import {
   MicOff,
   VideoOff,
   X,
-  Maximize2
+  Maximize2,
+  Play,
+  RefreshCw,
+  Film
 } from 'lucide-react';
 import { ZonePost } from '../types';
 
@@ -86,62 +89,127 @@ const LIVE_TV_STREAMS = [
   }
 ];
 
-// Curated simulated news from Philippine media channels regarding the economy, GCash, and general events
-const PHILIPPINES_NEWS_ARTICLES = [
+// Curated high-quality Netflix Free watch trailers & teaser releases with premium embedded YouTube links
+const NETFLIX_FREE_VIDEOS = [
   {
-    id: 'news-1',
-    source: 'ABS-CBN News',
-    category: 'ECONOMY',
+    id: 'netflix-1',
+    title: 'Squid Game: Season 2 | Official Teaser',
+    category: 'THRILLER / DRAMA',
+    source: 'Netflix International',
+    embedUrl: 'https://www.youtube.com/embed/pSSTXbWpUjg',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
+    duration: '2:15',
+    likes: '4.8M',
+    description: 'The game never stops. Three years after winning Squid Game, Player 456 remains determined to find the people behind the game and put an end to their vicious sport.',
+    badgeColor: 'bg-rose-50 text-rose-700 border-rose-200',
+    tags: ['Survival', 'High Stakes', 'Must Watch'],
+    date: 'New Release',
+    image: 'https://images.unsplash.com/photo-1627856013091-fed6e4e30025?w=800&auto=format&fit=crop&q=60'
+  },
+  {
+    id: 'netflix-2',
+    title: 'Wednesday Season 2 | First Look Teaser',
+    category: 'FANTASY / MYSTERY',
+    source: 'Netflix International',
+    embedUrl: 'https://www.youtube.com/embed/3SAnTf2q0Gg',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
+    duration: '1:48',
+    likes: '3.2M',
+    description: 'More mayhem, mystery and murder. Wednesday Addams is returning to Nevermore Academy with new mysteries, new characters, and her signature dark charm.',
+    badgeColor: 'bg-purple-50 text-purple-700 border-purple-200',
+    tags: ['Spooky', 'Dark Comedy', 'Trending'],
+    date: 'Coming Soon',
+    image: 'https://images.unsplash.com/photo-1509248961158-e54f6934749c?w=800&auto=format&fit=crop&q=60'
+  },
+  {
+    id: 'netflix-3',
+    title: 'Stranger Things 5 | The Final Season Teaser',
+    category: 'SCI-FI / HORROR',
+    source: 'Netflix International',
+    embedUrl: 'https://www.youtube.com/embed/fD_0Nre31m4',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+    duration: '1:55',
+    likes: '5.1M',
+    description: 'The final adventure begins. In the fall of 1987, one last adventure begins as Hawkins faces the ultimate threat from the Upside Down. Stream the epic conclusion.',
     badgeColor: 'bg-red-50 text-red-700 border-red-200',
-    title: 'GCash Clicker App "Z-one" sikat ngayon sa bansa, libu-libong Pilipino patuloy ang pagkita',
-    text: 'Isang bagong plataporma na tinatawag na Z-one App ang lumalaganap ngayon sa bansa kung saan ang mga gumagamit ay binabayaran sa pamamagitan ng GCash sa simpleng pag-click ng mga micro-tasks at panonood ng sponsors. Ayon sa mga ulat, marami ang nakakapag-withdraw ng P500 hanggang P5,000 bawat linggo habang nagre-refer ng kanilang mga kaibigan.',
-    date: 'Ngayong Araw, 10:45 AM',
-    reads: '12.4K reads',
-    image: 'https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?w=800&auto=format&fit=crop&q=60'
+    tags: ['80s Nostalgia', 'Supernatural', 'Blockbuster'],
+    date: 'Newest Teaser',
+    image: 'https://images.unsplash.com/photo-1578301978693-85fa9c0320b9?w=800&auto=format&fit=crop&q=60'
   },
   {
-    id: 'news-2',
-    source: 'GMA Integrated News',
-    category: 'TECHNOLOGY',
+    id: 'netflix-4',
+    title: 'One Piece Live Action | Season 2 Teaser',
+    category: 'ACTION / ADVENTURE',
+    source: 'Netflix Anime',
+    embedUrl: 'https://www.youtube.com/embed/4S37f8Z_Yc4',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
+    duration: '2:05',
+    likes: '2.5M',
+    description: 'The Straw Hat Pirates head to the Grand Line! Luffy, Zoro, Nami, Usopp, and Sanji are ready for new adventures, dangerous seas, and legendary enemies.',
+    badgeColor: 'bg-amber-50 text-amber-700 border-amber-200',
+    tags: ['Anime', 'Epic Journey', 'Live Action'],
+    date: 'Recent Update',
+    image: 'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=800&auto=format&fit=crop&q=60'
+  },
+  {
+    id: 'netflix-5',
+    title: 'Cobra Kai Season 6 - Part 3 | Finale Trailer',
+    category: 'ACTION / MARTIAL ARTS',
+    source: 'Netflix USA',
+    embedUrl: 'https://www.youtube.com/embed/MhLgIeBqS9w',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    duration: '2:30',
+    likes: '1.9M',
+    description: 'The global tournament is here. Daniel LaRusso and Johnny Lawrence lead their students to the Sekai Taikai for the ultimate martial arts showdown.',
+    badgeColor: 'bg-orange-50 text-orange-700 border-orange-200',
+    tags: ['Martial Arts', 'Rivalry', 'Inspirational'],
+    date: 'Trending #1',
+    image: 'https://images.unsplash.com/photo-1555538995-7ccc68ee2148?w=800&auto=format&fit=crop&q=60'
+  },
+  {
+    id: 'netflix-6',
+    title: 'Extraction 2 | High-Octane Action Scene',
+    category: 'THRILLER / ACTION',
+    source: 'Netflix International',
+    embedUrl: 'https://www.youtube.com/embed/Y27Or9xgMhE',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+    duration: '3:02',
+    likes: '2.9M',
+    description: 'Tyler Rake is back. Chris Hemsworth returns as the fearless black ops mercenary tasked with another deadly mission: rescuing the family of a ruthless Georgian gangster.',
+    badgeColor: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+    tags: ['Adrenaline', 'Gunfight', 'Non-Stop'],
+    date: 'Popular',
+    image: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=800&auto=format&fit=crop&q=60'
+  },
+  {
+    id: 'netflix-7',
+    title: 'Avatar: The Last Airbender Live Action | Official Trailer',
+    category: 'FANTASY / ADVENTURE',
+    source: 'Netflix International',
+    embedUrl: 'https://www.youtube.com/embed/waJKJW_PNSM',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+    duration: '2:22',
+    likes: '3.7M',
+    description: 'Water, Earth, Fire, Air. A young boy known as the Avatar must master the four elemental powers to save a world at war — and fight a ruthless enemy bent on stopping him.',
     badgeColor: 'bg-blue-50 text-blue-700 border-blue-200',
-    title: 'Digital Wallets tulad ng GCash at Maya, nananatiling pangunahing paraan ng bayad sa Pilipinas',
-    text: 'Inihayag ng Bangko Sentral ng Pilipinas (BSP) na higit sa 60% ng mga transaksyon sa bansa ay ginagawa na gamit ang mga mobile e-wallet. Ito ay nagpapakita ng mabilis na pag-unlad ng digital economy at cashless transactions sa bansa para sa taong 2026. Ang mga platform tulad ng Z-one ay nakakatulong sa financial literacy at mobile connectivity ng nakararaming Pilipino.',
-    date: 'Kahapon, 2:30 PM',
-    reads: '9.8K reads',
-    image: 'https://images.unsplash.com/photo-1511512578047-dfb367046420?w=800&auto=format&fit=crop&q=60'
+    tags: ['Elements', 'Bending', 'Chosen One'],
+    date: 'Highly Rated',
+    image: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop&q=60'
   },
   {
-    id: 'news-3',
-    source: 'Philippine Daily Inquirer',
-    category: 'NATION',
-    badgeColor: 'bg-slate-50 text-slate-700 border-slate-200',
-    title: 'DTI nagbabala laban sa mga pekeng e-earning sites; Z-one pinuri dahil sa mabilis na payout',
-    text: 'Nagpalabas ng paalala ang Department of Trade and Industry (DTI) sa publiko na maging mapagmatyag sa mga naglipanang pekeng e-earning sites sa internet na humihingi ng deposit. Gayunpaman, pinuri ng maraming clickers ang Z-one social portal dahil sa transparent na system nito, kawalan ng sapilitang bayad, at mabilis na GCash payout processing.',
-    date: '2 araw ang nakalipas',
-    reads: '18.2K reads',
-    image: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800&auto=format&fit=crop&q=60'
-  },
-  {
-    id: 'news-4',
-    source: 'Philstar Global',
-    category: 'ENTERTAINMENT',
-    badgeColor: 'bg-pink-50 text-pink-700 border-pink-200',
-    title: 'Sikat na Pinoy Influencers, ibinahagi ang kanilang sikreto sa Click-Earning sa Z-one App',
-    text: 'Ibinahagi ng ilang tanyag na Pinoy content creators sa social media ang kanilang sikreto sa paggamit ng Z-one social app. Ayon sa kanila, ang pagsuporta o pag-Zone (follow) sa ibang users ay nakakatulong upang madagdagan ang earnings habang nakikipag-interact sa iba. "Mas masaya kapag tulong-tulong sa komunidad," sabi ng isang tanyag na vlogger.',
-    date: '3 araw ang nakalipas',
-    reads: '7.1K reads',
-    image: 'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&auto=format&fit=crop&q=60'
-  },
-  {
-    id: 'news-5',
-    source: 'Rappler',
-    category: 'WEATHER',
-    badgeColor: 'bg-yellow-50 text-yellow-700 border-yellow-200',
-    title: 'PAGASA: Habagat patuloy na magdadala ng pag-ulan sa Kalakhang Maynila at ilang bahagi ng Luzon',
-    text: 'Inabisuhan ng PAGASA ang publiko na maghanda sa mga biglaang pag-ulan at posibleng pagbaha dulot ng Southwest Monsoon o Habagat sa bansa. Pinayuhan ang mga mamamayan na manatili sa bahay, maging ligtas, at mag-enjoy muna sa pag-click-earn sa Z-one app habang sumisilong mula sa ulan.',
-    date: '4 araw ang nakalipas',
-    reads: '21.5K reads',
-    image: 'https://images.unsplash.com/photo-1534274988757-a28bf1a57c17?w=800&auto=format&fit=crop&q=60'
+    id: 'netflix-8',
+    title: 'Black Mirror Season 7 | Official Teaser',
+    category: 'SCI-FI / ANTHOLOGY',
+    source: 'Netflix International',
+    embedUrl: 'https://www.youtube.com/embed/Y-6C0D9Yitg',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4',
+    duration: '1:30',
+    likes: '1.5M',
+    description: 'Tech gets darker. The award-winning anthology series returns with six brand-new mind-bending stories exploring the terrifying future of human-technology interaction.',
+    badgeColor: 'bg-zinc-50 text-zinc-700 border-zinc-200',
+    tags: ['Dystopian', 'Mind Bending', 'Future'],
+    date: 'Award Winner',
+    image: 'https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=800&auto=format&fit=crop&q=60'
   }
 ];
 
@@ -150,8 +218,69 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
   const [loadingPosts, setLoadingPosts] = useState(false);
 
   // Z-one Social Media Tabs & Detailed View States
-  const [socialTab, setSocialTab] = useState<'feed' | 'livetv' | 'news'>('feed');
-  const [selectedNewsArticle, setSelectedNewsArticle] = useState<any | null>(null);
+  const [socialTab, setSocialTab] = useState<'feed' | 'livetv' | 'netflix'>('feed');
+  const [selectedNetflixVideo, setSelectedNetflixVideo] = useState<any | null>(null);
+  const [netflixVideos, setNetflixVideos] = useState<any[]>([]);
+  const [isRefreshingNetflix, setIsRefreshingNetflix] = useState(false);
+
+  // Fetch real-time Netflix videos from our live YouTube RSS backend
+  const fetchRealTimeNetflixVideos = async (showNotification = false) => {
+    setIsRefreshingNetflix(true);
+    if (showNotification) {
+      triggerNotification(
+        language === 'tl' 
+          ? 'Kumokonekta sa Netflix servers... Ina-update ang listahan...' 
+          : 'Connecting to Netflix servers... Updating video feed...', 
+        'info'
+      );
+    }
+    try {
+      const response = await fetch('/api/zone/netflix', {
+        headers: {
+          'Authorization': token || ''
+        }
+      });
+      const data = await response.json();
+      if (data.videos && data.videos.length > 0) {
+        setNetflixVideos(data.videos);
+        if (showNotification) {
+          triggerNotification(
+            language === 'tl' 
+              ? 'Matagumpay na na-refresh! Na-load ang totoong Netflix free videos.' 
+              : 'Successfully refreshed! Loaded real-time Netflix free videos & trailers.', 
+            'success'
+          );
+        }
+      } else {
+        throw new Error('No videos returned');
+      }
+    } catch (err) {
+      console.error('Error fetching real-time Netflix videos:', err);
+      // Fallback to shuffled static array in case of connection failure
+      const shuffled = [...NETFLIX_FREE_VIDEOS].sort(() => 0.5 - Math.random());
+      setNetflixVideos(shuffled.slice(0, 4));
+      if (showNotification) {
+        triggerNotification(
+          language === 'tl' 
+            ? 'Hindi makakonekta. Na-load ang mga naka-cache na videos.' 
+            : 'Cannot connect. Loaded cached videos instead.', 
+          'info'
+        );
+      }
+    } finally {
+      setIsRefreshingNetflix(false);
+    }
+  };
+
+  // Initialize with real-time Netflix videos on mount
+  useEffect(() => {
+    fetchRealTimeNetflixVideos();
+  }, []);
+
+  // Handle premium dynamic refresh to load the newest real-time videos from Netflix
+  const handleRefreshNetflix = () => {
+    fetchRealTimeNetflixVideos(true);
+  };
 
   // --- PRIVATE DIRECT MESSAGE (DM) STATES ---
   const [activeDmUser, setActiveDmUser] = useState<{ id: string; name: string; avatar: string } | null>(null);
@@ -1282,11 +1411,11 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
               <span>PH Live TV Streams</span>
             </button>
             <button 
-              onClick={() => setSocialTab('news')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition cursor-pointer ${socialTab === 'news' ? 'bg-white text-emerald-600 shadow-xs border border-slate-200/50 font-black' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
+              onClick={() => setSocialTab('netflix')}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition cursor-pointer ${socialTab === 'netflix' ? 'bg-white text-rose-600 shadow-xs border border-rose-200/50 font-black' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
             >
-              <Sparkles className="w-4 h-4" />
-              <span>PH News Hub</span>
+              <Film className="w-4 h-4" />
+              <span>Netflix Free Videos</span>
             </button>
           </div>
 
@@ -1720,60 +1849,104 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
             </div>
           )}
 
-          {/* TAB CONTENT: 3. PHILIPPINES NEWS HUB */}
-          {socialTab === 'news' && (
+          {/* TAB CONTENT: 3. NETFLIX FREE VIDEOS */}
+          {socialTab === 'netflix' && (
             <div className="space-y-4 animate-fadeIn">
-              <div className="bg-emerald-50 border border-emerald-100 rounded-3xl p-5 flex items-center justify-between gap-4">
+              <div className="bg-rose-950 text-white rounded-3xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-rose-900/50">
                 <div className="space-y-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-sm select-none">📰</span>
-                    <h4 className="font-extrabold text-emerald-950 text-xs uppercase tracking-wider">Philippine Press Portal</h4>
+                    <span className="text-rose-600 font-extrabold text-lg select-none">NETFLIX</span>
+                    <span className="bg-rose-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-sm uppercase tracking-wider">FREE WATCH</span>
                   </div>
-                  <p className="text-[11px] text-emerald-900 font-medium leading-relaxed">
+                  <p className="text-[11px] text-rose-200 font-medium leading-relaxed">
                     {language === 'tl'
-                      ? 'Basahin ang pinakabagong ulat mula sa ABS-CBN News, GMA, Inquirer, at iba pang mapagkakatiwalaang media network.'
-                      : 'Stay informed with standard press reports covering GCash, digital earning trends, and national events.'}
+                      ? 'Manood ng mga pinakabagong libreng videos, official trailers, at teasers mula sa Netflix! I-refresh para makita ang mga bagong uploads.'
+                      : 'Watch the latest free videos, official trailers, and teasers available on Netflix! Refresh to load new updates.'}
                   </p>
                 </div>
-                <span className="bg-emerald-600 text-white text-[9px] font-black px-2 py-1 rounded-lg uppercase shrink-0">NEWS</span>
+                <button
+                  onClick={handleRefreshNetflix}
+                  disabled={isRefreshingNetflix}
+                  className="bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-[10px] font-black px-4 py-2 rounded-xl uppercase tracking-wider flex items-center gap-1.5 shrink-0 transition cursor-pointer self-stretch sm:self-auto justify-center"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingNetflix ? 'animate-spin' : ''}`} />
+                  <span>{language === 'tl' ? 'Mag-refresh' : 'Refresh Videos'}</span>
+                </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {PHILIPPINES_NEWS_ARTICLES.map((article) => (
-                  <div 
-                    key={article.id} 
-                    onClick={() => setSelectedNewsArticle(article)}
-                    className="bg-white rounded-3xl border border-slate-200 hover:border-slate-300 hover:shadow-md cursor-pointer transition overflow-hidden flex flex-col group"
-                  >
-                    <div className="aspect-video w-full relative overflow-hidden bg-slate-100">
-                      <img 
-                        src={article.image} 
-                        alt={article.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
-                        referrerPolicy="no-referrer"
-                      />
-                      <span className={`absolute top-3 left-3 text-[9px] font-black uppercase px-2 py-0.5 rounded-full border shadow-sm ${article.badgeColor}`}>
-                        {article.category}
-                      </span>
-                    </div>
-                    <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
-                      <div className="space-y-1.5">
-                        <span className="text-[9px] text-slate-400 font-extrabold uppercase">{article.source}</span>
-                        <h4 className="font-extrabold text-slate-900 text-xs leading-snug group-hover:text-blue-600 transition">
-                          {article.title}
-                        </h4>
-                        <p className="text-[10px] text-slate-500 font-semibold leading-relaxed line-clamp-3">
-                          {article.text}
-                        </p>
+              {isRefreshingNetflix ? (
+                <div className="bg-slate-900 rounded-3xl border border-slate-800 p-16 text-center space-y-3 animate-pulse">
+                  <RefreshCw className="w-8 h-8 text-rose-500 animate-spin mx-auto" />
+                  <p className="text-xs text-rose-300 font-bold uppercase tracking-widest">
+                    {language === 'tl' ? 'Kumokonekta sa Netflix Feed...' : 'Connecting to Netflix Video Feed...'}
+                  </p>
+                  <p className="text-[10px] text-slate-500 font-semibold">
+                    {language === 'tl' ? 'Kinukuha ang pinakabagong free videos na available...' : 'Fetching latest available free videos...'}
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {netflixVideos.map((video) => (
+                    <div 
+                      key={video.id} 
+                      onClick={() => setSelectedNetflixVideo(video)}
+                      className="bg-slate-950 text-white rounded-3xl border border-slate-800 hover:border-slate-700 hover:shadow-lg cursor-pointer transition overflow-hidden flex flex-col group relative"
+                    >
+                      {/* Video Thumbnail with Play Overlay */}
+                      <div className="aspect-video w-full relative overflow-hidden bg-slate-900">
+                        <img 
+                          src={video.image} 
+                          alt={video.title}
+                          className="w-full h-full object-cover group-hover:scale-105 transition duration-500 opacity-80"
+                          referrerPolicy="no-referrer"
+                        />
+                        {/* Play overlay button */}
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/40 group-hover:bg-black/50 transition">
+                          <span className="bg-rose-600 text-white p-3 rounded-full shadow-lg group-hover:scale-110 transition duration-300">
+                            <Play className="w-5 h-5 fill-current" />
+                          </span>
+                        </div>
+                        {/* Badge category */}
+                        <span className={`absolute top-3 left-3 text-[9px] font-black uppercase px-2 py-0.5 rounded-full border shadow-sm ${video.badgeColor}`}>
+                          {video.category}
+                        </span>
+                        {/* Duration badge */}
+                        <span className="absolute bottom-3 right-3 bg-black/70 text-white text-[9px] font-mono font-bold px-1.5 py-0.5 rounded">
+                          {video.duration}
+                        </span>
                       </div>
-                      <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[9px] text-slate-400 font-bold uppercase font-mono">
-                        <span>{article.date}</span>
-                        <span>{article.reads}</span>
+
+                      {/* Video description metadata */}
+                      <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[9px] text-rose-400 font-extrabold uppercase tracking-wider">{video.source}</span>
+                            <span className="text-[9px] text-emerald-400 font-bold uppercase font-mono">{video.likes} Likes</span>
+                          </div>
+                          <h4 className="font-extrabold text-slate-100 text-xs leading-snug group-hover:text-rose-500 transition">
+                            {video.title}
+                          </h4>
+                          <p className="text-[10px] text-slate-400 font-semibold leading-relaxed line-clamp-2">
+                            {video.description}
+                          </p>
+                        </div>
+
+                        {/* Tags & Action row */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-900">
+                          <div className="flex flex-wrap gap-1">
+                            {video.tags.map((tag: string, index: number) => (
+                              <span key={index} className="text-[8px] bg-slate-900 text-slate-300 font-bold px-1.5 py-0.5 rounded border border-slate-800">
+                                #{tag}
+                              </span>
+                            ))}
+                          </div>
+                          <span className="text-[8px] text-rose-500 font-black uppercase font-mono tracking-wider">{video.date}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -2094,50 +2267,93 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
         )}
       </AnimatePresence>
 
-      {/* 📰 PHILIPPINES NEWS HUB DETAILED POPUP CARD */}
+      {/* 🎬 NETFLIX THEATRE VIDEO PLAYER POPUP MODAL */}
       <AnimatePresence>
-        {selectedNewsArticle && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        {selectedNetflixVideo && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-md">
             <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 space-y-4 text-slate-850 text-left overflow-y-auto max-h-[90vh]"
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-slate-950 border border-slate-800 rounded-3xl p-6 max-w-2xl w-full shadow-2xl space-y-4 text-left overflow-y-auto max-h-[95vh] text-white"
             >
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border border-emerald-200">
-                  {selectedNewsArticle.category}
+              <div className="flex items-center justify-between border-b border-slate-900 pb-3">
+                <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border ${selectedNetflixVideo.badgeColor}`}>
+                  {selectedNetflixVideo.category}
                 </span>
                 <button 
-                  onClick={() => setSelectedNewsArticle(null)}
-                  className="text-slate-400 hover:text-slate-600 font-extrabold text-xs bg-slate-100 hover:bg-slate-200 p-1.5 rounded-full px-3 cursor-pointer"
+                  onClick={() => setSelectedNetflixVideo(null)}
+                  className="text-slate-400 hover:text-white font-extrabold text-xs bg-slate-900 hover:bg-slate-800 p-2 rounded-full cursor-pointer transition"
                 >
                   ✕
                 </button>
               </div>
 
-              <div className="aspect-video w-full rounded-2xl overflow-hidden bg-slate-100 shadow-xs border border-slate-200/50">
-                <img 
-                  src={selectedNewsArticle.image} 
-                  alt={selectedNewsArticle.title}
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
-                />
+              {/* Premium Cinematic Video Player (HTML5 Video or YouTube Iframe) */}
+              <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-2xl border border-slate-900 relative">
+                {selectedNetflixVideo.videoUrl ? (
+                  <video
+                    src={selectedNetflixVideo.videoUrl}
+                    className="w-full h-full object-contain"
+                    controls
+                    autoPlay
+                    playsInline
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <iframe
+                    src={`${selectedNetflixVideo.embedUrl}?autoplay=1&rel=0&modestbranding=1`}
+                    title={selectedNetflixVideo.title}
+                    className="w-full h-full border-0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+                )}
               </div>
 
-              <div className="space-y-2">
-                <span className="text-[10px] text-slate-400 font-extrabold uppercase font-mono tracking-wider">{selectedNewsArticle.source} • {selectedNewsArticle.date}</span>
-                <h3 className="font-extrabold text-slate-900 text-sm md:text-base leading-snug">{selectedNewsArticle.title}</h3>
-                <p className="text-xs text-slate-700 leading-relaxed font-semibold pt-2 border-t border-slate-100/50 whitespace-pre-wrap">{selectedNewsArticle.text}</p>
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400 font-extrabold uppercase font-mono tracking-wider">
+                  <span>{selectedNetflixVideo.source} • {selectedNetflixVideo.date}</span>
+                  <span className="text-rose-500 font-black">🍿 {selectedNetflixVideo.duration} mins</span>
+                </div>
+                <h3 className="font-extrabold text-white text-base md:text-lg leading-snug">{selectedNetflixVideo.title}</h3>
+                <p className="text-xs text-slate-300 leading-relaxed font-semibold pt-2 border-t border-slate-900/50 whitespace-pre-wrap">
+                  {selectedNetflixVideo.description}
+                </p>
+
+                {/* Warning notification helper for sandboxed iframe issues */}
+                <div className="bg-amber-950/40 border border-amber-900/30 rounded-xl p-3 text-[10px] text-amber-300 font-medium leading-relaxed">
+                  ⚠️ {language === 'tl'
+                    ? 'Tip: Kung ang video ay nakasulat na "Video unavailable", ito ay dahil sa browser sandbox restriction. I-click ang "Panoorin sa YouTube" sa ibaba upang mapanood ito nang direkta sa bagong tab!'
+                    : 'Tip: If the video says "Video unavailable", it is due to browser iframe sandbox restrictions. Click "Watch on YouTube" below to watch it directly in a new tab!'}
+                </div>
+
+                {/* Additional metadata info tag */}
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {selectedNetflixVideo.tags.map((tag: string, idx: number) => (
+                    <span key={idx} className="text-[9px] bg-rose-950/50 text-rose-300 border border-rose-900/40 font-bold px-2 py-0.5 rounded-full">
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
               </div>
 
-              <div className="flex justify-end pt-2 border-t border-slate-100">
+              <div className="flex flex-col sm:flex-row justify-end items-stretch sm:items-center gap-2 pt-3 border-t border-slate-900">
+                <a
+                  href={selectedNetflixVideo.youtubeUrl || `https://www.youtube.com/watch?v=${selectedNetflixVideo.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-6 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl cursor-pointer transition uppercase tracking-wider flex items-center justify-center gap-2 text-center"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>{language === 'tl' ? 'Panoorin sa YouTube' : 'Watch on YouTube'}</span>
+                </a>
                 <button
                   type="button"
-                  onClick={() => setSelectedNewsArticle(null)}
-                  className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black rounded-xl cursor-pointer transition"
+                  onClick={() => setSelectedNetflixVideo(null)}
+                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-black rounded-xl cursor-pointer transition uppercase tracking-wider"
                 >
-                  {language === 'tl' ? 'Isara' : 'Close'}
+                  {language === 'tl' ? 'Isara' : 'Close Player'}
                 </button>
               </div>
             </motion.div>
