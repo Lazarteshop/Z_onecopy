@@ -12,6 +12,17 @@ const PORT = Number(process.env.PORT) || 3000;
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
+// --- IN-MEMORY USER ONLINE STATUS TRACKING ---
+const activeUsersMap: Record<string, number> = {};
+
+app.use((req, res, next) => {
+  const token = req.headers.authorization;
+  if (token) {
+    activeUsersMap[token] = Date.now();
+  }
+  next();
+});
+
 const DB_FILE_PATH = path.join(process.cwd(), 'src', 'data', 'db.json');
 
 // --- FIREBASE CONFIGURATION & INITIALIZATION ---
@@ -160,10 +171,37 @@ interface UserSession {
   }[];
 }
 
+interface DirectMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar: string;
+  receiverId: string;
+  receiverName: string;
+  receiverAvatar: string;
+  text: string;
+  createdAt: string;
+}
+
+interface ActiveCall {
+  id: string;
+  callerId: string;
+  callerName: string;
+  callerAvatar: string;
+  receiverId: string;
+  receiverName: string;
+  receiverAvatar: string;
+  type: 'video' | 'voice';
+  status: 'ringing' | 'accepted' | 'declined' | 'ended';
+  createdAt: string;
+}
+
 interface DBStructure {
   users: UserSession[];
   campaigns?: any[];
   posts?: any[];
+  directMessages?: DirectMessage[];
+  activeCalls?: ActiveCall[];
 }
 
 // --- HELPER TO INITIALIZE AND GET DATABASE ---
@@ -450,7 +488,20 @@ async function uploadToFirestore(data: DBStructure) {
       });
     }
 
-    await Promise.all([...batchValues, ...campPromises, ...postPromises]);
+    let dmPromises: Promise<any>[] = [];
+    if (data.directMessages) {
+      dmPromises = data.directMessages.map(async (dm) => {
+        try {
+          const dmDocRef = firestore.collection('direct_messages').doc(dm.id);
+          const { id, ...dmWithoutId } = dm;
+          await dmDocRef.set(dmWithoutId);
+        } catch (dmErr) {
+          console.error(`Error saving DM ${dm.id} to Firestore:`, dmErr);
+        }
+      });
+    }
+
+    await Promise.all([...batchValues, ...campPromises, ...postPromises, ...dmPromises]);
     console.log('☁️ GCash Click-Earn: Firebase Firestore cloud backup completed successfully.');
   } catch (err) {
     console.error('❌ Failed background write to Firestore:', err);
@@ -495,12 +546,24 @@ async function syncFromFirestore() {
       dbPosts.push({ id: docSnap.id, ...docSnap.data() });
     });
 
+    const dmColRef = firestore.collection('direct_messages');
+    let dbDMs: any[] = [];
+    try {
+      const dmSnapshot = await dmColRef.get();
+      dmSnapshot.forEach((docSnap) => {
+        dbDMs.push({ id: docSnap.id, ...docSnap.data() });
+      });
+    } catch (e) {
+      console.log('No direct_messages collection yet in Firestore');
+    }
+
     if (dbUsers.length > 0) {
       console.log(`📱 Found ${dbUsers.length} users in Firestore. Overwriting local cache...`);
       const loadedDB: DBStructure = { 
         users: dbUsers,
         campaigns: dbCampaigns.length > 0 ? dbCampaigns : INITIAL_CAMPAIGNS,
-        posts: dbPosts.length > 0 ? dbPosts : undefined
+        posts: dbPosts.length > 0 ? dbPosts : undefined,
+        directMessages: dbDMs.length > 0 ? dbDMs : undefined
       };
       
       // Update/synchronize admin details if needed
@@ -545,7 +608,16 @@ async function syncFromFirestore() {
         });
       }
 
-      await Promise.all([...batchPromises, ...seedCampPromises, ...seedPostPromises]);
+      let seedDmPromises: Promise<any>[] = [];
+      if (localDB.directMessages) {
+        seedDmPromises = localDB.directMessages.map(async (dm) => {
+          const dmDocRef = firestore.collection('direct_messages').doc(dm.id);
+          const { id, ...dmWithoutId } = dm;
+          await dmDocRef.set(dmWithoutId);
+        });
+      }
+
+      await Promise.all([...batchPromises, ...seedCampPromises, ...seedPostPromises, ...seedDmPromises]);
       console.log('✅ Seeding of Firestore complete.');
     }
   } catch (err) {
@@ -1781,6 +1853,24 @@ function isUserBanned(db: DBStructure, userId: string): boolean {
   return !!(user && user.isBanned);
 }
 
+// GET ONLINE USER IDS
+app.get('/api/zone/online', (req, res) => {
+  const now = Date.now();
+  // Gather users active in the last 60 seconds (generous window for heartbeats/polling)
+  const onlineIds = Object.keys(activeUsersMap).filter(id => now - activeUsersMap[id] < 60000);
+  
+  // Always include admin-rosco and user-juan as online mock users for visual reference
+  if (!onlineIds.includes('admin-rosco')) {
+    onlineIds.push('admin-rosco');
+  }
+  if (!onlineIds.includes('user-juan')) {
+    onlineIds.push('user-juan');
+  }
+  
+  // Keep user-clara as offline (unless she is logged in and active), so they see red dot!
+  res.json({ onlineUserIds: onlineIds });
+});
+
 // 1. GET ALL POSTS
 app.get('/api/zone/posts', (req, res) => {
   const db = loadDB();
@@ -2142,6 +2232,165 @@ app.post('/api/user/simulate-expire', (req, res) => {
   saveDB(db);
   const { password: _, ...userSafe } = user as any;
   res.json({ user: userSafe });
+});
+
+
+// ============================================
+//       Z-ONE SOCIAL DMs & CALLS API
+// ============================================
+
+// 1. GET ALL MY DIRECT MESSAGES
+app.get('/api/zone/messages', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+  const db = loadDB();
+  const messages = db.directMessages || [];
+  const myMessages = messages.filter(m => m.senderId === userId || m.receiverId === userId);
+  res.json({ messages: myMessages });
+});
+
+// 2. SEND A DIRECT MESSAGE
+app.post('/api/zone/messages', (req, res) => {
+  const senderId = req.headers.authorization;
+  if (!senderId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+  const { receiverId, text } = req.body;
+  if (!receiverId || !text || !text.trim()) {
+    return res.status(400).json({ error: 'Kinakailangan ang receiver at mensahe.' });
+  }
+
+  const db = loadDB();
+  const sender = db.users.find(u => u.id === senderId);
+  const receiver = db.users.find(u => u.id === receiverId);
+
+  if (!sender || !receiver) {
+    return res.status(404).json({ error: 'Hindi mahanap ang sender o receiver.' });
+  }
+
+  if (isUserBanned(db, senderId)) {
+    return res.status(403).json({ error: 'Ang iyong account ay banned sa system.' });
+  }
+
+  const filteredText = filterSwearWords(text);
+
+  const newMsg: DirectMessage = {
+    id: 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+    senderId,
+    senderName: sender.name,
+    senderAvatar: sender.avatar,
+    receiverId,
+    receiverName: receiver.name,
+    receiverAvatar: receiver.avatar,
+    text: filteredText,
+    createdAt: new Date().toISOString()
+  };
+
+  if (!db.directMessages) {
+    db.directMessages = [];
+  }
+  db.directMessages.push(newMsg);
+  saveDB(db);
+
+  res.json({ success: true, message: newMsg });
+});
+
+// 3. GET ACTIVE CALLS FOR USER (POLLING)
+app.get('/api/zone/calls', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+  const db = loadDB();
+  const activeCalls = db.activeCalls || [];
+  // Filter active calling/ringing/accepted sessions in the last 60 seconds
+  const myCalls = activeCalls.filter(c => 
+    (c.callerId === userId || c.receiverId === userId) && 
+    c.status !== 'ended' && 
+    c.status !== 'declined' &&
+    (Date.now() - new Date(c.createdAt).getTime() < 60000)
+  );
+  res.json({ calls: myCalls });
+});
+
+// 4. INITIATE OR UPDATE CALL SESSION STATE
+app.post('/api/zone/calls', (req, res) => {
+  const callerId = req.headers.authorization;
+  if (!callerId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+  const { receiverId, type, status, callId } = req.body;
+  const db = loadDB();
+
+  if (!db.activeCalls) {
+    db.activeCalls = [];
+  }
+
+  if (callId) {
+    const call = db.activeCalls.find(c => c.id === callId);
+    if (call) {
+      if (status) call.status = status;
+      saveDB(db);
+      return res.json({ success: true, call });
+    }
+    return res.status(404).json({ error: 'Hindi mahanap ang call session.' });
+  }
+
+  if (!receiverId) {
+    return res.status(400).json({ error: 'Kinakailangan ang receiverId.' });
+  }
+
+  const caller = db.users.find(u => u.id === callerId);
+  const receiver = db.users.find(u => u.id === receiverId);
+
+  if (!caller || !receiver) {
+    return res.status(404).json({ error: 'Hindi mahanap ang users.' });
+  }
+
+  // Filter out and end existing calling session between these users
+  db.activeCalls = db.activeCalls.filter(c => 
+    !(c.callerId === callerId && c.receiverId === receiverId) &&
+    !(c.callerId === receiverId && c.receiverId === callerId)
+  );
+
+  const newCall: ActiveCall = {
+    id: 'call-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+    callerId,
+    callerName: caller.name,
+    callerAvatar: caller.avatar,
+    receiverId,
+    receiverName: receiver.name,
+    receiverAvatar: receiver.avatar,
+    type: type || 'voice',
+    status: 'ringing',
+    createdAt: new Date().toISOString()
+  };
+
+  db.activeCalls.push(newCall);
+  saveDB(db);
+
+  res.json({ success: true, call: newCall });
+});
+
+// 5. END ACTIVE CALL SESSION
+app.post('/api/zone/calls/end', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+  const { callId } = req.body;
+  const db = loadDB();
+  if (db.activeCalls) {
+    const call = db.activeCalls.find(c => c.id === callId);
+    if (call) {
+      call.status = 'ended';
+      saveDB(db);
+      return res.json({ success: true });
+    }
+  }
+  res.json({ success: false, message: 'Wala nang active call session.' });
 });
 
 

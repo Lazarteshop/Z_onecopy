@@ -19,7 +19,15 @@ import {
   Send,
   Flag,
   UserCheck,
-  Upload
+  Upload,
+  Phone,
+  Video,
+  PhoneOff,
+  Mic,
+  MicOff,
+  VideoOff,
+  X,
+  Maximize2
 } from 'lucide-react';
 import { ZonePost } from '../types';
 
@@ -50,9 +58,401 @@ const PRESET_VIDEOS = [
   { url: 'https://assets.mixkit.co/videos/preview/mixkit-hand-holding-smartphone-with-charts-on-screen-34442-large.mp4', label: '📊 Earnings Dashboard' }
 ];
 
+// Curated live YouTube streams from Philippines broadcast networks
+const LIVE_TV_STREAMS = [
+  {
+    id: 'stream-gma',
+    name: 'GMA Integrated News 24 Oras Live Stream',
+    network: 'GMA Integrated News',
+    logo: '📺',
+    url: 'https://www.youtube.com/embed/live_stream?channel=UC85fS0_2H6396_VAnz6vO9A',
+    description: 'Panoorin ang pinakabagong balita, ulat-panahon, at talakayan mula sa GMA Integrated News at 24 Oras sa buong Pilipinas.'
+  },
+  {
+    id: 'stream-abscbn',
+    name: 'ABS-CBN News Channel (ANC) Live stream',
+    network: 'ABS-CBN News',
+    logo: '🔴',
+    url: 'https://www.youtube.com/embed/live_stream?channel=UCE2606prvXQc_noEqKxVJXA',
+    description: 'Manatiling updated sa pinakabagong breaking news, headline story, at eksklusibong panayam mula sa ABS-CBN News.'
+  },
+  {
+    id: 'stream-tv5',
+    name: 'TV5 News (News5 Everywhere) Live Stream',
+    network: 'TV5 Network',
+    logo: '🔵',
+    url: 'https://www.youtube.com/embed/live_stream?channel=UCpP2SreG8A-u066XW1G9XJw',
+    description: 'Sundan ang live coverage ng mga balitang pambansa, isports, at talakayan sa News5 Everywhere livestream.'
+  }
+];
+
+// Curated simulated news from Philippine media channels regarding the economy, GCash, and general events
+const PHILIPPINES_NEWS_ARTICLES = [
+  {
+    id: 'news-1',
+    source: 'ABS-CBN News',
+    category: 'ECONOMY',
+    badgeColor: 'bg-red-50 text-red-700 border-red-200',
+    title: 'GCash Clicker App "Z-one" sikat ngayon sa bansa, libu-libong Pilipino patuloy ang pagkita',
+    text: 'Isang bagong plataporma na tinatawag na Z-one App ang lumalaganap ngayon sa bansa kung saan ang mga gumagamit ay binabayaran sa pamamagitan ng GCash sa simpleng pag-click ng mga micro-tasks at panonood ng sponsors. Ayon sa mga ulat, marami ang nakakapag-withdraw ng P500 hanggang P5,000 bawat linggo habang nagre-refer ng kanilang mga kaibigan.',
+    date: 'Ngayong Araw, 10:45 AM',
+    reads: '12.4K reads',
+    image: 'https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?w=800&auto=format&fit=crop&q=60'
+  },
+  {
+    id: 'news-2',
+    source: 'GMA Integrated News',
+    category: 'TECHNOLOGY',
+    badgeColor: 'bg-blue-50 text-blue-700 border-blue-200',
+    title: 'Digital Wallets tulad ng GCash at Maya, nananatiling pangunahing paraan ng bayad sa Pilipinas',
+    text: 'Inihayag ng Bangko Sentral ng Pilipinas (BSP) na higit sa 60% ng mga transaksyon sa bansa ay ginagawa na gamit ang mga mobile e-wallet. Ito ay nagpapakita ng mabilis na pag-unlad ng digital economy at cashless transactions sa bansa para sa taong 2026. Ang mga platform tulad ng Z-one ay nakakatulong sa financial literacy at mobile connectivity ng nakararaming Pilipino.',
+    date: 'Kahapon, 2:30 PM',
+    reads: '9.8K reads',
+    image: 'https://images.unsplash.com/photo-1511512578047-dfb367046420?w=800&auto=format&fit=crop&q=60'
+  },
+  {
+    id: 'news-3',
+    source: 'Philippine Daily Inquirer',
+    category: 'NATION',
+    badgeColor: 'bg-slate-50 text-slate-700 border-slate-200',
+    title: 'DTI nagbabala laban sa mga pekeng e-earning sites; Z-one pinuri dahil sa mabilis na payout',
+    text: 'Nagpalabas ng paalala ang Department of Trade and Industry (DTI) sa publiko na maging mapagmatyag sa mga naglipanang pekeng e-earning sites sa internet na humihingi ng deposit. Gayunpaman, pinuri ng maraming clickers ang Z-one social portal dahil sa transparent na system nito, kawalan ng sapilitang bayad, at mabilis na GCash payout processing.',
+    date: '2 araw ang nakalipas',
+    reads: '18.2K reads',
+    image: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800&auto=format&fit=crop&q=60'
+  },
+  {
+    id: 'news-4',
+    source: 'Philstar Global',
+    category: 'ENTERTAINMENT',
+    badgeColor: 'bg-pink-50 text-pink-700 border-pink-200',
+    title: 'Sikat na Pinoy Influencers, ibinahagi ang kanilang sikreto sa Click-Earning sa Z-one App',
+    text: 'Ibinahagi ng ilang tanyag na Pinoy content creators sa social media ang kanilang sikreto sa paggamit ng Z-one social app. Ayon sa kanila, ang pagsuporta o pag-Zone (follow) sa ibang users ay nakakatulong upang madagdagan ang earnings habang nakikipag-interact sa iba. "Mas masaya kapag tulong-tulong sa komunidad," sabi ng isang tanyag na vlogger.',
+    date: '3 araw ang nakalipas',
+    reads: '7.1K reads',
+    image: 'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&auto=format&fit=crop&q=60'
+  },
+  {
+    id: 'news-5',
+    source: 'Rappler',
+    category: 'WEATHER',
+    badgeColor: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+    title: 'PAGASA: Habagat patuloy na magdadala ng pag-ulan sa Kalakhang Maynila at ilang bahagi ng Luzon',
+    text: 'Inabisuhan ng PAGASA ang publiko na maghanda sa mga biglaang pag-ulan at posibleng pagbaha dulot ng Southwest Monsoon o Habagat sa bansa. Pinayuhan ang mga mamamayan na manatili sa bahay, maging ligtas, at mag-enjoy muna sa pag-click-earn sa Z-one app habang sumisilong mula sa ulan.',
+    date: '4 araw ang nakalipas',
+    reads: '21.5K reads',
+    image: 'https://images.unsplash.com/photo-1534274988757-a28bf1a57c17?w=800&auto=format&fit=crop&q=60'
+  }
+];
+
 export default function ZoneFeed({ token, user, triggerNotification, onRefreshProfile, language }: ZoneFeedProps) {
   const [posts, setPosts] = useState<ZonePost[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
+
+  // Z-one Social Media Tabs & Detailed View States
+  const [socialTab, setSocialTab] = useState<'feed' | 'livetv' | 'news'>('feed');
+  const [selectedNewsArticle, setSelectedNewsArticle] = useState<any | null>(null);
+
+  // --- PRIVATE DIRECT MESSAGE (DM) STATES ---
+  const [activeDmUser, setActiveDmUser] = useState<{ id: string; name: string; avatar: string } | null>(null);
+  const [dmMessages, setDmMessages] = useState<any[]>([]);
+  const [loadingDms, setLoadingDms] = useState(false);
+  const [newDmText, setNewDmText] = useState('');
+  const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
+
+  // --- VOICE/VIDEO CALLING STATES ---
+  const [activeCallSession, setActiveCallSession] = useState<any | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const videoRef = React.useRef<HTMLVideoElement>(null);
+
+  // Programmatic ringtone / dialing synthesizer using Web Audio API
+  const playCallTone = (isIncoming: boolean) => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      
+      if (isIncoming) {
+        // High pitch pulsing ring for incoming call
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.35);
+      } else {
+        // Dial tone ringing
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(425, audioCtx.currentTime);
+      }
+      
+      gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+      osc.start();
+      
+      setTimeout(() => {
+        try {
+          osc.stop();
+          audioCtx.close();
+        } catch (e) {}
+      }, 400);
+    } catch (e) {
+      console.log('Web Audio API not supported or awaiting user interaction gesture');
+    }
+  };
+
+  // Poll for incoming Direct Messages and Call invitations in real-time
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+
+    const pollDmsAndCalls = async () => {
+      try {
+        // 1. Fetch direct messages
+        const dmRes = await fetch('/api/zone/messages', {
+          headers: { 'Authorization': token }
+        });
+        if (dmRes.ok && active) {
+          const dmData = await dmRes.json();
+          setDmMessages(dmData.messages || []);
+        }
+
+        // 2. Fetch call status
+        const callRes = await fetch('/api/zone/calls', {
+          headers: { 'Authorization': token }
+        });
+        if (callRes.ok && active) {
+          const callData = await callRes.json();
+          const activeCalls = callData.calls || [];
+          
+          if (activeCalls.length > 0) {
+            const currentCall = activeCalls[0];
+            
+            // Trigger ringtones and set the call session state
+            if (!activeCallSession || activeCallSession.id !== currentCall.id) {
+              setActiveCallSession(currentCall);
+              if (currentCall.callerId !== user.id) {
+                playCallTone(true);
+                triggerNotification(`🔔 Papasok na ${currentCall.type === 'video' ? 'Video' : 'Voice'} Call mula kay ${currentCall.callerName}!`, 'info');
+              } else {
+                playCallTone(false);
+              }
+            } else {
+              // Sync existing call status
+              setActiveCallSession(currentCall);
+              if (currentCall.status === 'ringing') {
+                if (currentCall.callerId !== user.id) {
+                  playCallTone(true);
+                } else {
+                  playCallTone(false);
+                }
+              }
+            }
+          } else {
+            // No active call on the backend, clear call locally if we have one
+            if (activeCallSession && activeCallSession.status !== 'ended') {
+              setActiveCallSession(null);
+              if (localStream) {
+                localStream.getTracks().forEach(t => t.stop());
+                setLocalStream(null);
+              }
+            }
+          }
+        }
+
+        // 3. Fetch online users list
+        const onlineRes = await fetch('/api/zone/online', {
+          headers: { 'Authorization': token }
+        });
+        if (onlineRes.ok && active) {
+          const onlineData = await onlineRes.json();
+          setOnlineUserIds(onlineData.onlineUserIds || []);
+        }
+      } catch (err) {
+        console.error('Error polling messages/calls:', err);
+      }
+    };
+
+    // Run immediately and then poll every 3 seconds
+    pollDmsAndCalls();
+    const intervalId = setInterval(pollDmsAndCalls, 3000);
+
+    return () => {
+      active = false;
+      clearInterval(intervalId);
+    };
+  }, [token, activeCallSession, user.id]);
+
+  // Hook to request camera streams when a video call connects
+  useEffect(() => {
+    if (activeCallSession && activeCallSession.status === 'accepted' && activeCallSession.type === 'video' && !localStream && !isVideoOff) {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        .then(stream => {
+          setLocalStream(stream);
+        })
+        .catch(err => {
+          console.warn('Camera access was not permitted or not found.', err);
+        });
+    }
+    return () => {
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        setLocalStream(null);
+      }
+    };
+  }, [activeCallSession?.status, activeCallSession?.type, isVideoOff]);
+
+  // Render the local video preview stream inside the video component
+  useEffect(() => {
+    if (videoRef.current && localStream) {
+      videoRef.current.srcObject = localStream;
+    }
+  }, [localStream]);
+
+  // Handler to open DM modal with a specific user
+  const handleOpenDm = (targetUser: { id: string; name: string; avatar: string }) => {
+    if (targetUser.id === user.id) {
+      triggerNotification(
+        language === 'tl' ? 'Hindi mo pwedeng i-message ang iyong sarili.' : 'You cannot message yourself.',
+        'error'
+      );
+      return;
+    }
+    setActiveDmUser(targetUser);
+  };
+
+  // Handler to send message
+  const handleSendDm = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!activeDmUser || !newDmText.trim()) return;
+
+    try {
+      const res = await fetch('/api/zone/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({
+          receiverId: activeDmUser.id,
+          text: newDmText
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setDmMessages(prev => [...prev, data.message]);
+        setNewDmText('');
+        // Instantly focus scroll
+        setTimeout(() => {
+          const chatContainer = document.getElementById('dm-chat-scroll');
+          if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
+        }, 100);
+      } else {
+        const errData = await res.json();
+        triggerNotification(errData.error || 'Failed to send message', 'error');
+      }
+    } catch (err) {
+      console.error('Error sending DM:', err);
+    }
+  };
+
+  // Handler to initiate voice/video call
+  const handleStartCall = async (type: 'voice' | 'video') => {
+    if (!activeDmUser) return;
+    try {
+      const res = await fetch('/api/zone/calls', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({
+          receiverId: activeDmUser.id,
+          type
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setActiveCallSession(data.call);
+        triggerNotification(
+          language === 'tl' ? `Tinatawagan si ${activeDmUser.name}...` : `Calling ${activeDmUser.name}...`,
+          'success'
+        );
+      } else {
+        const errData = await res.json();
+        triggerNotification(errData.error || 'Failed to start call', 'error');
+      }
+    } catch (err) {
+      console.error('Error starting call:', err);
+    }
+  };
+
+  // Handler to accept an incoming call
+  const handleAcceptCall = async () => {
+    if (!activeCallSession) return;
+    try {
+      const res = await fetch('/api/zone/calls', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({
+          callId: activeCallSession.id,
+          status: 'accepted'
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setActiveCallSession(data.call);
+        triggerNotification(
+          language === 'tl' ? 'Konektado na ang tawag!' : 'Call connected successfully!',
+          'success'
+        );
+      }
+    } catch (err) {
+      console.error('Error accepting call:', err);
+    }
+  };
+
+  // Handler to decline or hangup a call
+  const handleDeclineOrHangup = async () => {
+    if (!activeCallSession) return;
+    try {
+      // Determine new status based on roles
+      const isCaller = activeCallSession.callerId === user.id;
+      const targetStatus = isCaller ? 'ended' : 'declined';
+
+      await fetch('/api/zone/calls', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({
+          callId: activeCallSession.id,
+          status: targetStatus
+        })
+      });
+
+      // Instantly clear call state locally
+      setActiveCallSession(null);
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        setLocalStream(null);
+      }
+      triggerNotification(
+        language === 'tl' ? 'Tinapos ang tawag.' : 'Call ended.',
+        'info'
+      );
+    } catch (err) {
+      console.error('Error ending call:', err);
+    }
+  };
 
   // Z-one Social Free/Basic Mode State
   const [isBasicMode, setIsBasicMode] = useState<boolean>(() => {
@@ -80,28 +480,35 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
     }
   };
 
-  const renderFeedAvatar = (avatarUrl: string | undefined, name: string, sizeClass: string = "w-10 h-10", textClass: string = "text-base") => {
+  const renderFeedAvatar = (
+    avatarUrl: string | undefined, 
+    name: string, 
+    sizeClass: string = "w-10 h-10", 
+    textClass: string = "text-base",
+    userId?: string
+  ) => {
     const fallbackChar = name ? name.charAt(0).toUpperCase() : '👤';
     const isEmoji = avatarUrl && avatarUrl.length <= 4;
     
+    let avatarEl;
+
     if (isBasicMode) {
       // In Basic Mode, skip base64/url images to simulate saving data, but allow emojis
       if (isEmoji) {
-        return (
+        avatarEl = (
           <div className={`${sizeClass} bg-slate-100 rounded-full flex items-center justify-center border border-slate-200 shrink-0`}>
             <span className={textClass}>{avatarUrl}</span>
           </div>
         );
+      } else {
+        avatarEl = (
+          <div className={`${sizeClass} rounded-full bg-blue-100 text-blue-800 flex items-center justify-center font-black select-none border border-blue-200 shrink-0 ${textClass}`}>
+            {fallbackChar}
+          </div>
+        );
       }
-      return (
-        <div className={`${sizeClass} rounded-full bg-blue-100 text-blue-800 flex items-center justify-center font-black select-none border border-blue-200 shrink-0 ${textClass}`}>
-          {fallbackChar}
-        </div>
-      );
-    }
-
-    if (avatarUrl && (avatarUrl.startsWith('http') || avatarUrl.startsWith('data:') || avatarUrl.startsWith('blob:'))) {
-      return (
+    } else if (avatarUrl && (avatarUrl.startsWith('http') || avatarUrl.startsWith('data:') || avatarUrl.startsWith('blob:'))) {
+      avatarEl = (
         <img 
           src={avatarUrl} 
           alt={name} 
@@ -109,13 +516,35 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
           referrerPolicy="no-referrer" 
         />
       );
+    } else {
+      avatarEl = (
+        <div className={`${sizeClass} rounded-full bg-slate-100 flex items-center justify-center border border-slate-200 shrink-0`}>
+          <span className={`select-none ${textClass}`}>{avatarUrl || '👤'}</span>
+        </div>
+      );
     }
 
-    return (
-      <div className={`${sizeClass} rounded-full bg-slate-100 flex items-center justify-center border border-slate-200 shrink-0`}>
-        <span className={`select-none ${textClass}`}>{avatarUrl || '👤'}</span>
-      </div>
-    );
+    if (userId) {
+      const isOnline = userId === user.id || onlineUserIds.includes(userId);
+      return (
+        <div className="relative inline-block shrink-0">
+          {avatarEl}
+          {isOnline ? (
+            <span className="absolute bottom-0 right-0 flex h-3 w-3 translate-x-0.5 translate-y-0.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border border-white"></span>
+            </span>
+          ) : (
+            <span 
+              className="absolute bottom-0 right-0 block h-3 w-3 translate-x-0.5 translate-y-0.5 rounded-full bg-rose-500 border border-white shadow-xs" 
+              title="Offline"
+            />
+          )}
+        </div>
+      );
+    }
+
+    return avatarEl;
   };
 
   // New Post state
@@ -597,7 +1026,17 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                 {modUsers.map((u) => (
                   <div key={u.id} className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2.5">
-                      <span className="text-2xl">{u.avatar || '👤'}</span>
+                      <div className="relative inline-block select-none">
+                        <span className="text-2xl">{u.avatar || '👤'}</span>
+                        {(u.id === user.id || onlineUserIds.includes(u.id)) ? (
+                          <span className="absolute bottom-0 right-0 flex h-2.5 w-2.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 border border-slate-950"></span>
+                          </span>
+                        ) : (
+                          <span className="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full bg-rose-500 border border-slate-950" />
+                        )}
+                      </div>
                       <div>
                         <div className="font-extrabold text-xs text-white flex items-center gap-1.5">
                           <span>{u.name}</span>
@@ -826,27 +1265,55 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
         {/* RIGHT COLUMN: RECENT FEED POSTS */}
         <div className="lg:col-span-2 space-y-6">
           
-          <div className="flex items-center justify-between">
-            <h3 className="font-black text-slate-950 text-xs tracking-wider uppercase flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-yellow-500 animate-pulse" />
-              <span>Mga Balita at Kwento (Z-one Live Feed)</span>
-            </h3>
-            <span className="text-[10px] text-slate-400 font-bold uppercase">
-              {posts.length} Active Posts
-            </span>
+          {/* MEDIA HUB SUB-NAVIGATION TABS */}
+          <div className="bg-slate-100 p-1.5 rounded-2xl flex flex-wrap items-center gap-1 border border-slate-200">
+            <button 
+              onClick={() => setSocialTab('feed')}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition cursor-pointer ${socialTab === 'feed' ? 'bg-white text-blue-600 shadow-xs border border-slate-200/50 font-black' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span>Z-one Social</span>
+            </button>
+            <button 
+              onClick={() => setSocialTab('livetv')}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition cursor-pointer ${socialTab === 'livetv' ? 'bg-white text-indigo-600 shadow-xs border border-slate-200/50 font-black' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
+            >
+              <Tv className="w-4 h-4" />
+              <span>PH Live TV Streams</span>
+            </button>
+            <button 
+              onClick={() => setSocialTab('news')}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition cursor-pointer ${socialTab === 'news' ? 'bg-white text-emerald-600 shadow-xs border border-slate-200/50 font-black' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>PH News Hub</span>
+            </button>
           </div>
 
-          {loadingPosts ? (
-            <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-500 text-xs font-bold">
-              Kinukuha ang pinakabagong posts sa Z-one...
-            </div>
-          ) : posts.length === 0 ? (
-            <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-400 text-xs font-bold space-y-1">
-              <p>📭 Walang laman ang Z-one feed sa ngayon.</p>
-              <p className="text-[10px] text-slate-450 font-normal">Maging kauna-unahang clicker na mag-post sa komunidad!</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
+          {/* TAB CONTENT: 1. CORE FEED */}
+          {socialTab === 'feed' && (
+            <div className="space-y-6 animate-fadeIn">
+              <div className="flex items-center justify-between">
+                <h3 className="font-black text-slate-950 text-xs tracking-wider uppercase flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-yellow-500 animate-pulse" />
+                  <span>Mga Balita at Kwento (Z-one Live Feed)</span>
+                </h3>
+                <span className="text-[10px] text-slate-400 font-bold uppercase">
+                  {posts.length} Active Posts
+                </span>
+              </div>
+
+              {loadingPosts ? (
+                <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-500 text-xs font-bold">
+                  Kinukuha ang pinakabagong posts sa Z-one...
+                </div>
+              ) : posts.length === 0 ? (
+                <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-400 text-xs font-bold space-y-1">
+                  <p>📭 Walang laman ang Z-one feed sa ngayon.</p>
+                  <p className="text-[10px] text-slate-450 font-normal">Maging kauna-unahang clicker na mag-post sa komunidad!</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
               {posts.map((post) => {
                 const hasLiked = post.likes.includes(user.id);
                 const isMyOwnPost = post.userId === user.id;
@@ -861,12 +1328,22 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                     {/* Header */}
                     <div className="p-4 flex items-center justify-between gap-3 border-b border-slate-50">
                       <div className="flex items-center gap-3">
-                        <span className="leading-none shrink-0 select-none block">
-                          {renderFeedAvatar(post.userAvatar, post.userName, "w-10 h-10", "text-xl")}
-                        </span>
+                        <button
+                          onClick={() => handleOpenDm({ id: post.userId, name: post.userName, avatar: post.userAvatar || '👤' })}
+                          className="leading-none shrink-0 select-none block hover:scale-105 transition cursor-pointer text-left focus:outline-hidden"
+                          title="I-Message o Tawagan"
+                        >
+                          {renderFeedAvatar(post.userAvatar, post.userName, "w-10 h-10", "text-xl", post.userId)}
+                        </button>
                         <div>
                           <div className="font-extrabold text-slate-900 text-xs flex items-center gap-1.5">
-                            <span>{post.userName}</span>
+                            <button
+                              onClick={() => handleOpenDm({ id: post.userId, name: post.userName, avatar: post.userAvatar || '👤' })}
+                              className="hover:underline hover:text-blue-600 font-extrabold cursor-pointer text-left transition focus:outline-hidden"
+                              title="I-Message o Tawagan"
+                            >
+                              {post.userName}
+                            </button>
                             {post.userId === 'admin-rosco' && (
                               <span className="bg-blue-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase">Admin</span>
                             )}
@@ -928,12 +1405,22 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                       {post.sharedPost && (
                         <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50 space-y-3 shadow-xs">
                           <div className="flex items-center gap-2">
-                            <span className="leading-none shrink-0 select-none block">
-                              {renderFeedAvatar(post.sharedPost.userAvatar, post.sharedPost.userName, "w-8 h-8", "text-sm")}
-                            </span>
+                            <button
+                              onClick={() => handleOpenDm({ id: post.sharedPost.userId, name: post.sharedPost.userName, avatar: post.sharedPost.userAvatar || '👤' })}
+                              className="leading-none shrink-0 select-none block hover:scale-105 transition cursor-pointer text-left focus:outline-hidden"
+                              title="I-Message o Tawagan"
+                            >
+                              {renderFeedAvatar(post.sharedPost.userAvatar, post.sharedPost.userName, "w-8 h-8", "text-sm", post.sharedPost.userId)}
+                            </button>
                             <div>
                               <div className="font-extrabold text-slate-850 text-[11px] leading-tight flex items-center gap-1.5">
-                                <span>{post.sharedPost.userName}</span>
+                                <button
+                                  onClick={() => handleOpenDm({ id: post.sharedPost.userId, name: post.sharedPost.userName, avatar: post.sharedPost.userAvatar || '👤' })}
+                                  className="hover:underline hover:text-blue-600 font-extrabold cursor-pointer text-left transition focus:outline-hidden"
+                                  title="I-Message o Tawagan"
+                                >
+                                  {post.sharedPost.userName}
+                                </button>
                                 {post.sharedPost.userId === 'admin-rosco' && (
                                   <span className="bg-blue-500 text-white text-[7px] font-black px-1.5 py-0.5 rounded-full uppercase">Admin</span>
                                 )}
@@ -1105,7 +1592,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                       {/* Comment input form */}
                       <div className="flex gap-2 items-center">
                         <span className="leading-none shrink-0 select-none block">
-                          {renderFeedAvatar(user.avatar, user.name, "w-7 h-7", "text-xs")}
+                          {renderFeedAvatar(user.avatar, user.name, "w-7 h-7", "text-xs", user.id)}
                         </span>
                         <div className="flex-1 flex gap-1 bg-white border border-slate-200 rounded-xl p-1 focus-within:ring-2 focus-within:ring-blue-500">
                           <input
@@ -1134,12 +1621,22 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                         <div className="space-y-2 pt-2 border-t border-slate-100 max-h-64 overflow-y-auto pr-1">
                           {post.comments.map((comm) => (
                             <div key={comm.id} className="flex gap-2.5 items-start">
-                              <span className="leading-none shrink-0 select-none block">
-                                {renderFeedAvatar(comm.userAvatar, comm.userName, "w-6 h-6", "text-[10px]")}
-                              </span>
+                              <button
+                                onClick={() => handleOpenDm({ id: comm.userId, name: comm.userName, avatar: comm.userAvatar || '👤' })}
+                                className="leading-none shrink-0 select-none block hover:scale-105 transition cursor-pointer text-left focus:outline-hidden"
+                                title="I-Message o Tawagan"
+                              >
+                                {renderFeedAvatar(comm.userAvatar, comm.userName, "w-6 h-6", "text-[10px]", comm.userId)}
+                              </button>
                               <div className="bg-slate-100 p-2.5 rounded-2xl flex-1 space-y-0.5">
                                 <div className="flex items-center justify-between gap-2">
-                                  <span className="font-extrabold text-slate-900 text-[10px]">{comm.userName}</span>
+                                  <button
+                                    onClick={() => handleOpenDm({ id: comm.userId, name: comm.userName, avatar: comm.userAvatar || '👤' })}
+                                    className="hover:underline hover:text-blue-600 font-extrabold cursor-pointer text-left transition focus:outline-hidden text-[10px]"
+                                    title="I-Message o Tawagan"
+                                  >
+                                    {comm.userName}
+                                  </button>
                                   <span className="text-[8px] text-slate-400 font-mono">
                                     {new Date(comm.createdAt).toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' })}
                                   </span>
@@ -1157,6 +1654,126 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                   </motion.div>
                 );
               })}
+            </div>
+          )}
+            </div>
+          )}
+
+          {/* TAB CONTENT: 2. PH LIVE TV STREAMS (YOUTUBE EMBEDS) */}
+          {socialTab === 'livetv' && (
+            <div className="space-y-6 animate-fadeIn">
+              <div className="bg-gradient-to-r from-red-500 to-indigo-600 text-white rounded-3xl p-6 shadow-xs relative overflow-hidden">
+                <div className="absolute top-0 right-0 transform translate-x-4 -translate-y-4 text-white/10 text-9xl font-black select-none pointer-events-none font-mono">LIVE</div>
+                <div className="relative z-10 space-y-2">
+                  <span className="bg-white/20 text-white text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-full border border-white/10">Z-one Broadcast TV</span>
+                  <h3 className="text-xl font-black">{language === 'tl' ? 'Mga Live Feed mula sa YouTube' : 'Live Streams from YouTube'}</h3>
+                  <p className="text-xs text-white/90 font-medium leading-relaxed">
+                    {language === 'tl'
+                      ? 'Panoorin ang pinakabagong balita at palabas nang LIVE at walang bawas! Piliin lamang ang network sa ibaba.'
+                      : 'Watch Philippine news broadcasts live and in real-time. Pick your preferred media network below.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {LIVE_TV_STREAMS.map((st) => (
+                  <div key={st.id} className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden flex flex-col">
+                    <div className="aspect-video w-full bg-slate-950">
+                      <iframe
+                        src={st.url}
+                        title={st.name}
+                        className="w-full h-full border-0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        allowFullScreen
+                        referrerPolicy="no-referrer"
+                      ></iframe>
+                    </div>
+                    <div className="p-4 flex-1 flex flex-col justify-between space-y-3 bg-slate-50/50">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-base leading-none select-none">📺</span>
+                          <span className="bg-slate-200 text-slate-800 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border border-slate-300/50">
+                            {st.network}
+                          </span>
+                        </div>
+                        <h4 className="font-extrabold text-slate-900 text-xs leading-snug">{st.name}</h4>
+                        <p className="text-[10px] text-slate-500 font-semibold leading-relaxed line-clamp-2">{st.description}</p>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                        <span className="text-[9px] text-rose-600 font-black uppercase tracking-widest flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping"></span>
+                          <span>LIVE FEED</span>
+                        </span>
+                        <a 
+                          href={st.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[9px] text-blue-600 hover:underline font-black uppercase"
+                        >
+                          Visit Stream ↗
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* TAB CONTENT: 3. PHILIPPINES NEWS HUB */}
+          {socialTab === 'news' && (
+            <div className="space-y-4 animate-fadeIn">
+              <div className="bg-emerald-50 border border-emerald-100 rounded-3xl p-5 flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm select-none">📰</span>
+                    <h4 className="font-extrabold text-emerald-950 text-xs uppercase tracking-wider">Philippine Press Portal</h4>
+                  </div>
+                  <p className="text-[11px] text-emerald-900 font-medium leading-relaxed">
+                    {language === 'tl'
+                      ? 'Basahin ang pinakabagong ulat mula sa ABS-CBN News, GMA, Inquirer, at iba pang mapagkakatiwalaang media network.'
+                      : 'Stay informed with standard press reports covering GCash, digital earning trends, and national events.'}
+                  </p>
+                </div>
+                <span className="bg-emerald-600 text-white text-[9px] font-black px-2 py-1 rounded-lg uppercase shrink-0">NEWS</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {PHILIPPINES_NEWS_ARTICLES.map((article) => (
+                  <div 
+                    key={article.id} 
+                    onClick={() => setSelectedNewsArticle(article)}
+                    className="bg-white rounded-3xl border border-slate-200 hover:border-slate-300 hover:shadow-md cursor-pointer transition overflow-hidden flex flex-col group"
+                  >
+                    <div className="aspect-video w-full relative overflow-hidden bg-slate-100">
+                      <img 
+                        src={article.image} 
+                        alt={article.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
+                        referrerPolicy="no-referrer"
+                      />
+                      <span className={`absolute top-3 left-3 text-[9px] font-black uppercase px-2 py-0.5 rounded-full border shadow-sm ${article.badgeColor}`}>
+                        {article.category}
+                      </span>
+                    </div>
+                    <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                      <div className="space-y-1.5">
+                        <span className="text-[9px] text-slate-400 font-extrabold uppercase">{article.source}</span>
+                        <h4 className="font-extrabold text-slate-900 text-xs leading-snug group-hover:text-blue-600 transition">
+                          {article.title}
+                        </h4>
+                        <p className="text-[10px] text-slate-500 font-semibold leading-relaxed line-clamp-3">
+                          {article.text}
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[9px] text-slate-400 font-bold uppercase font-mono">
+                        <span>{article.date}</span>
+                        <span>{article.reads}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -1206,7 +1823,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                 <div className="border border-slate-100 rounded-2xl p-3 bg-slate-50/50 space-y-2 text-left">
                   <div className="flex items-center gap-2">
                     <span className="leading-none shrink-0 select-none block">
-                      {renderFeedAvatar(targetPost.userAvatar, targetPost.userName, "w-6 h-6", "text-xs")}
+                      {renderFeedAvatar(targetPost.userAvatar, targetPost.userName, "w-6 h-6", "text-xs", targetPost.userId)}
                     </span>
                     <div>
                       <span className="font-extrabold text-slate-800 text-[10px] leading-tight block">{targetPost.userName}</span>
@@ -1248,6 +1865,284 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
             </div>
           );
         })()}
+      </AnimatePresence>
+
+      {/* 💬 PRIVATE DIRECT MESSAGE (DM) MODAL */}
+      <AnimatePresence>
+        {activeDmUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden flex flex-col h-[520px] text-slate-800"
+            >
+              {/* Header */}
+              <div className="p-4 flex items-center justify-between border-b border-slate-100 bg-slate-50/50">
+                <div className="flex items-center gap-2.5">
+                  <span className="leading-none select-none block">
+                    {renderFeedAvatar(activeDmUser.avatar, activeDmUser.name, "w-9 h-9", "text-sm", activeDmUser.id)}
+                  </span>
+                  <div className="text-left">
+                    <h3 className="font-extrabold text-slate-950 text-xs leading-none">{activeDmUser.name}</h3>
+                    {(onlineUserIds.includes(activeDmUser.id) || activeDmUser.id === user.id) ? (
+                      <span className="text-[9px] text-emerald-600 font-extrabold flex items-center gap-1 mt-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <span>{language === 'tl' ? 'Aktibo Ngayon' : 'Active Now'}</span>
+                      </span>
+                    ) : (
+                      <span className="text-[9px] text-slate-400 font-extrabold flex items-center gap-1 mt-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                        <span>{language === 'tl' ? 'Hindi Aktibo' : 'Offline'}</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  {/* Call buttons */}
+                  <button 
+                    onClick={() => handleStartCall('voice')}
+                    className="p-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl cursor-pointer transition focus:outline-hidden"
+                    title={language === 'tl' ? 'Voice Call' : 'Voice Call'}
+                  >
+                    <Phone className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => handleStartCall('video')}
+                    className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl cursor-pointer transition focus:outline-hidden"
+                    title={language === 'tl' ? 'Video Call' : 'Video Call'}
+                  >
+                    <Video className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => setActiveDmUser(null)}
+                    className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-xl cursor-pointer transition focus:outline-hidden"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Message scroll container */}
+              <div id="dm-chat-scroll" className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
+                {dmMessages.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-1">
+                    <span className="text-2xl select-none">👋</span>
+                    <p className="text-xs font-black text-slate-700">{language === 'tl' ? `Simulan ang usapan kay ${activeDmUser.name}` : `Say hello to ${activeDmUser.name}`}</p>
+                    <p className="text-[10px] text-slate-450 font-semibold">{language === 'tl' ? 'Maaari kayong mag-usap at mag-tawagan nang ligtas.' : 'You can message each other and place secure calls.'}</p>
+                  </div>
+                ) : (
+                  dmMessages
+                    .filter(msg => (msg.senderId === user.id && msg.receiverId === activeDmUser.id) || (msg.senderId === activeDmUser.id && msg.receiverId === user.id))
+                    .map((msg) => {
+                      const isMe = msg.senderId === user.id;
+                      return (
+                        <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-xs font-semibold leading-relaxed ${isMe ? 'bg-blue-600 text-white rounded-br-none shadow-xs text-left' : 'bg-slate-250 text-slate-900 rounded-bl-none text-left'}`}>
+                            <p>{msg.text}</p>
+                            <span className={`text-[8px] block mt-1 font-mono text-right ${isMe ? 'text-blue-100' : 'text-slate-400'}`}>
+                              {new Date(msg.createdAt).toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+
+              {/* Message Input form */}
+              <form onSubmit={handleSendDm} className="p-3 border-t border-slate-150 flex items-center gap-2 bg-white">
+                <input
+                  type="text"
+                  value={newDmText}
+                  onChange={(e) => setNewDmText(e.target.value)}
+                  placeholder={language === 'tl' ? 'Sumulat ng mensahe...' : 'Write a message...'}
+                  className="flex-1 bg-slate-100 border border-slate-200 rounded-2xl px-4 py-2 text-xs font-semibold focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:bg-white transition text-slate-800"
+                />
+                <button
+                  type="submit"
+                  disabled={!newDmText.trim()}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white p-2.5 rounded-2xl cursor-pointer transition flex items-center justify-center shadow-xs"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 📞 INCOMING/OUTGOING VOICE & VIDEO CALL OVERLAY */}
+      <AnimatePresence>
+        {activeCallSession && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-slate-900 border border-slate-800 text-white rounded-3xl max-w-md w-full p-6 shadow-2xl overflow-hidden flex flex-col items-center justify-between min-h-[420px] text-center"
+            >
+              {/* Call Mode Badge */}
+              <span className="bg-white/10 text-white/90 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full border border-white/5 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-ping"></span>
+                <span>Z-one Secure Call ({activeCallSession.type})</span>
+              </span>
+
+              {/* Status & Profile rendering */}
+              <div className="space-y-4 my-auto py-6">
+                <div className="relative">
+                  {/* Pulsing visual halo */}
+                  <span className="absolute inset-0 rounded-full bg-blue-500/15 animate-ping scale-150"></span>
+                  <div className="w-24 h-24 rounded-full bg-blue-600 flex items-center justify-center text-4xl shadow-lg border-4 border-slate-800 select-none mx-auto">
+                    {activeCallSession.callerId === user.id ? '👤' : (activeCallSession.callerAvatar || '👤')}
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <h3 className="font-extrabold text-lg text-white">
+                    {activeCallSession.callerId === user.id ? activeCallSession.receiverName : activeCallSession.callerName}
+                  </h3>
+                  <p className="text-xs text-slate-400 font-bold uppercase tracking-wider font-mono">
+                    {activeCallSession.status === 'ringing' 
+                      ? (activeCallSession.callerId === user.id ? 'Tumatawag...' : 'May tumatawag sa iyo...') 
+                      : 'Konektado'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Video Stream rendering (if connected video call) */}
+              {activeCallSession.status === 'accepted' && activeCallSession.type === 'video' && (
+                <div className="w-full aspect-video bg-slate-950 rounded-2xl relative border border-slate-800 overflow-hidden mb-6">
+                  {/* Local video thumbnail */}
+                  {!isVideoOff && (
+                    <div className="absolute top-3 right-3 w-32 aspect-video bg-slate-900 rounded-lg overflow-hidden border border-slate-700 shadow-lg z-20">
+                      <video 
+                        ref={videoRef} 
+                        autoPlay 
+                        playsInline 
+                        muted 
+                        className="w-full h-full object-cover scale-x-[-1]" 
+                      />
+                    </div>
+                  )}
+
+                  {/* Remote stream mockup animation */}
+                  <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 z-10 relative">
+                    <span className="text-4xl animate-bounce select-none">🎥</span>
+                    <p className="text-xs font-black text-slate-400 mt-2">Active Camera Connection Live</p>
+                    <p className="text-[10px] text-slate-500 font-semibold">Real-time encryption enabled</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Interaction Call Controls */}
+              <div className="flex items-center gap-4 pt-4 border-t border-slate-800/50 w-full justify-center">
+                {activeCallSession.status === 'ringing' && activeCallSession.callerId !== user.id ? (
+                  // Incoming Ring Controls
+                  <>
+                    <button
+                      onClick={handleAcceptCall}
+                      className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-2xl flex items-center gap-1.5 cursor-pointer transition shadow-lg shadow-emerald-900/30"
+                    >
+                      <Phone className="w-4 h-4 animate-bounce" />
+                      <span>{language === 'tl' ? 'Sagutin' : 'Accept'}</span>
+                    </button>
+                    <button
+                      onClick={handleDeclineOrHangup}
+                      className="px-6 py-3 bg-rose-600 hover:bg-rose-500 text-white font-black text-xs rounded-2xl flex items-center gap-1.5 cursor-pointer transition shadow-lg shadow-rose-900/30"
+                    >
+                      <PhoneOff className="w-4 h-4" />
+                      <span>{language === 'tl' ? 'Tanggihan' : 'Decline'}</span>
+                    </button>
+                  </>
+                ) : (
+                  // Outgoing Ringing or Active Connected Call Controls
+                  <>
+                    {activeCallSession.status === 'accepted' && (
+                      <>
+                        <button
+                          onClick={() => setIsMuted(!isMuted)}
+                          className={`p-3 rounded-2xl cursor-pointer transition border ${isMuted ? 'bg-red-500 text-white border-red-400' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'}`}
+                          title={isMuted ? 'Unmute Mic' : 'Mute Mic'}
+                        >
+                          {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                        </button>
+                        {activeCallSession.type === 'video' && (
+                          <button
+                            onClick={() => setIsVideoOff(!isVideoOff)}
+                            className={`p-3 rounded-2xl cursor-pointer transition border ${isVideoOff ? 'bg-red-500 text-white border-red-400' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'}`}
+                            title={isVideoOff ? 'Open Camera' : 'Close Camera'}
+                          >
+                            {isVideoOff ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+                          </button>
+                        )}
+                      </>
+                    )}
+                    <button
+                      onClick={handleDeclineOrHangup}
+                      className="px-6 py-3 bg-rose-600 hover:bg-rose-500 text-white font-black text-xs rounded-2xl flex items-center gap-1.5 cursor-pointer transition shadow-lg shadow-rose-900/30"
+                    >
+                      <PhoneOff className="w-4 h-4 animate-pulse" />
+                      <span>{language === 'tl' ? 'Ibaba' : 'Hang Up'}</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 📰 PHILIPPINES NEWS HUB DETAILED POPUP CARD */}
+      <AnimatePresence>
+        {selectedNewsArticle && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 space-y-4 text-slate-850 text-left overflow-y-auto max-h-[90vh]"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border border-emerald-200">
+                  {selectedNewsArticle.category}
+                </span>
+                <button 
+                  onClick={() => setSelectedNewsArticle(null)}
+                  className="text-slate-400 hover:text-slate-600 font-extrabold text-xs bg-slate-100 hover:bg-slate-200 p-1.5 rounded-full px-3 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="aspect-video w-full rounded-2xl overflow-hidden bg-slate-100 shadow-xs border border-slate-200/50">
+                <img 
+                  src={selectedNewsArticle.image} 
+                  alt={selectedNewsArticle.title}
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <span className="text-[10px] text-slate-400 font-extrabold uppercase font-mono tracking-wider">{selectedNewsArticle.source} • {selectedNewsArticle.date}</span>
+                <h3 className="font-extrabold text-slate-900 text-sm md:text-base leading-snug">{selectedNewsArticle.title}</h3>
+                <p className="text-xs text-slate-700 leading-relaxed font-semibold pt-2 border-t border-slate-100/50 whitespace-pre-wrap">{selectedNewsArticle.text}</p>
+              </div>
+
+              <div className="flex justify-end pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setSelectedNewsArticle(null)}
+                  className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black rounded-xl cursor-pointer transition"
+                >
+                  {language === 'tl' ? 'Isara' : 'Close'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </AnimatePresence>
 
     </div>
