@@ -233,10 +233,10 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
       fetchModUsers();
     }
 
-    // Auto-refresh the feed every 15 seconds silently like Facebook
+    // Auto-refresh the feed every 10 seconds silently like Facebook
     const interval = setInterval(() => {
       fetchPosts(true);
-    }, 15000);
+    }, 10000);
 
     return () => clearInterval(interval);
   }, [token]);

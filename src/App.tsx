@@ -72,6 +72,43 @@ interface UserSession {
   referredFriends: ReferralFriend[];
 }
 
+const compressImage = (base64Str: string, maxWidth = 150, maxHeight = 150): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = base64Str;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+      } else {
+        if (height > maxHeight) {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      } else {
+        resolve(base64Str);
+      }
+    };
+    img.onerror = () => {
+      resolve(base64Str);
+    };
+  });
+};
+
 export default function App() {
   // --- AUTHENTICATION & SYNC STATES ---
   const [token, setToken] = useState<string | null>(localStorage.getItem('gcash_click_earn_token'));
@@ -1072,8 +1109,14 @@ export default function App() {
                         return;
                       }
                       const reader = new FileReader();
-                      reader.onloadend = () => {
-                        setNewAvatar(reader.result as string);
+                      reader.onloadend = async () => {
+                        const rawBase64 = reader.result as string;
+                        try {
+                          const compressed = await compressImage(rawBase64);
+                          setNewAvatar(compressed);
+                        } catch (err) {
+                          setNewAvatar(rawBase64);
+                        }
                       };
                       reader.readAsDataURL(file);
                     }}

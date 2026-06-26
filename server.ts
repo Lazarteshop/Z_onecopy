@@ -437,7 +437,11 @@ async function uploadToFirestore(data: DBStructure) {
           const { id, ...pWithoutId } = p;
           // Safeguard Firestore 1MB limit for posts by replacing huge base64 media with a standard placeholder
           if (pWithoutId.mediaUrl && pWithoutId.mediaUrl.startsWith('data:') && pWithoutId.mediaUrl.length > 500000) {
-            pWithoutId.mediaUrl = 'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=800&auto=format&fit=crop&q=60';
+            if (pWithoutId.mediaType === 'video') {
+              pWithoutId.mediaUrl = 'https://assets.mixkit.co/videos/preview/mixkit-holding-a-smartphone-with-a-green-screen-34440-large.mp4';
+            } else {
+              pWithoutId.mediaUrl = 'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=800&auto=format&fit=crop&q=60';
+            }
           }
           await pDocRef.set(pWithoutId);
         } catch (postErr) {
