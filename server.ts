@@ -2037,6 +2037,151 @@ app.get('/api/zone/netflix', async (req, res) => {
   }
 });
 
+// DYNAMIC LIVE TV STREAM PARSER FROM PUBLIC REPOSITORIES
+app.get('/api/zone/livetv', async (req, res) => {
+  try {
+    const response = await fetch('https://raw.githubusercontent.com/iptv-org/iptv/gh-pages/countries/ph.m3u');
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ph.m3u: ${response.statusText}`);
+    }
+    const m3uText = await response.text();
+    
+    const lines = m3uText.split('\n');
+    const channels: any[] = [];
+    let currentChannel: any = null;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      if (line.startsWith('#EXTINF:')) {
+        // Parse metadata from EXTINF
+        const infoPart = line.substring(8);
+        const commaIndex = infoPart.lastIndexOf(',');
+        let name = commaIndex !== -1 ? infoPart.substring(commaIndex + 1).trim() : 'Unknown Channel';
+        
+        // Parse attributes
+        const idMatch = infoPart.match(/tvg-id="([^"]+)"/);
+        const logoMatch = infoPart.match(/tvg-logo="([^"]+)"/);
+        const groupMatch = infoPart.match(/group-title="([^"]+)"/);
+
+        // Standardize clean name
+        const id = idMatch ? idMatch[1] : `stream-${Math.random().toString(36).substr(2, 9)}`;
+        const logoUrl = logoMatch ? logoMatch[1] : '';
+        const rawGroup = groupMatch ? groupMatch[1] : 'Philippines TV';
+        
+        // Better clean name (remove parentheses with quality or specs)
+        name = name.replace(/\s*\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+
+        // Assign nice emojis depending on content
+        let emoji = '📺';
+        if (name.toLowerCase().includes('news') || rawGroup.toLowerCase().includes('news')) emoji = '📰';
+        else if (name.toLowerCase().includes('sport') || rawGroup.toLowerCase().includes('sport')) emoji = '⚽';
+        else if (name.toLowerCase().includes('hope') || name.toLowerCase().includes('faith') || rawGroup.toLowerCase().includes('religious')) emoji = '✝️';
+        else if (name.toLowerCase().includes('anime') || name.toLowerCase().includes('blast') || name.toLowerCase().includes('kids')) emoji = '🎮';
+        else if (name.toLowerCase().includes('music') || name.toLowerCase().includes('radio')) emoji = '🎵';
+        else if (name.toLowerCase().includes('business') || name.toLowerCase().includes('bilyonaryo')) emoji = '💼';
+
+        currentChannel = {
+          id,
+          name,
+          network: rawGroup || 'Local Stream',
+          logo: emoji,
+          url: '', // set next line
+          description: `Live streaming feed for ${name} from public IPTV repository.`
+        };
+      } else if (line.startsWith('http://') || line.startsWith('https://')) {
+        if (currentChannel) {
+          currentChannel.url = line;
+          // Filter out streams that don't look like HLS
+          const isHls = line.includes('.m3u8') || line.includes('/playlist') || line.includes('.m3u') || line.includes('/stream');
+          if (isHls) {
+            channels.push(currentChannel);
+          }
+          currentChannel = null;
+        }
+      }
+    }
+
+    // Sort channels by name so they look neat
+    channels.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Ensure we have a unique list by url
+    const uniqueChannelsMap = new Map();
+    for (const ch of channels) {
+      uniqueChannelsMap.set(ch.url, ch);
+    }
+    const uniqueChannels = Array.from(uniqueChannelsMap.values());
+
+    res.json({ success: true, channels: uniqueChannels });
+  } catch (err: any) {
+    console.error('Error fetching dynamic IPTV M3U, returning curated static streams instead:', err);
+    // In case of error/offline/CORS/network block, we return the curated fallback list
+    res.json({ 
+      success: false, 
+      message: 'Unable to reach live registry. Fallback channels loaded.',
+      channels: [
+        {
+          id: 'stream-cltv36',
+          name: 'CLTV 36 (Central Luzon TV) - News & Lifestyle',
+          network: 'CLTV 36 Regional',
+          logo: '📡',
+          url: 'https://live.cltv36.tv:5443/LiveApp/streams/cltvlive.m3u8',
+          description: 'Sundan ang mga pinakabagong balita, kaganapan, kultura, at pamumuhay sa buong Pampanga at Gitnang Luzon.'
+        },
+        {
+          id: 'stream-abantetv',
+          name: 'Abante TV - National News & Talks',
+          network: 'Abante TV',
+          logo: '📰',
+          url: 'https://amg19223-amg19223c12-amgplt0352.playout.now3.amagi.tv/playlist/amg19223-amg19223c12-amgplt0352/playlist.m3u8',
+          description: 'Live na balitaan, talakayan sa maiinit na isyu, at pampublikong serbisyo mula sa Abante Tonite network.'
+        },
+        {
+          id: 'stream-hope',
+          name: 'Hope Channel Philippines - Family & Faith',
+          network: 'Hope Channel',
+          logo: '✝️',
+          url: 'https://jstre.am/live/jsl:7A1swL7Fhlh.m3u8',
+          description: 'Pampamilyang palabas na naghahatid ng inspirasyon, kalusugan, pamumuhay, at turo ng Salita ng Diyos.'
+        },
+        {
+          id: 'stream-bilyonaryo',
+          name: 'Bilyonaryo News Channel (BNC) - Finance & Business',
+          network: 'Bilyonaryo News',
+          logo: '💼',
+          url: 'https://amg19223-amg19223c11-amgplt0352.playout.now3.amagi.tv/playlist/amg19223-amg19223c11-amgplt0352/playlist.m3u8',
+          description: 'Ang nangungunang premium na balitang pangnegosyo, pananalapi, ekonomiya, at pambansang balitaan sa bansa.'
+        },
+        {
+          id: 'stream-premier',
+          name: 'Premier Sports Channel',
+          network: 'Premier Sports',
+          logo: '⚽',
+          url: 'https://amg19223-amg19223c3-amgplt0351.playout.now3.amagi.tv/playlist/amg19223-amg19223c3-amgplt0351/playlist.m3u8',
+          description: 'Panoorin ang pinakapaboritong laro sa basketball, football, tennis, at combat sports ng live.'
+        },
+        {
+          id: 'stream-premier2',
+          name: 'Premier Sports 2 Channel',
+          network: 'Premier Sports 2',
+          logo: '🏎️',
+          url: 'https://amg19223-amg19223c4-amgplt0351.playout.now3.amagi.tv/playlist/amg19223-amg19223c4-amgplt0351/playlist.m3u8',
+          description: 'Karagdagang live sports coverage tulad ng motorsport, athletics, at combat championships.'
+        },
+        {
+          id: 'stream-aniblast',
+          name: 'Ani-Blast Channel',
+          network: 'Ani-Blast',
+          logo: '🎮',
+          url: 'https://amg19223-amg19223c9-amgplt0019.playout.now3.amagi.tv/playlist/amg19223-amg19223c9-amgplt0019/playlist.m3u8',
+          description: 'I-enjoy ang pinakamahusay na mga localized anime series na dinala sa wikang Filipino/Tagalog.'
+        }
+      ]
+    });
+  }
+});
+
 // GET ONLINE USER IDS
 app.get('/api/zone/online', (req, res) => {
   const now = Date.now();

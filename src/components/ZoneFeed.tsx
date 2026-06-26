@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Hls from 'hls.js';
 import { 
   motion, 
   AnimatePresence 
@@ -61,31 +62,63 @@ const PRESET_VIDEOS = [
   { url: 'https://assets.mixkit.co/videos/preview/mixkit-hand-holding-smartphone-with-charts-on-screen-34442-large.mp4', label: '📊 Earnings Dashboard' }
 ];
 
-// Curated live YouTube streams from Philippines broadcast networks
+// Curated live M3U8/HLS streams from Philippine broadcast networks and local television stations
 const LIVE_TV_STREAMS = [
   {
-    id: 'stream-gma',
-    name: 'GMA Integrated News 24 Oras Live Stream',
-    network: 'GMA Integrated News',
-    logo: '📺',
-    url: 'https://www.youtube.com/embed/live_stream?channel=UC85fS0_2H6396_VAnz6vO9A',
-    description: 'Panoorin ang pinakabagong balita, ulat-panahon, at talakayan mula sa GMA Integrated News at 24 Oras sa buong Pilipinas.'
+    id: 'stream-cltv36',
+    name: 'CLTV 36 (Central Luzon TV) - News & Lifestyle',
+    network: 'CLTV 36 Regional',
+    logo: '📡',
+    url: 'https://live.cltv36.tv:5443/LiveApp/streams/cltvlive.m3u8',
+    description: 'Sundan ang mga pinakabagong balita, kaganapan, kultura, at pamumuhay sa buong Pampanga at Gitnang Luzon.'
   },
   {
-    id: 'stream-abscbn',
-    name: 'ABS-CBN News Channel (ANC) Live stream',
-    network: 'ABS-CBN News',
-    logo: '🔴',
-    url: 'https://www.youtube.com/embed/live_stream?channel=UCE2606prvXQc_noEqKxVJXA',
-    description: 'Manatiling updated sa pinakabagong breaking news, headline story, at eksklusibong panayam mula sa ABS-CBN News.'
+    id: 'stream-abantetv',
+    name: 'Abante TV - National News & Talks',
+    network: 'Abante TV',
+    logo: '📰',
+    url: 'https://amg19223-amg19223c12-amgplt0352.playout.now3.amagi.tv/playlist/amg19223-amg19223c12-amgplt0352/playlist.m3u8',
+    description: 'Live na balitaan, talakayan sa maiinit na isyu, at pampublikong serbisyo mula sa Abante Tonite network.'
   },
   {
-    id: 'stream-tv5',
-    name: 'TV5 News (News5 Everywhere) Live Stream',
-    network: 'TV5 Network',
-    logo: '🔵',
-    url: 'https://www.youtube.com/embed/live_stream?channel=UCpP2SreG8A-u066XW1G9XJw',
-    description: 'Sundan ang live coverage ng mga balitang pambansa, isports, at talakayan sa News5 Everywhere livestream.'
+    id: 'stream-hope',
+    name: 'Hope Channel Philippines - Family & Faith',
+    network: 'Hope Channel',
+    logo: '✝️',
+    url: 'https://jstre.am/live/jsl:7A1swL7Fhlh.m3u8',
+    description: 'Pampamilyang palabas na naghahatid ng inspirasyon, kalusugan, pamumuhay, at turo ng Salita ng Diyos.'
+  },
+  {
+    id: 'stream-bilyonaryo',
+    name: 'Bilyonaryo News Channel (BNC) - Finance & Business',
+    network: 'Bilyonaryo News',
+    logo: '💼',
+    url: 'https://amg19223-amg19223c11-amgplt0352.playout.now3.amagi.tv/playlist/amg19223-amg19223c11-amgplt0352/playlist.m3u8',
+    description: 'Ang nangungunang premium na balitang pangnegosyo, pananalapi, ekonomiya, at pambansang balitaan sa bansa.'
+  },
+  {
+    id: 'stream-premier',
+    name: 'Premier Sports Channel',
+    network: 'Premier Sports',
+    logo: '⚽',
+    url: 'https://amg19223-amg19223c3-amgplt0351.playout.now3.amagi.tv/playlist/amg19223-amg19223c3-amgplt0351/playlist.m3u8',
+    description: 'Panoorin ang pinakapaboritong laro sa basketball, football, tennis, at combat sports ng live.'
+  },
+  {
+    id: 'stream-premier2',
+    name: 'Premier Sports 2 Channel',
+    network: 'Premier Sports 2',
+    logo: '🏎️',
+    url: 'https://amg19223-amg19223c4-amgplt0351.playout.now3.amagi.tv/playlist/amg19223-amg19223c4-amgplt0351/playlist.m3u8',
+    description: 'Karagdagang live sports coverage tulad ng motorsport, athletics, at combat championships.'
+  },
+  {
+    id: 'stream-aniblast',
+    name: 'Ani-Blast Channel',
+    network: 'Ani-Blast',
+    logo: '🎮',
+    url: 'https://amg19223-amg19223c9-amgplt0019.playout.now3.amagi.tv/playlist/amg19223-amg19223c9-amgplt0019/playlist.m3u8',
+    description: 'I-enjoy ang pinakamahusay na mga localized anime series na dinala sa wikang Filipino/Tagalog.'
   }
 ];
 
@@ -213,12 +246,169 @@ const NETFLIX_FREE_VIDEOS = [
   }
 ];
 
+// Reusable high-performance HLS/M3U8 video stream player
+interface M3U8PlayerProps {
+  url: string;
+  title: string;
+  language: string;
+  triggerNotification: (msg: string, type: 'success' | 'error' | 'info') => void;
+}
+
+function M3U8Player({ url, title, language, triggerNotification }: M3U8PlayerProps) {
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const hlsRef = React.useRef<Hls | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    setIsLoading(true);
+    setHasError(false);
+
+    // Clean up previous HLS instance
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        maxBufferSize: 0,
+        maxBufferLength: 30,
+        liveSyncDuration: 3,
+        liveMaxLatencyDuration: 10,
+      });
+
+      hlsRef.current = hls;
+      hls.loadSource(url);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setIsLoading(false);
+        video.play().then(() => {
+          setIsPlaying(true);
+        }).catch((e) => {
+          console.warn("Autoplay blocked:", e);
+          setIsPlaying(false);
+        });
+      });
+
+      hls.on(Hls.Events.ERROR, (event, data) => {
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              console.log("Fatal network error in stream, retrying...");
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              console.log("Fatal media error in stream, retrying...");
+              hls.recoverMediaError();
+              break;
+            default:
+              console.error("Fatal unrecoverable HLS error:", data);
+              setHasError(true);
+              setIsLoading(false);
+              hls.destroy();
+              break;
+          }
+        }
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Native support (Safari, iOS)
+      video.src = url;
+      const onLoadedMetadata = () => {
+        setIsLoading(false);
+        video.play().then(() => {
+          setIsPlaying(true);
+        }).catch((e) => {
+          console.warn("Native autoplay blocked:", e);
+          setIsPlaying(false);
+        });
+      };
+      
+      const onNativeError = (e: Event) => {
+        console.error("Native video play error:", e);
+        setHasError(true);
+        setIsLoading(false);
+      };
+
+      video.addEventListener('loadedmetadata', onLoadedMetadata);
+      video.addEventListener('error', onNativeError);
+
+      return () => {
+        video.removeEventListener('loadedmetadata', onLoadedMetadata);
+        video.removeEventListener('error', onNativeError);
+      };
+    } else {
+      setHasError(true);
+      setIsLoading(false);
+      triggerNotification(
+        language === 'tl'
+          ? 'Hindi suportado ang live HLS streaming sa browser na ito.'
+          : 'Live HLS streaming is not supported in this browser.',
+        'error'
+      );
+    }
+
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [url]);
+
+  return (
+    <div className="relative aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-2xl border border-slate-900 group">
+      <video
+        ref={videoRef}
+        className="w-full h-full object-contain"
+        controls
+        playsInline
+        referrerPolicy="no-referrer"
+      />
+
+      {/* Loading Indicator Overlay */}
+      {isLoading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 gap-3 z-10 animate-fadeIn">
+          <div className="w-10 h-10 border-4 border-rose-600 border-t-transparent rounded-full animate-spin"></div>
+          <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest animate-pulse">
+            {language === 'tl' ? 'Kumokonekta sa Live Stream...' : 'Connecting to Live Feed...'}
+          </span>
+        </div>
+      )}
+
+      {/* Error Overlay */}
+      {hasError && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/95 p-6 text-center gap-3 z-10">
+          <div className="w-12 h-12 rounded-full bg-rose-950/50 border border-rose-900 flex items-center justify-center text-rose-500 text-lg">⚠️</div>
+          <div className="space-y-1">
+            <h4 className="text-white text-xs font-black uppercase tracking-wider">
+              {language === 'tl' ? 'Hindi Ma-load ang Stream' : 'Live Stream Offline'}
+            </h4>
+            <p className="text-[10px] text-slate-400 max-w-xs font-medium leading-relaxed">
+              {language === 'tl'
+                ? 'Maaaring offline ang channel o hinarangan ng iyong browser/network ang direct streaming (CORS). Subukang panoorin ang ibang channel.'
+                : 'The channel may be offline or direct stream is blocked by browser CORS security policies. Please try another channel below.'}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ZoneFeed({ token, user, triggerNotification, onRefreshProfile, language }: ZoneFeedProps) {
   const [posts, setPosts] = useState<ZonePost[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
 
   // Z-one Social Media Tabs & Detailed View States
   const [socialTab, setSocialTab] = useState<'feed' | 'livetv' | 'netflix'>('feed');
+  const [selectedLiveTv, setSelectedLiveTv] = useState<any>(LIVE_TV_STREAMS[0]);
   const [selectedNetflixVideo, setSelectedNetflixVideo] = useState<any | null>(null);
   const [netflixVideos, setNetflixVideos] = useState<any[]>([]);
   const [isRefreshingNetflix, setIsRefreshingNetflix] = useState(false);
@@ -280,6 +470,70 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
   // Handle premium dynamic refresh to load the newest real-time videos from Netflix
   const handleRefreshNetflix = () => {
     fetchRealTimeNetflixVideos(true);
+  };
+
+  // --- LIVE TV STREAMS (IPTV M3U) DYNAMIC REFRESH AND SEARCH ---
+  const [liveTvStreams, setLiveTvStreams] = useState<any[]>(LIVE_TV_STREAMS);
+  const [isRefreshingLiveTv, setIsRefreshingLiveTv] = useState(false);
+  const [liveTvSearchQuery, setLiveTvSearchQuery] = useState('');
+
+  const fetchLiveTvStreams = async (showNotification = false) => {
+    setIsRefreshingLiveTv(true);
+    if (showNotification) {
+      triggerNotification(
+        language === 'tl'
+          ? 'Kumukuha ng mga pinakabagong live channels mula sa IPTV registry...'
+          : 'Retrieving latest live channels from public IPTV registry...',
+        'info'
+      );
+    }
+    try {
+      const response = await fetch('/api/zone/livetv');
+      const data = await response.json();
+      if (data && data.success && Array.isArray(data.channels)) {
+        setLiveTvStreams(data.channels);
+        // Keep selected channel if it still exists in the new list, or fallback
+        const exists = data.channels.some((c: any) => c.url === selectedLiveTv?.url);
+        if (!exists && data.channels.length > 0) {
+          // Try to prefer CLTV or first channel
+          const cltv = data.channels.find((c: any) => c.id.includes('cltv') || c.name.toLowerCase().includes('cltv'));
+          setSelectedLiveTv(cltv || data.channels[0]);
+        }
+        if (showNotification) {
+          triggerNotification(
+            language === 'tl'
+              ? `Matagumpay na na-refresh! ${data.channels.length} na channels ang magagamit.`
+              : `Successfully refreshed! ${data.channels.length} live channels are now available.`,
+            'success'
+          );
+        }
+      } else {
+        throw new Error('Failed to retrieve channels successfully.');
+      }
+    } catch (err) {
+      console.error('Error fetching dynamic live tv channels:', err);
+      if (showNotification) {
+        triggerNotification(
+          language === 'tl'
+            ? 'Hindi ma-load ang live registry stream. Ginagamit ang backup channels.'
+            : 'Unable to reach live registry stream. Loaded offline backup channels.',
+          'error'
+        );
+      }
+    } finally {
+      setIsRefreshingLiveTv(false);
+    }
+  };
+
+  // Auto-fetch live tv list when visiting the live tv tab for the first time
+  useEffect(() => {
+    if (socialTab === 'livetv' && liveTvStreams.length === LIVE_TV_STREAMS.length) {
+      fetchLiveTvStreams(false);
+    }
+  }, [socialTab]);
+
+  const handleRefreshLiveTv = () => {
+    fetchLiveTvStreams(true);
   };
 
   // --- PRIVATE DIRECT MESSAGE (DM) STATES ---
@@ -1788,66 +2042,212 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
             </div>
           )}
 
-          {/* TAB CONTENT: 2. PH LIVE TV STREAMS (YOUTUBE EMBEDS) */}
-          {socialTab === 'livetv' && (
-            <div className="space-y-6 animate-fadeIn">
-              <div className="bg-gradient-to-r from-red-500 to-indigo-600 text-white rounded-3xl p-6 shadow-xs relative overflow-hidden">
-                <div className="absolute top-0 right-0 transform translate-x-4 -translate-y-4 text-white/10 text-9xl font-black select-none pointer-events-none font-mono">LIVE</div>
-                <div className="relative z-10 space-y-2">
-                  <span className="bg-white/20 text-white text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-full border border-white/10">Z-one Broadcast TV</span>
-                  <h3 className="text-xl font-black">{language === 'tl' ? 'Mga Live Feed mula sa YouTube' : 'Live Streams from YouTube'}</h3>
-                  <p className="text-xs text-white/90 font-medium leading-relaxed">
-                    {language === 'tl'
-                      ? 'Panoorin ang pinakabagong balita at palabas nang LIVE at walang bawas! Piliin lamang ang network sa ibaba.'
-                      : 'Watch Philippine news broadcasts live and in real-time. Pick your preferred media network below.'}
-                  </p>
-                </div>
-              </div>
+          {/* TAB CONTENT: 2. PH LIVE TV STREAMS (M3U8 HLS PLAYER) */}
+          {socialTab === 'livetv' && (() => {
+            const filteredStreams = liveTvStreams.filter((stream: any) => {
+              const query = liveTvSearchQuery.toLowerCase();
+              return (
+                stream.name.toLowerCase().includes(query) ||
+                stream.network.toLowerCase().includes(query)
+              );
+            });
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {LIVE_TV_STREAMS.map((st) => (
-                  <div key={st.id} className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden flex flex-col">
-                    <div className="aspect-video w-full bg-slate-950">
-                      <iframe
-                        src={st.url}
-                        title={st.name}
-                        className="w-full h-full border-0"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                        allowFullScreen
-                        referrerPolicy="no-referrer"
-                      ></iframe>
-                    </div>
-                    <div className="p-4 flex-1 flex flex-col justify-between space-y-3 bg-slate-50/50">
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-base leading-none select-none">📺</span>
-                          <span className="bg-slate-200 text-slate-800 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border border-slate-300/50">
-                            {st.network}
-                          </span>
-                        </div>
-                        <h4 className="font-extrabold text-slate-900 text-xs leading-snug">{st.name}</h4>
-                        <p className="text-[10px] text-slate-500 font-semibold leading-relaxed line-clamp-2">{st.description}</p>
-                      </div>
-                      <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                        <span className="text-[9px] text-rose-600 font-black uppercase tracking-widest flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping"></span>
-                          <span>LIVE FEED</span>
+            return (
+              <div className="space-y-6 animate-fadeIn">
+                {/* Header Banner */}
+                <div className="bg-gradient-to-r from-rose-600 via-red-600 to-indigo-700 text-white rounded-3xl p-6 shadow-md relative overflow-hidden flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                  <div className="absolute top-0 right-0 transform translate-x-4 -translate-y-4 text-white/10 text-9xl font-black select-none pointer-events-none font-mono">LIVE</div>
+                  <div className="relative z-10 space-y-2 flex-1">
+                    <span className="bg-white/20 text-white text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-full border border-white/10">Z-one Broadcast TV</span>
+                    <h3 className="text-xl font-black">{language === 'tl' ? 'Pilipinas Live TV Stream' : 'Philippines Live TV Stream'}</h3>
+                    <p className="text-xs text-white/90 font-medium leading-relaxed">
+                      {language === 'tl'
+                        ? 'Manood ng mga pampublikong estasyon at lokal na balita sa bansa gamit ang totoong M3U8 feed! Piliin lamang ang estasyon sa ibaba.'
+                        : 'Watch Philippine public broadcast stations and local channels live in real-time with direct M3U8 streams.'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRefreshLiveTv}
+                    disabled={isRefreshingLiveTv}
+                    className="relative z-10 bg-white hover:bg-slate-100 disabled:opacity-50 text-rose-600 text-[10px] font-black px-4 py-2.5 rounded-xl uppercase tracking-wider flex items-center gap-1.5 shrink-0 transition shadow-xs cursor-pointer w-full md:w-auto justify-center"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingLiveTv ? 'animate-spin' : ''}`} />
+                    <span>{language === 'tl' ? 'I-refresh ang Channels' : 'Refresh Channels'}</span>
+                  </button>
+                </div>
+
+                {/* Active Broadcast Player */}
+                {selectedLiveTv && (
+                  <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden p-4 space-y-4 animate-slideUp">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-2.5 w-2.5 relative">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-600"></span>
                         </span>
-                        <a 
-                          href={st.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[9px] text-blue-600 hover:underline font-black uppercase"
-                        >
-                          Visit Stream ↗
-                        </a>
+                        <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                          {language === 'tl' ? 'Kasalukuyang I-na-stream' : 'Now Streaming'}
+                        </span>
+                      </div>
+                      <span className="bg-rose-100 text-rose-700 text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border border-rose-200/50">
+                        {selectedLiveTv.network}
+                      </span>
+                    </div>
+
+                    <M3U8Player
+                      url={selectedLiveTv.url}
+                      title={selectedLiveTv.name}
+                      language={language}
+                      triggerNotification={triggerNotification}
+                    />
+
+                    <div className="space-y-2 pt-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-2xl leading-none select-none">{selectedLiveTv.logo}</span>
+                        <h4 className="font-extrabold text-slate-900 text-base leading-snug">{selectedLiveTv.name}</h4>
+                      </div>
+                      <p className="text-xs text-slate-600 font-semibold leading-relaxed">{selectedLiveTv.description}</p>
+                      
+                      {/* Help/Troubleshooting Note */}
+                      <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-3 text-[10px] text-slate-500 font-medium leading-relaxed space-y-1 mt-2">
+                        <span className="font-black text-slate-700 block uppercase tracking-wider">💡 Troubleshooting Tips:</span>
+                        <p>{language === 'tl' 
+                          ? '1. Kung hindi naglo-load o nag-e-error, maaari itong sanhi ng browser CORS/security block o offline ang source feed.'
+                          : '1. If the stream fails to load or shows an error, it may be due to browser CORS security blocks or the feed being temporarily offline.'}</p>
+                        <p>{language === 'tl'
+                          ? '2. Ang CLTV 36, Abante TV, at Hope Channel ay nagbibigay ng matatag at pampublikong stream sa buong Pilipinas.'
+                          : '2. CLTV 36, Abante TV, and Hope Channel provide robust, highly-stable public streaming services.'}</p>
                       </div>
                     </div>
                   </div>
-                ))}
+                )}
+
+                {/* Station Search bar */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3 shadow-xs">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest pl-0.5">
+                        {language === 'tl' ? 'PAGHAHANAP NG ESTASYON' : 'STATION SEARCH & EXPLORE'}
+                      </h4>
+                      <p className="text-[10px] text-slate-400 font-semibold">
+                        {language === 'tl' 
+                          ? `Mayroong ${liveTvStreams.length} available na channels mula sa registry.` 
+                          : `Explore and play any of the ${liveTvStreams.length} live channels from the registry.`}
+                      </p>
+                    </div>
+                    {isRefreshingLiveTv && (
+                      <span className="bg-rose-50 text-rose-600 text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border border-rose-200 animate-pulse">
+                        Updating Registry...
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder={language === 'tl' ? 'Maghanap ng channel, balita, sports, anime...' : 'Search for channels by name, network, category...'}
+                      value={liveTvSearchQuery}
+                      onChange={(e) => setLiveTvSearchQuery(e.target.value)}
+                      className="w-full text-xs font-semibold text-slate-800 placeholder-slate-400 bg-slate-50 border border-slate-200 focus:border-rose-500 focus:bg-white focus:outline-none rounded-xl px-4 py-3 pr-10 transition shadow-inner"
+                    />
+                    {liveTvSearchQuery && (
+                      <button
+                        onClick={() => setLiveTvSearchQuery('')}
+                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-black"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Channel Selector Grid */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest pl-1">
+                    {language === 'tl' ? 'MGA LOKAL NA ESTASYON' : 'AVAILABLE LOCAL CHANNELS'}
+                  </h4>
+
+                  {isRefreshingLiveTv ? (
+                    <div className="bg-slate-50 rounded-2xl border border-slate-200/60 p-12 text-center space-y-2 animate-pulse">
+                      <RefreshCw className="w-6 h-6 text-rose-600 animate-spin mx-auto" />
+                      <p className="text-[11px] text-slate-600 font-extrabold uppercase tracking-wider">
+                        {language === 'tl' ? 'Ina-update ang listahan ng channels...' : 'Updating channel lists...'}
+                      </p>
+                    </div>
+                  ) : filteredStreams.length === 0 ? (
+                    <div className="bg-slate-50 rounded-2xl border border-dashed border-slate-200 p-12 text-center space-y-2">
+                      <div className="text-3xl">📺</div>
+                      <h5 className="font-extrabold text-slate-800 text-xs">
+                        {language === 'tl' ? 'Walang nahanap na channel' : 'No Channels Found'}
+                      </h5>
+                      <p className="text-[10px] text-slate-400 max-w-xs mx-auto font-semibold">
+                        {language === 'tl'
+                          ? `Walang tumutugmang estasyon para sa "${liveTvSearchQuery}". Subukang maghanap ng iba o i-refresh ang registry.`
+                          : `No channels matched your query "${liveTvSearchQuery}". Try adjusting your keywords or refresh the stream registry.`}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {filteredStreams.map((st) => {
+                        const isCurrentlyPlaying = selectedLiveTv?.id === st.id || selectedLiveTv?.url === st.url;
+                        return (
+                          <button
+                            key={st.id || st.url}
+                            type="button"
+                            onClick={() => {
+                              setSelectedLiveTv(st);
+                              triggerNotification(
+                                language === 'tl'
+                                  ? `Lumilipat sa ${st.name}...`
+                                  : `Switching to ${st.name}...`,
+                                'info'
+                              );
+                            }}
+                            className={`text-left rounded-2xl border p-4 transition flex flex-col justify-between space-y-3 cursor-pointer ${
+                              isCurrentlyPlaying
+                                ? 'bg-rose-50/70 border-rose-500 ring-2 ring-rose-500/20 shadow-xs'
+                                : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-xs'
+                            }`}
+                          >
+                            <div className="space-y-2 w-full">
+                              <div className="flex items-center justify-between w-full">
+                                <span className="bg-slate-100 text-slate-700 text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border border-slate-200 truncate max-w-[150px]">
+                                  {st.network}
+                                </span>
+                                {isCurrentlyPlaying && (
+                                  <span className="bg-rose-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-md animate-pulse shrink-0">
+                                    ON AIR
+                                  </span>
+                                )}
+                              </div>
+                              
+                              <div className="flex items-start gap-2 pt-1">
+                                <span className="text-xl leading-none select-none pt-0.5 shrink-0">{st.logo}</span>
+                                <div className="space-y-0.5 min-w-0">
+                                  <h5 className="font-extrabold text-slate-950 text-xs leading-snug line-clamp-1">{st.name}</h5>
+                                  <p className="text-[10px] text-slate-500 font-semibold leading-normal line-clamp-2">{st.description}</p>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between w-full pt-2 border-t border-slate-100/60 text-[9px] font-bold">
+                              <span className={isCurrentlyPlaying ? 'text-rose-600' : 'text-slate-500'}>
+                                {isCurrentlyPlaying ? '● Currently Playing' : 'Click to Tune In'}
+                              </span>
+                              <span className="text-blue-600 uppercase tracking-wider hover:underline">
+                                HLS Stream
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* TAB CONTENT: 3. NETFLIX FREE VIDEOS */}
           {socialTab === 'netflix' && (
