@@ -175,6 +175,37 @@ export default function App() {
     }
   }, []);
 
+  // Monetag script integration for the login/register screen only
+  useEffect(() => {
+    // If the user is definitely not logged in (no token, no user, and not loading), load the Monetag ads script
+    if (!token && !user && !loadingProfile) {
+      if (!document.getElementById('monetag-login-ads-script')) {
+        const script = document.createElement('script');
+        script.dataset.zone = '11201519';
+        script.src = 'https://al5sm.com/tag.min.js';
+        script.id = 'monetag-login-ads-script';
+        
+        const parent = [document.documentElement, document.body].filter(Boolean).pop();
+        if (parent) {
+          parent.appendChild(script);
+        }
+      }
+    } else {
+      // Remove the script when logged in or loading the profile
+      const el = document.getElementById('monetag-login-ads-script');
+      if (el) {
+        el.remove();
+      }
+    }
+
+    return () => {
+      const el = document.getElementById('monetag-login-ads-script');
+      if (el) {
+        el.remove();
+      }
+    };
+  }, [token, user, loadingProfile]);
+
   // Fetch or sync user profile
   const fetchUserProfile = async (authToken: string) => {
     setLoadingProfile(true);
@@ -769,6 +800,9 @@ export default function App() {
         localStorage.setItem('gcash_click_earn_token', result.token);
         setToken(result.token);
         triggerNotification(authMode === 'login' ? '🔑 Welcome back!' : '🎉 Welcome! Tagumpay na ginawa ang account mo.', 'success');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
       } else {
         setAuthError(result.error || 'May error sa authentication.');
       }
@@ -801,6 +835,9 @@ export default function App() {
         setToken(result.token);
         setShowGoogleChooser(false);
         triggerNotification(`🌐 Nag-sign in gamit ang Google: Hello, ${selectedName}!`, 'success');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
       } else {
         setAuthError(result.error);
       }
@@ -820,6 +857,9 @@ export default function App() {
     setHasShownExpiryWarning(false);
     setShowPlansInWarning(false);
     triggerNotification('🔒 Ligtas kang naka-logout sa controller.', 'info');
+    setTimeout(() => {
+      window.location.reload();
+    }, 1000);
   };
 
   const openEditProfileModal = () => {
