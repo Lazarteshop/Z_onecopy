@@ -189,8 +189,15 @@ function loadDB(): DBStructure {
         admin.password = envAdminPassword;
         admin.name = envAdminName;
       }
-      if (!loaded.campaigns || loaded.campaigns.length === 0) {
-        loaded.campaigns = INITIAL_CAMPAIGNS;
+      if (!loaded.campaigns || loaded.campaigns.length < INITIAL_CAMPAIGNS.length) {
+        const existingIds = new Set(loaded.campaigns ? loaded.campaigns.map((c: any) => c.id) : []);
+        const newCampaignsToAdd = INITIAL_CAMPAIGNS.filter(c => !existingIds.has(c.id));
+        loaded.campaigns = [...(loaded.campaigns || []), ...newCampaignsToAdd];
+        try {
+          fs.writeFileSync(DB_FILE_PATH, JSON.stringify(loaded, null, 2));
+        } catch (writeErr) {
+          console.error('Failed to write back updated campaigns to db.json', writeErr);
+        }
       }
       if (!loaded.posts) {
         loaded.posts = [
@@ -1745,7 +1752,7 @@ const PROHIBITED_PORN_WORDS = [
 ];
 
 const SWEAR_WORDS = [
-  "gago", "putangina", "tangina", "putang ina", "tang ina", "pukinangina", "tarantado", "ulol", "pakyu", "fuck", "shit", "mamatay ka na", "kantutan", "kantotin", "subo mo titi ko", "fuckyou", "tanga", "demonyo", "devil", "bitch", "asshole"
+  "gago", "putangina", "tangina", "putang ina", "tang ina", "pukinangina", "tarantado", "ulol", "pakyaw", "pakyu", "fuck", "shit", "bitch", "asshole"
 ];
 
 function containsInappropriateContent(text: string): boolean {

@@ -14,7 +14,7 @@ export interface WebsiteCampaign {
     primaryColor: string;
     accentColor: string;
     paragraphs: string[];
-    features: string[];
+    features?: string[];
     offers?: string[];
   };
 }
