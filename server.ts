@@ -194,6 +194,10 @@ interface ActiveCall {
   type: 'video' | 'voice';
   status: 'ringing' | 'accepted' | 'declined' | 'ended';
   createdAt: string;
+  callerSignal?: string;
+  receiverSignal?: string;
+  callerCandidates?: string;
+  receiverCandidates?: string;
 }
 
 interface DBStructure {
@@ -2661,6 +2665,10 @@ app.post('/api/zone/calls', (req, res) => {
     const call = db.activeCalls.find(c => c.id === callId);
     if (call) {
       if (status) call.status = status;
+      if (req.body.callerSignal) call.callerSignal = req.body.callerSignal;
+      if (req.body.receiverSignal) call.receiverSignal = req.body.receiverSignal;
+      if (req.body.callerCandidates) call.callerCandidates = req.body.callerCandidates;
+      if (req.body.receiverCandidates) call.receiverCandidates = req.body.receiverCandidates;
       saveDB(db);
       return res.json({ success: true, call });
     }

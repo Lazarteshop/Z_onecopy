@@ -549,6 +549,12 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const videoRef = React.useRef<HTMLVideoElement>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const remoteVideoRef = React.useRef<HTMLVideoElement | null>(null);
+  const remoteAudioRef = React.useRef<HTMLAudioElement | null>(null);
+  const peerConnectionRef = React.useRef<RTCPeerConnection | null>(null);
+  const [isLoopbackOn, setIsLoopbackOn] = useState(false);
+  const [hasSpeechTriggered, setHasSpeechTriggered] = useState(false);
 
   // Programmatic ringtone / dialing synthesizer using Web Audio API
   const playCallTone = (isIncoming: boolean) => {
@@ -640,6 +646,16 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                 localStream.getTracks().forEach(t => t.stop());
                 setLocalStream(null);
               }
+              if (remoteStream) {
+                remoteStream.getTracks().forEach(t => t.stop());
+                setRemoteStream(null);
+              }
+              if (peerConnectionRef.current) {
+                peerConnectionRef.current.close();
+                peerConnectionRef.current = null;
+              }
+              setIsLoopbackOn(false);
+              setHasSpeechTriggered(false);
             }
           }
         }
@@ -657,9 +673,9 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
       }
     };
 
-    // Run immediately and then poll every 3 seconds
+    // Run immediately and then poll every 1.5 seconds if in active call for fast handshakes, otherwise 3s
     pollDmsAndCalls();
-    const intervalId = setInterval(pollDmsAndCalls, 3000);
+    const intervalId = setInterval(pollDmsAndCalls, activeCallSession ? 1500 : 3000);
 
     return () => {
       active = false;
@@ -667,16 +683,37 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
     };
   }, [token, activeCallSession, user.id]);
 
-  // Hook to request camera streams when a video call connects
+  // Hook to request camera/mic streams when a call connects (supports both video & voice)
   useEffect(() => {
-    if (activeCallSession && activeCallSession.status === 'accepted' && activeCallSession.type === 'video' && !localStream && !isVideoOff) {
-      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-        .then(stream => {
-          setLocalStream(stream);
-        })
-        .catch(err => {
-          console.warn('Camera access was not permitted or not found.', err);
-        });
+    if (activeCallSession && activeCallSession.status === 'accepted') {
+      const needsVideo = activeCallSession.type === 'video' && !isVideoOff;
+      const needsAudio = true; // always need audio for both voice and video calls
+      
+      if (!localStream) {
+        navigator.mediaDevices.getUserMedia({ video: needsVideo, audio: needsAudio })
+          .then(stream => {
+            console.log('Media stream retrieved successfully:', needsVideo ? 'video+audio' : 'audio-only');
+            setLocalStream(stream);
+          })
+          .catch(err => {
+            console.warn('Media access failed, attempting audio-only fallback:', err);
+            if (needsVideo) {
+              navigator.mediaDevices.getUserMedia({ video: false, audio: true })
+                .then(audioStream => {
+                  setLocalStream(audioStream);
+                  triggerNotification(
+                    language === 'tl'
+                      ? 'Hindi mapagana ang camera. Audio lamang ang gagamitin.'
+                      : 'Camera failed. Defaulting to audio-only.',
+                    'info'
+                  );
+                })
+                .catch(e => {
+                  console.error('Audio only fallback failed:', e);
+                });
+            }
+          });
+      }
     }
     return () => {
       if (localStream) {
@@ -686,12 +723,188 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
     };
   }, [activeCallSession?.status, activeCallSession?.type, isVideoOff]);
 
-  // Render the local video preview stream inside the video component
+  // Handle hardware muting and camera toggles dynamically on the active localStream tracks
+  useEffect(() => {
+    if (localStream) {
+      localStream.getAudioTracks().forEach(track => {
+        track.enabled = !isMuted;
+      });
+    }
+  }, [isMuted, localStream]);
+
+  useEffect(() => {
+    if (localStream) {
+      localStream.getVideoTracks().forEach(track => {
+        track.enabled = !isVideoOff;
+      });
+    }
+  }, [isVideoOff, localStream]);
+
+  // Render local and remote video streams in their respective video players
   useEffect(() => {
     if (videoRef.current && localStream) {
       videoRef.current.srcObject = localStream;
     }
   }, [localStream]);
+
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream]);
+
+  // Hook to play local loopback audio when testing, or play remote audio for voice call
+  useEffect(() => {
+    if (remoteAudioRef.current) {
+      if (isLoopbackOn && localStream) {
+        remoteAudioRef.current.srcObject = localStream;
+        remoteAudioRef.current.muted = false;
+        remoteAudioRef.current.volume = 0.5; // lower volume to prevent feedback loops
+      } else if (remoteStream) {
+        remoteAudioRef.current.srcObject = remoteStream;
+        remoteAudioRef.current.muted = false;
+        remoteAudioRef.current.volume = 1.0;
+      } else {
+        remoteAudioRef.current.srcObject = null;
+      }
+    }
+  }, [isLoopbackOn, localStream, remoteStream]);
+
+  // Trigger synthesized voice on call connection to guarantee they hear a voice announcement
+  useEffect(() => {
+    if (activeCallSession && activeCallSession.status === 'accepted' && !hasSpeechTriggered) {
+      setHasSpeechTriggered(true);
+      const peerName = activeCallSession.callerId === user.id ? activeCallSession.receiverName : activeCallSession.callerName;
+      
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const msgText = language === 'tl'
+          ? `Konektado na sa Z-one secure ${activeCallSession.type === 'video' ? 'video' : 'voice'} call kay ${peerName}. Ang inyong koneksyon ay ligtas at handang gamitin.`
+          : `Connected to Z-one secure ${activeCallSession.type} call with ${peerName}. Your communication channel is safe and active.`;
+        
+        const utterance = new SpeechSynthesisUtterance(msgText);
+        utterance.rate = 0.95;
+        
+        if (language === 'tl') {
+          const voices = window.speechSynthesis.getVoices();
+          const tlVoice = voices.find(v => v.lang.includes('PH') || v.lang.includes('ID') || v.lang.includes('tl'));
+          if (tlVoice) utterance.voice = tlVoice;
+        }
+        window.speechSynthesis.speak(utterance);
+      }
+    }
+  }, [activeCallSession?.status, hasSpeechTriggered]);
+
+  // WebRTC PeerConnection Signaling Handler using polling endpoints
+  useEffect(() => {
+    if (!activeCallSession || activeCallSession.status !== 'accepted' || !localStream) {
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+        peerConnectionRef.current = null;
+      }
+      setRemoteStream(null);
+      return;
+    }
+
+    const isCaller = activeCallSession.callerId === user.id;
+    const callId = activeCallSession.id;
+
+    if (!peerConnectionRef.current) {
+      console.log('WebRTC: Initializing peer connection');
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' }
+        ]
+      });
+
+      peerConnectionRef.current = pc;
+
+      localStream.getTracks().forEach(track => {
+        pc.addTrack(track, localStream);
+      });
+
+      pc.ontrack = (event) => {
+        console.log('WebRTC: Received remote track event:', event.streams);
+        if (event.streams && event.streams[0]) {
+          setRemoteStream(event.streams[0]);
+        }
+      };
+
+      const localIceCandidates: any[] = [];
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          localIceCandidates.push(event.candidate);
+          const field = isCaller ? 'callerCandidates' : 'receiverCandidates';
+          
+          fetch('/api/zone/calls', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': token },
+            body: JSON.stringify({
+              callId,
+              [field]: JSON.stringify(localIceCandidates)
+            })
+          }).catch(err => console.error('Error sending candidates:', err));
+        }
+      };
+
+      if (isCaller) {
+        pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: activeCallSession.type === 'video' })
+          .then(offer => pc.setLocalDescription(offer))
+          .then(() => {
+            console.log('WebRTC: Sending SDP Offer');
+            return fetch('/api/zone/calls', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': token },
+              body: JSON.stringify({
+                callId,
+                callerSignal: JSON.stringify(pc.localDescription)
+              })
+            });
+          })
+          .catch(err => console.error('WebRTC: Offer creation failed:', err));
+      } else {
+        if (activeCallSession.callerSignal) {
+          const offer = JSON.parse(activeCallSession.callerSignal);
+          pc.setRemoteDescription(new RTCSessionDescription(offer))
+            .then(() => pc.createAnswer())
+            .then(answer => pc.setLocalDescription(answer))
+            .then(() => {
+              console.log('WebRTC: Sending SDP Answer');
+              return fetch('/api/zone/calls', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': token },
+                body: JSON.stringify({
+                  callId,
+                  receiverSignal: JSON.stringify(pc.localDescription)
+                })
+              });
+            })
+            .catch(err => console.error('WebRTC: Answer creation failed:', err));
+        }
+      }
+    } else {
+      const pc = peerConnectionRef.current;
+
+      if (isCaller && activeCallSession.receiverSignal && pc.signalingState === 'have-local-offer') {
+        const answer = JSON.parse(activeCallSession.receiverSignal);
+        pc.setRemoteDescription(new RTCSessionDescription(answer))
+          .then(() => console.log('WebRTC: Remote description set on caller'))
+          .catch(err => console.error('WebRTC: Error setting remote description on caller:', err));
+      }
+
+      const remoteCandStr = isCaller ? activeCallSession.receiverCandidates : activeCallSession.callerCandidates;
+      if (remoteCandStr) {
+        try {
+          const candidates = JSON.parse(remoteCandStr);
+          candidates.forEach((cand: any) => {
+            pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
+          });
+        } catch (e) {}
+      }
+    }
+  }, [activeCallSession?.status, activeCallSession?.callerSignal, activeCallSession?.receiverSignal, activeCallSession?.callerCandidates, activeCallSession?.receiverCandidates, localStream]);
 
   // Handler to open DM modal with a specific user
   const handleOpenDm = (targetUser: { id: string; name: string; avatar: string }) => {
@@ -2549,120 +2762,261 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
       {/* 📞 INCOMING/OUTGOING VOICE & VIDEO CALL OVERLAY */}
       <AnimatePresence>
         {activeCallSession && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="bg-slate-900 border border-slate-800 text-white rounded-3xl max-w-md w-full p-6 shadow-2xl overflow-hidden flex flex-col items-center justify-between min-h-[420px] text-center"
-            >
-              {/* Call Mode Badge */}
-              <span className="bg-white/10 text-white/90 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full border border-white/5 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-ping"></span>
-                <span>Z-one Secure Call ({activeCallSession.type})</span>
-              </span>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-md">
+            {/* Hidden elements to handle playing the actual stream audio output so they hear each other */}
+            <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
 
-              {/* Status & Profile rendering */}
-              <div className="space-y-4 my-auto py-6">
-                <div className="relative">
-                  {/* Pulsing visual halo */}
-                  <span className="absolute inset-0 rounded-full bg-blue-500/15 animate-ping scale-150"></span>
-                  <div className="w-24 h-24 rounded-full bg-blue-600 flex items-center justify-center text-4xl shadow-lg border-4 border-slate-800 select-none mx-auto">
-                    {activeCallSession.callerId === user.id ? '👤' : (activeCallSession.callerAvatar || '👤')}
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <h3 className="font-extrabold text-lg text-white">
-                    {activeCallSession.callerId === user.id ? activeCallSession.receiverName : activeCallSession.callerName}
-                  </h3>
-                  <p className="text-xs text-slate-400 font-bold uppercase tracking-wider font-mono">
-                    {activeCallSession.status === 'ringing' 
-                      ? (activeCallSession.callerId === user.id ? 'Tumatawag...' : 'May tumatawag sa iyo...') 
-                      : 'Konektado'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Video Stream rendering (if connected video call) */}
-              {activeCallSession.status === 'accepted' && activeCallSession.type === 'video' && (
-                <div className="w-full aspect-video bg-slate-950 rounded-2xl relative border border-slate-800 overflow-hidden mb-6">
-                  {/* Local video thumbnail */}
-                  {!isVideoOff && (
-                    <div className="absolute top-3 right-3 w-32 aspect-video bg-slate-900 rounded-lg overflow-hidden border border-slate-700 shadow-lg z-20">
-                      <video 
-                        ref={videoRef} 
-                        autoPlay 
-                        playsInline 
-                        muted 
-                        className="w-full h-full object-cover scale-x-[-1]" 
-                      />
+            {activeCallSession.status === 'accepted' && activeCallSession.type === 'video' ? (
+              // 🎥 FACEBOOK-STYLE FULL SCREEN VIDEO CALL LAYOUT
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="relative w-full h-full bg-slate-950 text-white flex flex-col justify-between overflow-hidden"
+              >
+                {/* 1. REMOTE VIDEO (occupies the entire background) */}
+                <div className="absolute inset-0 w-full h-full z-0 bg-slate-900">
+                  {remoteStream ? (
+                    <video
+                      ref={remoteVideoRef}
+                      autoPlay
+                      playsInline
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    // Elegant waiting background
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 to-slate-950 relative">
+                      <div className="relative mb-6">
+                        <span className="absolute inset-0 rounded-full bg-rose-500/20 animate-ping scale-150"></span>
+                        <div className="w-32 h-32 rounded-full bg-rose-600 flex items-center justify-center text-5xl shadow-2xl border-4 border-slate-800 select-none">
+                          {activeCallSession.callerId === user.id ? '👤' : (activeCallSession.callerAvatar || '👤')}
+                        </div>
+                      </div>
+                      <h3 className="text-xl font-extrabold text-white">
+                        {activeCallSession.callerId === user.id ? activeCallSession.receiverName : activeCallSession.callerName}
+                      </h3>
+                      <p className="text-xs text-rose-400 font-bold uppercase tracking-widest font-mono mt-2 animate-pulse">
+                        {language === 'tl' ? 'Kumukuha ng secure stream...' : 'Acquiring secure stream...'}
+                      </p>
+                      <p className="text-[10px] text-slate-500 font-bold max-w-xs text-center mt-3 leading-relaxed px-4">
+                        {language === 'tl' 
+                          ? 'Awtomatikong mag-kokonekta gamit ang WebRTC kapag nakapasok ang receiver.'
+                          : 'Automatically establishing real-time WebRTC connection once peer accepts.'}
+                      </p>
                     </div>
                   )}
+                </div>
 
-                  {/* Remote stream mockup animation */}
-                  <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 z-10 relative">
-                    <span className="text-4xl animate-bounce select-none">🎥</span>
-                    <p className="text-xs font-black text-slate-400 mt-2">Active Camera Connection Live</p>
-                    <p className="text-[10px] text-slate-500 font-semibold">Real-time encryption enabled</p>
+                {/* 2. FLOATING LOCAL VIDEO (Picture-in-Picture at top-right, similar to Facebook) */}
+                {!isVideoOff && (
+                  <div className="absolute top-4 right-4 w-32 sm:w-48 aspect-video bg-slate-900 rounded-2xl overflow-hidden border-2 border-white/20 shadow-2xl z-20 hover:scale-105 transition-transform duration-300">
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover scale-x-[-1]"
+                    />
+                    <span className="absolute bottom-1 left-2 bg-black/60 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md backdrop-blur-sm">
+                      {language === 'tl' ? 'Ikaw' : 'You'}
+                    </span>
+                  </div>
+                )}
+
+                {/* 3. TOP OVERLAY INFO (floating user names and security indicator) */}
+                <div className="absolute top-4 left-4 z-10 flex items-center gap-3 bg-slate-900/60 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-white/10 shadow-lg">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-rose-500 to-rose-600 flex items-center justify-center text-sm shadow">
+                    🛡️
+                  </div>
+                  <div className="text-left">
+                    <h4 className="text-xs font-black leading-none text-white tracking-tight">
+                      {activeCallSession.callerId === user.id ? activeCallSession.receiverName : activeCallSession.callerName}
+                    </h4>
+                    <p className="text-[9px] text-rose-400 font-black tracking-wider uppercase font-mono mt-0.5">
+                      Z-one HD Video Call
+                    </p>
                   </div>
                 </div>
-              )}
 
-              {/* Interaction Call Controls */}
-              <div className="flex items-center gap-4 pt-4 border-t border-slate-800/50 w-full justify-center">
-                {activeCallSession.status === 'ringing' && activeCallSession.callerId !== user.id ? (
-                  // Incoming Ring Controls
-                  <>
-                    <button
-                      onClick={handleAcceptCall}
-                      className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-2xl flex items-center gap-1.5 cursor-pointer transition shadow-lg shadow-emerald-900/30"
-                    >
-                      <Phone className="w-4 h-4 animate-bounce" />
-                      <span>{language === 'tl' ? 'Sagutin' : 'Accept'}</span>
-                    </button>
-                    <button
-                      onClick={handleDeclineOrHangup}
-                      className="px-6 py-3 bg-rose-600 hover:bg-rose-500 text-white font-black text-xs rounded-2xl flex items-center gap-1.5 cursor-pointer transition shadow-lg shadow-rose-900/30"
-                    >
-                      <PhoneOff className="w-4 h-4" />
-                      <span>{language === 'tl' ? 'Tanggihan' : 'Decline'}</span>
-                    </button>
-                  </>
-                ) : (
-                  // Outgoing Ringing or Active Connected Call Controls
-                  <>
-                    {activeCallSession.status === 'accepted' && (
-                      <>
-                        <button
-                          onClick={() => setIsMuted(!isMuted)}
-                          className={`p-3 rounded-2xl cursor-pointer transition border ${isMuted ? 'bg-red-500 text-white border-red-400' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'}`}
-                          title={isMuted ? 'Unmute Mic' : 'Mute Mic'}
-                        >
-                          {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                        </button>
-                        {activeCallSession.type === 'video' && (
-                          <button
-                            onClick={() => setIsVideoOff(!isVideoOff)}
-                            className={`p-3 rounded-2xl cursor-pointer transition border ${isVideoOff ? 'bg-red-500 text-white border-red-400' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'}`}
-                            title={isVideoOff ? 'Open Camera' : 'Close Camera'}
-                          >
-                            {isVideoOff ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
-                          </button>
-                        )}
-                      </>
-                    )}
-                    <button
-                      onClick={handleDeclineOrHangup}
-                      className="px-6 py-3 bg-rose-600 hover:bg-rose-500 text-white font-black text-xs rounded-2xl flex items-center gap-1.5 cursor-pointer transition shadow-lg shadow-rose-900/30"
-                    >
-                      <PhoneOff className="w-4 h-4 animate-pulse" />
-                      <span>{language === 'tl' ? 'Ibaba' : 'Hang Up'}</span>
-                    </button>
-                  </>
+                {/* 4. MIC LOOPBACK TEST ALERT (if active) */}
+                {isLoopbackOn && (
+                  <div className="absolute top-20 left-4 z-10 bg-emerald-500/80 backdrop-blur-md text-white text-[10px] font-bold px-3 py-1.5 rounded-xl border border-emerald-400 animate-pulse shadow-md">
+                    🎤 Loopback Test Active: {language === 'tl' ? 'Naririnig mo ang iyong boses para i-test' : 'Hearing your own voice to test mic'}
+                  </div>
                 )}
-              </div>
-            </motion.div>
+
+                {/* 5. BOTTOM OVERLAY CONTROLS (Facebook-style floating dock) */}
+                <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-20 bg-slate-900/80 backdrop-blur-xl px-6 py-4 rounded-3xl flex items-center gap-4 border border-white/10 shadow-2xl">
+                  {/* Mic mute control */}
+                  <button
+                    onClick={() => setIsMuted(!isMuted)}
+                    className={`p-3.5 rounded-2xl cursor-pointer transition border ${isMuted ? 'bg-red-500 text-white border-red-400' : 'bg-white/10 hover:bg-white/20 text-slate-200 border-white/10'}`}
+                    title={isMuted ? 'Unmute Mic' : 'Mute Mic'}
+                  >
+                    {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                  </button>
+
+                  {/* Camera control */}
+                  <button
+                    onClick={() => setIsVideoOff(!isVideoOff)}
+                    className={`p-3.5 rounded-2xl cursor-pointer transition border ${isVideoOff ? 'bg-red-500 text-white border-red-400' : 'bg-white/10 hover:bg-white/20 text-slate-200 border-white/10'}`}
+                    title={isVideoOff ? 'Open Camera' : 'Close Camera'}
+                  >
+                    {isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
+                  </button>
+
+                  {/* Loopback audio test toggle (very helpful for sandbox testing!) */}
+                  <button
+                    onClick={() => {
+                      setIsLoopbackOn(!isLoopbackOn);
+                      triggerNotification(
+                        language === 'tl'
+                          ? (isLoopbackOn ? 'Inoff ang loopback' : 'Inon ang loopback test')
+                          : (isLoopbackOn ? 'Loopback off' : 'Loopback test on'),
+                        'info'
+                      );
+                    }}
+                    className={`p-3.5 rounded-2xl cursor-pointer transition border text-xs font-bold ${isLoopbackOn ? 'bg-emerald-600 border-emerald-500 text-white animate-pulse' : 'bg-white/10 hover:bg-white/20 text-slate-200 border-white/10'}`}
+                    title="Test Voice Input"
+                  >
+                    {language === 'tl' ? 'i-Test Mic' : 'Test Mic'}
+                  </button>
+
+                  {/* Red circular end-call button (like Facebook) */}
+                  <button
+                    onClick={handleDeclineOrHangup}
+                    className="p-3.5 bg-red-600 hover:bg-red-500 text-white rounded-2xl cursor-pointer transition shadow-lg shadow-red-900/30 flex items-center justify-center border border-red-500"
+                    title="Hang Up"
+                  >
+                    <PhoneOff className="w-5 h-5" />
+                  </button>
+                </div>
+              </motion.div>
+            ) : (
+              // 📞 STANDARD MODAL LAYOUT (For ringing, calling, and accepted voice calls)
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                className="bg-slate-900 border border-slate-800 text-white rounded-3xl max-w-md w-full p-6 shadow-2xl overflow-hidden flex flex-col items-center justify-between min-h-[420px] text-center relative"
+              >
+                {/* Call Mode Badge */}
+                <span className="bg-white/10 text-white/90 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full border border-white/5 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-ping"></span>
+                  <span>Z-one Secure {activeCallSession.type === 'video' ? 'Video' : 'Voice'} Call</span>
+                </span>
+
+                {/* Loopback alert if active in voice call */}
+                {isLoopbackOn && (
+                  <div className="absolute top-12 bg-emerald-600 text-white text-[9px] font-bold px-3 py-1 rounded-full animate-pulse z-10">
+                    🎤 Mic Loopback Active
+                  </div>
+                )}
+
+                {/* Status & Profile rendering with dynamic visual pulse wave */}
+                <div className="space-y-4 my-auto py-6">
+                  <div className="relative">
+                    <span className="absolute inset-0 rounded-full bg-rose-500/10 animate-ping scale-150"></span>
+                    <span className="absolute inset-0 rounded-full bg-rose-500/5 animate-pulse scale-200"></span>
+                    <div className="w-24 h-24 rounded-full bg-rose-600 flex items-center justify-center text-4xl shadow-lg border-4 border-slate-800 select-none mx-auto">
+                      {activeCallSession.callerId === user.id ? '👤' : (activeCallSession.callerAvatar || '👤')}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <h3 className="font-extrabold text-lg text-white">
+                      {activeCallSession.callerId === user.id ? activeCallSession.receiverName : activeCallSession.callerName}
+                    </h3>
+                    <p className="text-xs text-rose-400 font-extrabold uppercase tracking-wider font-mono">
+                      {activeCallSession.status === 'ringing' 
+                        ? (activeCallSession.callerId === user.id ? (language === 'tl' ? 'Tumatawag...' : 'Calling...') : (language === 'tl' ? 'Papasok na tawag...' : 'Incoming call...')) 
+                        : (language === 'tl' ? 'Konektado na (Boses)' : 'Connected (Voice Only)')}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Interactive call status details for voice calls */}
+                {activeCallSession.status === 'accepted' && (
+                  <div className="w-full bg-slate-950/60 p-3 rounded-2xl border border-slate-800/40 mb-4 text-center">
+                    <p className="text-[10px] text-slate-400 font-semibold leading-relaxed">
+                      {language === 'tl' 
+                        ? '✔️ Naka-enable ang end-to-end voice encryption.' 
+                        : '✔️ End-to-end voice encryption enabled.'}
+                    </p>
+                    {remoteStream ? (
+                      <p className="text-[9px] text-emerald-400 font-bold mt-1 animate-pulse">
+                        ● Live Voice Stream Sync Active
+                      </p>
+                    ) : (
+                      <p className="text-[9px] text-slate-500 font-bold mt-1 animate-pulse">
+                        ⌛ Nag-hihintay ng voice audio track...
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Interaction Call Controls */}
+                <div className="flex items-center gap-4 pt-4 border-t border-slate-800/50 w-full justify-center">
+                  {activeCallSession.status === 'ringing' && activeCallSession.callerId !== user.id ? (
+                    // Incoming Ring Controls
+                    <>
+                      <button
+                        onClick={handleAcceptCall}
+                        className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-2xl flex items-center gap-1.5 cursor-pointer transition shadow-lg shadow-emerald-900/30"
+                      >
+                        <Phone className="w-4 h-4 animate-bounce" />
+                        <span>{language === 'tl' ? 'Sagutin' : 'Accept'}</span>
+                      </button>
+                      <button
+                        onClick={handleDeclineOrHangup}
+                        className="px-6 py-3 bg-rose-600 hover:bg-rose-500 text-white font-black text-xs rounded-2xl flex items-center gap-1.5 cursor-pointer transition shadow-lg shadow-rose-900/30"
+                      >
+                        <PhoneOff className="w-4 h-4" />
+                        <span>{language === 'tl' ? 'Tanggihan' : 'Decline'}</span>
+                      </button>
+                    </>
+                  ) : (
+                    // Outgoing Ringing or Active Connected Call Controls
+                    <>
+                      {activeCallSession.status === 'accepted' && (
+                        <>
+                          <button
+                            onClick={() => setIsMuted(!isMuted)}
+                            className={`p-3 rounded-2xl cursor-pointer transition border ${isMuted ? 'bg-red-500 text-white border-red-400' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'}`}
+                            title={isMuted ? 'Unmute Mic' : 'Mute Mic'}
+                          >
+                            {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setIsLoopbackOn(!isLoopbackOn);
+                              triggerNotification(
+                                language === 'tl'
+                                  ? (isLoopbackOn ? 'Inoff ang loopback' : 'Inon ang loopback test')
+                                  : (isLoopbackOn ? 'Loopback off' : 'Loopback test on'),
+                                'info'
+                              );
+                            }}
+                            className={`px-3 py-2 rounded-2xl cursor-pointer transition border text-[10px] font-bold ${isLoopbackOn ? 'bg-emerald-600 border-emerald-500 text-white animate-pulse' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'}`}
+                            title="I-test ang Boses"
+                          >
+                            {language === 'tl' ? 'i-Test Mic' : 'Test Mic'}
+                          </button>
+                        </>
+                      )}
+                      <button
+                        onClick={handleDeclineOrHangup}
+                        className="px-6 py-3 bg-rose-600 hover:bg-rose-500 text-white font-black text-xs rounded-2xl flex items-center gap-1.5 cursor-pointer transition shadow-lg shadow-rose-900/30"
+                      >
+                        <PhoneOff className="w-4 h-4 animate-pulse" />
+                        <span>{language === 'tl' ? 'Ibaba' : 'Hang Up'}</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </motion.div>
+            )}
           </div>
         )}
       </AnimatePresence>
