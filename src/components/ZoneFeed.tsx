@@ -3282,15 +3282,15 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                                 <p>{msg.text}</p>
                                 <div className="flex items-center justify-between gap-3 mt-1">
                                   {isMe ? (
-                                    <div className="flex items-center gap-1 select-none opacity-0 group-hover:opacity-100 transition duration-150">
+                                    <div className="flex items-center gap-2 select-none opacity-80 max-sm:opacity-100 md:opacity-0 md:group-hover:opacity-100 transition duration-150">
                                       <button
                                         type="button"
                                         onClick={() => {
                                           setEditingMessageId(msg.id);
                                           setEditingMessageText(msg.text);
                                         }}
-                                        className="text-blue-200 hover:text-white cursor-pointer"
-                                        title={language === 'tl' ? 'I-edit' : 'Edit'}
+                                        className="text-blue-200 hover:text-white cursor-pointer p-0.5"
+                                        title={language === 'tl' ? 'I-edit ang mensahe' : 'Edit message'}
                                       >
                                         <Pencil className="w-2.5 h-2.5" />
                                       </button>
@@ -3301,8 +3301,8 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                                             handleDeleteMessage(msg.id);
                                           }
                                         }}
-                                        className="text-blue-200 hover:text-red-300 cursor-pointer"
-                                        title={language === 'tl' ? 'I-delete' : 'Delete'}
+                                        className="text-blue-200 hover:text-red-300 cursor-pointer p-0.5"
+                                        title={language === 'tl' ? 'I-delete ang mensahe (Unsend)' : 'Unsend message'}
                                       >
                                         <Trash2 className="w-2.5 h-2.5" />
                                       </button>
