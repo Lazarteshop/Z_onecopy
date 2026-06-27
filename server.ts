@@ -2822,6 +2822,12 @@ app.put('/api/zone/messages/:messageId', (req, res) => {
     return res.status(403).json({ error: 'Wala kang pahintulot na i-edit ang mensaheng ito.' });
   }
 
+  // Check if message is older than 2 minutes (120000ms)
+  const messageTime = new Date(msg.createdAt).getTime();
+  if (Date.now() - messageTime > 120000) {
+    return res.status(400).json({ error: 'Hindi mo na pwedeng i-edit ang mensaheng ito dahil lumagpas na ang 2 minuto.' });
+  }
+
   if (!text || text.trim() === '') {
     return res.status(400).json({ error: 'Hindi pwedeng walang laman ang mensahe.' });
   }
@@ -2851,6 +2857,12 @@ app.delete('/api/zone/messages/:messageId', (req, res) => {
   const msg = db.directMessages[msgIndex];
   if (msg.senderId !== userId) {
     return res.status(403).json({ error: 'Wala kang pahintulot na i-delete ang mensaheng ito.' });
+  }
+
+  // Check if message is older than 2 minutes (120000ms)
+  const messageTime = new Date(msg.createdAt).getTime();
+  if (Date.now() - messageTime > 120000) {
+    return res.status(400).json({ error: 'Hindi mo na pwedeng i-unsend/delete ang mensaheng ito dahil lumagpas na ang 2 minuto.' });
   }
 
   db.directMessages.splice(msgIndex, 1);

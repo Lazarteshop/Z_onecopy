@@ -3245,6 +3245,9 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                     .filter(msg => (msg.senderId === user.id && msg.receiverId === activeDmUser.id) || (msg.senderId === activeDmUser.id && msg.receiverId === user.id))
                     .map((msg) => {
                       const isMe = msg.senderId === user.id;
+                      const msgTime = new Date(msg.createdAt).getTime();
+                      const canEditOrDelete = (Date.now() - msgTime) <= 120000;
+
                       return (
                         <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} group relative`}>
                           <div className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-xs font-semibold leading-relaxed ${isMe ? 'bg-blue-600 text-white rounded-br-none shadow-xs text-left' : 'bg-slate-250 text-slate-900 rounded-bl-none text-left'}`}>
@@ -3281,7 +3284,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                               <>
                                 <p>{msg.text}</p>
                                 <div className="flex items-center justify-between gap-3 mt-1">
-                                  {isMe ? (
+                                  {isMe && canEditOrDelete ? (
                                     <div className="flex items-center gap-2 select-none opacity-80 max-sm:opacity-100 md:opacity-0 md:group-hover:opacity-100 transition duration-150">
                                       <button
                                         type="button"
