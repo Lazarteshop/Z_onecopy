@@ -543,6 +543,213 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
   const [newDmText, setNewDmText] = useState('');
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
 
+  // --- DM READ/UNREAD TRACKING & INBOX PANEL STATES ---
+  const [readMessageIds, setReadMessageIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(`zone_read_msgs_${user.id}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const notifiedMsgIdsRef = React.useRef<Set<string>>(new Set());
+  const [showInboxPanel, setShowInboxPanel] = useState(false);
+  const [inboxSearch, setInboxSearch] = useState('');
+  const [inboxTab, setInboxTab] = useState<'chats' | 'members'>('chats');
+  const [allUsersList, setAllUsersList] = useState<any[]>([]);
+  const [loadingUsersList, setLoadingUsersList] = useState(false);
+
+  // Helper to play a lovely dual-tone chime for incoming message alerts
+  const playMessageSound = () => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const audioCtx = new AudioContextClass();
+      
+      const playTone = (freq: number, startTime: number, duration: number) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, startTime);
+        
+        gain.gain.setValueAtTime(0, startTime);
+        gain.gain.linearRampToValueAtTime(0.12, startTime + 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+        
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        osc.start(startTime);
+        osc.stop(startTime + duration);
+      };
+      
+      const now = audioCtx.currentTime;
+      // High pitched premium dual-chime: E5 (659.25Hz) followed by A5 (880.00Hz)
+      playTone(659.25, now, 0.15);
+      playTone(880.00, now + 0.12, 0.25);
+    } catch (e) {
+      console.log('Audio Context notification failed or needs initial user click gesture');
+    }
+  };
+
+  // Fetch registered users list for the inbox folder
+  const fetchAllUsersList = async () => {
+    setLoadingUsersList(true);
+    try {
+      const res = await fetch('/api/zone/users', {
+        headers: { 'Authorization': token }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAllUsersList(data.users || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch users list for inbox', err);
+    } finally {
+      setLoadingUsersList(false);
+    }
+  };
+
+  const handleOpenInbox = () => {
+    setShowInboxPanel(true);
+    setInboxSearch('');
+    fetchAllUsersList();
+  };
+
+  // Persist read message IDs across page reloads
+  useEffect(() => {
+    try {
+      localStorage.setItem(`zone_read_msgs_${user.id}`, JSON.stringify(readMessageIds));
+    } catch (e) {}
+  }, [readMessageIds, user.id]);
+
+  // Handle incoming new message alerts and notification triggers
+  useEffect(() => {
+    if (!dmMessages || dmMessages.length === 0) return;
+
+    const myReceivedMessages = dmMessages.filter(m => m.receiverId === user.id);
+
+    // Initial load: populate already received messages so they don't trigger alerts on load
+    if (notifiedMsgIdsRef.current.size === 0) {
+      myReceivedMessages.forEach(m => {
+        notifiedMsgIdsRef.current.add(m.id);
+      });
+      return;
+    }
+
+    // Identify brand-new incoming messages
+    const newMessages = myReceivedMessages.filter(m => !notifiedMsgIdsRef.current.has(m.id));
+
+    if (newMessages.length > 0) {
+      let playSound = false;
+
+      newMessages.forEach(msg => {
+        notifiedMsgIdsRef.current.add(msg.id);
+
+        // If currently talking with this sender in the active DM modal, mark as read instantly
+        if (activeDmUser && activeDmUser.id === msg.senderId) {
+          setReadMessageIds(prev => {
+            if (prev.includes(msg.id)) return prev;
+            return [...prev, msg.id];
+          });
+        } else {
+          // Play notification tone and trigger a beautiful visual feedback banner
+          playSound = true;
+          triggerNotification(
+            language === 'tl'
+              ? `💬 Mensahe mula kay ${msg.senderName}: "${msg.text.substring(0, 35)}${msg.text.length > 35 ? '...' : ''}"`
+              : `💬 Message from ${msg.senderName}: "${msg.text.substring(0, 35)}${msg.text.length > 35 ? '...' : ''}"`,
+            'success'
+          );
+        }
+      });
+
+      if (playSound) {
+        playMessageSound();
+      }
+    }
+  }, [dmMessages, activeDmUser?.id]);
+
+  // Mark all messages as read automatically from the active chat partner when the DM modal is opened
+  useEffect(() => {
+    if (activeDmUser && dmMessages.length > 0) {
+      const unreadFromActiveUser = dmMessages.filter(
+        m => m.senderId === activeDmUser.id && m.receiverId === user.id && !readMessageIds.includes(m.id)
+      );
+
+      if (unreadFromActiveUser.length > 0) {
+        const unreadIds = unreadFromActiveUser.map(m => m.id);
+        setReadMessageIds(prev => {
+          const combined = Array.from(new Set([...prev, ...unreadIds]));
+          return combined;
+        });
+      }
+    }
+  }, [activeDmUser?.id, dmMessages]);
+
+  // Group and format active direct message threads
+  const conversations = React.useMemo(() => {
+    const map = new Map<string, {
+      userId: string;
+      userName: string;
+      userAvatar: string;
+      lastMessage: string;
+      lastMessageTime: string;
+      unreadCount: number;
+    }>();
+
+    // Process from oldest to newest so the last message always overwrites in our Map
+    const sortedMsgs = [...dmMessages].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    sortedMsgs.forEach(m => {
+      const isSender = m.senderId === user.id;
+      const peerId = isSender ? m.receiverId : m.senderId;
+      const peerName = isSender ? m.receiverName : m.senderName;
+      const peerAvatar = isSender ? m.receiverAvatar : m.senderAvatar;
+
+      const isUnread = !isSender && !readMessageIds.includes(m.id);
+
+      const existing = map.get(peerId);
+      const unreadCount = (existing?.unreadCount || 0) + (isUnread ? 1 : 0);
+
+      map.set(peerId, {
+        userId: peerId,
+        userName: peerName,
+        userAvatar: peerAvatar,
+        lastMessage: m.text,
+        lastMessageTime: m.createdAt,
+        unreadCount
+      });
+    });
+
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()
+    );
+  }, [dmMessages, readMessageIds, user.id]);
+
+  const formatInboxTime = (isoString: string) => {
+    try {
+      const date = new Date(isoString);
+      const now = new Date();
+      if (date.toDateString() === now.toDateString()) {
+        return date.toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' });
+      }
+      const yesterday = new Date(now);
+      yesterday.setDate(yesterday.getDate() - 1);
+      if (date.toDateString() === yesterday.toDateString()) {
+        return language === 'tl' ? 'Kahapon' : 'Yesterday';
+      }
+      return date.toLocaleDateString('fil-PH', { month: 'short', day: 'numeric' });
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const totalUnreadCount = dmMessages.filter(
+    m => m.receiverId === user.id && !readMessageIds.includes(m.id)
+  ).length;
+
   // --- VOICE/VIDEO CALLING STATES ---
   const [activeCallSession, setActiveCallSession] = useState<any | null>(null);
   const [isMuted, setIsMuted] = useState(false);
@@ -1570,6 +1777,18 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                 {showModPanel ? '❌ Close Moderator Panel' : '🛡️ Manage Banned Users'}
               </button>
             )}
+            <button
+              onClick={handleOpenInbox}
+              className="relative bg-white text-indigo-700 hover:bg-indigo-50 border border-slate-250 font-black text-xs px-4 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-2 shadow-xs"
+            >
+              <MessageSquare className="w-4 h-4 text-indigo-600" />
+              <span>{language === 'tl' ? 'Mga Mensahe' : 'Messages'}</span>
+              {totalUnreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-black text-white ring-2 ring-white animate-bounce">
+                  {totalUnreadCount}
+                </span>
+              )}
+            </button>
             <button
               onClick={fetchPosts}
               className="bg-white/10 hover:bg-white/20 text-white border border-white/20 font-bold text-xs px-4 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-1.5"
@@ -3111,6 +3330,291 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                 </button>
               </div>
             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 📥 FLOATING MESSAGES INBOX SHORTCUT (PERSISTENT ON ALL TABS) */}
+      <div className="fixed bottom-6 right-6 z-40">
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={handleOpenInbox}
+          className="relative flex items-center justify-center w-14 h-14 rounded-full bg-gradient-to-r from-indigo-600 via-indigo-700 to-indigo-800 text-white shadow-2xl hover:from-indigo-700 hover:to-indigo-900 cursor-pointer border border-indigo-500 transition-colors"
+          title={language === 'tl' ? 'Buksan ang Inbox' : 'Open Inbox'}
+        >
+          <MessageSquare className="w-6 h-6 animate-pulse" />
+          {totalUnreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-[11px] font-black text-white ring-3 ring-slate-900 animate-bounce">
+              {totalUnreadCount}
+            </span>
+          )}
+        </motion.button>
+      </div>
+
+      {/* 📥 MESSAGES INBOX SLIDE-OVER DRAWER OVERLAY */}
+      <AnimatePresence>
+        {showInboxPanel && (
+          <div className="fixed inset-0 z-50 overflow-hidden">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowInboxPanel(false)}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-xs"
+            />
+
+            {/* Slide-over Panel Container */}
+            <div className="absolute inset-y-0 right-0 max-w-full flex pl-10">
+              <motion.div
+                initial={{ x: '100%' }}
+                animate={{ x: 0 }}
+                exit={{ x: '100%' }}
+                transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+                className="w-screen max-w-md bg-white shadow-2xl flex flex-col h-full border-l border-slate-100 text-slate-800"
+              >
+                {/* Drawer Header */}
+                <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                      <MessageSquare className="w-5 h-5" />
+                    </span>
+                    <div className="text-left">
+                      <h3 className="font-black text-slate-900 text-sm leading-tight">
+                        {language === 'tl' ? 'Z-one Inbox (Mga Mensahe)' : 'Z-one Messages Inbox'}
+                      </h3>
+                      <p className="text-[10px] text-slate-500 font-bold font-mono">
+                        {totalUnreadCount > 0
+                          ? (language === 'tl' ? `Mayroon kang ${totalUnreadCount} unread` : `You have ${totalUnreadCount} unread`)
+                          : (language === 'tl' ? 'Ligtas na end-to-end messaging' : 'Secure end-to-end messaging')}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setShowInboxPanel(false)}
+                    className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer transition"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Search Bar */}
+                <div className="p-3 bg-white border-b border-slate-50">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={inboxSearch}
+                      onChange={(e) => setInboxSearch(e.target.value)}
+                      placeholder={
+                        inboxTab === 'chats'
+                          ? (language === 'tl' ? 'Maghanap ng chat o mensahe...' : 'Search chat or message...')
+                          : (language === 'tl' ? 'Maghanap ng miyembro...' : 'Search members...')
+                      }
+                      className="w-full pl-3 pr-10 py-2 bg-slate-100 border-none rounded-2xl text-xs font-semibold placeholder-slate-450 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30"
+                    />
+                    {inboxSearch && (
+                      <button
+                        onClick={() => setInboxSearch('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Folder Selection Tabs */}
+                <div className="px-4 py-2 bg-slate-50/50 border-b border-slate-150 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1 flex-1">
+                    <button
+                      onClick={() => setInboxTab('chats')}
+                      className={`flex-1 py-1.5 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition ${
+                        inboxTab === 'chats'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'
+                      }`}
+                    >
+                      {language === 'tl' ? 'Mga Chat' : 'Active Chats'}
+                    </button>
+                    <button
+                      onClick={() => setInboxTab('members')}
+                      className={`flex-1 py-1.5 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition ${
+                        inboxTab === 'members'
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'
+                      }`}
+                    >
+                      {language === 'tl' ? 'Mga Miyembro' : 'All Members'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Scrollable Container List */}
+                <div className="flex-1 overflow-y-auto divide-y divide-slate-50 bg-slate-50/30">
+                  {inboxTab === 'chats' ? (
+                    (() => {
+                      const filtered = conversations.filter(conv =>
+                        conv.userName.toLowerCase().includes(inboxSearch.toLowerCase()) ||
+                        conv.lastMessage.toLowerCase().includes(inboxSearch.toLowerCase())
+                      );
+
+                      if (filtered.length === 0) {
+                        return (
+                          <div className="h-full flex flex-col items-center justify-center p-8 text-center space-y-2">
+                            <span className="text-3xl select-none animate-bounce">💬</span>
+                            <h4 className="font-extrabold text-xs text-slate-800">
+                              {language === 'tl' ? 'Walang Aktibong Chat' : 'No Active Chats'}
+                            </h4>
+                            <p className="text-[10px] text-slate-450 font-semibold max-w-xs leading-relaxed">
+                              {language === 'tl'
+                                ? 'I-click ang "Mga Miyembro" tab sa itaas o mag-click ng avatar sa feed upang simulan ang pakikipag-chat!'
+                                : 'Switch to "All Members" above or click any avatar in the feed to start messaging someone!'}
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return filtered.map(conv => {
+                        const isOnline = onlineUserIds.includes(conv.userId);
+                        return (
+                          <div
+                            key={conv.userId}
+                            onClick={() => {
+                              setActiveDmUser({
+                                id: conv.userId,
+                                name: conv.userName,
+                                avatar: conv.userAvatar
+                              });
+                              setShowInboxPanel(false);
+                            }}
+                            className="p-3.5 flex items-center justify-between gap-3 hover:bg-indigo-50/40 cursor-pointer transition duration-150"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="relative inline-block select-none shrink-0">
+                                {renderFeedAvatar(conv.userAvatar, conv.userName, "w-11 h-11", "text-xl", conv.userId)}
+                                {isOnline ? (
+                                  <span className="absolute bottom-0 right-0 flex h-3 w-3">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-white"></span>
+                                  </span>
+                                ) : (
+                                  <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-slate-400 border-2 border-white" />
+                                )}
+                              </div>
+
+                              <div className="text-left min-w-0">
+                                <h4 className={`text-xs font-black truncate text-slate-900 ${conv.unreadCount > 0 ? 'text-indigo-900 font-extrabold' : ''}`}>
+                                  {conv.userName}
+                                </h4>
+                                <p className={`text-[11px] truncate mt-0.5 leading-none ${
+                                  conv.unreadCount > 0 ? 'text-slate-900 font-extrabold' : 'text-slate-450 font-medium'
+                                }`}>
+                                  {conv.lastMessage}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col items-end shrink-0 gap-1.5">
+                              <span className="text-[9px] text-slate-400 font-bold font-mono">
+                                {formatInboxTime(conv.lastMessageTime)}
+                              </span>
+                              {conv.unreadCount > 0 && (
+                                <span className="bg-red-500 text-white font-black text-[9px] rounded-full min-w-5 h-5 px-1.5 flex items-center justify-center animate-pulse">
+                                  {conv.unreadCount}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()
+                  ) : (
+                    // MEMBERS DIRECTORY TAB
+                    (() => {
+                      const filtered = allUsersList
+                        .filter(u => u.id !== user.id) // hide ourselves
+                        .filter(u => u.name.toLowerCase().includes(inboxSearch.toLowerCase()));
+
+                      if (loadingUsersList) {
+                        return (
+                          <div className="h-full flex flex-col items-center justify-center p-8 text-center space-y-1">
+                            <span className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></span>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                              {language === 'tl' ? 'Kinukuha ang listahan...' : 'Loading directory...'}
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      if (filtered.length === 0) {
+                        return (
+                          <div className="h-full flex flex-col items-center justify-center p-8 text-center space-y-2">
+                            <span className="text-3xl select-none">🔍</span>
+                            <h4 className="font-extrabold text-xs text-slate-800">
+                              {language === 'tl' ? 'Walang Miyembro' : 'No Members Found'}
+                            </h4>
+                            <p className="text-[10px] text-slate-450 font-semibold max-w-xs leading-relaxed">
+                              {language === 'tl'
+                                ? 'Subukang mag-type ng iba pang pangalan.'
+                                : 'Try searching for a different username.'}
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return filtered.map(u => {
+                        const isOnline = onlineUserIds.includes(u.id);
+                        return (
+                          <div
+                            key={u.id}
+                            onClick={() => {
+                              setActiveDmUser({
+                                id: u.id,
+                                name: u.name,
+                                avatar: u.avatar
+                              });
+                              setShowInboxPanel(false);
+                            }}
+                            className="p-3.5 flex items-center justify-between gap-3 hover:bg-indigo-50/40 cursor-pointer transition duration-150"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="relative inline-block select-none shrink-0">
+                                {renderFeedAvatar(u.avatar, u.name, "w-10 h-10", "text-lg", u.id)}
+                                {isOnline ? (
+                                  <span className="absolute bottom-0 right-0 flex h-3 w-3">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-white"></span>
+                                  </span>
+                                ) : (
+                                  <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-slate-400 border-2 border-white" />
+                                )}
+                              </div>
+
+                              <div className="text-left min-w-0">
+                                <h4 className="text-xs font-black truncate text-slate-900">
+                                  {u.name}
+                                </h4>
+                                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-mono">
+                                  {isOnline
+                                    ? (language === 'tl' ? 'Online Ngayon' : 'Active Now')
+                                    : (language === 'tl' ? 'Hindi Aktibo' : 'Offline')}
+                                </p>
+                              </div>
+                            </div>
+
+                            <button className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-black rounded-xl cursor-pointer transition uppercase tracking-wider shrink-0">
+                              {language === 'tl' ? 'I-chat' : 'Message'}
+                            </button>
+                          </div>
+                        );
+                      });
+                    })()
+                  )}
+                </div>
+              </motion.div>
+            </div>
           </div>
         )}
       </AnimatePresence>

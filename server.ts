@@ -2572,6 +2572,21 @@ app.post('/api/user/simulate-expire', (req, res) => {
 //       Z-ONE SOCIAL DMs & CALLS API
 // ============================================
 
+// GET ALL REGISTERED USERS (FOR MESSAGING DIRECTORY)
+app.get('/api/zone/users', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+  const db = loadDB();
+  const list = (db.users || []).map(u => ({
+    id: u.id,
+    name: u.name,
+    avatar: u.avatar || '👤'
+  }));
+  res.json({ users: list });
+});
+
 // 1. GET ALL MY DIRECT MESSAGES
 app.get('/api/zone/messages', (req, res) => {
   const userId = req.headers.authorization;
