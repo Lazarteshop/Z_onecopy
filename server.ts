@@ -2414,8 +2414,160 @@ app.post('/api/zone/posts/:postId/share', (req, res) => {
 
   db.posts.push(newPost);
   saveDB(db);
-
   res.json({ success: true, post: newPost, message: 'Matagumpay na na-share ang post!' });
+});
+
+// 4c. EDIT A POST
+app.put('/api/zone/posts/:postId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const { postId } = req.params;
+  const { text } = req.body;
+  const db = loadDB();
+
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa Z-one.' });
+  }
+
+  if (!db.posts) db.posts = [];
+  const post = db.posts.find(p => p.id === postId);
+  if (!post) {
+    return res.status(404).json({ error: 'Hindi mahanap ang post.' });
+  }
+
+  if (post.userId !== userId) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na i-edit ang post na ito.' });
+  }
+
+  if (!text || text.trim() === '') {
+    return res.status(400).json({ error: 'Hindi pwedeng walang laman ang iyong post.' });
+  }
+
+  if (containsInappropriateContent(text)) {
+    return res.status(400).json({ 
+      error: '⚠️ [AUTO-DELETE]: Ang in-edit na nilalaman ay hinarang dahil naglalaman ito ng malalaswang salita.' 
+    });
+  }
+
+  post.text = filterSwearWords(text);
+  saveDB(db);
+
+  res.json({ success: true, post, message: 'Matagumpay na na-update ang post!' });
+});
+
+// 4d. DELETE A POST
+app.delete('/api/zone/posts/:postId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const { postId } = req.params;
+  const db = loadDB();
+
+  if (!db.posts) db.posts = [];
+  const postIndex = db.posts.findIndex(p => p.id === postId);
+  if (postIndex === -1) {
+    return res.status(404).json({ error: 'Hindi mahanap ang post.' });
+  }
+
+  const post = db.posts[postIndex];
+  if (post.userId !== userId) {
+    // Check if the user is admin as well
+    const user = db.users.find(u => u.id === userId);
+    if (!user || !user.isAdmin) {
+      return res.status(403).json({ error: 'Wala kang pahintulot na i-delete ang post na ito.' });
+    }
+  }
+
+  db.posts.splice(postIndex, 1);
+  saveDB(db);
+
+  res.json({ success: true, message: 'Matagumpay na na-delete ang post!' });
+});
+
+// 4e. EDIT A COMMENT
+app.put('/api/zone/posts/:postId/comments/:commentId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const { postId, commentId } = req.params;
+  const { text } = req.body;
+  const db = loadDB();
+
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa Z-one.' });
+  }
+
+  if (!db.posts) db.posts = [];
+  const post = db.posts.find(p => p.id === postId);
+  if (!post) {
+    return res.status(404).json({ error: 'Hindi mahanap ang post.' });
+  }
+
+  const comment = post.comments.find((c: any) => c.id === commentId);
+  if (!comment) {
+    return res.status(404).json({ error: 'Hindi mahanap ang comment.' });
+  }
+
+  if (comment.userId !== userId) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na i-edit ang comment na ito.' });
+  }
+
+  if (!text || text.trim() === '') {
+    return res.status(400).json({ error: 'Hindi pwedeng walang laman ang comment.' });
+  }
+
+  if (containsInappropriateContent(text)) {
+    return res.status(400).json({ 
+      error: '⚠️ [AUTO-DELETE]: Ang comment ay hinarang dahil naglalaman ito ng malalaswang salita.' 
+    });
+  }
+
+  comment.text = filterSwearWords(text);
+  saveDB(db);
+
+  res.json({ success: true, comments: post.comments, message: 'Matagumpay na na-edit ang comment!' });
+});
+
+// 4f. DELETE A COMMENT
+app.delete('/api/zone/posts/:postId/comments/:commentId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const { postId, commentId } = req.params;
+  const db = loadDB();
+
+  if (!db.posts) db.posts = [];
+  const post = db.posts.find(p => p.id === postId);
+  if (!post) {
+    return res.status(404).json({ error: 'Hindi mahanap ang post.' });
+  }
+
+  const commentIndex = post.comments.findIndex((c: any) => c.id === commentId);
+  if (commentIndex === -1) {
+    return res.status(404).json({ error: 'Hindi mahanap ang comment.' });
+  }
+
+  const comment = post.comments[commentIndex];
+  if (comment.userId !== userId) {
+    const user = db.users.find(u => u.id === userId);
+    if (!user || !user.isAdmin) {
+      return res.status(403).json({ error: 'Wala kang pahintulot na i-delete ang comment na ito.' });
+    }
+  }
+
+  post.comments.splice(commentIndex, 1);
+  saveDB(db);
+
+  res.json({ success: true, comments: post.comments, message: 'Matagumpay na na-delete ang comment!' });
 });
 
 // 5. TOGGLE ZONE (FOLLOW)
@@ -2643,6 +2795,68 @@ app.post('/api/zone/messages', (req, res) => {
   saveDB(db);
 
   res.json({ success: true, message: newMsg });
+});
+
+// 2b. EDIT A DIRECT MESSAGE
+app.put('/api/zone/messages/:messageId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { messageId } = req.params;
+  const { text } = req.body;
+  const db = loadDB();
+
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa system.' });
+  }
+
+  if (!db.directMessages) db.directMessages = [];
+  const msg = db.directMessages.find(m => m.id === messageId);
+  if (!msg) {
+    return res.status(404).json({ error: 'Hindi mahanap ang mensahe.' });
+  }
+
+  if (msg.senderId !== userId) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na i-edit ang mensaheng ito.' });
+  }
+
+  if (!text || text.trim() === '') {
+    return res.status(400).json({ error: 'Hindi pwedeng walang laman ang mensahe.' });
+  }
+
+  msg.text = filterSwearWords(text);
+  saveDB(db);
+
+  res.json({ success: true, message: msg, messageText: 'Matagumpay na na-edit ang mensahe!' });
+});
+
+// 2c. DELETE A DIRECT MESSAGE
+app.delete('/api/zone/messages/:messageId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { messageId } = req.params;
+  const db = loadDB();
+
+  if (!db.directMessages) db.directMessages = [];
+  const msgIndex = db.directMessages.findIndex(m => m.id === messageId);
+  if (msgIndex === -1) {
+    return res.status(404).json({ error: 'Hindi mahanap ang mensahe.' });
+  }
+
+  const msg = db.directMessages[msgIndex];
+  if (msg.senderId !== userId) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na i-delete ang mensaheng ito.' });
+  }
+
+  db.directMessages.splice(msgIndex, 1);
+  saveDB(db);
+
+  res.json({ success: true, message: 'Matagumpay na na-delete ang mensahe!' });
 });
 
 // 3. GET ACTIVE CALLS FOR USER (POLLING)

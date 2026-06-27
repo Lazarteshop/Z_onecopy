@@ -31,7 +31,9 @@ import {
   Maximize2,
   Play,
   RefreshCw,
-  Film
+  Film,
+  Pencil,
+  Trash2
 } from 'lucide-react';
 import { ZonePost } from '../types';
 
@@ -542,6 +544,14 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
   const [loadingDms, setLoadingDms] = useState(false);
   const [newDmText, setNewDmText] = useState('');
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
+
+  // --- EDIT / DELETE STATE HOOKS ---
+  const [editingPostId, setEditingPostId] = useState<string | null>(null);
+  const [editingPostText, setEditingPostText] = useState('');
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentText, setEditingCommentText] = useState('');
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingMessageText, setEditingMessageText] = useState('');
 
   // --- DM READ/UNREAD TRACKING & INBOX PANEL STATES ---
   const [readMessageIds, setReadMessageIds] = useState<string[]>(() => {
@@ -1655,6 +1665,152 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
     }
   };
 
+  // --- EDIT & DELETE HANDLERS ---
+  const handleSavePostEdit = async (postId: string) => {
+    if (!editingPostText.trim()) return;
+    try {
+      const res = await fetch(`/api/zone/posts/${postId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ text: editingPostText })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPosts(prev => prev.map(p => p.id === postId ? { ...p, text: data.post.text } : p));
+        setEditingPostId(null);
+        setEditingPostText('');
+        triggerNotification(
+          language === 'tl' ? 'Matagumpay na na-edit ang post!' : 'Successfully edited post!',
+          'success'
+        );
+      } else {
+        triggerNotification(data.error || 'Hindi ma-edit ang post.', 'error');
+      }
+    } catch (err) {
+      triggerNotification('Koneksyon error sa pag-edit.', 'error');
+    }
+  };
+
+  const handleDeletePost = async (postId: string) => {
+    try {
+      const res = await fetch(`/api/zone/posts/${postId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': token
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPosts(prev => prev.filter(p => p.id !== postId));
+        triggerNotification(
+          language === 'tl' ? 'Matagumpay na na-delete ang post!' : 'Successfully deleted post!',
+          'success'
+        );
+      } else {
+        triggerNotification(data.error || 'Hindi ma-delete ang post.', 'error');
+      }
+    } catch (err) {
+      triggerNotification('Koneksyon error sa pag-delete.', 'error');
+    }
+  };
+
+  const handleSaveCommentEdit = async (postId: string, commentId: string) => {
+    if (!editingCommentText.trim()) return;
+    try {
+      const res = await fetch(`/api/zone/posts/${postId}/comments/${commentId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ text: editingCommentText })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPosts(prev => prev.map(p => p.id === postId ? { ...p, comments: data.comments } : p));
+        setEditingCommentId(null);
+        setEditingCommentText('');
+        triggerNotification(
+          language === 'tl' ? 'Matagumpay na na-edit ang comment!' : 'Successfully edited comment!',
+          'success'
+        );
+      } else {
+        triggerNotification(data.error || 'Hindi ma-edit ang comment.', 'error');
+      }
+    } catch (err) {
+      triggerNotification('Koneksyon error sa pag-edit ng comment.', 'error');
+    }
+  };
+
+  const handleDeleteComment = async (postId: string, commentId: string) => {
+    try {
+      const res = await fetch(`/api/zone/posts/${postId}/comments/${commentId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': token
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPosts(prev => prev.map(p => p.id === postId ? { ...p, comments: data.comments } : p));
+        triggerNotification(
+          language === 'tl' ? 'Matagumpay na na-delete ang comment!' : 'Successfully deleted comment!',
+          'success'
+        );
+      } else {
+        triggerNotification(data.error || 'Hindi ma-delete ang comment.', 'error');
+      }
+    } catch (err) {
+      triggerNotification('Koneksyon error sa pag-delete ng comment.', 'error');
+    }
+  };
+
+  const handleSaveMessageEdit = async (messageId: string) => {
+    if (!editingMessageText.trim()) return;
+    try {
+      const res = await fetch(`/api/zone/messages/${messageId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ text: editingMessageText })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDmMessages(prev => prev.map(m => m.id === messageId ? { ...m, text: data.message.text } : m));
+        setEditingMessageId(null);
+        setEditingMessageText('');
+      } else {
+        triggerNotification(data.error || 'Hindi ma-edit ang mensahe.', 'error');
+      }
+    } catch (err) {
+      triggerNotification('Koneksyon error sa pag-edit ng mensahe.', 'error');
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    try {
+      const res = await fetch(`/api/zone/messages/${messageId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': token
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDmMessages(prev => prev.filter(m => m.id !== messageId));
+      } else {
+        triggerNotification(data.error || 'Hindi ma-delete ang mensahe.', 'error');
+      }
+    } catch (err) {
+      triggerNotification('Koneksyon error sa pag-delete ng mensahe.', 'error');
+    }
+  };
+
   const handleToggleBan = async (userIdToMod: string) => {
     try {
       const res = await fetch(`/api/admin/moderation/users/${userIdToMod}/toggle-ban`, {
@@ -2194,6 +2350,35 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                           </button>
                         )}
 
+                        {/* Owner edit/delete buttons */}
+                        {isMyOwnPost && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => {
+                                setEditingPostId(post.id);
+                                setEditingPostText(post.text);
+                              }}
+                              className="bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 p-1.5 rounded-lg text-[10px] font-black cursor-pointer flex items-center gap-1 transition"
+                              title={language === 'tl' ? 'I-edit ang post' : 'Edit post'}
+                            >
+                              <Pencil className="w-3 h-3 text-slate-500" />
+                              <span className="hidden sm:inline">{language === 'tl' ? 'I-edit' : 'Edit'}</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (!window.confirm || window.confirm(language === 'tl' ? 'Sigurado ka bang gusto mong i-delete ang post na ito?' : 'Are you sure you want to delete this post?')) {
+                                  handleDeletePost(post.id);
+                                }
+                              }}
+                              className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 p-1.5 rounded-lg text-[10px] font-black cursor-pointer flex items-center gap-1 transition"
+                              title={language === 'tl' ? 'I-delete ang post' : 'Delete post'}
+                            >
+                              <Trash2 className="w-3 h-3 text-rose-500" />
+                              <span className="hidden sm:inline">{language === 'tl' ? 'I-delete' : 'Delete'}</span>
+                            </button>
+                          </div>
+                        )}
+
                         {/* Admin delete/moderate button */}
                         {user.isAdmin && !isMyOwnPost && (
                           <button
@@ -2210,10 +2395,35 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
 
                     {/* Body */}
                     <div className="p-4 space-y-3">
-                      {post.text && (
-                        <p className="text-slate-800 text-xs font-semibold leading-relaxed whitespace-pre-wrap">
-                          {post.text}
-                        </p>
+                      {editingPostId === post.id ? (
+                        <div className="space-y-2 border border-blue-100 bg-blue-50/20 p-3 rounded-2xl">
+                          <textarea
+                            value={editingPostText}
+                            onChange={(e) => setEditingPostText(e.target.value)}
+                            className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-xl outline-none font-semibold text-slate-850 focus:ring-2 focus:ring-blue-500"
+                            rows={3}
+                          />
+                          <div className="flex justify-end gap-1.5">
+                            <button
+                              onClick={() => setEditingPostId(null)}
+                              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black rounded-xl cursor-pointer transition uppercase"
+                            >
+                              {language === 'tl' ? 'Kanselahin' : 'Cancel'}
+                            </button>
+                            <button
+                              onClick={() => handleSavePostEdit(post.id)}
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black rounded-xl cursor-pointer transition uppercase"
+                            >
+                              {language === 'tl' ? 'I-save' : 'Save'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        post.text && (
+                          <p className="text-slate-800 text-xs font-semibold leading-relaxed whitespace-pre-wrap">
+                            {post.text}
+                          </p>
+                        )
                       )}
 
                       {/* Render Shared Post Reference */}
@@ -2452,13 +2662,66 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                                   >
                                     {comm.userName}
                                   </button>
-                                  <span className="text-[8px] text-slate-400 font-mono">
-                                    {new Date(comm.createdAt).toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' })}
-                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[8px] text-slate-400 font-mono">
+                                      {new Date(comm.createdAt).toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' })}
+                                    </span>
+                                    {comm.userId === user.id && (
+                                      <div className="flex items-center gap-1 ml-1 select-none">
+                                        <button
+                                          onClick={() => {
+                                            setEditingCommentId(comm.id);
+                                            setEditingCommentText(comm.text);
+                                          }}
+                                          className="text-slate-400 hover:text-indigo-650 cursor-pointer p-0.5 rounded transition"
+                                          title={language === 'tl' ? 'I-edit' : 'Edit'}
+                                        >
+                                          <Pencil className="w-2.5 h-2.5" />
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            if (!window.confirm || window.confirm(language === 'tl' ? 'Sigurado ka bang gusto mong i-delete ang komento na ito?' : 'Are you sure you want to delete this comment?')) {
+                                              handleDeleteComment(post.id, comm.id);
+                                            }
+                                          }}
+                                          className="text-slate-400 hover:text-rose-600 cursor-pointer p-0.5 rounded transition"
+                                          title={language === 'tl' ? 'I-delete' : 'Delete'}
+                                        >
+                                          <Trash2 className="w-2.5 h-2.5" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
-                                <p className="text-slate-750 text-xs font-semibold leading-relaxed">
-                                  {comm.text}
-                                </p>
+                                {editingCommentId === comm.id ? (
+                                  <div className="flex items-center gap-1.5 mt-1.5">
+                                    <input
+                                      type="text"
+                                      value={editingCommentText}
+                                      onChange={(e) => setEditingCommentText(e.target.value)}
+                                      className="flex-1 text-xs px-2 py-1 bg-white border border-slate-200 rounded-xl outline-none text-slate-800"
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleSaveCommentEdit(post.id, comm.id);
+                                      }}
+                                    />
+                                    <button
+                                      onClick={() => setEditingCommentId(null)}
+                                      className="text-[9px] font-black text-slate-400 hover:text-slate-650 uppercase px-1.5 cursor-pointer"
+                                    >
+                                      ❌
+                                    </button>
+                                    <button
+                                      onClick={() => handleSaveCommentEdit(post.id, comm.id)}
+                                      className="text-[9px] font-black text-blue-600 hover:text-blue-750 uppercase px-1.5 cursor-pointer"
+                                    >
+                                      💾
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <p className="text-slate-750 text-xs font-semibold leading-relaxed">
+                                    {comm.text}
+                                  </p>
+                                )}
                               </div>
                             </div>
                           ))}
@@ -2943,12 +3206,74 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                     .map((msg) => {
                       const isMe = msg.senderId === user.id;
                       return (
-                        <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                        <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} group relative`}>
                           <div className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-xs font-semibold leading-relaxed ${isMe ? 'bg-blue-600 text-white rounded-br-none shadow-xs text-left' : 'bg-slate-250 text-slate-900 rounded-bl-none text-left'}`}>
-                            <p>{msg.text}</p>
-                            <span className={`text-[8px] block mt-1 font-mono text-right ${isMe ? 'text-blue-100' : 'text-slate-400'}`}>
-                              {new Date(msg.createdAt).toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' })}
-                            </span>
+                            {editingMessageId === msg.id ? (
+                              <div className="space-y-1.5 min-w-[150px]">
+                                <input
+                                  type="text"
+                                  value={editingMessageText}
+                                  onChange={(e) => setEditingMessageText(e.target.value)}
+                                  className="w-full text-xs p-1 bg-white text-slate-950 border border-slate-300 rounded-lg outline-none font-semibold"
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveMessageEdit(msg.id);
+                                  }}
+                                  autoFocus
+                                />
+                                <div className="flex justify-end gap-1.5 text-[9px] font-bold uppercase tracking-wider">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingMessageId(null)}
+                                    className="text-slate-300 hover:text-white"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveMessageEdit(msg.id)}
+                                    className="text-white hover:underline"
+                                  >
+                                    Save
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <p>{msg.text}</p>
+                                <div className="flex items-center justify-between gap-3 mt-1">
+                                  {isMe ? (
+                                    <div className="flex items-center gap-1 select-none opacity-0 group-hover:opacity-100 transition duration-150">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setEditingMessageId(msg.id);
+                                          setEditingMessageText(msg.text);
+                                        }}
+                                        className="text-blue-200 hover:text-white cursor-pointer"
+                                        title={language === 'tl' ? 'I-edit' : 'Edit'}
+                                      >
+                                        <Pencil className="w-2.5 h-2.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (!window.confirm || window.confirm(language === 'tl' ? 'Sigurado ka bang gusto mong i-delete ang mensaheng ito?' : 'Are you sure you want to delete this message?')) {
+                                            handleDeleteMessage(msg.id);
+                                          }
+                                        }}
+                                        className="text-blue-200 hover:text-red-300 cursor-pointer"
+                                        title={language === 'tl' ? 'I-delete' : 'Delete'}
+                                      >
+                                        <Trash2 className="w-2.5 h-2.5" />
+                                      </button>
+                                    </div>
+                                  ) : <span />}
+                                  <span className={`text-[8px] block font-mono ${isMe ? 'text-blue-100' : 'text-slate-400'}`}>
+                                    {new Date(msg.createdAt).toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                              </>
+                            )}
                           </div>
                         </div>
                       );
