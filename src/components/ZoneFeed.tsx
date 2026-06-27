@@ -2388,33 +2388,38 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                         )}
 
                         {/* Owner edit/delete buttons */}
-                        {isMyOwnPost && (
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => {
-                                setEditingPostId(post.id);
-                                setEditingPostText(post.text);
-                              }}
-                              className="bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 p-1.5 rounded-lg text-[10px] font-black cursor-pointer flex items-center gap-1 transition"
-                              title={language === 'tl' ? 'I-edit ang post' : 'Edit post'}
-                            >
-                              <Pencil className="w-3 h-3 text-slate-500" />
-                              <span className="hidden sm:inline">{language === 'tl' ? 'I-edit' : 'Edit'}</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                if (!window.confirm || window.confirm(language === 'tl' ? 'Sigurado ka bang gusto mong i-delete ang post na ito?' : 'Are you sure you want to delete this post?')) {
-                                  handleDeletePost(post.id);
-                                }
-                              }}
-                              className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 p-1.5 rounded-lg text-[10px] font-black cursor-pointer flex items-center gap-1 transition"
-                              title={language === 'tl' ? 'I-delete ang post' : 'Delete post'}
-                            >
-                              <Trash2 className="w-3 h-3 text-rose-500" />
-                              <span className="hidden sm:inline">{language === 'tl' ? 'I-delete' : 'Delete'}</span>
-                            </button>
-                          </div>
-                        )}
+                        {isMyOwnPost && (() => {
+                          const postTime = new Date(post.createdAt).getTime();
+                          const canEditOrDeletePost = (Date.now() - postTime) <= 120000;
+                          if (!canEditOrDeletePost) return null;
+                          return (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => {
+                                  setEditingPostId(post.id);
+                                  setEditingPostText(post.text);
+                                }}
+                                className="bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 p-1.5 rounded-lg text-[10px] font-black cursor-pointer flex items-center gap-1 transition"
+                                title={language === 'tl' ? 'I-edit ang post' : 'Edit post'}
+                              >
+                                <Pencil className="w-3 h-3 text-slate-500" />
+                                <span className="hidden sm:inline">{language === 'tl' ? 'I-edit' : 'Edit'}</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (!window.confirm || window.confirm(language === 'tl' ? 'Sigurado ka bang gusto mong i-delete ang post na ito?' : 'Are you sure you want to delete this post?')) {
+                                    handleDeletePost(post.id);
+                                  }
+                                }}
+                                className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 p-1.5 rounded-lg text-[10px] font-black cursor-pointer flex items-center gap-1 transition"
+                                title={language === 'tl' ? 'I-delete ang post' : 'Delete post'}
+                              >
+                                <Trash2 className="w-3 h-3 text-rose-500" />
+                                <span className="hidden sm:inline">{language === 'tl' ? 'I-delete' : 'Delete'}</span>
+                              </button>
+                            </div>
+                          );
+                        })()}
 
                         {/* Admin delete/moderate button */}
                         {user.isAdmin && !isMyOwnPost && (
@@ -2703,31 +2708,36 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                                     <span className="text-[8px] text-slate-400 font-mono">
                                       {new Date(comm.createdAt).toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' })}
                                     </span>
-                                    {comm.userId === user.id && (
-                                      <div className="flex items-center gap-1 ml-1 select-none">
-                                        <button
-                                          onClick={() => {
-                                            setEditingCommentId(comm.id);
-                                            setEditingCommentText(comm.text);
-                                          }}
-                                          className="text-slate-400 hover:text-indigo-650 cursor-pointer p-0.5 rounded transition"
-                                          title={language === 'tl' ? 'I-edit' : 'Edit'}
-                                        >
-                                          <Pencil className="w-2.5 h-2.5" />
-                                        </button>
-                                        <button
-                                          onClick={() => {
-                                            if (!window.confirm || window.confirm(language === 'tl' ? 'Sigurado ka bang gusto mong i-delete ang komento na ito?' : 'Are you sure you want to delete this comment?')) {
-                                              handleDeleteComment(post.id, comm.id);
-                                            }
-                                          }}
-                                          className="text-slate-400 hover:text-rose-600 cursor-pointer p-0.5 rounded transition"
-                                          title={language === 'tl' ? 'I-delete' : 'Delete'}
-                                        >
-                                          <Trash2 className="w-2.5 h-2.5" />
-                                        </button>
-                                      </div>
-                                    )}
+                                    {comm.userId === user.id && (() => {
+                                      const commTime = new Date(comm.createdAt).getTime();
+                                      const canEditOrDeleteComm = (Date.now() - commTime) <= 120000;
+                                      if (!canEditOrDeleteComm) return null;
+                                      return (
+                                        <div className="flex items-center gap-1 ml-1 select-none">
+                                          <button
+                                            onClick={() => {
+                                              setEditingCommentId(comm.id);
+                                              setEditingCommentText(comm.text);
+                                            }}
+                                            className="text-slate-400 hover:text-indigo-650 cursor-pointer p-0.5 rounded transition"
+                                            title={language === 'tl' ? 'I-edit' : 'Edit'}
+                                          >
+                                            <Pencil className="w-2.5 h-2.5" />
+                                          </button>
+                                          <button
+                                            onClick={() => {
+                                              if (!window.confirm || window.confirm(language === 'tl' ? 'Sigurado ka bang gusto mong i-delete ang komento na ito?' : 'Are you sure you want to delete this comment?')) {
+                                                handleDeleteComment(post.id, comm.id);
+                                              }
+                                            }}
+                                            className="text-slate-400 hover:text-rose-600 cursor-pointer p-0.5 rounded transition"
+                                            title={language === 'tl' ? 'I-delete' : 'Delete'}
+                                          >
+                                            <Trash2 className="w-2.5 h-2.5" />
+                                          </button>
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
                                 </div>
                                 {editingCommentId === comm.id ? (

@@ -2442,6 +2442,12 @@ app.put('/api/zone/posts/:postId', (req, res) => {
     return res.status(403).json({ error: 'Wala kang pahintulot na i-edit ang post na ito.' });
   }
 
+  // Check if post is older than 2 minutes (120000ms)
+  const postTime = new Date(post.createdAt).getTime();
+  if (Date.now() - postTime > 120000) {
+    return res.status(400).json({ error: 'Hindi mo na pwedeng i-edit ang post na ito dahil lumagpas na ang 2 minuto.' });
+  }
+
   if (!text || text.trim() === '') {
     return res.status(400).json({ error: 'Hindi pwedeng walang laman ang iyong post.' });
   }
@@ -2475,6 +2481,16 @@ app.delete('/api/zone/posts/:postId', (req, res) => {
   }
 
   const post = db.posts[postIndex];
+  const isMyOwnPost = post.userId === userId;
+
+  if (isMyOwnPost) {
+    // Check if post is older than 2 minutes (120000ms)
+    const postTime = new Date(post.createdAt).getTime();
+    if (Date.now() - postTime > 120000) {
+      return res.status(400).json({ error: 'Hindi mo na pwedeng i-delete ang post na ito dahil lumagpas na ang 2 minuto.' });
+    }
+  }
+
   if (post.userId !== userId) {
     // Check if the user is admin as well
     const user = db.users.find(u => u.id === userId);
@@ -2519,6 +2535,12 @@ app.put('/api/zone/posts/:postId/comments/:commentId', (req, res) => {
     return res.status(403).json({ error: 'Wala kang pahintulot na i-edit ang comment na ito.' });
   }
 
+  // Check if comment is older than 2 minutes (120000ms)
+  const commentTime = new Date(comment.createdAt).getTime();
+  if (Date.now() - commentTime > 120000) {
+    return res.status(400).json({ error: 'Hindi mo na pwedeng i-edit ang comment na ito dahil lumagpas na ang 2 minuto.' });
+  }
+
   if (!text || text.trim() === '') {
     return res.status(400).json({ error: 'Hindi pwedeng walang laman ang comment.' });
   }
@@ -2557,6 +2579,16 @@ app.delete('/api/zone/posts/:postId/comments/:commentId', (req, res) => {
   }
 
   const comment = post.comments[commentIndex];
+  const isMyOwnComment = comment.userId === userId;
+
+  if (isMyOwnComment) {
+    // Check if comment is older than 2 minutes (120000ms)
+    const commentTime = new Date(comment.createdAt).getTime();
+    if (Date.now() - commentTime > 120000) {
+      return res.status(400).json({ error: 'Hindi mo na pwedeng i-delete ang comment na ito dahil lumagpas na ang 2 minuto.' });
+    }
+  }
+
   if (comment.userId !== userId) {
     const user = db.users.find(u => u.id === userId);
     if (!user || !user.isAdmin) {
