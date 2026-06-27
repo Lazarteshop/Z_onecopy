@@ -545,6 +545,43 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
   const [newDmText, setNewDmText] = useState('');
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
 
+  // --- VISUAL VIEWPORT RESIZING FOR MOBILE KEYBOARD ---
+  const [visualViewportHeight, setVisualViewportHeight] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!window.visualViewport) return;
+    const updateViewportHeight = () => {
+      setVisualViewportHeight(window.visualViewport?.height || window.innerHeight);
+    };
+    window.visualViewport.addEventListener('resize', updateViewportHeight);
+    window.visualViewport.addEventListener('scroll', updateViewportHeight);
+    updateViewportHeight();
+    return () => {
+      window.visualViewport?.removeEventListener('resize', updateViewportHeight);
+      window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
+    };
+  }, [activeDmUser]);
+
+  // Keep chat container scrolled to bottom when keyboard opens or viewport shrinks
+  useEffect(() => {
+    if (activeDmUser) {
+      const scrollDown = () => {
+        const el = document.getElementById('dm-chat-scroll');
+        if (el) {
+          el.scrollTop = el.scrollHeight;
+        }
+      };
+      scrollDown();
+      // Also delayed slightly to allow transition animations to settle
+      const t1 = setTimeout(scrollDown, 80);
+      const t2 = setTimeout(scrollDown, 250);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [visualViewportHeight, activeDmUser, dmMessages.length]);
+
   // --- EDIT / DELETE STATE HOOKS ---
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [editingPostText, setEditingPostText] = useState('');
@@ -3138,12 +3175,15 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
       {/* 💬 PRIVATE DIRECT MESSAGE (DM) MODAL */}
       <AnimatePresence>
         {activeDmUser && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div 
+            className="fixed left-0 right-0 top-0 z-50 flex items-end sm:items-center justify-center p-4 max-sm:p-0 bg-slate-900/60 backdrop-blur-xs overflow-hidden"
+            style={visualViewportHeight ? { height: `${visualViewportHeight}px` } : { height: '100vh' }}
+          >
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden flex flex-col h-[520px] text-slate-800"
+              className="bg-white rounded-3xl max-sm:rounded-b-none max-sm:rounded-t-[24px] max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden flex flex-col h-[520px] max-sm:h-[85vh] max-sm:max-h-full text-slate-800"
             >
               {/* Header */}
               <div className="p-4 flex items-center justify-between border-b border-slate-100 bg-slate-50/50">
