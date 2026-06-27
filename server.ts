@@ -5,6 +5,7 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { Firestore } from '@google-cloud/firestore';
 import { INITIAL_CAMPAIGNS } from './src/data/campaigns';
+import { GoogleGenAI } from '@google/genai';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -2783,6 +2784,148 @@ app.get('/api/zone/messages', (req, res) => {
   res.json({ messages: myMessages });
 });
 
+// --- SYSTEM ADMINISTRATOR (AI ASSISTANT) CHATBOT CONFIGURATION ---
+const ZONE_APP_INFO = `
+Z-oneApp (Z-one) is a modern social media and click-earning platform with these features:
+1. **Social Media Feed**: Users can create, edit, or delete posts (with images/videos), like, comment, and "Zone" (follow) other users.
+2. **Direct Messages (DM)**: Users can chat with each other in real-time.
+3. **Voice & Video Calling**: Users can call other users directly through the DM chat interface.
+4. **Click-Earning Campaigns / Tasks**: Users can complete tasks (reading guides on Shopee, GCash, Inquirer, JobStreet remote jobs, Biyaheng Pinas, DITO SIM, Piso WiFi, Pag-IBIG MP2, SSS Salary Loan, PhilHealth, DTI, Binondo Food Trip, Tagaytay, Lazada, etc.) to earn real monetary rewards in Philippine Pesos (₱). Each task has a timer (e.g., 10-20 seconds) and a reward amount (e.g., ₱1 to ₱15).
+5. **Daily Check-in**: Users can check in daily to claim a bonus reward.
+6. **Referral System**: Users can invite friends using their unique referral code and earn bonuses and commissions from their invited friends' earnings.
+7. **Withdrawals**: Users can request withdrawals of their earnings to GCash, Maya, or bank accounts (processed/approved by an administrator).
+8. **Subscription Tiers**: Users can upgrade their levels (e.g., Regular, Gold, Premium, VIP) to get higher benefits, subject to admin approval.
+9. **Admin Panel**: Admins can ban users, moderate posts/comments, manage/create website campaigns, and approve/decline withdrawals and subscriptions.
+10. **2-Minute Rule**: Direct messages, posts, and comments can only be edited or deleted (un-sent) within 2 minutes after they are created.
+
+IMPORTANT BEHAVIOR RULES:
+- You are the System Administrator of Z-oneApp.
+- You must speak in a friendly, polite, and helpful tone, using conversational Tagalog, Taglish, or English (match the language of the user).
+- **Rule 1 (Within Scope)**: If the user asks about Z-oneApp, its features, details, campaigns, how to earn, referrals, daily check-in, subscriptions, or rules, answer them accurately and fully based on the information above.
+- **Rule 2 (Out of Scope)**: If the user asks about anything NOT related to Z-oneApp (e.g., general school questions, irrelevant tasks, unrelated products, personal problems, general knowledge, math, programming etc.), you MUST politely state that this is not within the scope of Z-oneApp and direct them to talk to the administrator or coach who invited them.
+- Example response for Out of Scope: "Pasensya na po, ang inyong tanong ay hindi saklaw ng Z-oneApp. Mangyaring makipag-ugnayan o makipag-usap sa inyong administrator o coach na nag-invite sa inyo dahil hindi ito saklaw ng aming system administrator."
+`;
+
+let geminiClientInstance: GoogleGenAI | null = null;
+
+function getGeminiClient(): GoogleGenAI | null {
+  if (!geminiClientInstance) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.warn("GEMINI_API_KEY environment variable is not defined. AI automated replies will use fallback heuristics.");
+      return null;
+    }
+    geminiClientInstance = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+  }
+  return geminiClientInstance;
+}
+
+function getFallbackResponse(text: string): string {
+  const lower = text.toLowerCase();
+  
+  // List of keywords related to Z-oneApp
+  const zoneKeywords = [
+    'z-one', 'zone', 'app', 'kita', 'earn', 'sweldo', 'pera', 'withdraw', 'daily', 'check', 'checkin', 
+    'check-in', 'commission', 'referral', 'campaign', 'task', 'post', 'comment', 'message', 'call', 
+    'pindot', 'click', 'shopee', 'gcash', 'maya', 'bank', 'subscription', 'gold', 'premium', 'vip', 'rule', 'banned'
+  ];
+
+  const isRelated = zoneKeywords.some(keyword => lower.includes(keyword));
+
+  if (isRelated) {
+    if (lower.includes('kita') || lower.includes('earn') || lower.includes('campaign') || lower.includes('task') || lower.includes('pindot')) {
+      return "Salamat sa pagtatanong! Sa Z-oneApp, pwede kang kumita sa pamamagitan ng pagkumpleto ng mga Website Campaigns sa 'Campaigns' section. Pindutin lamang ang task, mag-antay matapos ang timer, at makukuha mo na ang reward sa iyong wallet! Pwede ka ring mag-check-in araw-araw at mag-imbita ng mga kaibigan para sa karagdagang bonus.";
+    }
+    if (lower.includes('withdraw') || lower.includes('pera') || lower.includes('sweldo')) {
+      return "Para sa withdrawals, pumunta sa iyong Wallet page at i-request ang payout gamit ang iyong GCash, Maya, o Bank Account. Ipo-process ito ng administrator sa lalong madaling panahon.";
+    }
+    if (lower.includes('referral') || lower.includes('commission') || lower.includes('imbita') || lower.includes('invite')) {
+      return "Maaari mong gamitin ang iyong natatanging Referral Code sa 'Profile/Wallet' tab. Ibahagi ito sa iyong mga kaibigan upang makakuha ka ng commission mula sa bawat natapos nilang campaigns!";
+    }
+    if (lower.includes('subscription') || lower.includes('upgrade') || lower.includes('gold') || lower.includes('premium') || lower.includes('vip')) {
+      return "Maaari kang mag-request ng upgrade ng iyong subscription tier sa pamamagitan ng pagpindot ng 'Upgrade Account' sa dashboard. Susuriin at aaprubahan ito ng aming admin.";
+    }
+    return "Salamat sa pakikipag-ugnayan ukol sa Z-oneApp! Ang Z-one ay isang social media portal kung saan pwede kayong mag-post, mag-like, mag-comment, at mag-Zone habang kumikita sa pamamagitan ng pagkumpleto ng simpleng tasks at campaigns. Mayroon pa ba kayong ibang katanungan tungkol sa mga feature na ito?";
+  } else {
+    return "Pasensya na po, ang inyong tanong ay hindi saklaw ng Z-oneApp. Mangyaring makipag-ugnayan o makipag-usap sa inyong administrator o coach na nag-invite sa inyo dahil hindi ito saklaw ng aming system administrator.";
+  }
+}
+
+async function handleAdminAutoReply(userSenderId: string, userText: string) {
+  // Let it sleep for a short duration (e.g. 500ms) to look realistic
+  await new Promise(resolve => setTimeout(resolve, 600));
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userSenderId);
+  if (!user) return;
+
+  const messages = db.directMessages || [];
+  const chatHistory = messages
+    .filter(m => (m.senderId === userSenderId && m.receiverId === 'admin-rosco') || (m.senderId === 'admin-rosco' && m.receiverId === userSenderId))
+    .slice(-10);
+
+  const aiClient = getGeminiClient();
+  let replyText = '';
+
+  if (aiClient) {
+    try {
+      const formattedHistory = chatHistory.map(m => {
+        const role = m.senderId === 'admin-rosco' ? 'model' : 'user';
+        return {
+          role,
+          parts: [{ text: `${m.senderName}: ${m.text}` }]
+        };
+      });
+
+      const response = await aiClient.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: [
+          ...formattedHistory,
+          { role: 'user', parts: [{ text: `${user.name}: ${userText}` }] }
+        ],
+        config: {
+          systemInstruction: `You are the System Administrator of Z-oneApp (Z-one), acting like Meta. Stay strictly in character. If the user's question or topic is NOT related to or covered by Z-oneApp, strictly apply Rule 2 and direct them to talk to their administrator or coach who invited them because it is outside system support. Do not answer general knowledge, school questions, code, math, or other unrelated things.`
+        }
+      });
+
+      replyText = response.text || '';
+    } catch (apiErr) {
+      console.error('Gemini API call failed, falling back to heuristic response:', apiErr);
+      replyText = getFallbackResponse(userText);
+    }
+  } else {
+    replyText = getFallbackResponse(userText);
+  }
+
+  replyText = filterSwearWords(replyText);
+
+  const freshDb = loadDB();
+  const adminReply: DirectMessage = {
+    id: 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+    senderId: 'admin-rosco',
+    senderName: 'System Administrator',
+    senderAvatar: '👑',
+    receiverId: userSenderId,
+    receiverName: user.name,
+    receiverAvatar: user.avatar || '👤',
+    text: replyText,
+    createdAt: new Date().toISOString()
+  };
+
+  if (!freshDb.directMessages) {
+    freshDb.directMessages = [];
+  }
+  freshDb.directMessages.push(adminReply);
+  saveDB(freshDb);
+}
+
 // 2. SEND A DIRECT MESSAGE
 app.post('/api/zone/messages', (req, res) => {
   const senderId = req.headers.authorization;
@@ -2825,6 +2968,13 @@ app.post('/api/zone/messages', (req, res) => {
   }
   db.directMessages.push(newMsg);
   saveDB(db);
+
+  // Trigger admin auto reply if sent to the System Administrator
+  if (receiverId === 'admin-rosco') {
+    handleAdminAutoReply(senderId, text).catch(err => {
+      console.error('Error generating admin auto reply:', err);
+    });
+  }
 
   res.json({ success: true, message: newMsg });
 });
