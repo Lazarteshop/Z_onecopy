@@ -2325,6 +2325,48 @@ app.get('/api/zone/online', (req, res) => {
   res.json({ onlineUserIds: onlineIds });
 });
 
+// --- MEDIA UPLOAD ENDPOINT (Saves base64 media to server disk, keeping database small) ---
+app.post('/api/zone/upload', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const { dataUrl } = req.body;
+  if (!dataUrl || !dataUrl.startsWith('data:')) {
+    return res.status(400).json({ error: 'Walang valid media data na natanggap.' });
+  }
+
+  try {
+    const matches = dataUrl.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
+      return res.status(400).json({ error: 'Hindi maproseso ang media format.' });
+    }
+
+    const mimeType = matches[1];
+    const base64Data = matches[2];
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    const extension = mimeType.split('/')[1] || 'bin';
+    const filename = `media-${Date.now()}-${Math.floor(Math.random() * 1000000)}.${extension}`;
+    const uploadDir = path.join(process.cwd(), 'uploads');
+
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const filePath = path.join(uploadDir, filename);
+    fs.writeFileSync(filePath, buffer);
+
+    res.json({ success: true, url: `/uploads/${filename}` });
+  } catch (err: any) {
+    console.error('Error writing uploaded file:', err);
+    res.status(500).json({ error: 'Hindi naisulat ang media file sa server.' });
+  }
+});
+
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
 // 1. GET ALL POSTS
 app.get('/api/zone/posts', (req, res) => {
   const db = loadDB();

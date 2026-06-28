@@ -404,6 +404,46 @@ function M3U8Player({ url, title, language, triggerNotification }: M3U8PlayerPro
   );
 }
 
+const compressImage = (dataUrl: string, maxWidth: number = 800, maxHeight: number = 800, quality: number = 0.6): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = dataUrl;
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+      } else {
+        if (height > maxHeight) {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
+      }
+
+      ctx.drawImage(img, 0, 0, width, height);
+      const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+      resolve(compressedDataUrl);
+    };
+    img.onerror = () => {
+      resolve(dataUrl);
+    };
+  });
+};
+
 export default function ZoneFeed({ token, user, triggerNotification, onRefreshProfile, language }: ZoneFeedProps) {
   const [posts, setPosts] = useState<ZonePost[]>(() => {
     try {
@@ -1442,9 +1482,23 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         if (file.type.startsWith('image/')) {
-          const dataUrl = await readFile(file);
-          photosList.push(dataUrl);
+          triggerNotification(
+            language === 'tl' 
+              ? '⚡ Kusa naming pinapaliit at ino-optimize ang larawan para sa mabilisang upload...' 
+              : '⚡ Automatically optimizing and compressing image for super-fast upload...',
+            'info'
+          );
+          const originalDataUrl = await readFile(file);
+          // Compress the image down using canvas to under ~80KB
+          const compressedDataUrl = await compressImage(originalDataUrl, 800, 800, 0.6);
+          photosList.push(compressedDataUrl);
         } else if (file.type.startsWith('video/')) {
+          triggerNotification(
+            language === 'tl'
+              ? '🎥 Inihahanda ang video para sa background upload. Maaari ka pa ring mag-browse habang nag-a-upload!'
+              : '🎥 Preparing video for background upload. You can still browse while uploading!',
+            'info'
+          );
           const dataUrl = await readFile(file);
           videoDataUrl = dataUrl;
           hasVideo = true;
@@ -1555,14 +1609,71 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
   }, [outbox, user.id]);
 
   const uploadOutboxItem = async (item: any) => {
-    // Simulate gradual upload progress
-    setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: 35, isFailed: false, errorMsg: undefined } : x));
-    
-    const progTimeout = setTimeout(() => {
-      setOutbox(prev => prev.map(x => (x.id === item.id && x.progress < 75) ? { ...x, progress: 75 } : x));
-    }, 500);
+    // Start upload progress
+    setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: 15, isFailed: false, errorMsg: undefined } : x));
 
     try {
+      let finalMediaUrl = item.mediaUrl;
+      let finalMediaUrls = item.mediaUrls;
+
+      // 1. If mediaUrl is a local Base64 string, upload it to /api/zone/upload first
+      if (finalMediaUrl && finalMediaUrl.startsWith('data:')) {
+        setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: 30 } : x));
+        
+        const uploadRes = await fetch('/api/zone/upload', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': token
+          },
+          body: JSON.stringify({ dataUrl: finalMediaUrl })
+        });
+
+        if (!uploadRes.ok) {
+          const errData = await uploadRes.json();
+          throw new Error(errData.error || 'Hindi ma-upload ang media file.');
+        }
+
+        const uploadData = await uploadRes.json();
+        finalMediaUrl = uploadData.url;
+        setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: 60 } : x));
+      }
+
+      // 2. If mediaUrls contains Base64 strings, upload them all to /api/zone/upload
+      if (finalMediaUrls && Array.isArray(finalMediaUrls) && finalMediaUrls.length > 0) {
+        const uploadedUrls: string[] = [];
+        for (let i = 0; i < finalMediaUrls.length; i++) {
+          const url = finalMediaUrls[i];
+          if (url.startsWith('data:')) {
+            const stepProgress = Math.min(80, Math.round(30 + (i / finalMediaUrls.length) * 40));
+            setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: stepProgress } : x));
+
+            const uploadRes = await fetch('/api/zone/upload', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': token
+              },
+              body: JSON.stringify({ dataUrl: url })
+            });
+
+            if (!uploadRes.ok) {
+              const errData = await uploadRes.json();
+              throw new Error(errData.error || 'Hindi ma-upload ang isa sa mga larawan.');
+            }
+
+            const uploadData = await uploadRes.json();
+            uploadedUrls.push(uploadData.url);
+          } else {
+            uploadedUrls.push(url);
+          }
+        }
+        finalMediaUrls = uploadedUrls;
+      }
+
+      // 3. Post to the feed using the lightweight static file URLs!
+      setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: 85 } : x));
+
       const res = await fetch('/api/zone/posts', {
         method: 'POST',
         headers: {
@@ -1571,13 +1682,12 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
         },
         body: JSON.stringify({
           text: item.text,
-          mediaUrl: item.mediaUrl || undefined,
+          mediaUrl: finalMediaUrl || undefined,
           mediaType: item.mediaType || undefined,
-          mediaUrls: item.mediaUrls || undefined
+          mediaUrls: finalMediaUrls || undefined
         })
       });
 
-      clearTimeout(progTimeout);
       const data = await res.json();
       if (res.ok) {
         setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: 100 } : x));
@@ -1604,11 +1714,10 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
           'error'
         );
       }
-    } catch (err) {
-      clearTimeout(progTimeout);
-      const offlineMsg = language === 'tl' 
+    } catch (err: any) {
+      const offlineMsg = err.message || (language === 'tl' 
         ? 'Mahina ang signal o walang koneksyon. Naka-que para sa awtomatikong retry.' 
-        : 'Weak or no internet signal. Queued for automatic retry.';
+        : 'Weak or no internet signal. Queued for automatic retry.');
       setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, isFailed: true, progress: 0, errorMsg: offlineMsg } : x));
       console.warn('Background sync failed:', err);
     }
