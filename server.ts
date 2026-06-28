@@ -533,6 +533,14 @@ async function uploadToFirestore(data: DBStructure) {
                   pWithoutId.mediaUrl = 'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=800&auto=format&fit=crop&q=60';
                 }
               }
+              if (pWithoutId.mediaUrls && Array.isArray(pWithoutId.mediaUrls)) {
+                pWithoutId.mediaUrls = pWithoutId.mediaUrls.map(url => {
+                  if (url.startsWith('data:') && url.length > 500000) {
+                    return 'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=800&auto=format&fit=crop&q=60';
+                  }
+                  return url;
+                });
+              }
               await pDocRef.set(pWithoutId);
               lastSyncedCache.posts.set(p.id, pStr);
             } catch (postErr) {
@@ -2329,7 +2337,7 @@ app.post('/api/zone/posts', (req, res) => {
     return res.status(401).json({ error: 'Mag-login muna upang makapag-post.' });
   }
 
-  const { text, mediaUrl, mediaType } = req.body;
+  const { text, mediaUrl, mediaType, mediaUrls } = req.body;
   const db = loadDB();
 
   if (isUserBanned(db, userId)) {
@@ -2343,7 +2351,13 @@ app.post('/api/zone/posts', (req, res) => {
 
   // Auto-delete / Reject inappropriate posts (porn, nude, bastos)
   const isBase64Media = mediaUrl && (mediaUrl.startsWith('data:') || mediaUrl.startsWith('blob:'));
-  const isMediaInappropriate = mediaUrl && !isBase64Media && containsInappropriateContent(mediaUrl);
+  let isMediaInappropriate = mediaUrl && !isBase64Media && containsInappropriateContent(mediaUrl);
+  if (!isMediaInappropriate && mediaUrls && Array.isArray(mediaUrls)) {
+    isMediaInappropriate = mediaUrls.some(url => {
+      const isBase64 = url.startsWith('data:') || url.startsWith('blob:');
+      return !isBase64 && containsInappropriateContent(url);
+    });
+  }
 
   if (containsInappropriateContent(text) || isMediaInappropriate) {
     return res.status(400).json({ 
@@ -2362,6 +2376,7 @@ app.post('/api/zone/posts', (req, res) => {
     text: cleanedText,
     mediaUrl: mediaUrl || undefined,
     mediaType: mediaType || undefined,
+    mediaUrls: mediaUrls || undefined,
     likes: [],
     comments: [],
     createdAt: new Date().toISOString()
@@ -2512,6 +2527,7 @@ app.post('/api/zone/posts/:postId/share', (req, res) => {
       text: originalPost.sharedPost ? originalPost.sharedPost.text : originalPost.text,
       mediaUrl: originalPost.sharedPost ? originalPost.sharedPost.mediaUrl : originalPost.mediaUrl,
       mediaType: originalPost.sharedPost ? originalPost.sharedPost.mediaType : originalPost.mediaType,
+      mediaUrls: originalPost.sharedPost ? originalPost.sharedPost.mediaUrls : originalPost.mediaUrls,
       createdAt: originalPost.sharedPost ? originalPost.sharedPost.createdAt : originalPost.createdAt
     }
   };

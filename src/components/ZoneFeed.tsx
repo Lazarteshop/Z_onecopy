@@ -1400,57 +1400,73 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
   // New Post state
   const [postText, setPostText] = useState('');
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const [customMediaUrl, setCustomMediaUrl] = useState('');
   const [showMediaSelect, setShowMediaSelect] = useState(false);
   const [isSubmittingPost, setIsSubmittingPost] = useState(false);
   const [isUploadingLocalFile, setIsUploadingLocalFile] = useState(false);
+  const [postUploadProgress, setPostUploadProgress] = useState<number>(0);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
-  const handleLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Check size limit (e.g., 25MB)
-    if (file.size > 25 * 1024 * 1024) {
-      triggerNotification(
-        language === 'tl' 
-          ? 'Ang file ay masyadong malaki. Mangyaring gumamit ng file na mas maliit sa 25MB.' 
-          : 'File is too large. Please use a file smaller than 25MB.',
-        'error'
-      );
-      return;
-    }
+  const handleLocalFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
     setIsUploadingLocalFile(true);
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const dataUrl = reader.result as string;
-      if (file.type.startsWith('image/')) {
-        setSelectedPhoto(dataUrl);
-        setSelectedVideo(null);
-        setCustomMediaUrl('');
-      } else if (file.type.startsWith('video/')) {
-        setSelectedVideo(dataUrl);
+    const photosList: string[] = [...selectedPhotos];
+    let hasVideo = false;
+    let videoDataUrl = '';
+
+    const readFile = (file: File): Promise<string> => {
+      return new Promise((resolve, reject) => {
+        if (file.size > 25 * 1024 * 1024) {
+          reject(new Error(language === 'tl' ? 'Ang file ay masyadong malaki (Max 25MB).' : 'File size exceeds 25MB.'));
+          return;
+        }
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Failed to read file.'));
+        reader.readAsDataURL(file);
+      });
+    };
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file.type.startsWith('image/')) {
+          const dataUrl = await readFile(file);
+          photosList.push(dataUrl);
+        } else if (file.type.startsWith('video/')) {
+          const dataUrl = await readFile(file);
+          videoDataUrl = dataUrl;
+          hasVideo = true;
+        } else {
+          triggerNotification(
+            language === 'tl' 
+              ? 'Format ng file ay hindi suportado. Larawan o video lamang.' 
+              : 'Unsupported file format. Images and videos only.',
+            'error'
+          );
+        }
+      }
+
+      if (hasVideo) {
+        setSelectedVideo(videoDataUrl);
+        setSelectedPhotos([]);
         setSelectedPhoto(null);
         setCustomMediaUrl('');
       } else {
-        triggerNotification(
-          language === 'tl' 
-            ? 'Format ng file ay hindi suportado. Larawan o video lamang.' 
-            : 'Unsupported file format. Images and videos only.',
-          'error'
-        );
+        setSelectedPhotos(photosList);
+        setSelectedVideo(null);
+        setSelectedPhoto(photosList[0] || null);
+        setCustomMediaUrl('');
       }
+    } catch (err: any) {
+      triggerNotification(err.message || 'Error uploading files', 'error');
+    } finally {
       setIsUploadingLocalFile(false);
-    };
-    reader.onerror = () => {
-      triggerNotification(
-        language === 'tl' ? 'Failed basahin ang file.' : 'Failed to read file.',
-        'error'
-      );
-      setIsUploadingLocalFile(false);
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   // Comment state per post ID
@@ -1522,7 +1538,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
 
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!postText.trim() && !selectedPhoto && !selectedVideo && !customMediaUrl) {
+    if (!postText.trim() && selectedPhotos.length === 0 && !selectedVideo && !customMediaUrl) {
       triggerNotification(
         language === 'tl' ? 'Mag-type ng mensahe o pumili ng media!' : 'Please type a message or select media!',
         'error'
@@ -1531,10 +1547,21 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
     }
 
     setIsSubmittingPost(true);
-    let finalMediaUrl = customMediaUrl || selectedPhoto || selectedVideo || undefined;
+    setPostUploadProgress(0);
+
+    // Simulated progress bar interval for a realistic upload feel
+    const progressInterval = setInterval(() => {
+      setPostUploadProgress(prev => {
+        if (prev >= 95) return prev;
+        const diff = Math.max(1, Math.floor((95 - prev) * 0.2));
+        return prev + diff;
+      });
+    }, 150);
+
+    let finalMediaUrl = customMediaUrl || (selectedPhotos.length > 0 ? selectedPhotos[0] : null) || selectedVideo || undefined;
     let finalMediaType: 'image' | 'video' | undefined = undefined;
 
-    if (selectedPhoto || (customMediaUrl && !customMediaUrl.endsWith('.mp4'))) {
+    if (selectedPhotos.length > 0 || (customMediaUrl && !customMediaUrl.endsWith('.mp4'))) {
       finalMediaType = 'image';
     } else if (selectedVideo || (customMediaUrl && customMediaUrl.endsWith('.mp4'))) {
       finalMediaType = 'video';
@@ -1549,37 +1576,50 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
         },
         body: JSON.stringify({
           text: postText,
-          mediaUrl: finalMediaUrl,
-          mediaType: finalMediaType
+          mediaUrl: finalMediaUrl || undefined,
+          mediaType: finalMediaType,
+          mediaUrls: selectedPhotos.length > 0 ? selectedPhotos : undefined
         })
       });
 
       const data = await res.json();
       if (res.ok) {
-        triggerNotification(
-          language === 'tl' ? 'Nai-post na sa Z-one! 🎉' : 'Successfully posted to Z-one! 🎉',
-          'success'
-        );
-        setPostText('');
-        setSelectedPhoto(null);
-        setSelectedVideo(null);
-        setCustomMediaUrl('');
-        setShowMediaSelect(false);
-        
-        // Optimistically prepend the new post to the local state list immediately
-        if (data.post) {
-          setPosts(prev => [data.post, ...prev]);
-        }
-        
-        // Fetch silently in the background
-        fetchPosts(true);
+        clearInterval(progressInterval);
+        setPostUploadProgress(100);
+
+        setTimeout(() => {
+          triggerNotification(
+            language === 'tl' ? 'Nai-post na sa Z-one! 🎉' : 'Successfully posted to Z-one! 🎉',
+            'success'
+          );
+          setPostText('');
+          setSelectedPhoto(null);
+          setSelectedPhotos([]);
+          setSelectedVideo(null);
+          setCustomMediaUrl('');
+          setShowMediaSelect(false);
+          setIsSubmittingPost(false);
+          setPostUploadProgress(0);
+
+          // Optimistically prepend the new post to the local state list immediately
+          if (data.post) {
+            setPosts(prev => [data.post, ...prev]);
+          }
+          
+          // Fetch silently in the background
+          fetchPosts(true);
+        }, 300);
       } else {
+        clearInterval(progressInterval);
+        setIsSubmittingPost(false);
+        setPostUploadProgress(0);
         triggerNotification(data.error || 'Naglalaman ng bawal na salita.', 'error');
       }
     } catch (err) {
-      triggerNotification('Koneksyon error sa pag-post.', 'error');
-    } finally {
+      clearInterval(progressInterval);
       setIsSubmittingPost(false);
+      setPostUploadProgress(0);
+      triggerNotification('Koneksyon error sa pag-post.', 'error');
     }
   };
 
@@ -2097,12 +2137,36 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
               </div>
 
               {/* CHOSEN MEDIA PREVIEW */}
-              {(selectedPhoto || selectedVideo || customMediaUrl) && (
-                <div className="relative border border-slate-100 p-2 rounded-2xl bg-slate-50 space-y-2">
+              {(selectedPhotos.length > 0 || selectedVideo || customMediaUrl) && (
+                <div className="relative border border-slate-100 p-3 rounded-2xl bg-slate-50 space-y-2">
                   <span className="text-[10px] text-slate-400 uppercase font-black tracking-wider block">Attached Media:</span>
-                  {selectedPhoto && (
-                    <img src={selectedPhoto} alt="Selected" className="w-full max-h-40 object-cover rounded-xl" />
+                  
+                  {selectedPhotos.length > 0 && (
+                    <div className="grid grid-cols-3 gap-2">
+                      {selectedPhotos.map((photo, index) => (
+                        <div key={index} className="relative aspect-square rounded-xl overflow-hidden bg-slate-200 border border-slate-300 group">
+                          <img src={photo} alt={`Selected ${index + 1}`} className="w-full h-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = selectedPhotos.filter((_, idx) => idx !== index);
+                              setSelectedPhotos(updated);
+                              if (updated.length > 0) {
+                                setSelectedPhoto(updated[0]);
+                              } else {
+                                setSelectedPhoto(null);
+                              }
+                            }}
+                            className="absolute top-1 right-1 bg-rose-600/90 hover:bg-rose-600 text-white p-1 rounded-full text-[10px] h-4.5 w-4.5 flex items-center justify-center font-black cursor-pointer shadow-sm"
+                            title="Remove photo"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   )}
+
                   {selectedVideo && (
                     <video src={selectedVideo} controls className="w-full max-h-40 rounded-xl" />
                   )}
@@ -2114,11 +2178,13 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                   <button
                     type="button"
                     onClick={() => {
+                      setSelectedPhotos([]);
                       setSelectedPhoto(null);
                       setSelectedVideo(null);
                       setCustomMediaUrl('');
                     }}
-                    className="absolute top-2 right-2 bg-slate-900/80 hover:bg-slate-900 text-white p-1 rounded-full text-[10px] h-5 w-5 flex items-center justify-center font-black cursor-pointer"
+                    className="absolute top-2 right-2 bg-slate-900/80 hover:bg-slate-900 text-white p-1 rounded-full text-[10px] h-5 w-5 flex items-center justify-center font-black cursor-pointer shadow-lg"
+                    title="Clear all"
                   >
                     ×
                   </button>
@@ -2132,6 +2198,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                   type="file"
                   accept="image/*,video/*"
                   onChange={handleLocalFileChange}
+                  multiple={true}
                   className="hidden"
                   id="local-media-upload"
                   disabled={isUploadingLocalFile}
@@ -2148,7 +2215,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                   <span>
                     {isUploadingLocalFile 
                       ? (language === 'tl' ? 'Binabasa ang file...' : 'Reading file...') 
-                      : (language === 'tl' ? 'Kumuha sa Phone Gallery (Upload)' : 'Choose from Phone Gallery (Upload)')}
+                      : (language === 'tl' ? 'Kumuha sa Phone Gallery (Multi-Upload)' : 'Choose from Phone Gallery (Multi-Upload)')}
                   </span>
                 </label>
 
@@ -2177,6 +2244,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                               key={idx}
                               type="button"
                               onClick={() => {
+                                setSelectedPhotos([ph.url]);
                                 setSelectedPhoto(ph.url);
                                 setSelectedVideo(null);
                                 setCustomMediaUrl('');
@@ -2201,6 +2269,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                               type="button"
                               onClick={() => {
                                 setSelectedVideo(vi.url);
+                                setSelectedPhotos([]);
                                 setSelectedPhoto(null);
                                 setCustomMediaUrl('');
                               }}
@@ -2224,6 +2293,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                           value={customMediaUrl}
                           onChange={(e) => {
                             setCustomMediaUrl(e.target.value);
+                            setSelectedPhotos([]);
                             setSelectedPhoto(null);
                             setSelectedVideo(null);
                           }}
@@ -2236,13 +2306,31 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                 </AnimatePresence>
               </div>
 
+              {/* PROGRESS BAR */}
+              {isSubmittingPost && (
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex justify-between text-[10px] font-black uppercase text-blue-600">
+                    <span>{language === 'tl' ? 'Ina-upload / Inilalathala...' : 'Uploading / Posting...'}</span>
+                    <span>{postUploadProgress}%</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden border border-slate-200">
+                    <motion.div 
+                      className="bg-blue-600 h-full rounded-full shadow-inner"
+                      initial={{ width: '0%' }}
+                      animate={{ width: `${postUploadProgress}%` }}
+                      transition={{ ease: "easeOut", duration: 0.1 }}
+                    />
+                  </div>
+                </div>
+              )}
+
               <button
                 type="submit"
                 disabled={isSubmittingPost}
                 className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-black py-3 rounded-2xl text-xs cursor-pointer shadow-md transition flex items-center justify-center gap-1.5"
               >
                 {isSubmittingPost ? (
-                  <span>Inilalathala...</span>
+                  <span>Inilalathala... ({postUploadProgress}%)</span>
                 ) : (
                   <>
                     <Send className="w-4 h-4" />
@@ -2527,15 +2615,39 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                                 </div>
                               ) : (
                                 <>
-                                  {post.sharedPost.mediaType === 'image' && (
-                                    <div className="rounded-xl overflow-hidden border border-slate-200">
-                                      <img src={post.sharedPost.mediaUrl} alt="Shared Attachment" className="w-full max-h-60 object-cover" referrerPolicy="no-referrer" />
+                                  {post.sharedPost.mediaUrls && post.sharedPost.mediaUrls.length > 0 ? (
+                                    <div className={`grid gap-1.5 ${post.sharedPost.mediaUrls.length === 1 ? 'grid-cols-1' : post.sharedPost.mediaUrls.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                                      {post.sharedPost.mediaUrls.map((url, idx) => (
+                                        <div key={idx} className="rounded-xl overflow-hidden border border-slate-150 relative cursor-zoom-in hover:opacity-95 transition">
+                                          <img 
+                                            src={url} 
+                                            alt={`Shared Attachment ${idx + 1}`} 
+                                            className="w-full max-h-48 object-cover" 
+                                            referrerPolicy="no-referrer"
+                                            onClick={() => setLightboxImage(url)}
+                                          />
+                                        </div>
+                                      ))}
                                     </div>
-                                  )}
-                                  {post.sharedPost.mediaType === 'video' && (
-                                    <div className="rounded-xl overflow-hidden border border-slate-200">
-                                      <video src={post.sharedPost.mediaUrl} controls className="w-full max-h-60 object-cover" />
-                                    </div>
+                                  ) : (
+                                    <>
+                                      {post.sharedPost.mediaType === 'image' && (
+                                        <div className="rounded-xl overflow-hidden border border-slate-200 cursor-zoom-in hover:opacity-95 transition">
+                                          <img 
+                                            src={post.sharedPost.mediaUrl} 
+                                            alt="Shared Attachment" 
+                                            className="w-full max-h-60 object-cover" 
+                                            referrerPolicy="no-referrer" 
+                                            onClick={() => setLightboxImage(post.sharedPost!.mediaUrl!)}
+                                          />
+                                        </div>
+                                      )}
+                                      {post.sharedPost.mediaType === 'video' && (
+                                        <div className="rounded-xl overflow-hidden border border-slate-200">
+                                          <video src={post.sharedPost.mediaUrl} controls className="w-full max-h-60 object-cover" />
+                                        </div>
+                                      )}
+                                    </>
                                   )}
                                 </>
                               )}
@@ -2544,8 +2656,50 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                         </div>
                       )}
 
-                      {/* Attached Media Render */}
-                      {post.mediaUrl && (
+                      {/* Multiple Attached Photos Render */}
+                      {post.mediaUrls && post.mediaUrls.length > 0 && (
+                        <>
+                          {isBasicMode && !revealedMedia.has(post.id) ? (
+                            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center space-y-3">
+                              <div className="space-y-1">
+                                <p className="text-xs font-black text-slate-700">
+                                  📷 {post.mediaUrls.length} Larawan (Naitago sa Basic Mode)
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRevealedMedia(prev => {
+                                    const next = new Set(prev);
+                                    next.add(post.id);
+                                    return next;
+                                  });
+                                }}
+                                className="bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] px-3.5 py-1.5 rounded-xl cursor-pointer shadow-xs transition"
+                              >
+                                {language === 'tl' ? '👁️ Panoorin ang Larawan' : '👁️ Load Photo/Video'}
+                              </button>
+                            </div>
+                          ) : (
+                            <div className={`grid gap-2 ${post.mediaUrls.length === 1 ? 'grid-cols-1' : post.mediaUrls.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                              {post.mediaUrls.map((url, index) => (
+                                <div key={index} className="rounded-2xl overflow-hidden border border-slate-150 relative cursor-zoom-in group hover:opacity-95 transition">
+                                  <img 
+                                    src={url} 
+                                    alt={`Post Attachment ${index + 1}`} 
+                                    className="w-full h-full max-h-80 object-cover" 
+                                    referrerPolicy="no-referrer"
+                                    onClick={() => setLightboxImage(url)}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      {/* Single Attached Media Render */}
+                      {post.mediaUrl && (!post.mediaUrls || post.mediaUrls.length === 0) && (
                         <>
                           {isBasicMode && !revealedMedia.has(post.id) ? (
                             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center space-y-3">
@@ -2555,7 +2709,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                                 </p>
                                 <p className="text-[10px] text-slate-450 font-semibold">
                                   {language === 'tl' 
-                                    ? 'I-click ang button upang ipakita ang larawang ito gamit ang iyong mobile data.' 
+                                    ? 'I-click ang button upang iba-bahagi ang larawang ito gamit ang iyong mobile data.' 
                                     : 'Click the button below to load this media using standard data.'}
                                 </p>
                               </div>
@@ -2580,8 +2734,14 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                           ) : (
                             <>
                               {post.mediaType === 'image' && (
-                                <div className="rounded-2xl overflow-hidden border border-slate-100 relative">
-                                  <img src={post.mediaUrl} alt="Post Attachment" className="w-full max-h-80 object-cover" referrerPolicy="no-referrer" />
+                                <div className="rounded-2xl overflow-hidden border border-slate-100 relative cursor-zoom-in group hover:opacity-95 transition">
+                                  <img 
+                                    src={post.mediaUrl} 
+                                    alt="Post Attachment" 
+                                    className="w-full max-h-80 object-cover" 
+                                    referrerPolicy="no-referrer" 
+                                    onClick={() => setLightboxImage(post.mediaUrl!)}
+                                  />
                                   {isBasicMode && (
                                     <span className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[9px] font-black px-2 py-0.5 rounded-full">
                                       Loaded via Mobile Data
@@ -3994,6 +4154,36 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
               </motion.div>
             </div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* FULL PHOTO LIGHTBOX OVERLAY */}
+      <AnimatePresence>
+        {lightboxImage && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setLightboxImage(null)}
+            className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 cursor-zoom-out"
+          >
+            <motion.button
+              type="button"
+              className="absolute top-4 right-4 bg-slate-900/80 hover:bg-slate-850 text-white rounded-full p-2 h-10 w-10 flex items-center justify-center font-black cursor-pointer shadow-lg z-50 transition"
+              onClick={() => setLightboxImage(null)}
+            >
+              ×
+            </motion.button>
+            <motion.img
+              initial={{ scale: 0.95 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.95 }}
+              src={lightboxImage}
+              alt="Full view"
+              className="max-w-full max-h-[90vh] object-contain rounded-xl shadow-2xl border border-slate-800 pointer-events-auto"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </motion.div>
         )}
       </AnimatePresence>
 

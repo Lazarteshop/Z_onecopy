@@ -81,6 +81,7 @@ export interface ZonePost {
   text: string;
   mediaUrl?: string;
   mediaType?: 'image' | 'video';
+  mediaUrls?: string[];
   likes: string[]; // List of user IDs who liked
   comments: ZoneComment[];
   createdAt: string;
@@ -93,6 +94,7 @@ export interface ZonePost {
     text: string;
     mediaUrl?: string;
     mediaType?: 'image' | 'video';
+    mediaUrls?: string[];
     createdAt: string;
   };
 }
