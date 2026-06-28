@@ -433,6 +433,36 @@ function loadDB(): DBStructure {
   return defaultDB;
 }
 
+const lastSyncedCache = {
+  users: new Map<string, string>(),
+  campaigns: new Map<string, string>(),
+  posts: new Map<string, string>(),
+  directMessages: new Map<string, string>()
+};
+
+function initLastSyncedCache(data: DBStructure) {
+  if (lastSyncedCache.users.size === 0 && data.users && data.users.length > 0) {
+    for (const u of data.users) {
+      lastSyncedCache.users.set(u.id, JSON.stringify(u));
+    }
+  }
+  if (lastSyncedCache.campaigns.size === 0 && data.campaigns && data.campaigns.length > 0) {
+    for (const c of data.campaigns) {
+      lastSyncedCache.campaigns.set(c.id, JSON.stringify(c));
+    }
+  }
+  if (lastSyncedCache.posts.size === 0 && data.posts && data.posts.length > 0) {
+    for (const p of data.posts) {
+      lastSyncedCache.posts.set(p.id, JSON.stringify(p));
+    }
+  }
+  if (lastSyncedCache.directMessages.size === 0 && data.directMessages && data.directMessages.length > 0) {
+    for (const dm of data.directMessages) {
+      lastSyncedCache.directMessages.set(dm.id, JSON.stringify(dm));
+    }
+  }
+}
+
 function saveDB(data: DBStructure) {
   fs.writeFileSync(DB_FILE_PATH, JSON.stringify(data, null, 2), 'utf-8');
   uploadToFirestore(data).catch(err => {
@@ -444,70 +474,143 @@ async function uploadToFirestore(data: DBStructure) {
   if (!isFirestoreActive || !firestore) {
     return;
   }
+  
+  initLastSyncedCache(data);
+
   try {
-    const batchValues = data.users.map(async (u) => {
-      try {
-        const uDocRef = firestore.collection('users').doc(u.id);
-        const { id, ...uWithoutId } = u;
-        // Safeguard Firestore 1MB limit for user documents by replacing huge base64 avatars with a standard emoji
-        if (uWithoutId.avatar && uWithoutId.avatar.startsWith('data:') && uWithoutId.avatar.length > 500000) {
-          uWithoutId.avatar = '👤';
-        }
-        await uDocRef.set(uWithoutId);
-      } catch (userErr) {
-        console.error(`Error saving user ${u.id} to Firestore:`, userErr);
-      }
-    });
-
-    let campPromises: Promise<any>[] = [];
-    if (data.campaigns) {
-      campPromises = data.campaigns.map(async (c) => {
-        try {
-          const cDocRef = firestore.collection('campaigns').doc(c.id);
-          const { id, ...cWithoutId } = c;
-          await cDocRef.set(cWithoutId);
-        } catch (campErr) {
-          console.error(`Error saving campaign ${c.id} to Firestore:`, campErr);
-        }
-      });
-    }
-
-    let postPromises: Promise<any>[] = [];
-    if (data.posts) {
-      postPromises = data.posts.map(async (p) => {
-        try {
-          const pDocRef = firestore.collection('posts').doc(p.id);
-          const { id, ...pWithoutId } = p;
-          // Safeguard Firestore 1MB limit for posts by replacing huge base64 media with a standard placeholder
-          if (pWithoutId.mediaUrl && pWithoutId.mediaUrl.startsWith('data:') && pWithoutId.mediaUrl.length > 500000) {
-            if (pWithoutId.mediaType === 'video') {
-              pWithoutId.mediaUrl = 'https://assets.mixkit.co/videos/preview/mixkit-holding-a-smartphone-with-a-green-screen-34440-large.mp4';
-            } else {
-              pWithoutId.mediaUrl = 'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=800&auto=format&fit=crop&q=60';
+    const userPromises: Promise<any>[] = [];
+    for (const u of data.users) {
+      const uStr = JSON.stringify(u);
+      if (lastSyncedCache.users.get(u.id) !== uStr) {
+        userPromises.push((async () => {
+          try {
+            const uDocRef = firestore!.collection('users').doc(u.id);
+            const { id, ...uWithoutId } = u;
+            if (uWithoutId.avatar && uWithoutId.avatar.startsWith('data:') && uWithoutId.avatar.length > 500000) {
+              uWithoutId.avatar = '👤';
             }
+            await uDocRef.set(uWithoutId);
+            lastSyncedCache.users.set(u.id, uStr);
+          } catch (userErr) {
+            console.error(`Error saving user ${u.id} to Firestore:`, userErr);
           }
-          await pDocRef.set(pWithoutId);
-        } catch (postErr) {
-          console.error(`Error saving post ${p.id} to Firestore:`, postErr);
-        }
-      });
+        })());
+      }
     }
 
-    let dmPromises: Promise<any>[] = [];
+    const campPromises: Promise<any>[] = [];
+    if (data.campaigns) {
+      for (const c of data.campaigns) {
+        const cStr = JSON.stringify(c);
+        if (lastSyncedCache.campaigns.get(c.id) !== cStr) {
+          campPromises.push((async () => {
+            try {
+              const cDocRef = firestore!.collection('campaigns').doc(c.id);
+              const { id, ...cWithoutId } = c;
+              await cDocRef.set(cWithoutId);
+              lastSyncedCache.campaigns.set(c.id, cStr);
+            } catch (campErr) {
+              console.error(`Error saving campaign ${c.id} to Firestore:`, campErr);
+            }
+          })());
+        }
+      }
+    }
+
+    const postPromises: Promise<any>[] = [];
+    if (data.posts) {
+      for (const p of data.posts) {
+        const pStr = JSON.stringify(p);
+        if (lastSyncedCache.posts.get(p.id) !== pStr) {
+          postPromises.push((async () => {
+            try {
+              const pDocRef = firestore!.collection('posts').doc(p.id);
+              const { id, ...pWithoutId } = p;
+              if (pWithoutId.mediaUrl && pWithoutId.mediaUrl.startsWith('data:') && pWithoutId.mediaUrl.length > 500000) {
+                if (pWithoutId.mediaType === 'video') {
+                  pWithoutId.mediaUrl = 'https://assets.mixkit.co/videos/preview/mixkit-holding-a-smartphone-with-a-green-screen-34440-large.mp4';
+                } else {
+                  pWithoutId.mediaUrl = 'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=800&auto=format&fit=crop&q=60';
+                }
+              }
+              await pDocRef.set(pWithoutId);
+              lastSyncedCache.posts.set(p.id, pStr);
+            } catch (postErr) {
+              console.error(`Error saving post ${p.id} to Firestore:`, postErr);
+            }
+          })());
+        }
+      }
+    }
+
+    const dmPromises: Promise<any>[] = [];
     if (data.directMessages) {
-      dmPromises = data.directMessages.map(async (dm) => {
-        try {
-          const dmDocRef = firestore.collection('direct_messages').doc(dm.id);
-          const { id, ...dmWithoutId } = dm;
-          await dmDocRef.set(dmWithoutId);
-        } catch (dmErr) {
-          console.error(`Error saving DM ${dm.id} to Firestore:`, dmErr);
+      for (const dm of data.directMessages) {
+        const dmStr = JSON.stringify(dm);
+        if (lastSyncedCache.directMessages.get(dm.id) !== dmStr) {
+          dmPromises.push((async () => {
+            try {
+              const dmDocRef = firestore!.collection('direct_messages').doc(dm.id);
+              const { id, ...dmWithoutId } = dm;
+              await dmDocRef.set(dmWithoutId);
+              lastSyncedCache.directMessages.set(dm.id, dmStr);
+            } catch (dmErr) {
+              console.error(`Error saving DM ${dm.id} to Firestore:`, dmErr);
+            }
+          })());
         }
-      });
+      }
     }
 
-    await Promise.all([...batchValues, ...campPromises, ...postPromises, ...dmPromises]);
-    console.log('☁️ GCash Click-Earn: Firebase Firestore cloud backup completed successfully.');
+    const deletionPromises: Promise<any>[] = [];
+    
+    const currentPostIds = new Set(data.posts ? data.posts.map(p => p.id) : []);
+    for (const cachedId of lastSyncedCache.posts.keys()) {
+      if (!currentPostIds.has(cachedId)) {
+        deletionPromises.push((async () => {
+          try {
+            await firestore!.collection('posts').doc(cachedId).delete();
+            lastSyncedCache.posts.delete(cachedId);
+          } catch (delErr) {
+            console.error(`Error deleting post ${cachedId} from Firestore:`, delErr);
+          }
+        })());
+      }
+    }
+
+    const currentDmIds = new Set(data.directMessages ? data.directMessages.map(dm => dm.id) : []);
+    for (const cachedId of lastSyncedCache.directMessages.keys()) {
+      if (!currentDmIds.has(cachedId)) {
+        deletionPromises.push((async () => {
+          try {
+            await firestore!.collection('direct_messages').doc(cachedId).delete();
+            lastSyncedCache.directMessages.delete(cachedId);
+          } catch (delErr) {
+            console.error(`Error deleting DM ${cachedId} from Firestore:`, delErr);
+          }
+        })());
+      }
+    }
+
+    const currentUserIds = new Set(data.users.map(u => u.id));
+    for (const cachedId of lastSyncedCache.users.keys()) {
+      if (!currentUserIds.has(cachedId)) {
+        deletionPromises.push((async () => {
+          try {
+            await firestore!.collection('users').doc(cachedId).delete();
+            lastSyncedCache.users.delete(cachedId);
+          } catch (delErr) {
+            console.error(`Error deleting user ${cachedId} from Firestore:`, delErr);
+          }
+        })());
+      }
+    }
+
+    const allPromises = [...userPromises, ...campPromises, ...postPromises, ...dmPromises, ...deletionPromises];
+    if (allPromises.length > 0) {
+      await Promise.all(allPromises);
+      console.log(`☁️ GCash Click-Earn: Firestore cloud backup completed. Synced ${allPromises.length} updates/deletes.`);
+    }
   } catch (err) {
     console.error('❌ Failed background write to Firestore:', err);
   }
