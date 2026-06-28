@@ -117,7 +117,7 @@ if (hasServiceAccount || isOnGoogleCloud) {
 // --- DATABASE TYPES ---
 interface Subscription {
   status: 'none' | 'pending' | 'active' | 'expired';
-  planId: '1month' | '2months' | '3months' | '4months' | null;
+  planId: '7days' | '1month' | '2months' | '3months' | '4months' | null;
   requestedPlanName?: string | null;
   requestedAmount?: number | null;
   requestedAt?: string | null;
@@ -1800,6 +1800,7 @@ app.post('/api/subscription/request', (req, res) => {
   }
 
   const allowedPlans: Record<string, { name: string; amount: number }> = {
+    '7days': { name: '7 Days Access', amount: 20 },
     '1month': { name: '1 Month Access', amount: 200 },
     '2months': { name: '2 Months Access', amount: 500 },
     '3months': { name: '3 Months Access', amount: 1000 },
@@ -1814,6 +1815,17 @@ app.post('/api/subscription/request', (req, res) => {
   const user = db.users.find(u => u.id === userId);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang gumagamit.' });
+  }
+
+  if (planId === '7days') {
+    const isExpired = !hasActiveAccess(user);
+    if (!isExpired) {
+      return res.status(400).json({ error: 'Ang 7-Day Access na nagkakahalaga ng ₱20 ay para lamang sa mga expired users.' });
+    }
+    const balance = user.stats.balance || 0;
+    if (balance >= 50) {
+      return res.status(400).json({ error: 'Hindi ka kwalipikado sa ₱20 plan dahil ang iyong balance ay ₱50 o higit pa.' });
+    }
   }
 
   const targetPlan = allowedPlans[planId];
@@ -1866,7 +1878,8 @@ app.post('/api/admin/subscription/:userId/approve', (req, res) => {
 
   const planId = user.subscription.planId;
   let validityDays = 30;
-  if (planId === '2months') validityDays = 60;
+  if (planId === '7days') validityDays = 7;
+  else if (planId === '2months') validityDays = 60;
   else if (planId === '3months') validityDays = 90;
   else if (planId === '4months') validityDays = 120;
 

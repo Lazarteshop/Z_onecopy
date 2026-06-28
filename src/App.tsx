@@ -1243,12 +1243,21 @@ export default function App() {
                     </div>
 
                     <div className="grid grid-cols-1 gap-3">
-                      {[
-                        { id: '1month', name: '1 Month Access', price: 200, desc: '₱200 para sa 30 araw na tuloy-tuloy na earn.' },
-                        { id: '2months', name: '2 Months Access', price: 500, desc: '₱500 para sa 60 araw na pinalawak na access.' },
-                        { id: '3months', name: '3 Months Access', price: 1000, desc: '₱1000 para sa 90 araw na VIP access.' },
-                        { id: '4months', name: '4 Months Access', price: 2000, desc: '₱2000 para sa 120 araw na earning portal.' }
-                      ].map((plan) => (
+                      {(() => {
+                        const basePlans = [
+                          { id: '1month', name: '1 Month Access', price: 200, desc: '₱200 para sa 30 araw na tuloy-tuloy na earn.' },
+                          { id: '2months', name: '2 Months Access', price: 500, desc: '₱500 para sa 60 araw na pinalawak na access.' },
+                          { id: '3months', name: '3 Months Access', price: 1000, desc: '₱1000 para sa 90 araw na VIP access.' },
+                          { id: '4months', name: '4 Months Access', price: 2000, desc: '₱2000 para sa 120 araw na earning portal.' }
+                        ];
+                        if ((stats.balance || 0) < 50) {
+                          return [
+                            { id: '7days', name: '7 Days Special Access', price: 20, desc: '₱20 para sa 7 araw na mabilisang trial access habang nag-iipon.' },
+                            ...basePlans
+                          ];
+                        }
+                        return basePlans;
+                      })().map((plan) => (
                         <div 
                           key={plan.id}
                           className="border border-slate-200 rounded-xl p-3.5 hover:border-indigo-400 hover:bg-indigo-50/20 transition duration-300 flex items-center justify-between gap-4"
@@ -1765,12 +1774,21 @@ export default function App() {
 
                     {/* PLANS GRID */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {[
-                        { id: '1month', name: '1 Month Access', price: 200, desc: '₱200 para sa 30 araw na tuloy-tuloy na earn at cashouts.' },
-                        { id: '2months', name: '2 Months Access', price: 500, desc: '₱500 para sa 60 araw na pinalawak na access.' },
-                        { id: '3months', name: '3 Months Access', price: 1000, desc: '₱1000 para sa 90 araw na tanyag na VIP access.' },
-                        { id: '4months', name: '4 Months Access', price: 2000, desc: '₱2000 para sa 120 araw ng walang katapusang earning portal.' }
-                      ].map((plan) => (
+                      {(() => {
+                        const basePlans = [
+                          { id: '1month', name: '1 Month Access', price: 200, desc: '₱200 para sa 30 araw na tuloy-tuloy na earn at cashouts.' },
+                          { id: '2months', name: '2 Months Access', price: 500, desc: '₱500 para sa 60 araw na pinalawak na access.' },
+                          { id: '3months', name: '3 Months Access', price: 1000, desc: '₱1000 para sa 90 araw na tanyag na VIP access.' },
+                          { id: '4months', name: '4 Months Access', price: 2000, desc: '₱2000 para sa 120 araw ng walang katapusang earning portal.' }
+                        ];
+                        if ((stats.balance || 0) < 50) {
+                          return [
+                            { id: '7days', name: '7 Days Special Access', price: 20, desc: '₱20 para sa 7 araw na mabilisang trial access habang nag-iipon.' },
+                            ...basePlans
+                          ];
+                        }
+                        return basePlans;
+                      })().map((plan) => (
                         <div 
                           key={plan.id}
                           className="border border-slate-200 rounded-2xl p-4 hover:border-blue-450 hover:shadow-md transition duration-300 flex flex-col justify-between space-y-4"

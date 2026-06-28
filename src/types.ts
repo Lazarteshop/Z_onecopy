@@ -56,7 +56,7 @@ export interface ReferralFriend {
 
 export interface Subscription {
   status: 'none' | 'pending' | 'active' | 'expired';
-  planId: '1month' | '2months' | '3months' | '4months' | null;
+  planId: '7days' | '1month' | '2months' | '3months' | '4months' | null;
   requestedPlanName?: string | null;
   requestedAmount?: number | null;
   requestedAt?: string | null;
