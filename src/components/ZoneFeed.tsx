@@ -1535,6 +1535,162 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
     }
   };
 
+  // --- OUTBOX BACKGROUND SYNC ENGINE ---
+  const [outbox, setOutbox] = useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem(`zone_outbox_${user.id}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Sync outbox to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(`zone_outbox_${user.id}`, JSON.stringify(outbox));
+    } catch (e) {
+      console.error('Failed to save outbox to localStorage', e);
+    }
+  }, [outbox, user.id]);
+
+  const uploadOutboxItem = async (item: any) => {
+    // Simulate gradual upload progress
+    setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: 35, isFailed: false, errorMsg: undefined } : x));
+    
+    const progTimeout = setTimeout(() => {
+      setOutbox(prev => prev.map(x => (x.id === item.id && x.progress < 75) ? { ...x, progress: 75 } : x));
+    }, 500);
+
+    try {
+      const res = await fetch('/api/zone/posts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({
+          text: item.text,
+          mediaUrl: item.mediaUrl || undefined,
+          mediaType: item.mediaType || undefined,
+          mediaUrls: item.mediaUrls || undefined
+        })
+      });
+
+      clearTimeout(progTimeout);
+      const data = await res.json();
+      if (res.ok) {
+        setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: 100 } : x));
+        
+        setTimeout(() => {
+          // Remove from outbox queue
+          setOutbox(prev => prev.filter(x => x.id !== item.id));
+          
+          // Silently refresh the feed so the real post replaces the pending state
+          fetchPosts(true);
+          
+          triggerNotification(
+            language === 'tl' 
+              ? 'Matagumpay na nai-post sa background! 🎉' 
+              : 'Successfully posted in the background! 🎉',
+            'success'
+          );
+        }, 400);
+      } else {
+        const errorText = data.error || (language === 'tl' ? 'May error sa paglathala.' : 'Error publishing post.');
+        setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, isFailed: true, progress: 0, errorMsg: errorText } : x));
+        triggerNotification(
+          language === 'tl' ? `Hindi nai-post: ${errorText}` : `Posting failed: ${errorText}`,
+          'error'
+        );
+      }
+    } catch (err) {
+      clearTimeout(progTimeout);
+      const offlineMsg = language === 'tl' 
+        ? 'Mahina ang signal o walang koneksyon. Naka-que para sa awtomatikong retry.' 
+        : 'Weak or no internet signal. Queued for automatic retry.';
+      setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, isFailed: true, progress: 0, errorMsg: offlineMsg } : x));
+      console.warn('Background sync failed:', err);
+    }
+  };
+
+  const handleRetryPost = (itemId: string) => {
+    const item = outbox.find(x => x.id === itemId);
+    if (item) {
+      uploadOutboxItem({ ...item, isFailed: false, progress: 15 });
+    }
+  };
+
+  const handleDeletePendingPost = (itemId: string) => {
+    setOutbox(prev => prev.filter(x => x.id !== itemId));
+    triggerNotification(
+      language === 'tl' ? 'Tinanggal ang nakapilang post.' : 'Removed pending post.',
+      'info'
+    );
+  };
+
+  // Auto-retry all failed posts on network state change to online
+  useEffect(() => {
+    const handleOnline = () => {
+      const failedItems = outbox.filter(x => x.isFailed);
+      if (failedItems.length > 0) {
+        triggerNotification(
+          language === 'tl' 
+            ? 'Balik-online! Sinisimulan ang pag-upload muli...' 
+            : 'Back online! Retrying queued uploads...',
+          'info'
+        );
+        failedItems.forEach(item => {
+          uploadOutboxItem({ ...item, isFailed: false, progress: 15 });
+        });
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [outbox, token]);
+
+  // Periodic automatic retry handler for transient poor network cases
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const failedItems = outbox.filter(x => x.isFailed);
+      if (failedItems.length > 0 && navigator.onLine) {
+        failedItems.forEach(item => {
+          const isNetworkErr = !item.errorMsg || item.errorMsg.includes('signal') || item.errorMsg.includes('koneksyon') || item.errorMsg.includes('internet') || item.errorMsg.includes('retry');
+          if (isNetworkErr) {
+            uploadOutboxItem({ ...item, isFailed: false, progress: 15 });
+          }
+        });
+      }
+    }, 25000);
+    return () => clearInterval(interval);
+  }, [outbox, token]);
+
+  // Memoized visible posts list (merges server posts and outbox items)
+  const visiblePosts = React.useMemo(() => {
+    const outboxIds = new Set(outbox.map(item => item.id));
+    const nonOutboxPosts = posts.filter(p => !outboxIds.has(p.id));
+    
+    const outboxPosts = outbox.map(item => ({
+      id: item.id,
+      userId: user.id,
+      userName: user.name,
+      userAvatar: user.avatar,
+      text: item.text,
+      mediaUrl: item.mediaUrl,
+      mediaType: item.mediaType,
+      mediaUrls: item.mediaUrls,
+      likes: [] as string[],
+      comments: [] as any[],
+      createdAt: item.createdAt,
+      isPending: !item.isFailed,
+      isFailed: item.isFailed,
+      errorMsg: item.errorMsg,
+      progress: item.progress || 15
+    }));
+    
+    return [...outboxPosts, ...nonOutboxPosts];
+  }, [posts, outbox, user.id, user.name, user.avatar]);
+
   useEffect(() => {
     fetchPosts();
     if (user.isAdmin) {
@@ -1559,18 +1715,6 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
       return;
     }
 
-    setIsSubmittingPost(true);
-    setPostUploadProgress(0);
-
-    // Simulated progress bar interval for a realistic upload feel
-    const progressInterval = setInterval(() => {
-      setPostUploadProgress(prev => {
-        if (prev >= 95) return prev;
-        const diff = Math.max(1, Math.floor((95 - prev) * 0.2));
-        return prev + diff;
-      });
-    }, 150);
-
     let finalMediaUrl = customMediaUrl || (selectedPhotos.length > 0 ? selectedPhotos[0] : null) || selectedVideo || undefined;
     let finalMediaType: 'image' | 'video' | undefined = undefined;
 
@@ -1580,60 +1724,39 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
       finalMediaType = 'video';
     }
 
-    try {
-      const res = await fetch('/api/zone/posts', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': token
-        },
-        body: JSON.stringify({
-          text: postText,
-          mediaUrl: finalMediaUrl || undefined,
-          mediaType: finalMediaType,
-          mediaUrls: selectedPhotos.length > 0 ? selectedPhotos : undefined
-        })
-      });
+    // Instantly queue this post into our background Outbox
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const newItem = {
+      id: tempId,
+      text: postText,
+      mediaUrl: finalMediaUrl || undefined,
+      mediaType: finalMediaType,
+      mediaUrls: selectedPhotos.length > 0 ? selectedPhotos : undefined,
+      createdAt: new Date().toISOString(),
+      isFailed: false,
+      progress: 15,
+      errorMsg: undefined
+    };
 
-      const data = await res.json();
-      if (res.ok) {
-        clearInterval(progressInterval);
-        setPostUploadProgress(100);
+    setOutbox(prev => [newItem, ...prev]);
 
-        setTimeout(() => {
-          triggerNotification(
-            language === 'tl' ? 'Nai-post na sa Z-one! 🎉' : 'Successfully posted to Z-one! 🎉',
-            'success'
-          );
-          setPostText('');
-          setSelectedPhoto(null);
-          setSelectedPhotos([]);
-          setSelectedVideo(null);
-          setCustomMediaUrl('');
-          setShowMediaSelect(false);
-          setIsSubmittingPost(false);
-          setPostUploadProgress(0);
+    // Instantly reset all input controls to zero wait time
+    setPostText('');
+    setSelectedPhoto(null);
+    setSelectedPhotos([]);
+    setSelectedVideo(null);
+    setCustomMediaUrl('');
+    setShowMediaSelect(false);
 
-          // Optimistically prepend the new post to the local state list immediately
-          if (data.post) {
-            setPosts(prev => [data.post, ...prev]);
-          }
-          
-          // Fetch silently in the background
-          fetchPosts(true);
-        }, 300);
-      } else {
-        clearInterval(progressInterval);
-        setIsSubmittingPost(false);
-        setPostUploadProgress(0);
-        triggerNotification(data.error || 'Naglalaman ng bawal na salita.', 'error');
-      }
-    } catch (err) {
-      clearInterval(progressInterval);
-      setIsSubmittingPost(false);
-      setPostUploadProgress(0);
-      triggerNotification('Koneksyon error sa pag-post.', 'error');
-    }
+    triggerNotification(
+      language === 'tl' 
+        ? 'Inilalathala sa background! Maaari ka pa ring mag-click at mag-browse nang walang hinto. 🚀' 
+        : 'Posting in the background! You can keep clicking and browsing without any delay. 🚀',
+      'success'
+    );
+
+    // Kickoff background upload asynchronously
+    uploadOutboxItem(newItem);
   };
 
   const handleLikePost = async (postId: string) => {
@@ -2413,48 +2536,75 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                   )}
                 </h3>
                 <span className="text-[10px] text-slate-400 font-bold uppercase">
-                  {posts.length} Active Posts
+                  {visiblePosts.length} Active Posts
                 </span>
               </div>
 
-              {loadingPosts && posts.length === 0 ? (
+              {outbox.length > 0 && (
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-xs font-bold text-blue-900 shadow-xs animate-pulse">
+                  <div className="flex items-center gap-2.5">
+                    <RefreshCw className="w-4 h-4 text-blue-600 shrink-0 animate-spin" />
+                    <div>
+                      <p className="text-[11px] font-black uppercase text-blue-800 tracking-wider">
+                        {language === 'tl' ? 'Background Uploader Aktibo' : 'Background Sync Engine Active'}
+                      </p>
+                      <p className="text-[11px] text-slate-600 font-bold">
+                        {language === 'tl'
+                          ? `May ${outbox.length} post na kasalukuyang pinoproseso nang walang waiting time!`
+                          : `Uploading ${outbox.length} post(s) without making you wait!`}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] bg-blue-100 text-blue-700 px-2.5 py-1 rounded-full font-black uppercase tracking-wider border border-blue-200">
+                    {language === 'tl' ? 'Tumatakbo' : 'Processing'}
+                  </span>
+                </div>
+              )}
+
+              {loadingPosts && visiblePosts.length === 0 ? (
                 <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-500 text-xs font-bold">
                   Kinukuha ang pinakabagong posts sa Z-one...
                 </div>
-              ) : posts.length === 0 ? (
+              ) : visiblePosts.length === 0 ? (
                 <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-400 text-xs font-bold space-y-1">
                   <p>📭 Walang laman ang Z-one feed sa ngayon.</p>
                   <p className="text-[10px] text-slate-450 font-normal">Maging kauna-unahang clicker na mag-post sa komunidad!</p>
                 </div>
               ) : (
                 <div className="space-y-4">
-              {posts.map((post) => {
+              {visiblePosts.map((post) => {
                 const hasLiked = post.likes.includes(user.id);
                 const isMyOwnPost = post.userId === user.id;
                 const userZoned = isUserZoned(post.userId);
+                const isPending = (post as any).isPending;
+                const isFailed = (post as any).isFailed;
+                const errorMsg = (post as any).errorMsg;
+                const progress = (post as any).progress;
 
                 return (
                   <motion.div
                     key={post.id}
                     layoutId={post.id}
-                    className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden"
+                    className={`bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden transition-all duration-300 ${
+                      isPending ? 'opacity-70 saturate-75 bg-slate-50/50' : ''
+                    } ${isFailed ? 'border-rose-200 bg-rose-50/10' : ''}`}
                   >
                     {/* Header */}
                     <div className="p-4 flex items-center justify-between gap-3 border-b border-slate-50">
                       <div className="flex items-center gap-3">
                         <button
-                          onClick={() => handleOpenDm({ id: post.userId, name: post.userName, avatar: post.userAvatar || '👤' })}
-                          className="leading-none shrink-0 select-none block hover:scale-105 transition cursor-pointer text-left focus:outline-hidden"
-                          title="I-Message o Tawagan"
+                          onClick={() => !isPending && !isFailed && handleOpenDm({ id: post.userId, name: post.userName, avatar: post.userAvatar || '👤' })}
+                          className={`leading-none shrink-0 select-none block hover:scale-105 transition text-left focus:outline-hidden ${isPending || isFailed ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                          title={isPending || isFailed ? undefined : "I-Message o Tawagan"}
                         >
                           {renderFeedAvatar(post.userAvatar, post.userName, "w-10 h-10", "text-xl", post.userId)}
                         </button>
                         <div>
                           <div className="font-extrabold text-slate-900 text-xs flex items-center gap-1.5">
                             <button
-                              onClick={() => handleOpenDm({ id: post.userId, name: post.userName, avatar: post.userAvatar || '👤' })}
-                              className="hover:underline hover:text-blue-600 font-extrabold cursor-pointer text-left transition focus:outline-hidden"
-                              title="I-Message o Tawagan"
+                              onClick={() => !isPending && !isFailed && handleOpenDm({ id: post.userId, name: post.userName, avatar: post.userAvatar || '👤' })}
+                              className={`font-extrabold text-left transition focus:outline-hidden ${isPending || isFailed ? 'text-slate-500 cursor-not-allowed' : 'hover:underline hover:text-blue-600 cursor-pointer'}`}
+                              title={isPending || isFailed ? undefined : "I-Message o Tawagan"}
                             >
                               {post.userName}
                             </button>
@@ -2470,7 +2620,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
 
                       <div className="flex items-center gap-2">
                         {/* Zone (Follow) Toggle */}
-                        {!isMyOwnPost && (
+                        {!isMyOwnPost && !isPending && !isFailed && (
                           <button
                             onClick={() => handleToggleZone(post.userId)}
                             className={`text-[10px] font-black px-3 py-1.5 rounded-full cursor-pointer transition flex items-center gap-1 border ${
@@ -2494,7 +2644,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                         )}
 
                         {/* Owner edit/delete buttons */}
-                        {isMyOwnPost && (() => {
+                        {isMyOwnPost && !isPending && !isFailed && (() => {
                           const postTime = new Date(post.createdAt).getTime();
                           const canEditOrDeletePost = (Date.now() - postTime) <= 120000;
                           if (!canEditOrDeletePost) return null;
@@ -2528,7 +2678,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                         })()}
 
                         {/* Admin delete/moderate button */}
-                        {user.isAdmin && !isMyOwnPost && (
+                        {user.isAdmin && !isMyOwnPost && !isPending && !isFailed && (
                           <button
                             onClick={() => handleToggleBan(post.userId)}
                             className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 p-1.5 rounded-lg text-[10px] font-black cursor-pointer flex items-center gap-1"
@@ -2540,6 +2690,52 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                         )}
                       </div>
                     </div>
+
+                    {/* Progress Bar for background upload */}
+                    {isPending && (
+                      <div className="bg-blue-50/50 border-b border-blue-100/60 p-3.5 flex flex-col gap-1.5">
+                        <div className="flex items-center justify-between text-[10px] font-black text-blue-700 uppercase tracking-wider">
+                          <span className="flex items-center gap-1.5">
+                            <RefreshCw className="w-3 h-3 animate-spin text-blue-600" />
+                            <span className="animate-pulse">{language === 'tl' ? 'Inilalathala sa background...' : 'Posting in the background...'}</span>
+                          </span>
+                          <span>{progress}%</span>
+                        </div>
+                        <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                          <div 
+                            className="bg-blue-600 h-full rounded-full transition-all duration-300 shadow-inner"
+                            style={{ width: `${progress}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Error Banner with retry for failed outbox upload */}
+                    {isFailed && (
+                      <div className="bg-rose-50 border-b border-rose-100 p-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                          <div className="space-y-0.5">
+                            <p className="text-[10px] font-black text-rose-700 uppercase tracking-wider">{language === 'tl' ? 'Hindi Nai-post' : 'Upload Failed'}</p>
+                            <p className="text-[10px] text-rose-600 font-bold leading-relaxed">{errorMsg}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() => handleRetryPost(post.id)}
+                            className="bg-rose-600 hover:bg-rose-700 text-white font-black text-[9px] px-3 py-1.5 rounded-lg uppercase cursor-pointer shadow-xs transition"
+                          >
+                            {language === 'tl' ? 'Ibahagi Muli' : 'Retry'}
+                          </button>
+                          <button
+                            onClick={() => handleDeletePendingPost(post.id)}
+                            className="bg-slate-150 hover:bg-slate-200 text-slate-700 font-black text-[9px] px-3 py-1.5 rounded-lg uppercase cursor-pointer transition"
+                          >
+                            {language === 'tl' ? 'Burahin' : 'Delete'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Body */}
                     <div className="p-4 space-y-3">
@@ -2784,175 +2980,179 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                       )}
                     </div>
 
-                    {/* Likes & Comments Counters */}
-                    <div className="px-4 py-2 border-t border-b border-slate-50 flex items-center justify-between text-[10px] text-slate-450 font-bold">
-                      <span className="flex items-center gap-1">
-                        <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500 shrink-0" />
-                        <span>{post.likes.length} Likes</span>
-                      </span>
-                      <span>{post.comments?.length || 0} Comments</span>
-                    </div>
+                    {!isPending && !isFailed && (
+                      <>
+                        {/* Likes & Comments Counters */}
+                        <div className="px-4 py-2 border-t border-b border-slate-50 flex items-center justify-between text-[10px] text-slate-450 font-bold">
+                          <span className="flex items-center gap-1">
+                            <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500 shrink-0" />
+                            <span>{post.likes.length} Likes</span>
+                          </span>
+                          <span>{post.comments?.length || 0} Comments</span>
+                        </div>
 
-                    {/* Interaction Actions */}
-                    <div className="px-4 py-1.5 bg-slate-50/50 flex items-center justify-around gap-2 border-b border-slate-50">
-                      <button
-                        onClick={() => handleLikePost(post.id)}
-                        className={`flex-1 py-2 rounded-xl text-xs font-black cursor-pointer transition flex items-center justify-center gap-1.5 ${
-                          hasLiked 
-                            ? 'text-rose-600 bg-rose-50' 
-                            : 'text-slate-650 hover:bg-slate-100'
-                        }`}
-                      >
-                        <Heart className={`w-4 h-4 ${hasLiked ? 'fill-rose-500 text-rose-500' : 'text-slate-500'}`} />
-                        <span>{hasLiked ? 'Liked' : 'Like'}</span>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          // Focus comment box
-                          const el = document.getElementById(`comment-input-${post.id}`);
-                          el?.focus();
-                        }}
-                        className="flex-1 py-2 rounded-xl text-xs font-black text-slate-650 hover:bg-slate-100 cursor-pointer transition flex items-center justify-center gap-1.5"
-                      >
-                        <MessageSquare className="w-4 h-4 text-slate-500" />
-                        <span>Comment</span>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setSharingPostId(post.id);
-                          setShareCaptionText('');
-                        }}
-                        className="flex-1 py-2 rounded-xl text-xs font-black text-slate-650 hover:bg-slate-100 cursor-pointer transition flex items-center justify-center gap-1.5"
-                      >
-                        <Share2 className="w-4 h-4 text-slate-500" />
-                        <span>{language === 'tl' ? 'I-share' : 'Share'}</span>
-                      </button>
-                    </div>
-
-                    {/* Comments section */}
-                    <div className="bg-slate-50/30 p-4 space-y-3">
-                      
-                      {/* Comment input form */}
-                      <div className="flex gap-2 items-center">
-                        <span className="leading-none shrink-0 select-none block">
-                          {renderFeedAvatar(user.avatar, user.name, "w-7 h-7", "text-xs", user.id)}
-                        </span>
-                        <div className="flex-1 flex gap-1 bg-white border border-slate-200 rounded-xl p-1 focus-within:ring-2 focus-within:ring-blue-500">
-                          <input
-                            type="text"
-                            id={`comment-input-${post.id}`}
-                            placeholder={language === 'tl' ? 'Sumulat ng komento...' : 'Write a comment...'}
-                            value={commentInputs[post.id] || ''}
-                            onChange={(e) => setCommentInputs(prev => ({ ...prev, [post.id]: e.target.value }))}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handlePostComment(post.id);
-                            }}
-                            className="flex-1 text-xs px-2 py-1 outline-none font-semibold text-slate-800"
-                          />
+                        {/* Interaction Actions */}
+                        <div className="px-4 py-1.5 bg-slate-50/50 flex items-center justify-around gap-2 border-b border-slate-50">
                           <button
-                            onClick={() => handlePostComment(post.id)}
-                            disabled={submittingCommentId === post.id}
-                            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white p-1.5 rounded-lg cursor-pointer transition shrink-0"
+                            onClick={() => handleLikePost(post.id)}
+                            className={`flex-1 py-2 rounded-xl text-xs font-black cursor-pointer transition flex items-center justify-center gap-1.5 ${
+                              hasLiked 
+                                ? 'text-rose-600 bg-rose-50' 
+                                : 'text-slate-650 hover:bg-slate-100'
+                            }`}
                           >
-                            <Send className="w-3.5 h-3.5" />
+                            <Heart className={`w-4 h-4 ${hasLiked ? 'fill-rose-500 text-rose-500' : 'text-slate-500'}`} />
+                            <span>{hasLiked ? 'Liked' : 'Like'}</span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              // Focus comment box
+                              const el = document.getElementById(`comment-input-${post.id}`);
+                              el?.focus();
+                            }}
+                            className="flex-1 py-2 rounded-xl text-xs font-black text-slate-650 hover:bg-slate-100 cursor-pointer transition flex items-center justify-center gap-1.5"
+                          >
+                            <MessageSquare className="w-4 h-4 text-slate-500" />
+                            <span>Comment</span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setSharingPostId(post.id);
+                              setShareCaptionText('');
+                            }}
+                            className="flex-1 py-2 rounded-xl text-xs font-black text-slate-650 hover:bg-slate-100 cursor-pointer transition flex items-center justify-center gap-1.5"
+                          >
+                            <Share2 className="w-4 h-4 text-slate-500" />
+                            <span>{language === 'tl' ? 'I-share' : 'Share'}</span>
                           </button>
                         </div>
-                      </div>
 
-                      {/* Comments list - Scrollable Facebook Style */}
-                      {post.comments && post.comments.length > 0 && (
-                        <div className="space-y-2 pt-2 border-t border-slate-100 max-h-64 overflow-y-auto pr-1">
-                          {post.comments.map((comm) => (
-                            <div key={comm.id} className="flex gap-2.5 items-start">
+                        {/* Comments section */}
+                        <div className="bg-slate-50/30 p-4 space-y-3">
+                          
+                          {/* Comment input form */}
+                          <div className="flex gap-2 items-center">
+                            <span className="leading-none shrink-0 select-none block">
+                              {renderFeedAvatar(user.avatar, user.name, "w-7 h-7", "text-xs", user.id)}
+                            </span>
+                            <div className="flex-1 flex gap-1 bg-white border border-slate-200 rounded-xl p-1 focus-within:ring-2 focus-within:ring-blue-500">
+                              <input
+                                type="text"
+                                id={`comment-input-${post.id}`}
+                                placeholder={language === 'tl' ? 'Sumulat ng komento...' : 'Write a comment...'}
+                                value={commentInputs[post.id] || ''}
+                                onChange={(e) => setCommentInputs(prev => ({ ...prev, [post.id]: e.target.value }))}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handlePostComment(post.id);
+                                }}
+                                className="flex-1 text-xs px-2 py-1 outline-none font-semibold text-slate-800"
+                              />
                               <button
-                                onClick={() => handleOpenDm({ id: comm.userId, name: comm.userName, avatar: comm.userAvatar || '👤' })}
-                                className="leading-none shrink-0 select-none block hover:scale-105 transition cursor-pointer text-left focus:outline-hidden"
-                                title="I-Message o Tawagan"
+                                onClick={() => handlePostComment(post.id)}
+                                disabled={submittingCommentId === post.id}
+                                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white p-1.5 rounded-lg cursor-pointer transition shrink-0"
                               >
-                                {renderFeedAvatar(comm.userAvatar, comm.userName, "w-6 h-6", "text-[10px]", comm.userId)}
+                                <Send className="w-3.5 h-3.5" />
                               </button>
-                              <div className="bg-slate-100 p-2.5 rounded-2xl flex-1 space-y-0.5">
-                                <div className="flex items-center justify-between gap-2">
+                            </div>
+                          </div>
+
+                          {/* Comments list - Scrollable Facebook Style */}
+                          {post.comments && post.comments.length > 0 && (
+                            <div className="space-y-2 pt-2 border-t border-slate-100 max-h-64 overflow-y-auto pr-1">
+                              {post.comments.map((comm) => (
+                                <div key={comm.id} className="flex gap-2.5 items-start">
                                   <button
                                     onClick={() => handleOpenDm({ id: comm.userId, name: comm.userName, avatar: comm.userAvatar || '👤' })}
-                                    className="hover:underline hover:text-blue-600 font-extrabold cursor-pointer text-left transition focus:outline-hidden text-[10px]"
+                                    className="leading-none shrink-0 select-none block hover:scale-105 transition cursor-pointer text-left focus:outline-hidden"
                                     title="I-Message o Tawagan"
                                   >
-                                    {comm.userName}
+                                    {renderFeedAvatar(comm.userAvatar, comm.userName, "w-6 h-6", "text-[10px]", comm.userId)}
                                   </button>
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="text-[8px] text-slate-400 font-mono">
-                                      {new Date(comm.createdAt).toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' })}
-                                    </span>
-                                    {comm.userId === user.id && (() => {
-                                      const commTime = new Date(comm.createdAt).getTime();
-                                      const canEditOrDeleteComm = (Date.now() - commTime) <= 120000;
-                                      if (!canEditOrDeleteComm) return null;
-                                      return (
-                                        <div className="flex items-center gap-1 ml-1 select-none">
-                                          <button
-                                            onClick={() => {
-                                              setEditingCommentId(comm.id);
-                                              setEditingCommentText(comm.text);
-                                            }}
-                                            className="text-slate-400 hover:text-indigo-650 cursor-pointer p-0.5 rounded transition"
-                                            title={language === 'tl' ? 'I-edit' : 'Edit'}
-                                          >
-                                            <Pencil className="w-2.5 h-2.5" />
-                                          </button>
-                                          <button
-                                            onClick={() => {
-                                              if (!window.confirm || window.confirm(language === 'tl' ? 'Sigurado ka bang gusto mong i-delete ang komento na ito?' : 'Are you sure you want to delete this comment?')) {
-                                                handleDeleteComment(post.id, comm.id);
-                                              }
-                                            }}
-                                            className="text-slate-400 hover:text-rose-600 cursor-pointer p-0.5 rounded transition"
-                                            title={language === 'tl' ? 'I-delete' : 'Delete'}
-                                          >
-                                            <Trash2 className="w-2.5 h-2.5" />
-                                          </button>
-                                        </div>
-                                      );
-                                    })()}
+                                  <div className="bg-slate-100 p-2.5 rounded-2xl flex-1 space-y-0.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <button
+                                        onClick={() => handleOpenDm({ id: comm.userId, name: comm.userName, avatar: comm.userAvatar || '👤' })}
+                                        className="hover:underline hover:text-blue-600 font-extrabold cursor-pointer text-left transition focus:outline-hidden text-[10px]"
+                                        title="I-Message o Tawagan"
+                                      >
+                                        {comm.userName}
+                                      </button>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-[8px] text-slate-400 font-mono">
+                                          {new Date(comm.createdAt).toLocaleTimeString('fil-PH', { hour12: false, hour: 'numeric', minute: '2-digit' })}
+                                        </span>
+                                        {comm.userId === user.id && (() => {
+                                          const commTime = new Date(comm.createdAt).getTime();
+                                          const canEditOrDeleteComm = (Date.now() - commTime) <= 120000;
+                                          if (!canEditOrDeleteComm) return null;
+                                          return (
+                                            <div className="flex items-center gap-1 ml-1 select-none">
+                                              <button
+                                                onClick={() => {
+                                                  setEditingCommentId(comm.id);
+                                                  setEditingCommentText(comm.text);
+                                                }}
+                                                className="text-slate-400 hover:text-indigo-650 cursor-pointer p-0.5 rounded transition"
+                                                title={language === 'tl' ? 'I-edit' : 'Edit'}
+                                              >
+                                                <Pencil className="w-2.5 h-2.5" />
+                                              </button>
+                                              <button
+                                                onClick={() => {
+                                                  if (!window.confirm || window.confirm(language === 'tl' ? 'Sigurado ka bang gusto mong i-delete ang komento na ito?' : 'Are you sure you want to delete this comment?')) {
+                                                    handleDeleteComment(post.id, comm.id);
+                                                  }
+                                                }}
+                                                className="text-slate-400 hover:text-rose-600 cursor-pointer p-0.5 rounded transition"
+                                                title={language === 'tl' ? 'I-delete' : 'Delete'}
+                                              >
+                                                <Trash2 className="w-2.5 h-2.5" />
+                                              </button>
+                                            </div>
+                                          );
+                                        })()}
+                                      </div>
+                                    </div>
+                                    {editingCommentId === comm.id ? (
+                                      <div className="flex items-center gap-1.5 mt-1.5">
+                                        <input
+                                          type="text"
+                                          value={editingCommentText}
+                                          onChange={(e) => setEditingCommentText(e.target.value)}
+                                          className="flex-1 text-xs px-2 py-1 bg-white border border-slate-200 rounded-xl outline-none text-slate-800"
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') handleSaveCommentEdit(post.id, comm.id);
+                                          }}
+                                        />
+                                        <button
+                                          onClick={() => setEditingCommentId(null)}
+                                          className="text-[9px] font-black text-slate-400 hover:text-slate-650 uppercase px-1.5 cursor-pointer"
+                                        >
+                                          ❌
+                                        </button>
+                                        <button
+                                          onClick={() => handleSaveCommentEdit(post.id, comm.id)}
+                                          className="text-[9px] font-black text-blue-600 hover:text-blue-750 uppercase px-1.5 cursor-pointer"
+                                        >
+                                          💾
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <p className="text-slate-750 text-xs font-semibold leading-relaxed">
+                                        {comm.text}
+                                      </p>
+                                    )}
                                   </div>
                                 </div>
-                                {editingCommentId === comm.id ? (
-                                  <div className="flex items-center gap-1.5 mt-1.5">
-                                    <input
-                                      type="text"
-                                      value={editingCommentText}
-                                      onChange={(e) => setEditingCommentText(e.target.value)}
-                                      className="flex-1 text-xs px-2 py-1 bg-white border border-slate-200 rounded-xl outline-none text-slate-800"
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') handleSaveCommentEdit(post.id, comm.id);
-                                      }}
-                                    />
-                                    <button
-                                      onClick={() => setEditingCommentId(null)}
-                                      className="text-[9px] font-black text-slate-400 hover:text-slate-650 uppercase px-1.5 cursor-pointer"
-                                    >
-                                      ❌
-                                    </button>
-                                    <button
-                                      onClick={() => handleSaveCommentEdit(post.id, comm.id)}
-                                      className="text-[9px] font-black text-blue-600 hover:text-blue-750 uppercase px-1.5 cursor-pointer"
-                                    >
-                                      💾
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <p className="text-slate-750 text-xs font-semibold leading-relaxed">
-                                    {comm.text}
-                                  </p>
-                                )}
-                              </div>
+                              ))}
                             </div>
-                          ))}
+                          )}
                         </div>
-                      )}
-                    </div>
+                      </>
+                    )}
 
                   </motion.div>
                 );
