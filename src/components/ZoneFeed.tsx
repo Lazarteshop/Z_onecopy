@@ -405,7 +405,14 @@ function M3U8Player({ url, title, language, triggerNotification }: M3U8PlayerPro
 }
 
 export default function ZoneFeed({ token, user, triggerNotification, onRefreshProfile, language }: ZoneFeedProps) {
-  const [posts, setPosts] = useState<ZonePost[]>([]);
+  const [posts, setPosts] = useState<ZonePost[]>(() => {
+    try {
+      const cached = localStorage.getItem('zone_posts_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [loadingPosts, setLoadingPosts] = useState(false);
 
   // Z-one Social Media Tabs & Detailed View States
@@ -1493,7 +1500,13 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
       });
       if (res.ok) {
         const data = await res.json();
-        setPosts(data.posts || []);
+        const loadedPosts = data.posts || [];
+        setPosts(loadedPosts);
+        try {
+          localStorage.setItem('zone_posts_cache', JSON.stringify(loadedPosts));
+        } catch (cacheErr) {
+          console.error('Failed to write posts to localStorage cache:', cacheErr);
+        }
       }
     } catch (err) {
       console.error('Failed to load posts', err);
@@ -2393,13 +2406,18 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                 <h3 className="font-black text-slate-950 text-xs tracking-wider uppercase flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-yellow-500 animate-pulse" />
                   <span>Mga Balita at Kwento (Z-one Live Feed)</span>
+                  {loadingPosts && (
+                    <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-md font-black animate-pulse tracking-normal normal-case border border-blue-100">
+                      Ina-update...
+                    </span>
+                  )}
                 </h3>
                 <span className="text-[10px] text-slate-400 font-bold uppercase">
                   {posts.length} Active Posts
                 </span>
               </div>
 
-              {loadingPosts ? (
+              {loadingPosts && posts.length === 0 ? (
                 <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-500 text-xs font-bold">
                   Kinukuha ang pinakabagong posts sa Z-one...
                 </div>

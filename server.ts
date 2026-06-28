@@ -210,7 +210,12 @@ interface DBStructure {
 }
 
 // --- HELPER TO INITIALIZE AND GET DATABASE ---
+let cachedDB: DBStructure | null = null;
+
 function loadDB(): DBStructure {
+  if (cachedDB) {
+    return cachedDB;
+  }
   const envAdminEmail = process.env.ADMIN_EMAIL || 'admin@example.com';
   const envAdminPassword = process.env.ADMIN_PASSWORD || 'AdminSecurePassword123';
   const envAdminName = process.env.ADMIN_NAME || 'System Administrator';
@@ -267,6 +272,7 @@ function loadDB(): DBStructure {
           }
         ];
       }
+      cachedDB = loaded;
       return loaded;
     } catch (e) {
       console.error('Error reading database file, resetting...', e);
@@ -430,6 +436,7 @@ function loadDB(): DBStructure {
   });
 
   fs.writeFileSync(DB_FILE_PATH, JSON.stringify(defaultDB, null, 2), 'utf-8');
+  cachedDB = defaultDB;
   return defaultDB;
 }
 
@@ -464,6 +471,7 @@ function initLastSyncedCache(data: DBStructure) {
 }
 
 function saveDB(data: DBStructure) {
+  cachedDB = data;
   fs.writeFileSync(DB_FILE_PATH, JSON.stringify(data, null, 2), 'utf-8');
   uploadToFirestore(data).catch(err => {
     console.error('Error uploading db changes to Firestore:', err);
@@ -694,6 +702,7 @@ async function syncFromFirestore() {
         loadedDB.posts = temp.posts;
       }
       fs.writeFileSync(DB_FILE_PATH, JSON.stringify(loadedDB, null, 2), 'utf-8');
+      cachedDB = loadedDB;
     } else {
       console.log('🌱 Firestore cloud database is empty. Seeding defaults from local template...');
       // Load local database or create a new one using loadDB
