@@ -74,38 +74,50 @@ interface UserSession {
 
 const compressImage = (base64Str: string, maxWidth = 150, maxHeight = 150): Promise<string> => {
   return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      console.warn("Avatar compression timed out. Resolving with original string.");
+      resolve(base64Str);
+    }, 4000); // 4 seconds fail-safe timeout
+
     const img = new Image();
-    img.src = base64Str;
     img.onload = () => {
-      const canvas = document.createElement('canvas');
-      let width = img.width;
-      let height = img.height;
+      clearTimeout(timeout);
+      try {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
 
-      if (width > height) {
-        if (width > maxWidth) {
-          height = Math.round((height * maxWidth) / width);
-          width = maxWidth;
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
         }
-      } else {
-        if (height > maxHeight) {
-          width = Math.round((width * maxHeight) / height);
-          height = maxHeight;
-        }
-      }
 
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.7));
-      } else {
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.7));
+        } else {
+          resolve(base64Str);
+        }
+      } catch (err) {
+        console.error("Avatar compression error:", err);
         resolve(base64Str);
       }
     };
     img.onerror = () => {
+      clearTimeout(timeout);
       resolve(base64Str);
     };
+    img.src = base64Str;
   });
 };
 
