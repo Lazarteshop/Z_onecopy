@@ -1467,6 +1467,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
   const [isUploadingLocalFile, setIsUploadingLocalFile] = useState(false);
   const [postUploadProgress, setPostUploadProgress] = useState<number>(0);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
 
   const handleLocalFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -1629,7 +1630,8 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
       let finalMediaUrls = item.mediaUrls;
 
       // 1. If mediaUrl is a local Base64 string, upload it to /api/zone/upload first
-      if (finalMediaUrl && finalMediaUrl.startsWith('data:')) {
+      // Bypassed for images to store them as high-reliability, persistent Base64 strings in the database
+      if (finalMediaUrl && finalMediaUrl.startsWith('data:') && item.mediaType !== 'image') {
         setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: 30 } : x));
         
         const uploadRes = await fetch('/api/zone/upload', {
@@ -1652,7 +1654,8 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
       }
 
       // 2. If mediaUrls contains Base64 strings, upload them all to /api/zone/upload
-      if (finalMediaUrls && Array.isArray(finalMediaUrls) && finalMediaUrls.length > 0) {
+      // Bypassed for images to store them as high-reliability, persistent Base64 strings in the database
+      if (finalMediaUrls && Array.isArray(finalMediaUrls) && finalMediaUrls.length > 0 && item.mediaType !== 'image') {
         const uploadedUrls: string[] = [];
         for (let i = 0; i < finalMediaUrls.length; i++) {
           const url = finalMediaUrls[i];
@@ -2927,7 +2930,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                             </p>
                           )}
 
-                          {post.sharedPost.mediaUrl && (
+                          {post.sharedPost.mediaUrl && !failedImages.has(post.sharedPost.mediaUrl) && (
                             <>
                               {isBasicMode && !revealedMedia.has(post.sharedPost.id) ? (
                                 <div className="bg-slate-100/50 border border-slate-200 rounded-xl p-3 text-center space-y-2">
@@ -2951,8 +2954,8 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                               ) : (
                                 <>
                                   {post.sharedPost.mediaUrls && post.sharedPost.mediaUrls.length > 0 ? (
-                                    <div className={`grid gap-1.5 ${post.sharedPost.mediaUrls.length === 1 ? 'grid-cols-1' : post.sharedPost.mediaUrls.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
-                                      {post.sharedPost.mediaUrls.map((url, idx) => (
+                                    <div className={`grid gap-1.5 ${post.sharedPost.mediaUrls.filter(url => !failedImages.has(url)).length === 1 ? 'grid-cols-1' : post.sharedPost.mediaUrls.filter(url => !failedImages.has(url)).length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                                      {post.sharedPost.mediaUrls.filter(url => !failedImages.has(url)).map((url, idx) => (
                                         <div key={idx} className="rounded-xl overflow-hidden border border-slate-150 relative cursor-zoom-in hover:opacity-95 transition">
                                           <img 
                                             src={url} 
@@ -2960,6 +2963,13 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                                             className="w-full max-h-48 object-cover" 
                                             referrerPolicy="no-referrer"
                                             onClick={() => setLightboxImage(url)}
+                                            onError={() => {
+                                              setFailedImages(prev => {
+                                                const next = new Set(prev);
+                                                next.add(url);
+                                                return next;
+                                              });
+                                            }}
                                           />
                                         </div>
                                       ))}
@@ -2974,6 +2984,13 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                                             className="w-full max-h-60 object-cover" 
                                             referrerPolicy="no-referrer" 
                                             onClick={() => setLightboxImage(post.sharedPost!.mediaUrl!)}
+                                            onError={() => {
+                                              setFailedImages(prev => {
+                                                const next = new Set(prev);
+                                                next.add(post.sharedPost!.mediaUrl!);
+                                                return next;
+                                              });
+                                            }}
                                           />
                                         </div>
                                       )}
@@ -3016,8 +3033,8 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                               </button>
                             </div>
                           ) : (
-                            <div className={`grid gap-2 ${post.mediaUrls.length === 1 ? 'grid-cols-1' : post.mediaUrls.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
-                              {post.mediaUrls.map((url, index) => (
+                            <div className={`grid gap-2 ${post.mediaUrls.filter(url => !failedImages.has(url)).length === 1 ? 'grid-cols-1' : post.mediaUrls.filter(url => !failedImages.has(url)).length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                              {post.mediaUrls.filter(url => !failedImages.has(url)).map((url, index) => (
                                 <div key={index} className="rounded-2xl overflow-hidden border border-slate-150 relative cursor-zoom-in group hover:opacity-95 transition">
                                   <img 
                                     src={url} 
@@ -3025,6 +3042,13 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                                     className="w-full h-full max-h-80 object-cover" 
                                     referrerPolicy="no-referrer"
                                     onClick={() => setLightboxImage(url)}
+                                    onError={() => {
+                                      setFailedImages(prev => {
+                                        const next = new Set(prev);
+                                        next.add(url);
+                                        return next;
+                                      });
+                                    }}
                                   />
                                 </div>
                               ))}
@@ -3034,7 +3058,7 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                       )}
 
                       {/* Single Attached Media Render */}
-                      {post.mediaUrl && (!post.mediaUrls || post.mediaUrls.length === 0) && (
+                      {post.mediaUrl && (!post.mediaUrls || post.mediaUrls.length === 0) && !failedImages.has(post.mediaUrl) && (
                         <>
                           {isBasicMode && !revealedMedia.has(post.id) ? (
                             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center space-y-3">
@@ -3076,6 +3100,13 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
                                     className="w-full max-h-80 object-cover" 
                                     referrerPolicy="no-referrer" 
                                     onClick={() => setLightboxImage(post.mediaUrl!)}
+                                    onError={() => {
+                                      setFailedImages(prev => {
+                                        const next = new Set(prev);
+                                        next.add(post.mediaUrl!);
+                                        return next;
+                                      });
+                                    }}
                                   />
                                   {isBasicMode && (
                                     <span className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[9px] font-black px-2 py-0.5 rounded-full">
