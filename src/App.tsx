@@ -1841,6 +1841,7 @@ export default function App() {
                 <ZoneFeed
                   token={token || ''}
                   user={user}
+                  setUser={setUser}
                   triggerNotification={triggerNotification}
                   onRefreshProfile={() => fetchUserProfile(token || '')}
                   language={language}

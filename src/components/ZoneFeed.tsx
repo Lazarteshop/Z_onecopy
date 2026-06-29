@@ -46,6 +46,7 @@ interface ZoneFeedProps {
     isAdmin: boolean;
     zonedUsers?: string[];
   };
+  setUser?: React.Dispatch<React.SetStateAction<any>>;
   triggerNotification: (msg: string, type: 'success' | 'error' | 'info') => void;
   onRefreshProfile: () => void;
   language: 'en' | 'tl';
@@ -456,7 +457,7 @@ const compressImage = (dataUrl: string, maxWidth: number = 800, maxHeight: numbe
   });
 };
 
-export default function ZoneFeed({ token, user, triggerNotification, onRefreshProfile, language }: ZoneFeedProps) {
+export default function ZoneFeed({ token, user, setUser, triggerNotification, onRefreshProfile, language }: ZoneFeedProps) {
   const [posts, setPosts] = useState<ZonePost[]>(() => {
     try {
       const cached = localStorage.getItem('zone_posts_cache');
@@ -1236,6 +1237,31 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
     if (e) e.preventDefault();
     if (!activeDmUser || !newDmText.trim()) return;
 
+    const tempId = 'temp-msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+    const originalText = newDmText;
+
+    const optimisticMsg = {
+      id: tempId,
+      senderId: user.id,
+      senderName: user.name,
+      senderAvatar: user.avatar || '👤',
+      receiverId: activeDmUser.id,
+      receiverName: activeDmUser.name,
+      receiverAvatar: activeDmUser.avatar || '👤',
+      text: originalText,
+      createdAt: new Date().toISOString()
+    };
+
+    // Optimistically update messages list immediately (0ms delay)
+    setDmMessages(prev => [...prev, optimisticMsg]);
+    setNewDmText('');
+
+    // Instantly scroll to bottom for maximum responsive feeling
+    setTimeout(() => {
+      const chatContainer = document.getElementById('dm-chat-scroll');
+      if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
+    }, 20);
+
     try {
       const res = await fetch('/api/zone/messages', {
         method: 'POST',
@@ -1245,25 +1271,27 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
         },
         body: JSON.stringify({
           receiverId: activeDmUser.id,
-          text: newDmText
+          text: originalText
         })
       });
 
       if (res.ok) {
         const data = await res.json();
-        setDmMessages(prev => [...prev, data.message]);
-        setNewDmText('');
-        // Instantly focus scroll
-        setTimeout(() => {
-          const chatContainer = document.getElementById('dm-chat-scroll');
-          if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
-        }, 100);
+        // Replace temp message with server version
+        setDmMessages(prev => prev.map(msg => msg.id === tempId ? data.message : msg));
       } else {
         const errData = await res.json();
+        // Remove temp message and restore text
+        setDmMessages(prev => prev.filter(msg => msg.id !== tempId));
+        setNewDmText(originalText);
         triggerNotification(errData.error || 'Failed to send message', 'error');
       }
     } catch (err) {
       console.error('Error sending DM:', err);
+      // Remove temp message and restore text
+      setDmMessages(prev => prev.filter(msg => msg.id !== tempId));
+      setNewDmText(originalText);
+      triggerNotification(language === 'tl' ? 'Koneksyon error sa pagpapadala ng mensahe.' : 'Network error sending message.', 'error');
     }
   };
 
@@ -1884,6 +1912,24 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
   };
 
   const handleLikePost = async (postId: string) => {
+    const postToUpdate = posts.find(p => p.id === postId);
+    if (!postToUpdate) return;
+
+    const hasLiked = postToUpdate.likes?.includes(user.id);
+    const newLikes = hasLiked
+      ? (postToUpdate.likes || []).filter(id => id !== user.id)
+      : [...(postToUpdate.likes || []), user.id];
+
+    const originalLikes = postToUpdate.likes || [];
+
+    // Optimistically update likes in local state immediately (0ms delay)
+    setPosts(prev => prev.map(p => {
+      if (p.id === postId) {
+        return { ...p, likes: newLikes };
+      }
+      return p;
+    }));
+
     try {
       const res = await fetch(`/api/zone/posts/${postId}/like`, {
         method: 'POST',
@@ -1893,16 +1939,32 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
       });
       if (res.ok) {
         const data = await res.json();
-        // Optimistically update likes in local state
+        // Update with fresh server state to ensure perfect sync
         setPosts(prev => prev.map(p => {
           if (p.id === postId) {
             return { ...p, likes: data.likes };
           }
           return p;
         }));
+      } else {
+        // Rollback on server error
+        setPosts(prev => prev.map(p => {
+          if (p.id === postId) {
+            return { ...p, likes: originalLikes };
+          }
+          return p;
+        }));
+        triggerNotification(language === 'tl' ? 'Hindi magawa ang action sa pag-like.' : 'Failed to register like.', 'error');
       }
     } catch (err) {
       console.error(err);
+      // Rollback on connection error
+      setPosts(prev => prev.map(p => {
+        if (p.id === postId) {
+          return { ...p, likes: originalLikes };
+        }
+        return p;
+      }));
     }
   };
 
@@ -1910,7 +1972,31 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
     const commentText = commentInputs[postId];
     if (!commentText || !commentText.trim()) return;
 
-    setSubmittingCommentId(postId);
+    const postToUpdate = posts.find(p => p.id === postId);
+    if (!postToUpdate) return;
+    const originalComments = postToUpdate.comments || [];
+
+    const tempCommentId = 'temp-comm-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+    const optimisticComment = {
+      id: tempCommentId,
+      userId: user.id,
+      userName: user.name,
+      userAvatar: user.avatar,
+      text: commentText,
+      createdAt: new Date().toISOString()
+    };
+
+    // Optimistically add comment to state instantly (0ms delay)
+    setPosts(prev => prev.map(p => {
+      if (p.id === postId) {
+        return { ...p, comments: [...(p.comments || []), optimisticComment] };
+      }
+      return p;
+    }));
+
+    // Instantly clear the input field
+    setCommentInputs(prev => ({ ...prev, [postId]: '' }));
+
     try {
       const res = await fetch(`/api/zone/posts/${postId}/comment`, {
         method: 'POST',
@@ -1923,24 +2009,61 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
 
       const data = await res.json();
       if (res.ok) {
+        // Sync with server's final filtered comments list
         setPosts(prev => prev.map(p => {
           if (p.id === postId) {
             return { ...p, comments: data.comments };
           }
           return p;
         }));
-        setCommentInputs(prev => ({ ...prev, [postId]: '' }));
       } else {
+        // Rollback on server error
+        setPosts(prev => prev.map(p => {
+          if (p.id === postId) {
+            return { ...p, comments: originalComments };
+          }
+          return p;
+        }));
+        // Restore comment input
+        setCommentInputs(prev => ({ ...prev, [postId]: commentText }));
         triggerNotification(data.error || 'Bawal na salita sa comment.', 'error');
       }
     } catch (err) {
       console.error(err);
-    } finally {
-      setSubmittingCommentId(null);
+      // Rollback on connection error
+      setPosts(prev => prev.map(p => {
+        if (p.id === postId) {
+          return { ...p, comments: originalComments };
+        }
+        return p;
+      }));
+      setCommentInputs(prev => ({ ...prev, [postId]: commentText }));
     }
   };
 
   const handleToggleZone = async (targetUserId: string) => {
+    if (!user) return;
+
+    // Determine current follow state
+    const isCurrentlyZoned = user.zonedUsers?.includes(targetUserId);
+
+    // Prepare original and optimistic lists
+    const originalZonedUsers = user.zonedUsers || [];
+    const newZonedUsers = isCurrentlyZoned
+      ? originalZonedUsers.filter(id => id !== targetUserId)
+      : [...originalZonedUsers, targetUserId];
+
+    // Optimistically update parent user session state instantly (0ms delay)
+    if (setUser) {
+      setUser(prev => prev ? { ...prev, zonedUsers: newZonedUsers } : null);
+    }
+
+    // Instantly trigger responsive notification
+    const instantMsg = !isCurrentlyZoned
+      ? (language === 'tl' ? 'Naka-Zone (Follow) ka na sa kanya!' : 'You zoned (followed) this user!')
+      : (language === 'tl' ? 'Inalis sa Zone (Unfollowed) ang user.' : 'You unzoned this user.');
+    triggerNotification(instantMsg, 'success');
+
     try {
       const res = await fetch(`/api/zone/users/${targetUserId}/toggle-zone`, {
         method: 'POST',
@@ -1950,17 +2073,21 @@ export default function ZoneFeed({ token, user, triggerNotification, onRefreshPr
       });
       const data = await res.json();
       if (res.ok) {
-        const msg = data.isZoned 
-          ? (language === 'tl' ? 'Naka-Zone (Follow) ka na sa kanya!' : 'You zoned (followed) this user!')
-          : (language === 'tl' ? 'Inalis sa Zone (Unfollowed) ang user.' : 'You unzoned this user.');
-        
-        triggerNotification(msg, 'success');
+        // Run refresh in background to make sure stats stay perfectly in sync
         onRefreshProfile();
       } else {
+        // Rollback on server error
+        if (setUser) {
+          setUser(prev => prev ? { ...prev, zonedUsers: originalZonedUsers } : null);
+        }
         triggerNotification(data.error || 'Hindi magawa ang action.', 'error');
       }
     } catch (err) {
       console.error(err);
+      // Rollback on network error
+      if (setUser) {
+        setUser(prev => prev ? { ...prev, zonedUsers: originalZonedUsers } : null);
+      }
     }
   };
 
