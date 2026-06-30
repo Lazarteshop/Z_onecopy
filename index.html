@@ -13,23 +13,64 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Z-oneApp" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png">
+    
+    <style>
+      .install-btn {
+        position: fixed;
+        bottom: 70px;
+        right: 20px;
+        background: #0a4fb3;
+        color: #fff;
+        border: none;
+        padding: 12px 18px;
+        border-radius: 25px;
+        font-weight: bold;
+        cursor: pointer;
+        display: none;
+        z-index: 9999;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      }
+    </style>
   </head>
   <body>
+    <button id="installBtn" class="install-btn">Install App</button>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     
-    <!-- Register Service Worker -->
+    <!-- PWA Installation Script & Service Worker Registration -->
     <script>
+      let deferredPrompt;
+      const installBtn = document.getElementById("installBtn");
+
+      window.addEventListener("beforeinstallprompt", (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        installBtn.style.display = "block";
+      });
+
+      installBtn.addEventListener("click", async () => {
+        if (deferredPrompt) {
+          deferredPrompt.prompt();
+          await deferredPrompt.userChoice;
+          deferredPrompt = null;
+        } else {
+          alert("Tap menu (⋮) then 'Add to Home Screen'");
+        }
+      });
+
+      window.addEventListener("load", () => {
+        setTimeout(() => {
+          if (!deferredPrompt) {
+            installBtn.style.display = "block";
+            installBtn.innerText = "Install (Use menu ⋮)";
+          }
+        }, 3000);
+      });
+
       if ("serviceWorker" in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register("/service-worker.js")
-            .then((reg) => {
-              console.log('✅ PWA Service Worker successfully registered with scope: ', reg.scope);
-            })
-            .catch((err) => {
-              console.error('❌ PWA Service Worker registration failed: ', err);
-            });
-        });
+        navigator.serviceWorker.register("/sw.js")
+          .then(() => console.log("SW registered"))
+          .catch(err => console.log("SW failed", err));
       }
     </script>
   </body>

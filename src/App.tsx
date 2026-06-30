@@ -58,7 +58,6 @@ import AdminPanel from './components/AdminPanel';
 import ZoneFeed from './components/ZoneFeed';
 import ZonePromoVideo from './components/ZonePromoVideo';
 import MerchantPortal from './components/MerchantPortal';
-import AppInstallationPanel from './components/AppInstallationPanel';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -145,10 +144,6 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [showGoogleChooser, setShowGoogleChooser] = useState(false);
 
-  // PWA Installation States
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [showInstallPwaBtn, setShowInstallPwaBtn] = useState(false);
-
   // --- CORE APP STATES ---
   const [stats, setStats] = useState<UserStats>({
     balance: 25.00,
@@ -183,32 +178,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('user_lang', language);
   }, [language]);
-
-  // Capture standard browser PWA install event
-  useEffect(() => {
-    const handleBeforeInstallPrompt = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-      setShowInstallPwaBtn(true);
-    };
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    };
-  }, []);
-
-  const handleInstallPWA = async () => {
-    if (!deferredPrompt) return;
-    try {
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      console.log(`User choice outcome: ${outcome}`);
-    } catch (err) {
-      console.error("PWA Prompt Error:", err);
-    }
-    setDeferredPrompt(null);
-    setShowInstallPwaBtn(false);
-  };
 
   // Dynamically backup active user profile and stats locally to recover transparently after server cold starts/reboots
   useEffect(() => {
@@ -2251,15 +2220,6 @@ export default function App() {
                   referredFriends={referredFriends}
                   token={token}
                   onRefreshProfile={() => fetchUserProfile(token)}
-                  triggerNotification={triggerNotification}
-                  language={language}
-                />
-
-                {/* MOBILE WEB APP & APK INSTALLATION CONTROL PANEL */}
-                <AppInstallationPanel
-                  deferredPrompt={deferredPrompt}
-                  showInstallPwaBtn={showInstallPwaBtn}
-                  onInstallPwa={handleInstallPWA}
                   triggerNotification={triggerNotification}
                   language={language}
                 />
