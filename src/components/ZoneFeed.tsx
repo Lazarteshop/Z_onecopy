@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import Hls from 'hls.js';
 import { 
   motion, 
   AnimatePresence 
@@ -65,345 +64,7 @@ const PRESET_VIDEOS = [
   { url: 'https://assets.mixkit.co/videos/preview/mixkit-hand-holding-smartphone-with-charts-on-screen-34442-large.mp4', label: '📊 Earnings Dashboard' }
 ];
 
-// Curated live M3U8/HLS streams from Philippine broadcast networks and local television stations
-const LIVE_TV_STREAMS = [
-  {
-    id: 'stream-cltv36',
-    name: 'CLTV 36 (Central Luzon TV) - News & Lifestyle',
-    network: 'CLTV 36 Regional',
-    logo: '📡',
-    url: 'https://live.cltv36.tv:5443/LiveApp/streams/cltvlive.m3u8',
-    description: 'Sundan ang mga pinakabagong balita, kaganapan, kultura, at pamumuhay sa buong Pampanga at Gitnang Luzon.'
-  },
-  {
-    id: 'stream-abantetv',
-    name: 'Abante TV - National News & Talks',
-    network: 'Abante TV',
-    logo: '📰',
-    url: 'https://amg19223-amg19223c12-amgplt0352.playout.now3.amagi.tv/playlist/amg19223-amg19223c12-amgplt0352/playlist.m3u8',
-    description: 'Live na balitaan, talakayan sa maiinit na isyu, at pampublikong serbisyo mula sa Abante Tonite network.'
-  },
-  {
-    id: 'stream-hope',
-    name: 'Hope Channel Philippines - Family & Faith',
-    network: 'Hope Channel',
-    logo: '✝️',
-    url: 'https://jstre.am/live/jsl:7A1swL7Fhlh.m3u8',
-    description: 'Pampamilyang palabas na naghahatid ng inspirasyon, kalusugan, pamumuhay, at turo ng Salita ng Diyos.'
-  },
-  {
-    id: 'stream-bilyonaryo',
-    name: 'Bilyonaryo News Channel (BNC) - Finance & Business',
-    network: 'Bilyonaryo News',
-    logo: '💼',
-    url: 'https://amg19223-amg19223c11-amgplt0352.playout.now3.amagi.tv/playlist/amg19223-amg19223c11-amgplt0352/playlist.m3u8',
-    description: 'Ang nangungunang premium na balitang pangnegosyo, pananalapi, ekonomiya, at pambansang balitaan sa bansa.'
-  },
-  {
-    id: 'stream-premier',
-    name: 'Premier Sports Channel',
-    network: 'Premier Sports',
-    logo: '⚽',
-    url: 'https://amg19223-amg19223c3-amgplt0351.playout.now3.amagi.tv/playlist/amg19223-amg19223c3-amgplt0351/playlist.m3u8',
-    description: 'Panoorin ang pinakapaboritong laro sa basketball, football, tennis, at combat sports ng live.'
-  },
-  {
-    id: 'stream-premier2',
-    name: 'Premier Sports 2 Channel',
-    network: 'Premier Sports 2',
-    logo: '🏎️',
-    url: 'https://amg19223-amg19223c4-amgplt0351.playout.now3.amagi.tv/playlist/amg19223-amg19223c4-amgplt0351/playlist.m3u8',
-    description: 'Karagdagang live sports coverage tulad ng motorsport, athletics, at combat championships.'
-  },
-  {
-    id: 'stream-aniblast',
-    name: 'Ani-Blast Channel',
-    network: 'Ani-Blast',
-    logo: '🎮',
-    url: 'https://amg19223-amg19223c9-amgplt0019.playout.now3.amagi.tv/playlist/amg19223-amg19223c9-amgplt0019/playlist.m3u8',
-    description: 'I-enjoy ang pinakamahusay na mga localized anime series na dinala sa wikang Filipino/Tagalog.'
-  }
-];
-
-// Curated high-quality Netflix Free watch trailers & teaser releases with premium embedded YouTube links
-const NETFLIX_FREE_VIDEOS = [
-  {
-    id: 'netflix-1',
-    title: 'Squid Game: Season 2 | Official Teaser',
-    category: 'THRILLER / DRAMA',
-    source: 'Netflix International',
-    embedUrl: 'https://www.youtube.com/embed/pSSTXbWpUjg',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-    duration: '2:15',
-    likes: '4.8M',
-    description: 'The game never stops. Three years after winning Squid Game, Player 456 remains determined to find the people behind the game and put an end to their vicious sport.',
-    badgeColor: 'bg-rose-50 text-rose-700 border-rose-200',
-    tags: ['Survival', 'High Stakes', 'Must Watch'],
-    date: 'New Release',
-    image: 'https://images.unsplash.com/photo-1627856013091-fed6e4e30025?w=800&auto=format&fit=crop&q=60'
-  },
-  {
-    id: 'netflix-2',
-    title: 'Wednesday Season 2 | First Look Teaser',
-    category: 'FANTASY / MYSTERY',
-    source: 'Netflix International',
-    embedUrl: 'https://www.youtube.com/embed/3SAnTf2q0Gg',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
-    duration: '1:48',
-    likes: '3.2M',
-    description: 'More mayhem, mystery and murder. Wednesday Addams is returning to Nevermore Academy with new mysteries, new characters, and her signature dark charm.',
-    badgeColor: 'bg-purple-50 text-purple-700 border-purple-200',
-    tags: ['Spooky', 'Dark Comedy', 'Trending'],
-    date: 'Coming Soon',
-    image: 'https://images.unsplash.com/photo-1509248961158-e54f6934749c?w=800&auto=format&fit=crop&q=60'
-  },
-  {
-    id: 'netflix-3',
-    title: 'Stranger Things 5 | The Final Season Teaser',
-    category: 'SCI-FI / HORROR',
-    source: 'Netflix International',
-    embedUrl: 'https://www.youtube.com/embed/fD_0Nre31m4',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-    duration: '1:55',
-    likes: '5.1M',
-    description: 'The final adventure begins. In the fall of 1987, one last adventure begins as Hawkins faces the ultimate threat from the Upside Down. Stream the epic conclusion.',
-    badgeColor: 'bg-red-50 text-red-700 border-red-200',
-    tags: ['80s Nostalgia', 'Supernatural', 'Blockbuster'],
-    date: 'Newest Teaser',
-    image: 'https://images.unsplash.com/photo-1578301978693-85fa9c0320b9?w=800&auto=format&fit=crop&q=60'
-  },
-  {
-    id: 'netflix-4',
-    title: 'One Piece Live Action | Season 2 Teaser',
-    category: 'ACTION / ADVENTURE',
-    source: 'Netflix Anime',
-    embedUrl: 'https://www.youtube.com/embed/4S37f8Z_Yc4',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
-    duration: '2:05',
-    likes: '2.5M',
-    description: 'The Straw Hat Pirates head to the Grand Line! Luffy, Zoro, Nami, Usopp, and Sanji are ready for new adventures, dangerous seas, and legendary enemies.',
-    badgeColor: 'bg-amber-50 text-amber-700 border-amber-200',
-    tags: ['Anime', 'Epic Journey', 'Live Action'],
-    date: 'Recent Update',
-    image: 'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=800&auto=format&fit=crop&q=60'
-  },
-  {
-    id: 'netflix-5',
-    title: 'Cobra Kai Season 6 - Part 3 | Finale Trailer',
-    category: 'ACTION / MARTIAL ARTS',
-    source: 'Netflix USA',
-    embedUrl: 'https://www.youtube.com/embed/MhLgIeBqS9w',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    duration: '2:30',
-    likes: '1.9M',
-    description: 'The global tournament is here. Daniel LaRusso and Johnny Lawrence lead their students to the Sekai Taikai for the ultimate martial arts showdown.',
-    badgeColor: 'bg-orange-50 text-orange-700 border-orange-200',
-    tags: ['Martial Arts', 'Rivalry', 'Inspirational'],
-    date: 'Trending #1',
-    image: 'https://images.unsplash.com/photo-1555538995-7ccc68ee2148?w=800&auto=format&fit=crop&q=60'
-  },
-  {
-    id: 'netflix-6',
-    title: 'Extraction 2 | High-Octane Action Scene',
-    category: 'THRILLER / ACTION',
-    source: 'Netflix International',
-    embedUrl: 'https://www.youtube.com/embed/Y27Or9xgMhE',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-    duration: '3:02',
-    likes: '2.9M',
-    description: 'Tyler Rake is back. Chris Hemsworth returns as the fearless black ops mercenary tasked with another deadly mission: rescuing the family of a ruthless Georgian gangster.',
-    badgeColor: 'bg-cyan-50 text-cyan-700 border-cyan-200',
-    tags: ['Adrenaline', 'Gunfight', 'Non-Stop'],
-    date: 'Popular',
-    image: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=800&auto=format&fit=crop&q=60'
-  },
-  {
-    id: 'netflix-7',
-    title: 'Avatar: The Last Airbender Live Action | Official Trailer',
-    category: 'FANTASY / ADVENTURE',
-    source: 'Netflix International',
-    embedUrl: 'https://www.youtube.com/embed/waJKJW_PNSM',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    duration: '2:22',
-    likes: '3.7M',
-    description: 'Water, Earth, Fire, Air. A young boy known as the Avatar must master the four elemental powers to save a world at war — and fight a ruthless enemy bent on stopping him.',
-    badgeColor: 'bg-blue-50 text-blue-700 border-blue-200',
-    tags: ['Elements', 'Bending', 'Chosen One'],
-    date: 'Highly Rated',
-    image: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop&q=60'
-  },
-  {
-    id: 'netflix-8',
-    title: 'Black Mirror Season 7 | Official Teaser',
-    category: 'SCI-FI / ANTHOLOGY',
-    source: 'Netflix International',
-    embedUrl: 'https://www.youtube.com/embed/Y-6C0D9Yitg',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4',
-    duration: '1:30',
-    likes: '1.5M',
-    description: 'Tech gets darker. The award-winning anthology series returns with six brand-new mind-bending stories exploring the terrifying future of human-technology interaction.',
-    badgeColor: 'bg-zinc-50 text-zinc-700 border-zinc-200',
-    tags: ['Dystopian', 'Mind Bending', 'Future'],
-    date: 'Award Winner',
-    image: 'https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=800&auto=format&fit=crop&q=60'
-  }
-];
-
-// Reusable high-performance HLS/M3U8 video stream player
-interface M3U8PlayerProps {
-  url: string;
-  title: string;
-  language: string;
-  triggerNotification: (msg: string, type: 'success' | 'error' | 'info') => void;
-}
-
-function M3U8Player({ url, title, language, triggerNotification }: M3U8PlayerProps) {
-  const videoRef = React.useRef<HTMLVideoElement | null>(null);
-  const hlsRef = React.useRef<Hls | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasError, setHasError] = useState(false);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    setIsLoading(true);
-    setHasError(false);
-
-    // Clean up previous HLS instance
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-
-    if (Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        maxBufferSize: 0,
-        maxBufferLength: 30,
-        liveSyncDuration: 3,
-        liveMaxLatencyDuration: 10,
-      });
-
-      hlsRef.current = hls;
-      hls.loadSource(url);
-      hls.attachMedia(video);
-
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        setIsLoading(false);
-        video.play().then(() => {
-          setIsPlaying(true);
-        }).catch((e) => {
-          console.warn("Autoplay blocked:", e);
-          setIsPlaying(false);
-        });
-      });
-
-      hls.on(Hls.Events.ERROR, (event, data) => {
-        if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              console.log("Fatal network error in stream, retrying...");
-              hls.startLoad();
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              console.log("Fatal media error in stream, retrying...");
-              hls.recoverMediaError();
-              break;
-            default:
-              console.error("Fatal unrecoverable HLS error:", data);
-              setHasError(true);
-              setIsLoading(false);
-              hls.destroy();
-              break;
-          }
-        }
-      });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Native support (Safari, iOS)
-      video.src = url;
-      const onLoadedMetadata = () => {
-        setIsLoading(false);
-        video.play().then(() => {
-          setIsPlaying(true);
-        }).catch((e) => {
-          console.warn("Native autoplay blocked:", e);
-          setIsPlaying(false);
-        });
-      };
-      
-      const onNativeError = (e: Event) => {
-        console.error("Native video play error:", e);
-        setHasError(true);
-        setIsLoading(false);
-      };
-
-      video.addEventListener('loadedmetadata', onLoadedMetadata);
-      video.addEventListener('error', onNativeError);
-
-      return () => {
-        video.removeEventListener('loadedmetadata', onLoadedMetadata);
-        video.removeEventListener('error', onNativeError);
-      };
-    } else {
-      setHasError(true);
-      setIsLoading(false);
-      triggerNotification(
-        language === 'tl'
-          ? 'Hindi suportado ang live HLS streaming sa browser na ito.'
-          : 'Live HLS streaming is not supported in this browser.',
-        'error'
-      );
-    }
-
-    return () => {
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
-    };
-  }, [url]);
-
-  return (
-    <div className="relative aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-2xl border border-slate-900 group">
-      <video
-        ref={videoRef}
-        className="w-full h-full object-contain"
-        controls
-        playsInline
-        referrerPolicy="no-referrer"
-      />
-
-      {/* Loading Indicator Overlay */}
-      {isLoading && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 gap-3 z-10 animate-fadeIn">
-          <div className="w-10 h-10 border-4 border-rose-600 border-t-transparent rounded-full animate-spin"></div>
-          <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest animate-pulse">
-            {language === 'tl' ? 'Kumokonekta sa Live Stream...' : 'Connecting to Live Feed...'}
-          </span>
-        </div>
-      )}
-
-      {/* Error Overlay */}
-      {hasError && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/95 p-6 text-center gap-3 z-10">
-          <div className="w-12 h-12 rounded-full bg-rose-950/50 border border-rose-900 flex items-center justify-center text-rose-500 text-lg">⚠️</div>
-          <div className="space-y-1">
-            <h4 className="text-white text-xs font-black uppercase tracking-wider">
-              {language === 'tl' ? 'Hindi Ma-load ang Stream' : 'Live Stream Offline'}
-            </h4>
-            <p className="text-[10px] text-slate-400 max-w-xs font-medium leading-relaxed">
-              {language === 'tl'
-                ? 'Maaaring offline ang channel o hinarangan ng iyong browser/network ang direct streaming (CORS). Subukang panoorin ang ibang channel.'
-                : 'The channel may be offline or direct stream is blocked by browser CORS security policies. Please try another channel below.'}
-            </p>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+// Media Hub features cleaned up
 
 const compressImage = (dataUrl: string, maxWidth: number = 800, maxHeight: number = 800, quality: number = 0.6): Promise<string> => {
   return new Promise((resolve) => {
@@ -468,138 +129,6 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   });
   const [loadingPosts, setLoadingPosts] = useState(false);
 
-  // Z-one Social Media Tabs & Detailed View States
-  const [socialTab, setSocialTab] = useState<'feed' | 'livetv' | 'netflix'>('feed');
-  const [selectedLiveTv, setSelectedLiveTv] = useState<any>(LIVE_TV_STREAMS[0]);
-  const [selectedNetflixVideo, setSelectedNetflixVideo] = useState<any | null>(null);
-  const [netflixVideos, setNetflixVideos] = useState<any[]>([]);
-  const [isRefreshingNetflix, setIsRefreshingNetflix] = useState(false);
-
-  // Fetch real-time Netflix videos from our live YouTube RSS backend
-  const fetchRealTimeNetflixVideos = async (showNotification = false) => {
-    setIsRefreshingNetflix(true);
-    if (showNotification) {
-      triggerNotification(
-        language === 'tl' 
-          ? 'Kumokonekta sa Netflix servers... Ina-update ang listahan...' 
-          : 'Connecting to Netflix servers... Updating video feed...', 
-        'info'
-      );
-    }
-    try {
-      const response = await fetch('/api/zone/netflix', {
-        headers: {
-          'Authorization': token || ''
-        }
-      });
-      const data = await response.json();
-      if (data.videos && data.videos.length > 0) {
-        setNetflixVideos(data.videos);
-        if (showNotification) {
-          triggerNotification(
-            language === 'tl' 
-              ? 'Matagumpay na na-refresh! Na-load ang totoong Netflix free videos.' 
-              : 'Successfully refreshed! Loaded real-time Netflix free videos & trailers.', 
-            'success'
-          );
-        }
-      } else {
-        throw new Error('No videos returned');
-      }
-    } catch (err) {
-      console.error('Error fetching real-time Netflix videos:', err);
-      // Fallback to shuffled static array in case of connection failure
-      const shuffled = [...NETFLIX_FREE_VIDEOS].sort(() => 0.5 - Math.random());
-      setNetflixVideos(shuffled.slice(0, 4));
-      if (showNotification) {
-        triggerNotification(
-          language === 'tl' 
-            ? 'Hindi makakonekta. Na-load ang mga naka-cache na videos.' 
-            : 'Cannot connect. Loaded cached videos instead.', 
-          'info'
-        );
-      }
-    } finally {
-      setIsRefreshingNetflix(false);
-    }
-  };
-
-  // Fetch real-time Netflix videos lazily when the Netflix tab becomes active
-  useEffect(() => {
-    if (socialTab === 'netflix' && netflixVideos.length === 0) {
-      fetchRealTimeNetflixVideos(false);
-    }
-  }, [socialTab]);
-
-  // Handle premium dynamic refresh to load the newest real-time videos from Netflix
-  const handleRefreshNetflix = () => {
-    fetchRealTimeNetflixVideos(true);
-  };
-
-  // --- LIVE TV STREAMS (IPTV M3U) DYNAMIC REFRESH AND SEARCH ---
-  const [liveTvStreams, setLiveTvStreams] = useState<any[]>(LIVE_TV_STREAMS);
-  const [isRefreshingLiveTv, setIsRefreshingLiveTv] = useState(false);
-  const [liveTvSearchQuery, setLiveTvSearchQuery] = useState('');
-
-  const fetchLiveTvStreams = async (showNotification = false) => {
-    setIsRefreshingLiveTv(true);
-    if (showNotification) {
-      triggerNotification(
-        language === 'tl'
-          ? 'Kumukuha ng mga pinakabagong live channels mula sa IPTV registry...'
-          : 'Retrieving latest live channels from public IPTV registry...',
-        'info'
-      );
-    }
-    try {
-      const response = await fetch('/api/zone/livetv');
-      const data = await response.json();
-      if (data && data.success && Array.isArray(data.channels)) {
-        setLiveTvStreams(data.channels);
-        // Keep selected channel if it still exists in the new list, or fallback
-        const exists = data.channels.some((c: any) => c.url === selectedLiveTv?.url);
-        if (!exists && data.channels.length > 0) {
-          // Try to prefer CLTV or first channel
-          const cltv = data.channels.find((c: any) => c.id.includes('cltv') || c.name.toLowerCase().includes('cltv'));
-          setSelectedLiveTv(cltv || data.channels[0]);
-        }
-        if (showNotification) {
-          triggerNotification(
-            language === 'tl'
-              ? `Matagumpay na na-refresh! ${data.channels.length} na channels ang magagamit.`
-              : `Successfully refreshed! ${data.channels.length} live channels are now available.`,
-            'success'
-          );
-        }
-      } else {
-        throw new Error('Failed to retrieve channels successfully.');
-      }
-    } catch (err) {
-      console.error('Error fetching dynamic live tv channels:', err);
-      if (showNotification) {
-        triggerNotification(
-          language === 'tl'
-            ? 'Hindi ma-load ang live registry stream. Ginagamit ang backup channels.'
-            : 'Unable to reach live registry stream. Loaded offline backup channels.',
-          'error'
-        );
-      }
-    } finally {
-      setIsRefreshingLiveTv(false);
-    }
-  };
-
-  // Auto-fetch live tv list when visiting the live tv tab for the first time
-  useEffect(() => {
-    if (socialTab === 'livetv' && liveTvStreams.length === LIVE_TV_STREAMS.length) {
-      fetchLiveTvStreams(false);
-    }
-  }, [socialTab]);
-
-  const handleRefreshLiveTv = () => {
-    fetchLiveTvStreams(true);
-  };
-
   // --- PRIVATE DIRECT MESSAGE (DM) STATES ---
   const [activeDmUser, setActiveDmUser] = useState<{ id: string; name: string; avatar: string } | null>(null);
   const [dmMessages, setDmMessages] = useState<any[]>([]);
@@ -609,6 +138,22 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
   // --- VISUAL VIEWPORT RESIZING FOR MOBILE KEYBOARD ---
   const [visualViewportHeight, setVisualViewportHeight] = useState<number | null>(null);
+
+  // --- DECOMMISSIONED MEDIA HUB / LIVE FEED DUMMY STATES ---
+  const socialTab = 'feed' as string;
+  const liveTvStreams: any[] = [];
+  const liveTvSearchQuery = '';
+  const setLiveTvSearchQuery = (v: any) => {};
+  const handleRefreshLiveTv = () => {};
+  const isRefreshingLiveTv = false;
+  const selectedLiveTv: any = null;
+  const setSelectedLiveTv = (v: any) => {};
+  const handleRefreshNetflix = () => {};
+  const isRefreshingNetflix = false;
+  const netflixVideos: any[] = [];
+  const selectedNetflixVideo: any = null;
+  const setSelectedNetflixVideo = (v: any) => {};
+  const M3U8Player: any = () => null;
 
   useEffect(() => {
     if (!window.visualViewport) return;
@@ -2777,34 +2322,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         {/* RIGHT COLUMN: RECENT FEED POSTS */}
         <div className="lg:col-span-2 space-y-6">
           
-          {/* MEDIA HUB SUB-NAVIGATION TABS */}
-          <div className="bg-slate-100 p-1.5 rounded-2xl flex flex-wrap items-center gap-1 border border-slate-200">
-            <button 
-              onClick={() => setSocialTab('feed')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition cursor-pointer ${socialTab === 'feed' ? 'bg-white text-blue-600 shadow-xs border border-slate-200/50 font-black' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
-            >
-              <MessageSquare className="w-4 h-4" />
-              <span>Z-one Social</span>
-            </button>
-            <button 
-              onClick={() => setSocialTab('livetv')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition cursor-pointer ${socialTab === 'livetv' ? 'bg-white text-indigo-600 shadow-xs border border-slate-200/50 font-black' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
-            >
-              <Tv className="w-4 h-4" />
-              <span>PH Live TV Streams</span>
-            </button>
-            <button 
-              onClick={() => setSocialTab('netflix')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition cursor-pointer ${socialTab === 'netflix' ? 'bg-white text-rose-600 shadow-xs border border-rose-200/50 font-black' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
-            >
-              <Film className="w-4 h-4" />
-              <span>Netflix Free Videos</span>
-            </button>
-          </div>
-
-          {/* TAB CONTENT: 1. CORE FEED */}
-          {socialTab === 'feed' && (
-            <div className="space-y-6 animate-fadeIn">
+          <div className="space-y-6 animate-fadeIn">
               <div className="flex items-center justify-between">
                 <h3 className="font-black text-slate-950 text-xs tracking-wider uppercase flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-yellow-500 animate-pulse" />
@@ -3468,10 +2986,10 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
             </div>
           )}
             </div>
-          )}
 
-          {/* TAB CONTENT: 2. PH LIVE TV STREAMS (M3U8 HLS PLAYER) */}
+          {/* PH LIVE TV STREAMS DELETED */}
           {socialTab === 'livetv' && (() => {
+            if (true) return null;
             const filteredStreams = liveTvStreams.filter((stream: any) => {
               const query = liveTvSearchQuery.toLowerCase();
               return (
@@ -3678,7 +3196,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           })()}
 
           {/* TAB CONTENT: 3. NETFLIX FREE VIDEOS */}
-          {socialTab === 'netflix' && (
+          {socialTab === 'netflix' && null && (
             <div className="space-y-4 animate-fadeIn">
               <div className="bg-rose-950 text-white rounded-3xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-rose-900/50">
                 <div className="space-y-1">
@@ -4306,7 +3824,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
       {/* 🎬 NETFLIX THEATRE VIDEO PLAYER POPUP MODAL */}
       <AnimatePresence>
-        {selectedNetflixVideo && (
+        {selectedNetflixVideo && null && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-md">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
