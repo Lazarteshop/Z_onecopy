@@ -524,10 +524,12 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     }
   };
 
-  // Initialize with real-time Netflix videos on mount
+  // Fetch real-time Netflix videos lazily when the Netflix tab becomes active
   useEffect(() => {
-    fetchRealTimeNetflixVideos();
-  }, []);
+    if (socialTab === 'netflix' && netflixVideos.length === 0) {
+      fetchRealTimeNetflixVideos(false);
+    }
+  }, [socialTab]);
 
   // Handle premium dynamic refresh to load the newest real-time videos from Netflix
   const handleRefreshNetflix = () => {
@@ -1596,7 +1598,25 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       if (res.ok) {
         const data = await res.json();
         const loadedPosts = data.posts || [];
-        setPosts(loadedPosts);
+        
+        // Optimize re-renders: Only update React state if the posts or their interactions actually changed!
+        setPosts(prev => {
+          const isSame = prev.length === loadedPosts.length &&
+            prev.every((post, idx) => {
+              const loadedPost = loadedPosts[idx];
+              return loadedPost &&
+                post.id === loadedPost.id &&
+                post.text === loadedPost.text &&
+                (post.likes || []).length === (loadedPost.likes || []).length &&
+                (post.comments || []).length === (loadedPost.comments || []).length;
+            });
+          
+          if (isSame) {
+            return prev; // Skip re-rendering by preserving the exact same array reference
+          }
+          return loadedPosts;
+        });
+
         try {
           localStorage.setItem('zone_posts_cache', JSON.stringify(loadedPosts));
         } catch (cacheErr) {
@@ -1748,7 +1768,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
               : 'Successfully posted in the background! 🎉',
             'success'
           );
-        }, 400);
+        }, 0);
       } else {
         const errorText = data.error || (language === 'tl' ? 'May error sa paglathala.' : 'Error publishing post.');
         setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, isFailed: true, progress: 0, errorMsg: errorText } : x));
@@ -1844,15 +1864,24 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   }, [posts, outbox, user.id, user.name, user.avatar]);
 
   useEffect(() => {
-    fetchPosts();
+    // Zero Waiting: If we already have cached posts in localStorage, fetch silently in the background
+    let hasCached = false;
+    try {
+      const cached = localStorage.getItem('zone_posts_cache');
+      if (cached && JSON.parse(cached).length > 0) {
+        hasCached = true;
+      }
+    } catch (e) {}
+
+    fetchPosts(hasCached);
     if (user.isAdmin) {
       fetchModUsers();
     }
 
-    // Auto-refresh the feed every 10 seconds silently like Facebook
+    // Auto-refresh the feed every 2 seconds silently like Facebook (Zero Waiting)
     const interval = setInterval(() => {
       fetchPosts(true);
-    }, 10000);
+    }, 2000);
 
     return () => clearInterval(interval);
   }, [token]);
