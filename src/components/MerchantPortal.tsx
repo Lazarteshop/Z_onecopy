@@ -483,7 +483,7 @@ export default function MerchantPortal({
                     1. Magpadala ng <span className="font-black text-indigo-950">₱{PLANS.find(p => p.id === planId)?.price}</span> sa opisyal na GCash number ng admin:
                   </p>
                   <div className="bg-white border border-indigo-100 rounded-xl px-3 py-2 text-center text-xs font-black tracking-wider text-indigo-750">
-                    📱 0917-888-9663 (System Admin)
+                    📱 0991-408-9646 (System Admin)
                   </div>
                   <p>
                     2. Piliin ang <span className="font-black">"Send Money"</span> o <span className="font-black">"Express Send"</span>.
