@@ -20,17 +20,11 @@
     
     <!-- Register Service Worker -->
     <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then((reg) => {
-              console.log('✅ PWA Service Worker successfully registered with scope: ', reg.scope);
-            })
-            .catch((err) => {
-              console.error('❌ PWA Service Worker registration failed: ', err);
-            });
-        });
-      }
+      if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js")
+    .then(() => console.log("Service Worker registered"))
+    .catch(err => console.error("Registration failed:", err));
+}
     </script>
   </body>
 </html>
