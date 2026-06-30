@@ -1,1321 +1,2373 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Smartphone, 
-  Download, 
-  Sparkles, 
+  motion, 
+  AnimatePresence 
+} from 'motion/react';
+import { 
+  Wallet, 
   Coins, 
   Eye, 
-  Settings, 
-  Users, 
-  CheckCircle, 
-  Clock, 
-  ArrowUpRight, 
-  Menu, 
-  X, 
-  ChevronRight, 
-  Plus, 
-  Trash, 
-  Play, 
-  Check, 
-  AlertCircle,
-  ShieldCheck,
+  Newspaper, 
+  ShoppingBag, 
+  TrendingUp, 
+  PlusCircle, 
+  Sparkles, 
+  CheckCircle2, 
+  HelpCircle,
+  Clock,
+  Compass,
+  DollarSign,
+  UserCheck,
   Globe,
-  Share2
+  Share2,
+  ListFilter,
+  CheckCircle,
+  Activity,
+  History,
+  Plus,
+  Moon,
+  Sun,
+  AlertCircle,
+  Lock,
+  Mail,
+  User,
+  UserPlus,
+  ShieldAlert,
+  LogOut,
+  RefreshCw,
+  Shield,
+  Award,
+  Trash2,
+  Heart,
+  MessageSquare,
+  ThumbsUp,
+  Camera,
+  Tv,
+  Users,
+  Ban,
+  Upload,
+  Megaphone
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import soundEffects from './utils/audio';
-import { db } from './firebase';
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  updateDoc, 
-  deleteDoc, 
-  onSnapshot 
-} from 'firebase/firestore';
+import { INITIAL_CAMPAIGNS } from './data/campaigns';
+import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend } from './types';
+import BrowserSimulator from './components/BrowserSimulator';
+import GCashCashout from './components/GCashCashout';
+import ReferralPanel from './components/ReferralPanel';
+import AdminPanel from './components/AdminPanel';
+import ZoneFeed from './components/ZoneFeed';
+import ZonePromoVideo from './components/ZonePromoVideo';
+import MerchantPortal from './components/MerchantPortal';
+import { soundEffects } from './utils/audio';
 
-// Types
-interface Campaign {
+interface UserSession {
   id: string;
-  title: string;
-  description: string;
-  url: string;
-  reward: number;
-  duration: number; // in seconds
-  category: string;
-  views: number;
-}
-
-interface CashoutRequest {
-  id: string;
+  email: string;
   name: string;
-  number: string;
-  amount: number;
-  status: 'pending' | 'approved' | 'rejected';
-  date: string;
-  userId: string;
+  avatar: string;
+  isAdmin: boolean;
+  isBanned?: boolean;
+  zonedUsers?: string[];
+  referralCode: string;
+  stats: UserStats;
+  withdrawals: WithdrawalRequest[];
+  activityLogs: ActivityLog[];
+  referredFriends: ReferralFriend[];
 }
 
-interface Referral {
-  id: string;
-  username: string;
-  bonus: number;
-  date: string;
-}
+const compressImage = (base64Str: string, maxWidth = 150, maxHeight = 150): Promise<string> => {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      console.warn("Avatar compression timed out. Resolving with original string.");
+      resolve(base64Str);
+    }, 4000); // 4 seconds fail-safe timeout
 
-// Error Handling for Firebase Integration Skill
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
+    const img = new Image();
+    img.onload = () => {
+      clearTimeout(timeout);
+      try {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
 
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-  }
-}
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
 
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: localStorage.getItem('zone_user_id'),
-    },
-    operationType,
-    path
-  };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
-}
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.7));
+        } else {
+          resolve(base64Str);
+        }
+      } catch (err) {
+        console.error("Avatar compression error:", err);
+        resolve(base64Str);
+      }
+    };
+    img.onerror = () => {
+      clearTimeout(timeout);
+      resolve(base64Str);
+    };
+    img.src = base64Str;
+  });
+};
 
 export default function App() {
-  // Global App States
-  const [language, setLanguage] = useState<'en' | 'tl'>('tl'); // Default to Tagalog
+  // --- AUTHENTICATION & SYNC STATES ---
+  const [token, setToken] = useState<string | null>(localStorage.getItem('gcash_click_earn_token'));
+  const [user, setUser] = useState<UserSession | null>(null);
+  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
+  const [newAvatar, setNewAvatar] = useState('👤');
+  const [newName, setNewName] = useState('');
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+
+  // Form states
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [emailInput, setEmailInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [nameInput, setNameInput] = useState('');
+  const [referralInput, setReferralInput] = useState('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [showGoogleChooser, setShowGoogleChooser] = useState(false);
+
+  // --- CORE APP STATES ---
+  const [stats, setStats] = useState<UserStats>({
+    balance: 25.00,
+    lifetimeEarnings: 25.00,
+    completedTasksCount: 0,
+    dailyCheckInDate: null
+  });
+
+  const [campaigns, setCampaigns] = useState<WebsiteCampaign[]>([]);
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [referredFriends, setReferredFriends] = useState<ReferralFriend[]>([]);
   
-  // Unique User/Client ID for Firebase Sync
-  const [userId] = useState<string>(() => {
-    let id = localStorage.getItem('zone_user_id');
-    if (!id) {
-      id = 'usr_' + Math.random().toString(36).substring(2, 11);
-      localStorage.setItem('zone_user_id', id);
-    }
-    return id;
-  });
+  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo'>('earn');
+  const [currentViewingCampaign, setCurrentViewingCampaign] = useState<WebsiteCampaign | null>(null);
 
-  const [balance, setBalance] = useState<number>(() => {
-    const saved = localStorage.getItem('zone_balance');
-    return saved ? parseFloat(saved) : 150.00; // Starter balance
-  });
+  // Add custom campaigns state
+  const [customTitle, setCustomTitle] = useState('');
+  const [customUrl, setCustomUrl] = useState('');
+  const [customReward, setCustomReward] = useState('0.75');
+  const [customTimer, setCustomTimer] = useState('15');
+  const [customDescription, setCustomDescription] = useState('');
+  const [campaignFilter, setCampaignFilter] = useState<'all' | 'high' | 'available'>('all');
+
+  // Animation states
+  const [floatingCoinReward, setFloatingCoinReward] = useState<number | null>(null);
+  const [showConfetti, setShowConfetti] = useState(false);
   
-  const [completedCampaigns, setCompletedCampaigns] = useState<string[]>(() => {
-    const saved = localStorage.getItem('zone_completed_campaigns');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // Language switcher state (English default)
+  const [language, setLanguage] = useState<'en' | 'tl'>((localStorage.getItem('user_lang') as 'en' | 'tl') || 'en');
 
-  const [activeTab, setActiveTab] = useState<'earn' | 'withdraw' | 'refer' | 'guide'>('earn');
-  
-  // Audio state
-  const [soundEnabled, setSoundEnabled] = useState(true);
-
-  // Installer state
-  const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'completed'>('idle');
-  const [downloadProgress, setDownloadProgress] = useState(0);
-  const [downloadSpeed, setDownloadSpeed] = useState('0 KB/s');
-  const [downloadedSize, setDownloadedSize] = useState('0 MB');
-  const [activePwaGuideTab, setActivePwaGuideTab] = useState<'android' | 'ios' | 'desktop'>('android');
-
-  // Simulated Web Viewer State
-  const [activeViewingCampaign, setActiveViewingCampaign] = useState<Campaign | null>(null);
-  const [viewerTimeLeft, setViewerTimeLeft] = useState(0);
-  const [viewerProgress, setViewerProgress] = useState(100);
-  const [isViewerSuccessful, setIsViewerSuccessful] = useState(false);
-
-  // GCash Withdraw Form
-  const [gcashName, setGcashName] = useState('');
-  const [gcashNumber, setGcashNumber] = useState('');
-  const [selectedWithdrawAmount, setSelectedWithdrawAmount] = useState<number>(100);
-  const [isWithdrawing, setIsWithdrawing] = useState(false);
-  const [withdrawSuccess, setWithdrawSuccess] = useState(false);
-
-  // Referral State
-  const [copiedReferral, setCopiedReferral] = useState(false);
-  const [referrals, setReferrals] = useState<Referral[]>([
-    { id: '1', username: 'Khel_09', bonus: 20.00, date: '2026-06-29' },
-    { id: '2', username: 'Mariel_Cruz', bonus: 20.00, date: '2026-06-28' },
-  ]);
-
-  // Admin Portal State
-  const [showAdminPanel, setShowAdminPanel] = useState(false);
-  const [adminPasscode, setAdminPasscode] = useState('');
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
-  const [adminError, setAdminError] = useState('');
-
-  // Campaigns Database
-  const [campaigns, setCampaigns] = useState<Campaign[]>(() => {
-    const saved = localStorage.getItem('zone_campaigns');
-    if (saved) return JSON.parse(saved);
-    return [
-      { id: 'c1', title: 'GCash Free Promos', description: 'Tingnan ang pinakabagong GCash promos para kumita ng instant points.', url: 'https://www.gcash.com/promos', reward: 8.50, duration: 10, category: 'Promos', views: 423 },
-      { id: 'c2', title: 'Shopee Piso Deals', description: 'Tuklasin ang pinakamurang Shopee piso deals ngayon.', url: 'https://shopee.ph/m/piso-deals', reward: 12.00, duration: 15, category: 'Shopping', views: 890 },
-      { id: 'c3', title: 'Lazada Free Shipping', description: 'Kolektahin ang mga voucher para sa libreng pagpapadala.', url: 'https://www.lazada.com.ph/free-shipping', reward: 10.50, duration: 12, category: 'Vouchers', views: 561 },
-      { id: 'c4', title: 'Smart GigaLife Offers', description: 'Suriin ang mga bagong gigalife internet data packages.', url: 'https://smart.com.ph/gigalife', reward: 9.00, duration: 10, category: 'Telecom', views: 231 },
-      { id: 'c5', title: 'Z-one Official Website', description: 'Sponsor website para sa mabilis na high-paying points.', url: 'https://z-one-app.com/rewards', reward: 15.00, duration: 15, category: 'Sponsor', views: 1450 }
-    ];
-  });
-
-  // Cashout requests history
-  const [cashoutHistory, setCashoutHistory] = useState<CashoutRequest[]>(() => {
-    const saved = localStorage.getItem('zone_cashout_history');
-    return saved ? JSON.parse(saved) : [
-      { id: 'wd1', name: 'JUAN DELA CRUZ', number: '09123456789', amount: 100, status: 'approved', date: '2026-06-28', userId: 'default' },
-      { id: 'wd2', name: 'MARIA SANTOS', number: '09876543210', amount: 250, status: 'pending', date: '2026-06-29', userId: 'default' }
-    ];
-  });
-
-  // =========================================
-  // 🔥 REAL-TIME FIREBASE SYNCHRONIZER
-  // =========================================
   useEffect(() => {
-    // 1. Sync User Document: /users/{userId}
-    const userDocRef = doc(db, 'users', userId);
-    const unsubscribeUser = onSnapshot(userDocRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        if (data.balance !== undefined) setBalance(data.balance);
-        if (data.completedCampaigns !== undefined) setCompletedCampaigns(data.completedCampaigns);
-      } else {
-        // Initialize user record in Firestore
-        setDoc(userDocRef, {
-          id: userId,
-          balance: balance,
-          completedCampaigns: completedCampaigns,
-          createdAt: new Date().toISOString()
-        }).catch((err) => handleFirestoreError(err, OperationType.WRITE, `users/${userId}`));
-      }
-    }, (err) => handleFirestoreError(err, OperationType.GET, `users/${userId}`));
+    localStorage.setItem('user_lang', language);
+  }, [language]);
 
-    // 2. Sync Campaigns: /campaigns
-    const campaignsColRef = collection(db, 'campaigns');
-    const unsubscribeCampaigns = onSnapshot(campaignsColRef, (snapshot) => {
-      if (snapshot.empty) {
-        // Seed default campaigns if none exist in Firestore
-        const defaultCampaigns = [
-          { id: 'c1', title: 'GCash Free Promos', description: 'Tingnan ang pinakabagong GCash promos para kumita ng instant points.', url: 'https://www.gcash.com/promos', reward: 8.50, duration: 10, category: 'Promos', views: 423 },
-          { id: 'c2', title: 'Shopee Piso Deals', description: 'Tuklasin ang pinakamurang Shopee piso deals ngayon.', url: 'https://shopee.ph/m/piso-deals', reward: 12.00, duration: 15, category: 'Shopping', views: 890 },
-          { id: 'c3', title: 'Lazada Free Shipping', description: 'Kolektahin ang mga voucher para sa libreng pagpapadala.', url: 'https://www.lazada.com.ph/free-shipping', reward: 10.50, duration: 12, category: 'Vouchers', views: 561 },
-          { id: 'c4', title: 'Smart GigaLife Offers', description: 'Suriin ang mga bagong gigalife internet data packages.', url: 'https://smart.com.ph/gigalife', reward: 9.00, duration: 10, category: 'Telecom', views: 231 },
-          { id: 'c5', title: 'Z-one Official Website', description: 'Sponsor website para sa mabilis na high-paying points.', url: 'https://z-one-app.com/rewards', reward: 15.00, duration: 15, category: 'Sponsor', views: 1450 }
-        ];
-        defaultCampaigns.forEach((camp) => {
-          setDoc(doc(db, 'campaigns', camp.id), camp).catch((err) => handleFirestoreError(err, OperationType.WRITE, `campaigns/${camp.id}`));
-        });
-      } else {
-        const loadedCampaigns: Campaign[] = [];
-        snapshot.forEach((docSnap) => {
-          loadedCampaigns.push(docSnap.data() as Campaign);
-        });
-        setCampaigns(loadedCampaigns);
+  // Dynamically backup active user profile and stats locally to recover transparently after server cold starts/reboots
+  useEffect(() => {
+    if (user) {
+      let savedPassword = '';
+      const existingBackupStr = localStorage.getItem('gcash_user_backup_profile');
+      if (existingBackupStr) {
+        try {
+          const parsed = JSON.parse(existingBackupStr);
+          if (parsed && parsed.password) {
+            savedPassword = parsed.password;
+          }
+        } catch (_) {}
       }
-    }, (err) => handleFirestoreError(err, OperationType.GET, 'campaigns'));
 
-    // 3. Sync Cashouts: /cashouts
-    const cashoutsColRef = collection(db, 'cashouts');
-    const unsubscribeCashouts = onSnapshot(cashoutsColRef, (snapshot) => {
-      const loadedCashouts: CashoutRequest[] = [];
-      snapshot.forEach((docSnap) => {
-        const data = docSnap.data() as CashoutRequest;
-        // Admins see all requests. Normal users only see their own requests.
-        if (isAdminAuthenticated || data.userId === userId) {
-          loadedCashouts.push(data);
+      if (!savedPassword && passwordInput) {
+        savedPassword = passwordInput;
+      }
+
+      localStorage.setItem('gcash_user_backup_profile', JSON.stringify({
+        ...user,
+        password: savedPassword || (user as any).password
+      }));
+    }
+  }, [user, passwordInput]);
+
+  // --- NOTIFICATION BANNER STATE ---
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+  
+  const triggerNotification = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
+    setNotification({ message, type });
+    setTimeout(() => {
+      setNotification((curr) => curr?.message === message ? null : curr);
+    }, 4500);
+  };
+
+  // --- COMPILATION & SETUP EFFECTS ---
+
+  // Check for auto referral code in URL parameters
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get('ref');
+    if (ref) {
+      setReferralInput(ref);
+      setAuthMode('register');
+      triggerNotification(`🔗 Referral Link na-detect! Awtomatikong sinali sa ref code: ${ref}`, 'info');
+    }
+  }, []);
+
+  // Monetag script integration for the login/register screen only
+  useEffect(() => {
+    // If the user is definitely not logged in (no token, no user, and not loading), load the Monetag ads script
+    if (!token && !user && !loadingProfile) {
+      if (!document.getElementById('monetag-login-ads-script')) {
+        const script = document.createElement('script');
+        script.dataset.zone = '11201519';
+        script.src = 'https://al5sm.com/tag.min.js';
+        script.id = 'monetag-login-ads-script';
+        
+        const parent = [document.documentElement, document.body].filter(Boolean).pop();
+        if (parent) {
+          parent.appendChild(script);
         }
-      });
-      loadedCashouts.sort((a, b) => b.id.localeCompare(a.id));
-      setCashoutHistory(loadedCashouts);
-    }, (err) => handleFirestoreError(err, OperationType.GET, 'cashouts'));
+      }
+    } else {
+      // Remove the script when logged in or loading the profile
+      const el = document.getElementById('monetag-login-ads-script');
+      if (el) {
+        el.remove();
+      }
+    }
 
     return () => {
-      unsubscribeUser();
-      unsubscribeCampaigns();
-      unsubscribeCashouts();
-    };
-  }, [userId, isAdminAuthenticated]);
-
-  // Keep localStorage synced as fallback
-  useEffect(() => {
-    localStorage.setItem('zone_balance', balance.toFixed(2));
-  }, [balance]);
-
-  useEffect(() => {
-    localStorage.setItem('zone_completed_campaigns', JSON.stringify(completedCampaigns));
-  }, [completedCampaigns]);
-
-  useEffect(() => {
-    localStorage.setItem('zone_campaigns', JSON.stringify(campaigns));
-  }, [campaigns]);
-
-  useEffect(() => {
-    localStorage.setItem('zone_cashout_history', JSON.stringify(cashoutHistory));
-  }, [cashoutHistory]);
-
-  // Audio trigger utility
-  const playSfx = (type: 'click' | 'reward' | 'withdraw') => {
-    if (!soundEnabled) return;
-    if (type === 'click') soundEffects.playClick();
-    if (type === 'reward') soundEffects.playReward();
-    if (type === 'withdraw') soundEffects.playWithdraw();
-  };
-
-  // Start Download Simulator
-  const startAutomaticDownload = (platform: 'android' | 'ios' | 'desktop') => {
-    playSfx('click');
-    setDownloadProgress(0);
-    setDownloadState('downloading');
-
-    let currentProgress = 0;
-    const interval = setInterval(() => {
-      currentProgress += Math.floor(Math.random() * 8) + 4;
-      if (currentProgress >= 100) {
-        currentProgress = 100;
-        clearInterval(interval);
-        setDownloadState('completed');
-        
-        // Trigger actual download of the real APK we downloaded in our public folder!
-        const link = document.createElement('a');
-        link.href = '/Z-oneApp.apk';
-        link.setAttribute('download', 'Z-oneApp.apk');
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+      const el = document.getElementById('monetag-login-ads-script');
+      if (el) {
+        el.remove();
       }
-      setDownloadProgress(currentProgress);
-      setDownloadedSize(((currentProgress / 100) * 2.4).toFixed(1) + ' MB');
-      setDownloadSpeed((Math.random() * 2 + 1.5).toFixed(1) + ' MB/s');
-    }, 150);
-  };
-
-  // Simulated viewer timer loop
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (activeViewingCampaign && viewerTimeLeft > 0) {
-      timer = setTimeout(() => {
-        const nextTime = viewerTimeLeft - 1;
-        setViewerTimeLeft(nextTime);
-        setViewerProgress((nextTime / activeViewingCampaign.duration) * 100);
-      }, 1000);
-    } else if (activeViewingCampaign && viewerTimeLeft === 0) {
-      // Completed!
-      setIsViewerSuccessful(true);
-      const newBalance = balance + activeViewingCampaign.reward;
-      const newCompleted = [...completedCampaigns, activeViewingCampaign.id];
-      
-      setBalance(newBalance);
-      setCompletedCampaigns(newCompleted);
-
-      // Save to Firestore
-      const userDocRef = doc(db, 'users', userId);
-      setDoc(userDocRef, {
-        id: userId,
-        balance: newBalance,
-        completedCampaigns: newCompleted,
-        updatedAt: new Date().toISOString()
-      }, { merge: true }).catch((err) => handleFirestoreError(err, OperationType.WRITE, `users/${userId}`));
-      
-      // Update campaigns view counts in Firestore
-      const campDocRef = doc(db, 'campaigns', activeViewingCampaign.id);
-      updateDoc(campDocRef, {
-        views: (activeViewingCampaign.views || 0) + 1
-      }).catch((err) => handleFirestoreError(err, OperationType.WRITE, `campaigns/${activeViewingCampaign.id}`));
-      
-      playSfx('reward');
-      setActiveViewingCampaign(null);
-    }
-    return () => clearTimeout(timer);
-  }, [activeViewingCampaign, viewerTimeLeft]);
-
-  // GCash Submit Cashout
-  const handleCashoutSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    playSfx('click');
-
-    if (!gcashName.trim() || !gcashNumber.trim()) {
-      alert(language === 'tl' ? 'Paki-kumpleto ang GCash Name at Number!' : 'Please complete the GCash Name and Number!');
-      return;
-    }
-
-    if (gcashNumber.length < 11) {
-      alert(language === 'tl' ? 'Ang GCash number ay dapat may 11 na numero!' : 'The GCash number must be 11 digits!');
-      return;
-    }
-
-    if (balance < selectedWithdrawAmount) {
-      alert(language === 'tl' ? 'Hindi sapat ang iyong balance!' : 'Insufficient balance!');
-      return;
-    }
-
-    setIsWithdrawing(true);
-    
-    const newBalance = balance - selectedWithdrawAmount;
-    setBalance(newBalance);
-
-    // Save wallet balance update in Firestore
-    const userDocRef = doc(db, 'users', userId);
-    updateDoc(userDocRef, {
-      balance: newBalance
-    }).catch((err) => handleFirestoreError(err, OperationType.WRITE, `users/${userId}`));
-
-    // Add cashout request document to Firestore
-    const cashoutId = 'wd' + Date.now();
-    const newRequest: CashoutRequest = {
-      id: cashoutId,
-      name: gcashName.toUpperCase(),
-      number: gcashNumber,
-      amount: selectedWithdrawAmount,
-      status: 'pending',
-      date: new Date().toISOString().split('T')[0],
-      userId: userId
     };
+  }, [token, user, loadingProfile]);
 
-    setDoc(doc(db, 'cashouts', cashoutId), newRequest)
-      .then(() => {
-        setIsWithdrawing(false);
-        setWithdrawSuccess(true);
-        playSfx('withdraw');
-        setGcashName('');
-        setGcashNumber('');
-      })
-      .catch((err) => {
-        setIsWithdrawing(false);
-        handleFirestoreError(err, OperationType.WRITE, `cashouts/${cashoutId}`);
+  // Fetch or sync user profile
+  const fetchUserProfile = async (authToken: string) => {
+    setLoadingProfile(true);
+    try {
+      const res = await fetch('/api/user/profile', {
+        headers: {
+          'Authorization': authToken
+        }
       });
-  };
+      if (res.ok) {
+        const data = await res.json();
+        setUser(data.user);
+        setStats(data.user.stats);
+        setWithdrawals(data.user.withdrawals);
+        setActivityLogs(data.user.activityLogs);
+        setReferredFriends(data.user.referredFriends);
+        
+        // Load campaigns directly from our centralized cloud backend
+        try {
+          const campRes = await fetch('/api/campaigns', {
+            headers: {
+              'Authorization': authToken
+            }
+          });
+          if (campRes.ok) {
+            const campData = await campRes.json();
+            setCampaigns(campData.campaigns);
+          } else {
+            throw new Error('Failed to fetch from /api/campaigns');
+          }
+        } catch (cErr) {
+          console.error('Error fetching campaigns from backend, using fallback:', cErr);
+          const mapped = INITIAL_CAMPAIGNS.map(c => ({
+            ...c,
+            completed: data.user.activityLogs.some((l: any) => l.type === 'reward' && l.title.includes(c.title))
+          }));
+          setCampaigns(mapped);
+        }
 
-  // Referral Copy
-  const copyReferralLink = () => {
-    playSfx('click');
-    const link = `${window.location.origin}/?ref=Z${Math.floor(Math.random() * 90000 + 10000)}`;
-    navigator.clipboard.writeText(link);
-    setCopiedReferral(true);
-    setTimeout(() => setCopiedReferral(false), 2000);
-  };
+        // Auto transition into admin panel tab if they are logged in as admin to save steps
+        if (data.user.isAdmin && activeTab === 'earn') {
+          setActiveTab('admin');
+        }
+      } else {
+        // Token has expired/invalid, or server rebooted on Cloud Run. Try auto-restoring session from offline backup!
+        const backupStr = localStorage.getItem('gcash_user_backup_profile');
+        if (backupStr) {
+          try {
+            const backupProfile = JSON.parse(backupStr);
+            if (backupProfile && backupProfile.email && backupProfile.password && backupProfile.name) {
+              const restoreRes = await fetch('/api/auth/auto-restore', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  email: backupProfile.email,
+                  password: backupProfile.password,
+                  name: backupProfile.name,
+                  avatar: backupProfile.avatar,
+                  stats: backupProfile.stats,
+                  withdrawals: backupProfile.withdrawals,
+                  activityLogs: backupProfile.activityLogs,
+                  referredFriends: backupProfile.referredFriends
+                })
+              });
+              if (restoreRes.ok) {
+                const restoreData = await restoreRes.json();
+                localStorage.setItem('gcash_click_earn_token', restoreData.token);
+                setToken(restoreData.token);
+                setUser(restoreData.user);
+                setStats(restoreData.user.stats);
+                setWithdrawals(restoreData.user.withdrawals);
+                setActivityLogs(restoreData.user.activityLogs);
+                setReferredFriends(restoreData.user.referredFriends);
+                triggerNotification('🔄 Ang iyong session at naipong balance ay ligtas na na-sync muli!', 'success');
+                setLoadingProfile(false);
+                return;
+              }
+            }
+          } catch (restoreErr) {
+            console.error('Failed to auto-restore session from backup:', restoreErr);
+          }
+        }
 
-  // Authenticate Admin
-  const handleAdminAuth = (e: React.FormEvent) => {
-    e.preventDefault();
-    playSfx('click');
-    if (adminPasscode === 'admin123') {
-      setIsAdminAuthenticated(true);
-      setAdminError('');
-    } else {
-      setAdminError(language === 'tl' ? 'Maling passcode!' : 'Incorrect passcode!');
+        // Token has expired or is invalid
+        handleLogout();
+      }
+    } catch (e) {
+      console.error(e);
+      triggerNotification('⚠️ Connection error sa pag-load ng inyong Profile.', 'error');
+    } finally {
+      setLoadingProfile(false);
     }
   };
 
-  // Add Campaign via Admin
-  const [newCampaignTitle, setNewCampaignTitle] = useState('');
-  const [newCampaignUrl, setNewCampaignUrl] = useState('');
-  const [newCampaignReward, setNewCampaignReward] = useState<number>(5.00);
-  const [newCampaignDuration, setNewCampaignDuration] = useState<number>(10);
-  const [newCampaignCategory, setNewCampaignCategory] = useState('Promos');
+  // Trigger sync on login status change
+  useEffect(() => {
+    if (token) {
+      fetchUserProfile(token);
+    } else {
+      setUser(null);
+    }
+  }, [token]);
 
-  const handleAddCampaign = (e: React.FormEvent) => {
-    e.preventDefault();
-    playSfx('click');
-    if (!newCampaignTitle || !newCampaignUrl) {
-      alert('Paki-punan ang lahat ng fields!');
+  // Periodic active polling check to sync admin or other devices' actions
+  useEffect(() => {
+    if (!token) return;
+    const interval = setInterval(() => {
+      fetchUserProfile(token);
+    }, 10000); // Poll every 10 seconds to align with admin approvals/declines instantly
+    return () => clearInterval(interval);
+  }, [token, activeTab]);
+
+  // --- SUBSCRIPTIONS STATE & CALCULATIONS ---
+  const [submittingSubscription, setSubmittingSubscription] = useState(false);
+  const [now, setNow] = useState<Date>(new Date());
+  const [showExpiryWarningModal, setShowExpiryWarningModal] = useState(false);
+  const [hasShownExpiryWarning, setHasShownExpiryWarning] = useState(false);
+  const [showPlansInWarning, setShowPlansInWarning] = useState(false);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!user || user.isAdmin || isSubscriptionExpired()) {
       return;
     }
-    const campId = 'c' + Date.now();
-    const newCamp: Campaign = {
-      id: campId,
-      title: newCampaignTitle,
-      description: `Suriin ang sponsor website na ito upang kumita ng instant cash reward.`,
-      url: newCampaignUrl,
-      reward: newCampaignReward,
-      duration: newCampaignDuration,
-      category: newCampaignCategory,
-      views: 0
-    };
+    const info = getAccessStatusInfo();
+    if (info.expiresAt && !hasShownExpiryWarning) {
+      const remainingMs = info.expiresAt.getTime() - now.getTime();
+      // Less than 1 hour (3,600,000 ms) and more than 0
+      if (remainingMs > 0 && remainingMs < 3600000) {
+        setShowExpiryWarningModal(true);
+        setHasShownExpiryWarning(true);
+      }
+    }
+  }, [now, user, hasShownExpiryWarning]);
+
+  const getAccessStatusInfo = () => {
+    if (!user) {
+      return {
+        type: 'expired',
+        label: language === 'tl' ? 'Walang Access' : 'No Access',
+        badgeColor: 'bg-slate-100 text-slate-700 border-slate-200',
+        expiresAt: null,
+        expiresAtString: 'N/A',
+        isExpired: true,
+      };
+    }
     
-    setDoc(doc(db, 'campaigns', campId), newCamp)
-      .then(() => {
-        setNewCampaignTitle('');
-        setNewCampaignUrl('');
-        alert('Sponsor Campaign matagumpay na naidagdag!');
-      })
-      .catch((err) => handleFirestoreError(err, OperationType.WRITE, `campaigns/${campId}`));
+    if (user.isAdmin) {
+      return {
+        type: 'admin',
+        label: language === 'tl' ? 'Owner Admin Access (Walang Limit)' : 'Owner Admin Access (Unlimited)',
+        badgeColor: 'bg-red-500/10 text-red-500 border-red-500/20',
+        expiresAt: null,
+        expiresAtString: language === 'tl' ? 'Habang-buhay / Lifetime' : 'Lifetime Access',
+        isExpired: false,
+      };
+    }
+
+    const regDate = user.createdAt ? new Date(user.createdAt) : new Date();
+    const oneDayInMs = 24 * 60 * 60 * 1000;
+    const trialExpiresAt = new Date(regDate.getTime() + oneDayInMs);
+    const isTrialActive = trialExpiresAt.getTime() > now.getTime();
+
+    const sub = user.subscription;
+    const isSubActive = sub && sub.status === 'active' && sub.expiresAt && new Date(sub.expiresAt).getTime() > now.getTime();
+
+    if (isSubActive) {
+      const expiresDate = new Date(sub.expiresAt!);
+      const planName = sub.requestedPlanName || sub.planId || 'Premium Plan';
+      return {
+        type: 'premium',
+        label: language === 'tl' ? `Premium Access (${planName})` : `Premium Access (${planName})`,
+        badgeColor: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
+        expiresAt: expiresDate,
+        expiresAtString: expiresDate.toLocaleString(language === 'tl' ? 'fil-PH' : 'en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true,
+        }),
+        isExpired: false,
+      };
+    }
+
+    if (isTrialActive) {
+      return {
+        type: 'free',
+        label: language === 'tl' ? 'Free Access (1-Day Trial)' : 'Free Access (1-Day Trial)',
+        badgeColor: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+        expiresAt: trialExpiresAt,
+        expiresAtString: trialExpiresAt.toLocaleString(language === 'tl' ? 'fil-PH' : 'en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true,
+        }),
+        isExpired: false,
+      };
+    }
+
+    // Otherwise, expired
+    const lastExpiresAt = sub && sub.expiresAt ? new Date(sub.expiresAt) : trialExpiresAt;
+    return {
+      type: 'expired',
+      label: language === 'tl' ? 'Expired Access' : 'Expired Access',
+      badgeColor: 'bg-rose-500/10 text-rose-500 border-rose-500/20',
+      expiresAt: lastExpiresAt,
+      expiresAtString: lastExpiresAt.toLocaleString(language === 'tl' ? 'fil-PH' : 'en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      }),
+      isExpired: true,
+    };
   };
 
-  const handleDeleteCampaign = (id: string) => {
-    playSfx('click');
-    const campDocRef = doc(db, 'campaigns', id);
-    deleteDoc(campDocRef)
-      .catch((err) => handleFirestoreError(err, OperationType.DELETE, `campaigns/${id}`));
+  const getRemainingTimeText = (expiresAt: Date | null) => {
+    if (!expiresAt) {
+      return language === 'tl' ? 'Walang expiration limit' : 'No expiration limit';
+    }
+    const diffMs = expiresAt.getTime() - now.getTime();
+    if (diffMs <= 0) {
+      return language === 'tl' ? 'Expired na ang access' : 'Access expired';
+    }
+    const hours = Math.floor(diffMs / (60 * 60 * 1000));
+    const mins = Math.floor((diffMs % (60 * 60 * 1000)) / (60 * 1000));
+    const secs = Math.floor((diffMs % (60 * 1000)) / 1000);
+
+    const parts = [];
+    if (hours > 0) parts.push(`${hours}h`);
+    if (mins > 0 || hours > 0) parts.push(`${mins}m`);
+    parts.push(`${secs}s`);
+
+    return language === 'tl' 
+      ? `Ma-eexpire sa loob ng ${parts.join(' ')}` 
+      : `Expires in ${parts.join(' ')}`;
   };
 
-  const handleApproveWithdrawal = (id: string) => {
-    playSfx('reward');
-    const cashoutDocRef = doc(db, 'cashouts', id);
-    updateDoc(cashoutDocRef, {
-      status: 'approved'
-    }).catch((err) => handleFirestoreError(err, OperationType.WRITE, `cashouts/${id}`));
+  const isSubscriptionExpired = () => {
+    if (!user) return false;
+    if (user.isAdmin) return false;
+    
+    // Check registration creation date
+    const regDate = user.createdAt ? new Date(user.createdAt) : new Date();
+    const passedMs = now.getTime() - regDate.getTime();
+    const oneDayInMs = 24 * 60 * 60 * 1000;
+    
+    // Free trial active if registered less than 24 hours ago
+    if (passedMs < oneDayInMs) {
+      return false; 
+    }
+    
+    // Check active subscription status
+    const sub = user.subscription;
+    if (!sub || sub.status !== 'active') {
+      return true; // Locked out
+    }
+    
+    if (sub.expiresAt) {
+      return new Date(sub.expiresAt).getTime() < now.getTime();
+    }
+    
+    return true; // Locked
   };
 
-  const handleRejectWithdrawal = (id: string) => {
-    playSfx('click');
-    const cashoutDocRef = doc(db, 'cashouts', id);
-    updateDoc(cashoutDocRef, {
-      status: 'rejected'
-    }).catch((err) => handleFirestoreError(err, OperationType.WRITE, `cashouts/${id}`));
+  const handleSubscriptionRequest = async (planId: string) => {
+    if (!token) return;
+    setSubmittingSubscription(true);
+    try {
+      const res = await fetch('/api/subscription/request', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ planId })
+      });
+      const result = await res.json();
+      if (res.ok) {
+        setUser(result.user);
+        triggerNotification('📨 Ang iyong Subscription request ay natanggap ng Admin! Mangyaring magdeposito sa GCash.', 'success');
+      } else {
+        triggerNotification(`⚠️ ${result.error || 'Hindi maipadala ang request.'}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      triggerNotification('⚠️ Error sa pagkonekta sa server.', 'error');
+    } finally {
+      setSubmittingSubscription(false);
+    }
   };
+
+  const handleSimulateTrialExpiration = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/user/simulate-expire', {
+        method: 'POST',
+        headers: {
+          'Authorization': token
+        }
+      });
+      const result = await res.json();
+      if (res.ok) {
+        setUser(result.user);
+        triggerNotification('⚡ Kunwari ay natapos na ang iyong 1-Day Trial! Subukan muli ang dashboard.', 'info');
+      } else {
+        triggerNotification(`⚠️ ${result.error || 'Hindi ma-expire ang trial.'}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      triggerNotification('⚠️ Error connecting to server.', 'error');
+    }
+  };
+
+  // --- CORE SYSTEM CONTROLLER ACTIONS ---
+
+  // 1. Daily Bonus Check-In Hook
+  const handleDailyCheckIn = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/user/daily-checkin', {
+        method: 'POST',
+        headers: {
+          'Authorization': token
+        }
+      });
+      const result = await res.json();
+      if (res.ok) {
+        setUser(result.user);
+        setStats(result.user.stats);
+        setActivityLogs(result.user.activityLogs);
+        
+        // Play sound effect
+        soundEffects.playReward();
+        
+        // Show visual coin rewards
+        setFloatingCoinReward(1.00);
+        setShowConfetti(true);
+        triggerNotification('💰 +₱1.00 Instant GCash Bonus idinagdag sa iyong Wallet!', 'success');
+        setTimeout(() => {
+          setFloatingCoinReward(null);
+          setShowConfetti(false);
+        }, 4000);
+      } else {
+        triggerNotification(`⚠️ ${result.error || 'Hindi ma-claim ang bonus.'}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      triggerNotification('⚠️ Error connecting to server.', 'error');
+    }
+  };
+
+  // 2. Open Website homepage for earning
+  const handleOpenCampaign = (campaign: WebsiteCampaign) => {
+    setCurrentViewingCampaign(campaign);
+  };
+
+  // 3. Complete browser simulator task
+  const handleCompleteCampaignView = async (id: string, reward: number) => {
+    if (!token) return;
+
+    const matchCampaign = campaigns.find(c => c.id === id);
+    const label = matchCampaign ? matchCampaign.title : 'Web Homepage View';
+
+    try {
+      const res = await fetch('/api/user/task-complete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({
+          campaignId: id,
+          rewardAmount: reward,
+          title: `Natapos panoorin ang ${label}`,
+          details: `Salamat sa pag-open at pananatili sa homepage ng ${label} nang ${matchCampaign?.timer || 10} segundo.`
+        })
+      });
+
+      const result = await res.json();
+      if (res.ok) {
+        setUser(result.user);
+        setStats(result.user.stats);
+        setActivityLogs(result.user.activityLogs);
+        
+        // Mark campaign as completed locally
+        const updatedCampaigns = campaigns.map((c) => {
+          if (c.id === id) {
+            return { ...c, completed: true };
+          }
+          return c;
+        });
+        setCampaigns(updatedCampaigns);
+        localStorage.setItem('gcash_click_earn_campaigns', JSON.stringify(updatedCampaigns));
+
+        // Play sound effect
+        soundEffects.playReward();
+
+        // Animate Coin Floating
+        setFloatingCoinReward(reward);
+        setShowConfetti(true);
+        setCurrentViewingCampaign(null);
+        triggerNotification(`💰 Matagumpay! Naka-ipon ka ng +₱${reward.toFixed(2)}`, 'success');
+
+        setTimeout(() => {
+          setFloatingCoinReward(null);
+          setShowConfetti(false);
+        }, 4000);
+      } else {
+        triggerNotification(`⚠️ ${result.error || 'Hindi mate-record ang task.'}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      triggerNotification('⚠️ Connection error recording completions.', 'error');
+    }
+  };
+
+  // 4. Submit GCash Withdrawal
+  const handleWithdrawalRequest = async (accountName: string, gcashNumber: string, amount: number) => {
+    if (!token) return { success: false, message: 'Naka-logout ka.' };
+
+    try {
+      const res = await fetch('/api/user/withdraw', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ accountName, gcashNumber, amount })
+      });
+      const result = await res.json();
+      if (res.ok) {
+        setUser(result.user);
+        setStats(result.user.stats);
+        setWithdrawals(result.user.withdrawals);
+        setActivityLogs(result.user.activityLogs);
+        
+        // Play cha-ching sound
+        soundEffects.playWithdraw();
+        
+        triggerNotification(`💸 Sumite ng Cashout (Binubuo)`, 'success');
+        return { 
+          success: true, 
+          message: language === 'tl'
+            ? `Ang transaksyon ay ipapadala sa iyong GCash number ${gcashNumber}. Ang iyong request ay naghihintay ng System Administrator Approval.`
+            : `The transaction will be sent to your GCash number ${gcashNumber}. Your request is pending System Administrator Approval.`
+        };
+      } else {
+        return { success: false, message: result.error || 'Hindi maiproseso.' };
+      }
+    } catch (e) {
+      console.error(e);
+      return { success: false, message: 'Server connection error.' };
+    }
+  };
+
+  // 5. Add Custom Website Campaign
+  const handleCreateCustomCampaign = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!customTitle.trim()) {
+      triggerNotification('⚠️ Pakilagay ang pamagat (Website Title).', 'error');
+      return;
+    }
+
+    if (!customUrl.trim()) {
+      triggerNotification('⚠️ Pakilagay ang URL ng website.', 'error');
+      return;
+    }
+
+    let finalUrl = customUrl.trim();
+    if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
+      finalUrl = 'https://' + finalUrl;
+    }
+
+    const rewardNum = parseFloat(customReward);
+    const timerNum = parseInt(customTimer);
+
+    const newCampaign: WebsiteCampaign = {
+      id: 'custom-' + Date.now(),
+      title: customTitle.trim(),
+      url: finalUrl,
+      reward: isNaN(rewardNum) ? 0.75 : rewardNum,
+      timer: isNaN(timerNum) ? 15 : timerNum,
+      completed: false,
+      logo: 'Globe',
+      category: 'E-Services',
+      description: customDescription.trim() || 'Isang verified advertiser page para mas palawakin ang iyong simulated earnings.',
+      mockPageContent: {
+        heroTitle: customTitle.trim(),
+        heroSubtitle: 'Maligayang pagdating sa aming isinadyang simulated ad landing partner. Manatili rito para sa automated GCash rewards!',
+        primaryColor: '#1E40AF',
+        accentColor: '#10B950',
+        paragraphs: [
+          'Salamat sa pagsuporta at pagbisita sa aming page upang matulungan kaming mai-optimize ang search visibility index.',
+          'Ang simulated traffic flow na ito ay ligtas at direktang naka-link sa iyong aktibong user profile account.'
+        ],
+        features: [
+          'SEO Rank Optimization',
+          'Automated Traffic Validation',
+          'Fast Rewards Payout Credits'
+        ]
+      }
+    };
+
+    try {
+      const res = await fetch('/api/admin/campaigns', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token || ''
+        },
+        body: JSON.stringify({ campaign: newCampaign })
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setCampaigns(result.campaigns);
+        setCustomTitle('');
+        setCustomUrl('');
+        setCustomReward('0.75');
+        setCustomTimer('15');
+        setCustomDescription('');
+        triggerNotification(`💡 Tagumpay na naidagdag ang "${newCampaign.title}"! Puwede na itong buksan at panoorin para may mapanalunang ₱${newCampaign.reward.toFixed(2)}.`, 'success');
+      } else {
+        const errData = await res.json();
+        triggerNotification(`⚠️ Bigo sa pagpasa: ${errData.error || 'Server error'}`, 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification('⚠️ Connection error sa server.', 'error');
+    }
+  };
+
+  const handleDeleteCampaign = async (campaignId: string, campaignTitle: string) => {
+    try {
+      const res = await fetch(`/api/admin/campaigns/${campaignId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': token || ''
+        }
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setCampaigns(result.campaigns);
+        triggerNotification(`🗑️ Tagumpay na tinanggal ang campaign: "${campaignTitle}"`, 'success');
+      } else {
+        const errData = await res.json();
+        triggerNotification(`⚠️ Bigo sa pagtanggal: ${errData.error || 'Server error'}`, 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification('⚠️ Connection error sa server.', 'error');
+    }
+  };
+
+  // --- AUTHENTICATION INTERFACE HANDLERS ---
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthLoading(true);
+
+    const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    const payload = authMode === 'login' 
+      ? { email: emailInput.trim(), password: passwordInput }
+      : { name: nameInput.trim(), email: emailInput.trim(), password: passwordInput, referralCode: referralInput.trim() };
+
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      const result = await res.json();
+      if (res.ok) {
+        localStorage.setItem('gcash_click_earn_token', result.token);
+        setToken(result.token);
+        triggerNotification(authMode === 'login' ? '🔑 Welcome back!' : '🎉 Welcome! Tagumpay na ginawa ang account mo.', 'success');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } else {
+        setAuthError(result.error || 'May error sa authentication.');
+      }
+    } catch (err) {
+      console.error(err);
+      setAuthError('Hindi makakonekta sa central server.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSimulatedGoogleLogin = async (selectedName: string, selectedEmail: string, avatar: string) => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      const res = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: selectedName,
+          email: selectedEmail,
+          avatar: avatar
+        })
+      });
+      const result = await res.json();
+      if (res.ok) {
+        localStorage.setItem('gcash_click_earn_token', result.token);
+        setToken(result.token);
+        setShowGoogleChooser(false);
+        triggerNotification(`🌐 Nag-sign in gamit ang Google: Hello, ${selectedName}!`, 'success');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } else {
+        setAuthError(result.error);
+      }
+    } catch (e) {
+      setAuthError('Connection error resolving Google session.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('gcash_click_earn_token');
+    setToken(null);
+    setUser(null);
+    setActiveTab('earn');
+    setShowExpiryWarningModal(false);
+    setHasShownExpiryWarning(false);
+    setShowPlansInWarning(false);
+    triggerNotification('🔒 Ligtas kang naka-logout sa controller.', 'info');
+    setTimeout(() => {
+      window.location.reload();
+    }, 1000);
+  };
+
+  const openEditProfileModal = () => {
+    if (user) {
+      setNewAvatar(user.avatar || '👤');
+      setNewName(user.name || '');
+      setShowEditProfileModal(true);
+    }
+  };
+
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim()) {
+      triggerNotification(language === 'tl' ? 'Mangyaring ilagay ang iyong pangalan.' : 'Please enter your name.', 'error');
+      return;
+    }
+
+    setIsUpdatingProfile(true);
+    try {
+      const res = await fetch('/api/user/update-profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token || ''
+        },
+        body: JSON.stringify({
+          avatar: newAvatar,
+          name: newName
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setUser(data.user);
+        triggerNotification(language === 'tl' ? 'Matagumpay na na-update ang iyong profile! 🎉' : 'Profile updated successfully! 🎉', 'success');
+        setShowEditProfileModal(false);
+      } else {
+        triggerNotification(data.error || 'May error sa pag-update.', 'error');
+      }
+    } catch (err) {
+      triggerNotification(language === 'tl' ? 'Koneksyon error.' : 'Connection error.', 'error');
+    } finally {
+      setIsUpdatingProfile(false);
+    }
+  };
+
+  // --- FILTERS LOGIC ---
+  const filteredCampaigns = campaigns.filter((c) => {
+    if (campaignFilter === 'high') return c.reward >= 1.00;
+    if (campaignFilter === 'available') return !c.completed;
+    return true;
+  });
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-indigo-950 text-white font-sans flex flex-col justify-between">
+    <div id="application-sandbox-root" className="min-h-screen bg-slate-100 flex flex-col text-slate-800 font-sans antialiased selection:bg-blue-600 selection:text-white">
       
-      {/* HEADER BAR */}
-      <header className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-md border-b border-indigo-500/10 px-4 py-3">
-        <div className="max-w-md mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="bg-gradient-to-r from-indigo-500 to-pink-500 p-2 rounded-xl shadow-lg shadow-indigo-500/20">
-              <span className="text-xl font-black tracking-tighter">Z</span>
-            </div>
-            <div>
-              <h1 className="text-base font-black tracking-tight bg-gradient-to-r from-white via-indigo-200 to-pink-200 bg-clip-text text-transparent">Z-oneApp</h1>
-              <span className="text-[10px] text-indigo-400 font-extrabold uppercase tracking-widest">
-                {language === 'tl' ? 'PANOOD & KUMITA' : 'WATCH & EARN'}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* EN/TL toggle */}
-            <button 
-              onClick={() => { playSfx('click'); setLanguage(prev => prev === 'en' ? 'tl' : 'en'); }}
-              className="bg-white/5 hover:bg-white/10 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-lg border border-white/10 transition cursor-pointer"
-            >
-              {language === 'en' ? '🇵🇭 Tagalog' : '🇺🇸 English'}
-            </button>
-
-            {/* Audio Toggle */}
-            <button 
-              onClick={() => setSoundEnabled(prev => !prev)}
-              className="bg-white/5 hover:bg-white/10 p-1.5 rounded-lg border border-white/10 transition text-indigo-300"
-            >
-              {soundEnabled ? '🔊' : '🔇'}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* CORE VIEW */}
-      <main className="flex-1 max-w-md w-full mx-auto px-4 py-5 space-y-5">
-        
-        {/* WALLET BALANCE HERO CARD */}
-        <div className="relative overflow-hidden bg-gradient-to-br from-indigo-600 to-pink-600 rounded-3xl p-6 shadow-2xl shadow-indigo-600/20 border border-white/10">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl transform translate-x-10 -translate-y-10"></div>
-          
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-indigo-100 font-extrabold uppercase tracking-widest flex items-center gap-1.5">
-                <Coins className="w-3.5 h-3.5" />
-                {language === 'tl' ? 'Kasalukuyang Balance' : 'Current Balance'}
-              </span>
-              <span className="bg-white/20 text-white text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border border-white/10 animate-pulse">
-                ₱ {balance >= 100 ? 'READY TO GCASH' : '₱100 MINIMUM'}
-              </span>
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-4xl font-black tracking-tight flex items-baseline gap-1">
-                <span className="text-2xl font-bold">₱</span>
-                {balance.toFixed(2)}
-              </div>
-              <p className="text-[11px] text-indigo-100 font-medium">
-                {language === 'tl' 
-                  ? '*Simulated rewards sa panonood ng sponsored websites' 
-                  : '*Simulated rewards for viewing sponsored websites'}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 pt-2">
-              <button 
-                onClick={() => { playSfx('click'); setActiveTab('withdraw'); }}
-                className="bg-white text-slate-950 hover:bg-indigo-50 font-black text-xs uppercase tracking-wider py-2.5 rounded-xl transition transform active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
-              >
-                <span>💳</span>
-                <span>{language === 'tl' ? 'GCash Cashout' : 'GCash Cashout'}</span>
-              </button>
-              <button 
-                onClick={() => { playSfx('click'); setActiveTab('guide'); }}
-                className="bg-indigo-950/40 hover:bg-indigo-950/60 border border-white/15 text-white font-bold text-xs uppercase tracking-wider py-2.5 rounded-xl transition transform active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
-              >
-                <span>📥</span>
-                <span>{language === 'tl' ? 'I-download ang App' : 'Download APK'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* 🚀 DIRECT AUTOMATIC PACKAGE INSTALLER DOWNLOADER CARD */}
-        <div id="apk-card" className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 rounded-3xl p-5 text-white border border-indigo-500/30 shadow-xl space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="bg-amber-400 text-slate-950 p-1.5 rounded-lg font-black text-xs">APK</div>
-              <div>
-                <h4 className="text-xs font-extrabold uppercase tracking-widest text-indigo-300">
-                  {language === 'tl' ? 'Direktang Installer (Apk)' : 'Direct App Installer (APK)'}
-                </h4>
-                <p className="text-[10px] text-slate-300">
-                  {language === 'tl' ? 'Ligtas, mabilis, at hindi dadaan sa Play Store' : '100% Safe, fast, bypasses app store restrictions'}
-                </p>
-              </div>
-            </div>
-            <span className="bg-emerald-500/20 text-emerald-400 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border border-emerald-500/30">
-              {language === 'tl' ? 'Inirerekomenda' : 'Recommended'}
-            </span>
-          </div>
-
-          {downloadState === 'idle' && (
-            <button
-              onClick={() => startAutomaticDownload(activePwaGuideTab)}
-              className="w-full bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 text-slate-950 py-3.5 px-4 rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg shadow-amber-500/20 transition transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              <span>
-                {language === 'tl' ? 'I-DOWNLOAD ANG REAL Z-ONEAPP.APK' : 'DOWNLOAD GENUINE Z-ONEAPP.APK'}
-              </span>
-            </button>
-          )}
-
-          {downloadState === 'downloading' && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between text-xs font-bold">
-                <span className="text-indigo-200 animate-pulse flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-                  {language === 'tl' ? 'Dina-download ang legit package...' : 'Downloading installer package...'}
-                </span>
-                <span className="text-amber-400 font-black">{downloadProgress}%</span>
-              </div>
-              
-              <div className="h-3 w-full bg-white/10 rounded-full overflow-hidden border border-white/5 p-0.5">
-                <div 
-                  className="h-full bg-gradient-to-r from-amber-400 via-yellow-400 to-emerald-400 rounded-full transition-all duration-150"
-                  style={{ width: `${downloadProgress}%` }}
-                />
-              </div>
-
-              <div className="flex justify-between text-[10px] text-slate-400 font-semibold pt-1">
-                <div className="flex gap-1">
-                  <span>{language === 'tl' ? 'Bilis:' : 'Speed:'}</span>
-                  <span className="text-white font-extrabold">{downloadSpeed}</span>
-                </div>
-                <div className="flex gap-1">
-                  <span>{language === 'tl' ? 'Laki:' : 'Size:'}</span>
-                  <span className="text-white font-extrabold">{downloadedSize} / 2.4 MB</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {downloadState === 'completed' && (
-            <div className="bg-emerald-950/40 border border-emerald-500/30 p-4 rounded-2xl space-y-3">
-              <div className="flex items-center gap-2.5">
-                <div className="bg-emerald-500 text-slate-950 p-1.5 rounded-full shadow-lg">
-                  <Check className="w-5 h-5 stroke-[3]" />
-                </div>
-                <div>
-                  <h5 className="text-xs font-black text-emerald-400 uppercase tracking-wide">
-                    {language === 'tl' ? 'Tapos na ang Download!' : 'Download Successful!'}
-                  </h5>
-                  <p className="text-[10px] text-emerald-200/80 mt-0.5 font-bold">
-                    {language === 'tl' ? 'Nai-save na ang Z-oneApp.apk sa iyong Downloads!' : 'Z-oneApp.apk successfully saved to your downloads folder!'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="bg-slate-950/40 p-3 rounded-xl space-y-1.5 text-[11px] text-slate-300 border border-slate-800 leading-relaxed font-semibold">
-                <p className="font-extrabold text-amber-300">
-                  {language === 'tl' ? '⚠️ LEGIT INSTALL GUIDE (HINDI MA-PARSING ERROR):' : '⚠️ HOW TO INSTALL CORRECTLY (NO PARSING ERROR):'}
-                </p>
-                <ul className="list-decimal pl-4 space-y-1 text-slate-300">
-                  <li>{language === 'tl' ? 'I-click ang downloaded "Z-oneApp.apk" file sa iyong notification panel o sa File Manager / Downloads folder.' : 'Open the downloaded "Z-oneApp.apk" file from your browser notification panel or Android Files/Downloads app.'}</li>
-                  <li>{language === 'tl' ? 'Kapag lumabas ang block o babala, piliin ang "Install Anyway" o i-on ang "Allow from this source" sa iyong Settings.' : 'If prompted with security settings, simply check "Allow installation from unknown sources" or click "Install Anyway".'}</li>
-                  <li>{language === 'tl' ? 'I-click ang "Install" at mag-log in gamit ang iyong account para magpatuloy!' : 'Click "Install" to finish and launch the Z-oneApp shortcut directly from your homescreen!'}</li>
-                </ul>
-              </div>
-
-              <button
-                onClick={() => startAutomaticDownload(activePwaGuideTab)}
-                className="w-full text-center text-[10px] font-black text-indigo-300 hover:text-indigo-200 transition uppercase tracking-wider border border-indigo-400/20 py-2 rounded-xl bg-indigo-500/5 hover:bg-indigo-500/10 cursor-pointer"
-              >
-                {language === 'tl' ? '🔄 I-download Muli ang Package' : '🔄 Redownload Installer Package'}
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* NAVIGATION TABS */}
-        <div className="bg-slate-900 p-1.5 rounded-2xl border border-white/5 flex gap-1">
-          <button 
-            onClick={() => { playSfx('click'); setActiveTab('earn'); }}
-            className={`flex-1 text-center py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
-              activeTab === 'earn' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Eye className="w-3.5 h-3.5" />
-            <span>{language === 'tl' ? 'Manood' : 'Earn'}</span>
-          </button>
-          <button 
-            onClick={() => { playSfx('click'); setActiveTab('withdraw'); }}
-            className={`flex-1 text-center py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
-              activeTab === 'withdraw' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Coins className="w-3.5 h-3.5" />
-            <span>{language === 'tl' ? 'Cashout' : 'GCash'}</span>
-          </button>
-          <button 
-            onClick={() => { playSfx('click'); setActiveTab('refer'); }}
-            className={`flex-1 text-center py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
-              activeTab === 'refer' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Users className="w-3.5 h-3.5" />
-            <span>{language === 'tl' ? 'Referral' : 'Refer'}</span>
-          </button>
-        </div>
-
-        {/* VIEW CONDITIONAL BLOCKS */}
-
-        {/* 1. EARN VIEW */}
-        {activeTab === 'earn' && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-black uppercase tracking-wider text-indigo-300">
-                {language === 'tl' ? 'Mga Available na Sponsor Websites' : 'Available Sponsored Campaigns'}
-              </h3>
-              <span className="text-[10px] text-slate-400 font-bold">
-                {campaigns.length} {language === 'tl' ? 'Website na magagamit' : 'Websites available'}
-              </span>
-            </div>
-
-            <div className="space-y-3">
-              {campaigns.map((camp) => {
-                const isDone = completedCampaigns.includes(camp.id);
-                return (
-                  <div 
-                    key={camp.id} 
-                    className={`bg-slate-900 p-4 rounded-2xl border transition-all ${
-                      isDone ? 'border-emerald-500/20 opacity-70' : 'border-indigo-500/10 hover:border-indigo-500/30'
-                    }`}
-                  >
-                    <div className="flex justify-between items-start gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="bg-indigo-500/10 text-indigo-300 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md border border-indigo-500/20">
-                            {camp.category}
-                          </span>
-                          {isDone && (
-                            <span className="bg-emerald-500/10 text-emerald-400 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md border border-emerald-500/20 flex items-center gap-0.5">
-                              <CheckCircle className="w-2.5 h-2.5" />
-                              {language === 'tl' ? 'TAPOS NA' : 'DONE'}
-                            </span>
-                          )}
-                        </div>
-                        <h4 className="text-sm font-black text-white">{camp.title}</h4>
-                        <p className="text-xs text-slate-400 leading-normal">{camp.description}</p>
-                      </div>
-
-                      <div className="text-right space-y-1 shrink-0">
-                        <div className="text-xs text-slate-400 font-bold flex items-center justify-end gap-1">
-                          <Clock className="w-3 h-3" />
-                          <span>{camp.duration}s</span>
-                        </div>
-                        <div className="text-sm font-black text-amber-400">
-                          + ₱{camp.reward.toFixed(2)}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between items-center mt-4 pt-3 border-t border-white/5 text-[10px] text-slate-500 font-bold">
-                      <div>👁️ {camp.views} {language === 'tl' ? 'na nanood' : 'viewers'}</div>
-                      <button
-                        onClick={() => {
-                          playSfx('click');
-                          setActiveViewingCampaign(camp);
-                          setViewerTimeLeft(camp.duration);
-                          setViewerProgress(100);
-                          setIsViewerSuccessful(false);
-                        }}
-                        className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1 transition ${
-                          isDone 
-                            ? 'bg-slate-800 text-slate-400 hover:bg-slate-700 cursor-pointer' 
-                            : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 transform active:scale-95 cursor-pointer'
-                        }`}
-                      >
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                        <span>{isDone ? (language === 'tl' ? 'PANOORIN MULI' : 'RE-WATCH') : (language === 'tl' ? 'PANOORIN' : 'VIEW')}</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* 2. WITHDRAW PORTAL */}
-        {activeTab === 'withdraw' && (
-          <div className="space-y-4">
-            <h3 className="text-xs font-black uppercase tracking-wider text-indigo-300">
-              {language === 'tl' ? 'GCash Cashout Gateway' : 'GCash Cashout Portal'}
-            </h3>
-
-            {/* Withdraw Success Alert */}
-            {withdrawSuccess && (
-              <div className="bg-emerald-950/40 border border-emerald-500/30 p-4 rounded-2xl text-center space-y-3">
-                <div className="bg-emerald-500 text-slate-950 p-2 rounded-full w-10 h-10 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/20">
-                  <Check className="w-6 h-6 stroke-[3]" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-black text-emerald-400 uppercase tracking-wide">
-                    {language === 'tl' ? 'Matagumpay na Naisumite!' : 'Cashout Request Submitted!'}
-                  </h4>
-                  <p className="text-xs text-slate-300 mt-1">
-                    {language === 'tl' 
-                      ? 'Ang iyong request ay kasalukuyang pinoproseso ng sponsor at dadating sa iyong GCash sa loob ng 24 oras.' 
-                      : 'Your transfer is being processed by the sponsor system and will arrive in your GCash wallet within 24 hours.'}
-                  </p>
-                </div>
-                <button 
-                  onClick={() => { playSfx('click'); setWithdrawSuccess(false); }}
-                  className="bg-white/5 hover:bg-white/10 text-xs text-indigo-300 font-extrabold tracking-wider uppercase py-2 px-6 rounded-xl border border-white/5 cursor-pointer"
-                >
-                  {language === 'tl' ? 'OKAY, SALAMAT' : 'DISMISS'}
-                </button>
-              </div>
-            )}
-
-            {/* Form */}
-            <form onSubmit={handleCashoutSubmit} className="bg-slate-900 p-5 rounded-2xl border border-white/5 space-y-4">
-              <div className="bg-blue-600/10 p-3 rounded-xl border border-blue-500/20 flex items-start gap-2 text-xs leading-relaxed text-blue-200">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-blue-400" />
-                <p>
-                  {language === 'tl' 
-                    ? 'Tiyakin na tama ang iyong impormasyon upang maiwasan ang maling pagpapadala ng simulated GCash.' 
-                    : 'Ensure your account details match your GCash registration to prevent transactional failures.'}
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                  {language === 'tl' ? 'GCash Account Name' : 'GCash Registered Name'}
-                </label>
-                <input 
-                  type="text" 
-                  value={gcashName}
-                  onChange={(e) => setGcashName(e.target.value)}
-                  placeholder="e.g. JUAN DELA CRUZ"
-                  required
-                  className="w-full bg-slate-950 text-white border border-white/10 px-4 py-3 rounded-xl text-sm font-bold focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                  {language === 'tl' ? 'GCash Phone Number (11-Digits)' : 'GCash Mobile Number (11-Digits)'}
-                </label>
-                <input 
-                  type="tel" 
-                  maxLength={11}
-                  value={gcashNumber}
-                  onChange={(e) => setGcashNumber(e.target.value.replace(/[^0-9]/g, ''))}
-                  placeholder="e.g. 09123456789"
-                  required
-                  className="w-full bg-slate-950 text-white border border-white/10 px-4 py-3 rounded-xl text-sm font-bold focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                  {language === 'tl' ? 'Halaga na Iwiwithdraw' : 'Select Withdrawal Amount'}
-                </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {[100, 250, 500, 1000].map((amt) => (
-                    <button
-                      key={amt}
-                      type="button"
-                      onClick={() => { playSfx('click'); setSelectedWithdrawAmount(amt); }}
-                      className={`py-3 rounded-xl font-black text-xs transition cursor-pointer border ${
-                        selectedWithdrawAmount === amt 
-                          ? 'bg-gradient-to-r from-indigo-600 to-pink-600 text-white border-transparent' 
-                          : 'bg-slate-950 text-slate-300 border-white/5 hover:border-white/20'
-                      }`}
-                    >
-                      ₱{amt}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isWithdrawing || balance < selectedWithdrawAmount}
-                className={`w-full text-center font-black text-xs uppercase tracking-wider py-4 rounded-xl transition ${
-                  balance < selectedWithdrawAmount
-                    ? 'bg-slate-800 text-slate-500 border border-white/5 cursor-not-allowed'
-                    : 'bg-gradient-to-r from-indigo-500 to-pink-500 hover:from-indigo-600 hover:to-pink-600 text-white cursor-pointer shadow-lg shadow-indigo-600/10 transform active:scale-[0.98]'
-                }`}
-              >
-                {isWithdrawing 
-                  ? (language === 'tl' ? 'KASALUKUYANG IPINOPROSESO...' : 'PROCESSING TRANSACTION...') 
-                  : (balance < selectedWithdrawAmount 
-                    ? (language === 'tl' ? 'HINDI SAPAT ANG BALANCE' : 'INSUFFICIENT BALANCE')
-                    : (language === 'tl' ? `I-WITHDRAW ANG ₱${selectedWithdrawAmount}.00` : `WITHDRAW ₱${selectedWithdrawAmount}.00`))}
-              </button>
-            </form>
-
-            {/* History */}
-            <div className="space-y-2">
-              <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                {language === 'tl' ? 'Karanasan sa Pag-withdraw' : 'Recent Transaction Logs'}
-              </h4>
-              <div className="bg-slate-900 rounded-2xl border border-white/5 overflow-hidden">
-                {cashoutHistory.map((item, index) => (
-                  <div key={item.id} className={`flex items-center justify-between p-4 ${index > 0 ? 'border-t border-white/5' : ''}`}>
-                    <div className="space-y-1">
-                      <div className="text-xs font-black text-white">{item.name}</div>
-                      <div className="text-[10px] text-slate-500 font-bold">{item.number} • {item.date}</div>
-                    </div>
-                    <div className="text-right space-y-1">
-                      <div className="text-xs font-black text-white">₱{item.amount.toFixed(2)}</div>
-                      <span className={`inline-block text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${
-                        item.status === 'approved' 
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                          : item.status === 'rejected'
-                            ? 'bg-red-500/10 text-red-400 border-red-500/20'
-                            : 'bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse'
-                      }`}>
-                        {item.status === 'approved' 
-                          ? (language === 'tl' ? 'IPINADALA NA' : 'SUCCESS') 
-                          : item.status === 'rejected'
-                            ? (language === 'tl' ? 'HINDI TINANGGAP' : 'REJECTED')
-                            : (language === 'tl' ? 'PINOPROSESO' : 'PENDING')}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 3. REFERRAL */}
-        {activeTab === 'refer' && (
-          <div className="space-y-4">
-            <h3 className="text-xs font-black uppercase tracking-wider text-indigo-300">
-              {language === 'tl' ? 'Sistema ng Referral' : 'Referral Commission Engine'}
-            </h3>
-
-            <div className="bg-slate-900 p-5 rounded-2xl border border-white/5 text-center space-y-4">
-              <div className="bg-indigo-600/10 w-12 h-12 rounded-full flex items-center justify-center mx-auto text-indigo-400">
-                <Users className="w-6 h-6" />
-              </div>
-              <div className="space-y-1">
-                <h4 className="text-sm font-black text-white">
-                  {language === 'tl' ? 'Kumita ng ₱20.00 Bawat Imbitasyon' : 'Earn ₱20.00 per Successful Invitation'}
-                </h4>
-                <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
-                  {language === 'tl' 
-                    ? 'Makakatanggap ka ng komisyon kapag sumali ang iyong kaibigan at nag-download ng official Z-oneApp.' 
-                    : 'Commission credits will be added synchronously when your referee completes their app download.'}
-                </p>
-              </div>
-
-              <div className="bg-slate-950 p-3 rounded-xl border border-white/5 flex items-center justify-between gap-2">
-                <span className="text-xs font-bold text-slate-300 truncate text-left">
-                  {window.location.origin}/?ref=Z48293
-                </span>
-                <button
-                  type="button"
-                  onClick={copyReferralLink}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black uppercase tracking-wider px-4 py-2 rounded-lg cursor-pointer transition shrink-0"
-                >
-                  {copiedReferral ? (language === 'tl' ? 'NAKOPYA NA!' : 'COPIED!') : (language === 'tl' ? 'KOPYAHIN' : 'COPY')}
-                </button>
-              </div>
-            </div>
-
-            {/* Referrals history list */}
-            <div className="space-y-2">
-              <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                {language === 'tl' ? 'Iyong mga Inimbita' : 'Your Successful Invites'}
-              </h4>
-              <div className="bg-slate-900 rounded-2xl border border-white/5 overflow-hidden">
-                {referrals.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between p-4 border-b border-white/5 last:border-0">
-                    <div className="flex items-center gap-2.5">
-                      <div className="bg-slate-800 p-1.5 rounded-full text-indigo-300 font-extrabold text-xs text-center w-7 h-7">
-                        {item.username[0].toUpperCase()}
-                      </div>
-                      <div className="space-y-0.5">
-                        <div className="text-xs font-black text-white">{item.username}</div>
-                        <div className="text-[9px] text-slate-500 font-bold">{item.date}</div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs font-black text-emerald-400">+ ₱{item.bonus.toFixed(2)}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-      </main>
-
-      {/* FOOTER & SECRET ADMIN PORTAL TRIGGERS */}
-      <footer className="mt-8 bg-slate-950/80 border-t border-indigo-500/5 py-6 text-center space-y-4">
-        <div className="max-w-md mx-auto px-4 flex flex-col items-center justify-center gap-2">
-          <p className="text-[10px] text-slate-500 font-bold">
-            © 2026 Z-oneApp Studio. All rights reserved.
-          </p>
-          <div className="flex gap-4">
-            <button 
-              onClick={() => { playSfx('click'); setShowAdminPanel(true); }}
-              className="text-[10px] text-slate-600 hover:text-indigo-400 font-bold uppercase tracking-wider underline cursor-pointer"
-            >
-              {language === 'tl' ? '🛠️ Admin Panel' : '🛠️ Admin Panel'}
-            </button>
-          </div>
-        </div>
-      </footer>
-
-      {/* ========================================= */}
-      {/* 🚀 SIMULATED WEB VIEWER POPUP OVERLAY */}
-      {/* ========================================= */}
+      {/* 🔔 FLOATING NOTIFICATION SYSTEM */}
       <AnimatePresence>
-        {activeViewingCampaign && (
-          <div className="fixed inset-0 z-50 bg-slate-950/95 flex flex-col justify-between">
-            {/* Countdown timer bar */}
-            <div className="bg-slate-900 border-b border-white/5 px-4 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <span className="flex h-3 w-3 relative">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
-                </span>
-                <div>
-                  <h3 className="text-xs font-black uppercase text-slate-300">
-                    {language === 'tl' ? 'Kasalukuyang Nanonood' : 'Actively Viewing Website'}
-                  </h3>
-                  <p className="text-[10px] text-slate-500 truncate max-w-[180px] font-semibold">{activeViewingCampaign.url}</p>
-                </div>
-              </div>
-
-              {/* Countdown counter ring */}
-              <div className="flex items-center gap-2 bg-slate-950/50 px-3 py-1.5 rounded-full border border-white/5">
-                <Clock className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-                <span className="text-sm font-black text-amber-400">{viewerTimeLeft}s</span>
-              </div>
+        {notification && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            id="system-banner"
+            className={`fixed top-5 left-1/2 -translate-x-1/2 z-50 max-w-md w-[90%] p-4 rounded-2xl shadow-xl border flex items-start gap-3 backdrop-blur-md ${
+              notification.type === 'success'
+                ? 'bg-emerald-50/95 border-emerald-200 text-emerald-950'
+                : notification.type === 'error'
+                ? 'bg-rose-50/95 border-rose-200 text-rose-950'
+                : 'bg-indigo-50/95 border-indigo-200 text-indigo-950'
+            }`}
+          >
+            <div className={`p-1.5 rounded-xl shrink-0 ${
+              notification.type === 'success' ? 'bg-emerald-100' : notification.type === 'error' ? 'bg-rose-100' : 'bg-indigo-100'
+            }`}>
+              {notification.type === 'success' ? '💰' : notification.type === 'error' ? '🚨' : 'ℹ️'}
             </div>
-
-            {/* Timer linear progress indicator */}
-            <div className="h-1 bg-white/10 w-full overflow-hidden">
-              <div 
-                className="h-full bg-gradient-to-r from-amber-400 to-yellow-500 transition-all duration-1000"
-                style={{ width: `${viewerProgress}%` }}
-              />
+            <div className="flex-1">
+              <span className="text-xs font-extrabold block text-slate-400 uppercase tracking-widest leading-none mb-1">GCash Rewards Alert</span>
+              <p className="text-xs font-bold leading-normal">{notification.message}</p>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-            {/* Simulated Website iframe viewport */}
-            <div className="flex-1 bg-slate-100 text-slate-900 relative flex flex-col overflow-hidden">
-              {/* Fake web browser UI */}
-              <div className="bg-slate-200 border-b border-slate-300 px-3 py-2 flex items-center gap-2 text-xs text-slate-500 select-none">
-                <div className="flex gap-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-red-400"></span>
-                  <span className="w-2.5 h-2.5 rounded-full bg-yellow-400"></span>
-                  <span className="w-2.5 h-2.5 rounded-full bg-green-400"></span>
-                </div>
-                <div className="flex-1 bg-white px-3 py-1 rounded-md text-[11px] font-bold truncate flex items-center gap-1.5 border border-slate-300 text-slate-700">
-                  <Globe className="w-3.5 h-3.5 text-slate-400" />
-                  <span>{activeViewingCampaign.url}</span>
-                </div>
-              </div>
+      {/* 🪙 FLOATING COINS OVERLAYS ANIMATION */}
+      <AnimatePresence>
+        {floatingCoinReward !== null && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.5, y: 100 }}
+            animate={{ opacity: [1, 1, 0], scale: [1, 1.3, 1], y: -100 }}
+            transition={{ duration: 1.5 }}
+            className="fixed inset-0 pointer-events-none z-50 flex items-center justify-center"
+          >
+            <div className="bg-gradient-to-br from-yellow-300 to-amber-500 text-slate-950 p-6 rounded-full shadow-2xl flex flex-col items-center justify-center border-4 border-yellow-200 aspect-square min-w-[120px]">
+              <Coins className="w-10 h-10 animate-repeat animate-bounce" />
+              <div className="text-xl font-black mt-1 font-mono">+₱{floatingCoinReward.toFixed(2)}</div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-              {/* Scrolling Content Canvas */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50">
-                <div className="text-center space-y-2 border-b border-slate-200 pb-5">
-                  <span className="bg-indigo-100 text-indigo-800 text-[9px] font-black uppercase px-2 py-0.5 rounded-full">
-                    Sponsor Web Advertisement
-                  </span>
-                  <h1 className="text-xl font-black text-slate-950">{activeViewingCampaign.title}</h1>
-                  <p className="text-xs text-slate-500 font-bold">
-                    {language === 'tl' 
-                      ? 'Inirerekomenda ng Z-oneApp Sponsor Solutions' 
-                      : 'Recommended by Z-oneApp Sponsor Solutions'}
-                  </p>
-                </div>
-
-                <div className="space-y-4 text-xs text-slate-700 leading-relaxed font-semibold">
-                  <p>
-                    {language === 'tl'
-                      ? 'Salamat sa pagbisita sa aming partner sponsor. Mangyaring manatili sa pahinang ito hanggang matapos ang countdown timer upang makuha ang iyong simulated GCash rewards credit.'
-                      : 'Thank you for visiting our partner sponsor. Please keep this interactive tab active until the countdown ends to securely acquire your reward points.'}
-                  </p>
-                  
-                  {/* Decorative Simulated Interactive Cards */}
-                  <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl space-y-2">
-                    <h4 className="text-xs font-black text-indigo-950 uppercase flex items-center gap-1">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>{language === 'tl' ? 'Espesyal na Promosyon' : 'Exclusive Partner Bonus'}</span>
-                    </h4>
-                    <p className="text-[11px] text-indigo-800">
-                      {language === 'tl' 
-                        ? 'Mag-click at mag-scroll sa mga link upang mas mapabilis ang transaksyon!' 
-                        : 'Explore this layout and interact with elements to fast track confirmation.'}
+      {/* 👤 EDIT PROFILE PIC & NAME MODAL */}
+      <AnimatePresence>
+        {showEditProfileModal && user && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden flex flex-col"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-5 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="bg-white/20 p-2 rounded-xl">
+                    <User className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-sm tracking-wide uppercase">
+                      {language === 'tl' ? '⚙️ I-edit ang Profile' : '⚙️ Edit Profile'}
+                    </h3>
+                    <p className="text-[10px] text-white/90 font-semibold">
+                      {language === 'tl' ? 'Baguhin ang iyong pangalan at profile pic' : 'Customize your name and profile pic'}
                     </p>
                   </div>
-
-                  <div className="space-y-2 pt-4">
-                    <h3 className="font-extrabold text-slate-900">{language === 'tl' ? 'Paano Gumagana:' : 'System Instructions:'}</h3>
-                    <ul className="list-disc pl-5 space-y-1.5 text-slate-600">
-                      <li>{language === 'tl' ? 'Huwag isasara ang simulated tab na ito habang tumatakbo ang timer.' : 'Avoid closing or minimizing this viewport while countdown is active.'}</li>
-                      <li>{language === 'tl' ? 'Maaari mong i-scroll ang pahinang ito para magbasa.' : 'You can read or browse this layout freely.'}</li>
-                      <li>{language === 'tl' ? 'Awtomatikong maidaragdag ang pera kapag natapos ang segundo.' : 'Cash points are deposited synchronously when timer hits zero.'}</li>
-                    </ul>
-                  </div>
                 </div>
-
-                {/* Simulated Content Image blocks */}
-                <div className="grid grid-cols-2 gap-3 pt-6">
-                  <div className="bg-slate-200 h-24 rounded-xl flex items-center justify-center font-black text-xs text-slate-500 border border-slate-300">
-                    Promo Ad Banner A
-                  </div>
-                  <div className="bg-slate-200 h-24 rounded-xl flex items-center justify-center font-black text-xs text-slate-500 border border-slate-300">
-                    Promo Ad Banner B
-                  </div>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowEditProfileModal(false)}
+                  className="text-white hover:text-blue-100 transition text-xs font-bold cursor-pointer"
+                >
+                  ✕
+                </button>
               </div>
-            </div>
 
-            {/* Bottom Actions */}
-            <div className="bg-slate-900 border-t border-white/5 px-4 py-4 flex items-center justify-between">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                {language === 'tl' ? 'Reward:' : 'Reward:'} <span className="text-amber-400 font-black">₱{activeViewingCampaign.reward.toFixed(2)}</span>
-              </span>
-              
-              <button
-                onClick={() => {
-                  playSfx('click');
-                  setActiveViewingCampaign(null);
-                }}
-                className="bg-white/5 hover:bg-white/10 text-slate-300 px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-widest cursor-pointer"
-              >
-                {language === 'tl' ? 'I-CANCEL' : 'CANCEL'}
-              </button>
-            </div>
+              {/* Form Content */}
+              <form onSubmit={handleUpdateProfile} className="p-6 space-y-5">
+                {/* Profile Pic Preview & Current Status */}
+                <div className="flex flex-col items-center justify-center space-y-2 py-2">
+                  <div className="relative">
+                    <div className="w-20 h-20 rounded-full bg-slate-100 flex items-center justify-center shadow-lg border-2 border-indigo-250 overflow-hidden">
+                      {newAvatar && (newAvatar.startsWith('http') || newAvatar.startsWith('data:')) ? (
+                        <img src={newAvatar} alt="New Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <span className="text-5xl leading-none">{newAvatar || '👤'}</span>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-slate-450 font-black uppercase tracking-wider">Live Profile Picture Preview</span>
+                </div>
+
+                {/* Name field */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
+                    {language === 'tl' ? 'Pangalan (Full Name)' : 'Name (Full Name)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    required
+                    maxLength={35}
+                    placeholder="E.g., Juan Dela Cruz"
+                    className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none rounded-2xl px-4 py-3 text-xs font-bold text-slate-800 transition"
+                  />
+                </div>
+
+                {/* Avatar Presets Selection */}
+                <div className="space-y-2">
+                  <label className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
+                    {language === 'tl' ? 'Pumili sa aming Presets (Choose Preset Emoji)' : 'Choose Preset Emoji'}
+                  </label>
+                  <div className="grid grid-cols-6 gap-2 bg-slate-50 border border-slate-150 p-3 rounded-2xl max-h-[110px] overflow-y-auto">
+                    {['👤', '👨‍💻', '👩‍💻', '🦁', '🦉', '🐱', '🐶', '🦊', '🦄', '🐼', '🤖', '👑', '💼', '🚀', '⭐', '🌈', '🔥', '💖', '🍀', '🍕', '😎', '🎮', '💡', '🎵'].map(preset => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setNewAvatar(preset)}
+                        className={`text-2xl p-1 rounded-xl hover:bg-slate-200 transition cursor-pointer select-none text-center ${
+                          newAvatar === preset ? 'bg-indigo-100 border-2 border-indigo-400 scale-110' : 'border border-transparent'
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Custom Avatar Upload from Gallery */}
+                <div className="space-y-1.5 border-t border-slate-100 pt-3">
+                  <label className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
+                    {language === 'tl' ? 'O Kumuha sa Phone Gallery (Upload)' : 'Or Upload From Phone Gallery'}
+                  </label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    id="profile-pic-upload"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (file.size > 15 * 1024 * 1024) {
+                        triggerNotification(
+                          language === 'tl' 
+                            ? 'Masyadong malaki ang file. Dapat mas maliit sa 15MB.' 
+                            : 'File too large. Must be smaller than 15MB.',
+                          'error'
+                        );
+                        return;
+                      }
+                      const reader = new FileReader();
+                      reader.onloadend = async () => {
+                        const rawBase64 = reader.result as string;
+                        try {
+                          const compressed = await compressImage(rawBase64);
+                          setNewAvatar(compressed);
+                        } catch (err) {
+                          setNewAvatar(rawBase64);
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                  <label
+                    htmlFor="profile-pic-upload"
+                    className="w-full border border-dashed border-indigo-300 hover:border-indigo-500 hover:bg-indigo-50/20 p-2.5 rounded-2xl text-[11px] text-indigo-750 font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5"
+                  >
+                    <Upload className="w-4 h-4 text-indigo-600" />
+                    <span>{language === 'tl' ? 'Mag-upload ng Larawan mula sa Gallery' : 'Upload Image from Gallery'}</span>
+                  </label>
+                </div>
+
+                {/* Custom Avatar URL or Custom Emoji */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
+                    {language === 'tl' ? 'O Maglagay ng Sariling Image URL' : 'Or Paste Custom Image URL'}
+                  </label>
+                  <input
+                    type="text"
+                    value={newAvatar.startsWith('http') || newAvatar.startsWith('data:') ? newAvatar : ''}
+                    onChange={(e) => {
+                      const val = e.target.value.trim();
+                      if (val) {
+                        setNewAvatar(val);
+                      } else {
+                        setNewAvatar('👤');
+                      }
+                    }}
+                    placeholder="I-paste ang link (https://...) para sa tunay na profile pic"
+                    className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none rounded-2xl px-4 py-3 text-xs font-semibold text-slate-700 transition font-mono"
+                  />
+                  <p className="text-[10px] text-slate-455 leading-normal font-semibold">
+                    💡 Maari kang mag-paste ng link ng larawan mula sa internet (tulad ng Facebook, Imgur, o Unsplash) upang ito ang maging larawan ng iyong profile.
+                  </p>
+                </div>
+
+                {/* Footer buttons */}
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditProfileModal(false)}
+                    className="flex-1 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 transition py-3 rounded-2xl text-slate-700 font-black text-xs cursor-pointer text-center"
+                  >
+                    {language === 'tl' ? 'I-cancel' : 'Cancel'}
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isUpdatingProfile}
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 active:bg-indigo-800 transition py-3 rounded-2xl text-white font-black text-xs cursor-pointer flex items-center justify-center gap-2 shadow-md"
+                  >
+                    {isUpdatingProfile ? (
+                      <span className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    ) : (
+                      <span>{language === 'tl' ? 'I-save ang Profile' : 'Save Profile'}</span>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
           </div>
         )}
       </AnimatePresence>
 
-      {/* ========================================= */}
-      {/* 🛠️ ADMIN PORTAL POPUP DIALOG */}
-      {/* ========================================= */}
+      {/* ⚠️ EXPIRY WARNING & PLAN SHORTCUT MODAL */}
       <AnimatePresence>
-        {showAdminPanel && (
-          <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-indigo-500/20 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-              
+        {showExpiryWarningModal && user && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden flex flex-col"
+            >
               {/* Header */}
-              <div className="p-4 bg-slate-950 border-b border-white/5 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Settings className="w-5 h-5 text-indigo-400" />
-                  <h3 className="text-sm font-black uppercase tracking-wider text-white">
-                    {language === 'tl' ? 'Admin Controller Portal' : 'Admin Controller Portal'}
-                  </h3>
+              <div className="bg-gradient-to-r from-amber-500 to-rose-600 p-5 text-white flex items-center gap-3">
+                <div className="bg-white/20 p-2 rounded-xl animate-bounce">
+                  <AlertCircle className="w-6 h-6 text-white" />
                 </div>
-                <button 
-                  onClick={() => { playSfx('click'); setShowAdminPanel(false); setIsAdminAuthenticated(false); setAdminPasscode(''); }}
-                  className="text-slate-400 hover:text-white"
+                <div>
+                  <h3 className="font-black text-sm tracking-wide uppercase">
+                    {language === 'tl' ? '⚠️ Babala: Paubos na ang Access' : '⚠️ Warning: Access Expiring'}
+                  </h3>
+                  <p className="text-[10px] text-white/90 font-bold">
+                    {language === 'tl' ? 'Mayroon ka na lamang kulang sa isang oras!' : 'You have less than 1 hour of access left!'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Content */}
+              <div className="p-6 space-y-4 overflow-y-auto max-h-[75vh]">
+                <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl space-y-2 text-center">
+                  <span className="text-[10px] text-rose-500 font-extrabold uppercase tracking-widest block">Natitirang Oras / Remaining Time</span>
+                  <span className="text-xl font-black text-rose-650 font-mono block animate-pulse">
+                    ⏳ {getRemainingTimeText(getAccessStatusInfo().expiresAt)}
+                  </span>
+                  <p className="text-[11px] text-slate-550 font-bold leading-relaxed">
+                    {language === 'tl' 
+                      ? 'Upang hindi maputol ang iyong pag-click, pag-earn, at pag-cashout, mag-extend o pumili ng subscription plan ngayon.' 
+                      : 'To prevent interruptions in your clicking, earning, and cashouts, extend your access or select a subscription plan now.'}
+                  </p>
+                </div>
+
+                {!showPlansInWarning ? (
+                  <div className="space-y-3 pt-2">
+                    <button
+                      onClick={() => setShowPlansInWarning(true)}
+                      className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-black py-3.5 rounded-2xl text-xs cursor-pointer shadow-md transition duration-300 flex items-center justify-center gap-2"
+                    >
+                      <Sparkles className="w-4 h-4 text-amber-300 animate-spin-slow" />
+                      <span>{language === 'tl' ? 'Tingnan ang Earning Plans (Extend Access)' : 'View Earning Plans (Extend Access)'}</span>
+                    </button>
+                    <button
+                      onClick={() => setShowExpiryWarningModal(false)}
+                      className="w-full bg-slate-100 hover:bg-slate-200 text-slate-650 font-black py-3 rounded-2xl text-xs cursor-pointer transition duration-300"
+                    >
+                      {language === 'tl' ? 'Pansamantalang I-dismiss (Close for Now)' : 'Dismiss for Now'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4 pt-2">
+                    <div className="border-b border-slate-100 pb-2">
+                      <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block">Mga Pagpipiliang Plan (Select a Plan):</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3">
+                      {(() => {
+                        const basePlans = [
+                          { id: '1month', name: '1 Month Access', price: 200, desc: '₱200 para sa 30 araw na tuloy-tuloy na earn.' },
+                          { id: '2months', name: '2 Months Access', price: 500, desc: '₱500 para sa 60 araw na pinalawak na access.' },
+                          { id: '3months', name: '3 Months Access', price: 1000, desc: '₱1000 para sa 90 araw na VIP access.' },
+                          { id: '4months', name: '4 Months Access', price: 2000, desc: '₱2000 para sa 120 araw na earning portal.' }
+                        ];
+                        if ((stats.balance || 0) < 50) {
+                          return [
+                            { id: '7days', name: '7 Days Special Access', price: 20, desc: '₱20 para sa 7 araw na mabilisang trial access habang nag-iipon.' },
+                            ...basePlans
+                          ];
+                        }
+                        return basePlans;
+                      })().map((plan) => (
+                        <div 
+                          key={plan.id}
+                          className="border border-slate-200 rounded-xl p-3.5 hover:border-indigo-400 hover:bg-indigo-50/20 transition duration-300 flex items-center justify-between gap-4"
+                        >
+                          <div className="space-y-0.5">
+                            <h4 className="font-extrabold text-slate-900 text-xs">{plan.name}</h4>
+                            <span className="text-indigo-650 font-black text-xs font-mono">₱{plan.price}</span>
+                            <p className="text-[10px] text-slate-450 leading-tight font-semibold">{plan.desc}</p>
+                          </div>
+                          
+                          <button
+                            onClick={() => {
+                              handleSubscriptionRequest(plan.id);
+                              setShowExpiryWarningModal(false);
+                            }}
+                            disabled={submittingSubscription}
+                            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-[11px] px-4 py-2 rounded-xl cursor-pointer shadow-sm shrink-0"
+                          >
+                            {language === 'tl' ? 'Bilhin' : 'Buy'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex gap-2 pt-2">
+                      <button
+                        onClick={() => setShowPlansInWarning(false)}
+                        className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-650 font-black py-2.5 rounded-xl text-xs cursor-pointer transition duration-300"
+                      >
+                        {language === 'tl' ? 'Bumalik' : 'Back'}
+                      </button>
+                      <button
+                        onClick={() => setShowExpiryWarningModal(false)}
+                        className="flex-1 bg-rose-50 hover:bg-rose-100 text-rose-600 font-black py-2.5 rounded-xl text-xs cursor-pointer transition duration-300"
+                      >
+                        {language === 'tl' ? 'I-dismiss' : 'Dismiss'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 🚀 SCREEN GATEWAY 1: NOT AUTHENTICATED SCREEN */}
+      {!token || !user ? (
+        <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 py-12 relative overflow-hidden">
+          
+          {/* Ambient Cosmic Neon background lights */}
+          <div className="absolute top-1/4 left-1/4 h-96 w-96 rounded-full bg-blue-600/10 blur-3xl" />
+          <div className="absolute bottom-1/4 right-1/4 h-96 w-96 rounded-full bg-indigo-600/10 blur-3xl" />
+
+          <div className="max-w-md w-full space-y-6 z-10">
+            
+            {/* LOGO TITLE */}
+            <div className="text-center space-y-2">
+              <span className="mx-auto bg-blue-600 text-white text-[10px] font-black tracking-widest uppercase px-3 py-1 rounded-full flex items-center gap-1 w-max">
+                <Coins className="w-3.5 h-3.5 text-yellow-300 animate-bounce" />
+                <span>ACTIVE EARNING PORTAL</span>
+              </span>
+              <h1 className="text-3xl font-black text-white tracking-tight leading-none">
+                G-Click & Get rewarded every visit
+              </h1>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto font-semibold">
+                Simulan ang pagbisita sa mga verified web homepage upang makakuha ng automated PPV rewards!
+              </p>
+            </div>
+
+            {/* MAIN CREDENTIAL CARD */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4 relative">
+              
+              {/* Form Tab Toggles */}
+              <div className="flex border-b border-slate-850 gap-2 text-xs font-black">
+                <button
+                  onClick={() => { setAuthMode('login'); setAuthError(null); }}
+                  className={`flex-1 py-2.5 transition rounded-t-xl cursor-pointer ${
+                    authMode === 'login' 
+                      ? 'border-b-2 border-blue-500 text-blue-400 bg-white/5' 
+                      : 'text-slate-500 hover:text-slate-350'
+                  }`}
                 >
-                  <X className="w-5 h-5" />
+                  Naka-rehistro (Login)
+                </button>
+                <button
+                  onClick={() => { setAuthMode('register'); setAuthError(null); }}
+                  className={`flex-1 py-2.5 transition rounded-t-xl cursor-pointer ${
+                    authMode === 'register' 
+                      ? 'border-b-2 border-blue-500 text-blue-400 bg-white/5' 
+                      : 'text-slate-500 hover:text-slate-350'
+                  }`}
+                >
+                  Gawa ng Account (Register)
                 </button>
               </div>
 
-              {/* Body */}
-              <div className="p-5 flex-1 overflow-y-auto space-y-4">
+              {/* AUTH FORM */}
+              <form onSubmit={handleAuthSubmit} className="space-y-3.5 text-xs text-slate-300">
                 
-                {/* Auth Screen */}
-                {!isAdminAuthenticated ? (
-                  <form onSubmit={handleAdminAuth} className="space-y-4">
-                    <p className="text-xs text-slate-400 font-medium">
-                      {language === 'tl' 
-                        ? 'Ipasok ang admin passcode para ma-access ang mga cashout requests at magdagdag ng sponsored campaigns.' 
-                        : 'Enter the admin control passcode to manage cashout transactions and add sponsor links.'}
-                    </p>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Admin Passcode</label>
-                      <input 
-                        type="password"
-                        placeholder="Default is: admin123"
-                        value={adminPasscode}
-                        onChange={(e) => setAdminPasscode(e.target.value)}
-                        className="w-full bg-slate-950 border border-white/10 px-4 py-3 rounded-xl text-xs font-bold text-center focus:outline-none focus:border-indigo-500"
-                        required
-                      />
+                {/* Name - Register only */}
+                {authMode === 'register' && (
+                  <div className="space-y-1.5">
+                    <label className="font-bold text-slate-400 flex items-center gap-1.5">
+                      <User className="w-4 h-4" />
+                      <span>Buong Pangalan (Profile Name-Admin Visibility)</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Hal. Juan Dela Cruz"
+                      value={nameInput}
+                      onChange={(e) => setNameInput(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 hover:border-slate-700 p-3 rounded-xl outline-none font-bold text-white transition placeholder:font-normal placeholder:text-slate-600"
+                    />
+                  </div>
+                )}
+
+                {/* Email */}
+                <div className="space-y-1.5">
+                  <label className="font-bold text-slate-400 flex items-center gap-1.5">
+                    <Mail className="w-4 h-4" />
+                    <span>Email Address</span>
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="Hal. juan.delacruz@gmail.com"
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 hover:border-slate-700 p-3 rounded-xl outline-none font-bold text-white transition placeholder:font-normal placeholder:text-slate-600"
+                  />
+                </div>
+
+                {/* Password */}
+                <div className="space-y-1.5">
+                  <label className="font-bold text-slate-400 flex items-center gap-1.5">
+                    <Lock className="w-4 h-4" />
+                    <span>Password</span>
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Wag kalimutan"
+                    value={passwordInput}
+                    onChange={(e) => setPasswordInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 hover:border-slate-700 p-3 rounded-xl outline-none font-bold text-white transition placeholder:font-normal placeholder:text-slate-600"
+                  />
+                </div>
+
+                {/* Optional Referral Code - Register only */}
+                {authMode === 'register' && (
+                  <div className="space-y-1.5 animate-fadeIn">
+                    <label className="font-bold text-slate-400 flex items-center gap-1.5">
+                      <UserPlus className="w-4 h-4 text-emerald-400" />
+                      <span>Referral Code (Opsyonal - pwedeng maiwan na blangko)</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Hal. REF-123456"
+                      value={referralInput}
+                      onChange={(e) => setReferralInput(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 hover:border-slate-700 p-3 rounded-xl outline-none font-bold text-white transition placeholder:font-normal placeholder:text-slate-600 truncate uppercase"
+                    />
+                  </div>
+                )}
+
+                {/* Feedbacks */}
+                {authError && (
+                  <div className="p-3 bg-red-950/85 border border-red-900 rounded-xl flex items-start gap-2 text-[11px] text-red-300 leading-normal">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
+                    <span className="font-bold">{authError}</span>
+                  </div>
+                )}
+
+                {/* Submit button */}
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 transition py-3 rounded-xl text-white font-black text-xs uppercase tracking-wider cursor-pointer shadow-md flex items-center justify-center gap-2"
+                >
+                  {authLoading ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : authMode === 'login' ? (
+                    'I-verify at Mag-login'
+                  ) : (
+                    'Gumawa ng Account at Simulan'
+                  )}
+                </button>
+
+              </form>
+
+            </div>
+
+            <p className="text-center text-[10px] text-slate-600 leading-normal max-w-sm mx-auto">
+              {language === 'tl'
+                ? "Sa pamamagitan ng pag-sign in, sumasang-ayon ka sa interactive simulator guidelines."
+                : "By signing in, you agree to the interactive simulator guidelines."}
+            </p>
+
+          </div>
+        </div>
+      ) : (
+        /* 📱 GATEWAY 2: AUTHENTICATED SYSTEM DASHBOARD */
+        <>
+          {/* HEADER BAR */}
+          <header id="dashboard-header" className="bg-slate-900 border-b border-slate-800 text-white py-3 sm:py-4 shadow-md">
+            <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
+              
+              {/* BRAND / IDENTITY */}
+              <div className="flex items-center gap-2 sm:gap-3">
+                <span className="p-2 bg-blue-600 rounded-xl sm:rounded-2xl shadow-md flex items-center justify-center animate-pulse shrink-0">
+                  <Coins className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-300" />
+                </span>
+                <div>
+                  <div className="flex items-center gap-1.5 sm:gap-2">
+                    <h1 className="font-black text-sm sm:text-lg tracking-tight">Earning Dashboard</h1>
+                    {user.isAdmin && (
+                      <span className="bg-red-500 text-white text-[8px] sm:text-[9px] font-black tracking-widest uppercase px-1.5 sm:px-2 py-0.5 rounded flex items-center gap-1">
+                        <Shield className="w-2.5 h-2.5 text-yellow-250 animate-bounce" />
+                        <span>OWNER ADMIN</span>
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] sm:text-[11px] text-slate-400 font-semibold hidden md:block">Explore featured websites and participate in platform activities to enjoy available PPV rewards, subject to our terms and guidelines.</p>
+                </div>
+              </div>
+
+              {/* USER PROFILE CARD AND METRICS */}
+              <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto justify-between sm:justify-end">
+                {/* 🌍 LANGUAGE SELECT SWITCH */}
+                <div className="flex items-center gap-0.5 sm:gap-1 bg-slate-950/65 border border-slate-800 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl shadow-inner shrink-0">
+                  <button
+                    onClick={() => setLanguage('en')}
+                    className={`px-2 py-1 sm:px-3 sm:py-1.5 text-[9px] sm:text-[10px] font-black uppercase rounded-lg sm:rounded-xl transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                      language === 'en'
+                        ? 'bg-slate-700 text-white shadow font-black scale-105'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>🇺🇸</span>
+                    <span className="hidden xs:inline">EN</span>
+                  </button>
+                  <button
+                    onClick={() => setLanguage('tl')}
+                    className={`px-2 py-1 sm:px-3 sm:py-1.5 text-[9px] sm:text-[10px] font-black uppercase rounded-lg sm:rounded-xl transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                      language === 'tl'
+                        ? 'bg-indigo-600 text-white shadow font-black scale-105'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>🇵🇭</span>
+                    <span className="hidden xs:inline">TL</span>
+                  </button>
+                </div>
+
+                <div className="bg-slate-850 border border-slate-800 p-1.5 sm:p-2.5 rounded-xl sm:rounded-2xl flex items-center gap-2 sm:gap-2.5 shadow-sm min-w-0">
+                  {/* Clickable Avatar to edit profile picture */}
+                  <button
+                    onClick={openEditProfileModal}
+                    title={language === 'tl' ? 'I-edit ang iyong Profile at Larawan' : 'Edit your Profile and Picture'}
+                    className="relative group cursor-pointer focus:outline-none shrink-0"
+                  >
+                    <div className="text-xl sm:text-2xl leading-none select-none flex items-center justify-center">
+                      {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:')) ? (
+                        <img src={user.avatar} alt="Profile" className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover border border-slate-700 shadow-inner group-hover:opacity-85 transition" referrerPolicy="no-referrer" />
+                      ) : (
+                        <span className="text-xl sm:text-2xl bg-slate-900 p-1 sm:p-1.5 rounded-full shadow-inner group-hover:scale-105 transition block">{user.avatar || '👤'}</span>
+                      )}
                     </div>
-                    {adminError && <p className="text-xs text-red-400 font-bold text-center">{adminError}</p>}
+                    <span className="absolute -bottom-1 -right-1 bg-blue-600 text-[8px] text-white font-black p-0.5 rounded-full border border-slate-900 group-hover:bg-blue-500 transition scale-90">
+                      ✎
+                    </span>
+                  </button>
+
+                  <div className="min-w-0 pr-1">
                     <button
-                      type="submit"
-                      className="w-full bg-indigo-600 hover:bg-indigo-500 py-3 rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer"
+                      onClick={openEditProfileModal}
+                      title={language === 'tl' ? 'I-edit ang iyong Profile at Larawan' : 'Edit your Profile and Picture'}
+                      className="text-left font-black text-[10px] sm:text-xs leading-none text-white truncate max-w-[80px] xs:max-w-[120px] sm:max-w-[130px] hover:text-blue-400 cursor-pointer transition block"
                     >
-                      Authenticate Admin
+                      Mabuhay, {user.name}!
                     </button>
-                  </form>
-                ) : (
-                  // Admin Authenticated View
-                  <div className="space-y-6">
-                    
-                    {/* Stat Cards */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-slate-950 p-3 rounded-xl border border-white/5 text-center">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase">Total Campaigns</div>
-                        <div className="text-xl font-black text-white">{campaigns.length}</div>
-                      </div>
-                      <div className="bg-slate-950 p-3 rounded-xl border border-white/5 text-center">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase">Cashouts Queued</div>
-                        <div className="text-xl font-black text-white">
-                          {cashoutHistory.filter(c => c.status === 'pending').length}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Pending Cashouts Manager */}
-                    <div className="space-y-3">
-                      <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300">
-                        Pending Cashout Transfers ({cashoutHistory.filter(c => c.status === 'pending').length})
-                      </h4>
-                      
-                      <div className="space-y-2">
-                        {cashoutHistory.filter(c => c.status === 'pending').length === 0 ? (
-                          <p className="text-xs text-slate-500 font-bold text-center py-3">Walang nakabinbing requests.</p>
-                        ) : (
-                          cashoutHistory.filter(c => c.status === 'pending').map((item) => (
-                            <div key={item.id} className="bg-slate-950 p-3 rounded-xl border border-white/5 space-y-2">
-                              <div className="flex justify-between text-xs">
-                                <div>
-                                  <span className="font-black text-white">{item.name}</span>
-                                  <span className="text-slate-500 block text-[10px] font-bold">{item.number}</span>
-                                </div>
-                                <span className="font-black text-amber-400">₱{item.amount.toFixed(2)}</span>
-                              </div>
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => handleApproveWithdrawal(item.id)}
-                                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 py-1.5 rounded-lg text-[10px] font-black uppercase cursor-pointer text-white"
-                                >
-                                  Approve / Send
-                                </button>
-                                <button
-                                  onClick={() => handleRejectWithdrawal(item.id)}
-                                  className="flex-1 bg-red-600/20 hover:bg-red-600/40 text-red-400 py-1.5 rounded-lg text-[10px] font-black uppercase cursor-pointer border border-red-500/10"
-                                >
-                                  Reject
-                                </button>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Add Sponsor Campaign */}
-                    <form onSubmit={handleAddCampaign} className="bg-slate-950 p-4 rounded-xl border border-white/5 space-y-3">
-                      <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300">
-                        Create Sponsor Website Campaign
-                      </h4>
-                      <input 
-                        type="text"
-                        placeholder="Campaign Title (e.g. Lazada Deal)"
-                        value={newCampaignTitle}
-                        onChange={(e) => setNewCampaignTitle(e.target.value)}
-                        className="w-full bg-slate-900 border border-white/5 px-3 py-2 rounded-lg text-xs font-bold focus:outline-none"
-                        required
-                      />
-                      <input 
-                        type="url"
-                        placeholder="Sponsor URL (https://...)"
-                        value={newCampaignUrl}
-                        onChange={(e) => setNewCampaignUrl(e.target.value)}
-                        className="w-full bg-slate-900 border border-white/5 px-3 py-2 rounded-lg text-xs font-bold focus:outline-none"
-                        required
-                      />
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <label className="text-[9px] text-slate-500 font-bold uppercase">Reward (₱)</label>
-                          <input 
-                            type="number"
-                            step="0.10"
-                            value={newCampaignReward}
-                            onChange={(e) => setNewCampaignReward(parseFloat(e.target.value) || 0)}
-                            className="w-full bg-slate-900 border border-white/5 px-3 py-2 rounded-lg text-xs font-bold focus:outline-none"
-                            required
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[9px] text-slate-500 font-bold uppercase">Timer (sec)</label>
-                          <input 
-                            type="number"
-                            value={newCampaignDuration}
-                            onChange={(e) => setNewCampaignDuration(parseInt(e.target.value) || 10)}
-                            className="w-full bg-slate-900 border border-white/5 px-3 py-2 rounded-lg text-xs font-bold focus:outline-none"
-                            required
-                          />
-                        </div>
-                      </div>
+                    <p className="text-[8px] sm:text-[9px] text-slate-400 mt-0.5 sm:mt-1 font-semibold truncate max-w-[80px] xs:max-w-[120px] sm:max-w-[130px]" title={user.email}>
+                      {user.email}
+                    </p>
+                    {!user.isAdmin && (
                       <button
-                        type="submit"
-                        className="w-full bg-indigo-600 hover:bg-indigo-500 py-2.5 rounded-lg text-xs font-black uppercase tracking-wider cursor-pointer"
+                        onClick={handleSimulateTrialExpiration}
+                        className="text-[7px] sm:text-[8px] bg-red-650 hover:bg-red-600 hover:scale-105 active:scale-95 text-white font-black py-0.5 px-1 sm:px-1.5 rounded-sm mt-0.5 sm:mt-1 transition leading-none select-none cursor-pointer inline-block"
+                        title="Isimula ang 1-Day Trial Expiration para sa pagsusulit!"
                       >
-                        Add Campaign
+                        ⚡ Sim Expire
                       </button>
-                    </form>
+                    )}
+                  </div>
+                  
+                  {/* LOGOUT */}
+                  <button 
+                    onClick={handleLogout}
+                    title="Log-out safe"
+                    id="user-logout-btn"
+                    className="p-1 sm:p-1.5 hover:bg-slate-700/60 transition rounded-lg sm:rounded-xl text-slate-400 hover:text-red-400 cursor-pointer shrink-0"
+                  >
+                    <LogOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  </button>
+                </div>
+              </div>
 
-                    {/* Delete Campaigns Manager */}
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300">
-                        Manage Campaigns List
-                      </h4>
-                      <div className="space-y-1.5">
-                        {campaigns.map((c) => (
-                          <div key={c.id} className="flex justify-between items-center bg-slate-950 p-2.5 rounded-lg border border-white/5">
-                            <span className="text-xs font-bold truncate pr-3">{c.title} (₱{c.reward.toFixed(2)})</span>
-                            <button
-                              onClick={() => handleDeleteCampaign(c.id)}
-                              className="text-red-400 hover:text-red-300 p-1"
-                            >
-                              <Trash className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        ))}
+            </div>
+          </header>
+
+          {/* GIANT COLOR HERO BANNER PANEL */}
+          <div id="hero-marketing-bar" className="bg-slate-900 border-b border-slate-800 py-8 text-white relative overflow-hidden shrink-0">
+            
+            {/* Ambient colorful vector orbs */}
+            <div className="absolute top-0 right-0 h-44 w-44 rounded-full bg-indigo-500/10 blur-3xl" />
+            
+            <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-6">
+              
+              {/* DETAILS LEFT */}
+              <div className="space-y-2 text-center md:text-left">
+                <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-black tracking-widest uppercase px-2.5 py-1 rounded-full flex items-center gap-1 w-max mx-auto md:mx-0">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>₱0.01 - ₱50.00 PER SIMULATED HOME VIEW</span>
+                </span>
+                <h2 className="text-2xl md:text-3xl font-black tracking-tight leading-tight max-w-xl">
+                  Explore featured websites and discover businesses through our platform. Businesses may also partner with us for promotional exposure and increased website visits.
+                </h2>
+                <p className="text-slate-400 text-xs max-w-lg font-semibold">
+                  I-explore ang mga featured homepage sa ibaba at hintaying matapos ang automatic browser timer upang makumpleto ang iyong participation sa activity.
+                </p>
+              </div>
+
+              {/* WALLET AND REWARDS CENTER STATUS */}
+              <div className="flex items-center gap-4 self-center md:self-auto">
+                
+                {/* CURRENT BALANCE */}
+                <div className="bg-white/10 hover:bg-white/15 border border-white/15 rounded-2xl p-4 min-w-[170px] backdrop-blur-sm transition">
+                  <div className="flex items-center justify-between gap-3 text-blue-200 text-[10px] font-bold uppercase tracking-wider">
+                    <span>Kasalukuyang Balance</span>
+                    <Coins className="w-4 h-4 text-yellow-300 animate-spin-slow" />
+                  </div>
+                  <div className="text-2xl md:text-3xl font-black text-white mt-1 tracking-tight">
+                    <span className="text-yellow-300 mr-0.5">₱</span>
+                    {stats.balance.toFixed(2)}
+                  </div>
+                  <p className="text-[10px] text-emerald-300 mt-1 font-semibold flex items-center gap-1">
+                    <span>● Ligtas at Pwedeng i-GCash</span>
+                  </p>
+                </div>
+
+                {/* DAILY CHECK IN ACTION */}
+                <button
+                  id="daily-bonus-checking-btn"
+                  onClick={handleDailyCheckIn}
+                  className="bg-gradient-to-b from-yellow-300 to-amber-500 hover:from-yellow-200 hover:to-amber-450 text-slate-950 font-black px-5 py-3 rounded-2xl h-full shadow-md text-sm transition hover:scale-[1.02] active:scale-[0.98] cursor-pointer flex flex-col items-center justify-center gap-1 shrink-0"
+                >
+                  <Sparkles className="w-5 h-5 text-yellow-950 animate-pulse" />
+                  <span>₱1.00 Araw Bonus</span>
+                </button>
+
+              </div>
+
+            </div>
+
+          </div>
+
+          {/* 🧭 NAVIGATION TABS CONTROL BAR */}
+          <div id="dashboard-navigation-tabs" className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
+            <div className="max-w-7xl mx-auto px-4 flex items-center justify-between gap-4">
+              
+              <div className={`w-full grid py-2.5 gap-1 shrink-0 ${user.isAdmin ? 'grid-cols-6' : 'grid-cols-5'} md:flex md:w-auto md:py-3 md:gap-1`}>
+                {[
+                  { id: 'earn', textMobile: 'Mag-ipon', textDesktop: ' (Website Lists)', icon: Globe },
+                  { id: 'cashout', textMobile: 'GCash Cash-Out', textDesktop: ' (Withdraw)', icon: Wallet },
+                  { id: 'zone', textMobile: 'Z-one Social', textDesktop: ' (Community Feed)', icon: Users },
+                  { id: 'negosyo', textMobile: 'Negosyo', textDesktop: ' (Promotion)', icon: Megaphone },
+                  { id: 'guide', textMobile: 'Gabay', textDesktop: ' (FAQs)', icon: HelpCircle },
+                  // Dynamic Admin tab if the session yields an admin role
+                  ...(user.isAdmin ? [{ id: 'admin', textMobile: 'Admin Control', textDesktop: ' Panel', icon: Shield }] : [])
+                ].map((tab) => {
+                  const IconComp = tab.icon;
+                  const isSelected = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      id={`nav-tab-${tab.id}`}
+                      onClick={() => setActiveTab(tab.id as any)}
+                      className={`px-1 py-1.5 sm:px-2 md:px-4.5 md:py-2.5 rounded-xl font-extrabold text-[10px] sm:text-xs md:text-sm transition cursor-pointer flex flex-col md:flex-row items-center justify-center text-center md:text-left gap-1 md:gap-2 leading-tight ${
+                        isSelected
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                      }`}
+                    >
+                      <IconComp className="w-4 h-4 md:w-4.5 md:h-4.5 shrink-0" />
+                      <span className="flex flex-col md:flex-row md:items-center gap-0.5 md:gap-1">
+                        <span>{tab.textMobile}</span>
+                        {tab.textDesktop && (
+                          <span className="hidden md:inline text-[10px] md:text-[11px] font-bold opacity-80">
+                            {tab.textDesktop}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="hidden sm:flex items-center gap-1.5 font-mono text-[11px] text-slate-500 font-bold border-l border-slate-200 pl-4 py-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>Server Synchronized: Real-Time</span>
+              </div>
+
+            </div>
+          </div>
+
+          {/* 🖥️ MAIN BODY WORKSPACE */}
+          <div id="main-content-layout" className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 md:py-8">
+            {isSubscriptionExpired() ? (
+              <div className="max-w-2xl mx-auto space-y-6 animate-fadeIn py-6">
+                
+                {/* SYSTEM ALERT */}
+                <div className="bg-rose-50 border border-rose-200 rounded-3xl p-6 shadow-md text-center space-y-4">
+                  <div className="h-14 w-14 bg-rose-100 rounded-full flex items-center justify-center mx-auto text-rose-600 animate-bounce">
+                    <AlertCircle className="w-8 h-8" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <h2 className="text-xl font-black text-rose-950">⚠️ Tapos na ang Iyong Access</h2>
+                    <p className="text-xs text-rose-800 font-bold max-w-md mx-auto">
+                      Ang system access para sa iyong account ay kasalukuyang natapos na dahil ang iyong 1-Day Trial o Subscription ay Expired na.
+                    </p>
+                  </div>
+                </div>
+
+                {/* ACCOUNT ACCESS STATUS SUMMARY (EXPIRED STATE) */}
+                <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-3">
+                  <h3 className="font-extrabold text-slate-950 text-xs tracking-wider uppercase flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-rose-500 animate-pulse" />
+                    <span>Detalye ng Iyong Access (Access Expiration Details)</span>
+                  </h3>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-rose-50/50 border border-rose-100 p-4 rounded-2xl">
+                    <div>
+                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Kasalukuyang Status (Current Status)</span>
+                      <span className="font-black text-rose-650 text-xs flex items-center gap-1.5 mt-0.5">
+                        <span className="h-2 w-2 rounded-full bg-rose-500 animate-ping shrink-0" />
+                        {getAccessStatusInfo().label}
+                      </span>
+                    </div>
+                    <div className="sm:text-right">
+                      <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Petsa ng Pagka-expire (Expiration Date)</span>
+                      <span className="font-bold text-slate-700 text-xs mt-0.5 block font-mono">
+                        {getAccessStatusInfo().expiresAtString}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* IF THE REQUEST IS PENDING */}
+                {user.subscription?.status === 'pending' ? (
+                  <div className="bg-white border-2 border-amber-400 rounded-3xl p-6 shadow-lg space-y-5">
+                    <div className="flex items-start gap-4">
+                      <div className="bg-amber-100 p-3 rounded-2xl shrink-0 text-amber-600 animate-pulse">
+                        <Clock className="w-6 h-6" />
                       </div>
+                      <div className="space-y-1">
+                        <h3 className="font-extrabold text-slate-900 text-sm">📨 Naghihintay ng Pag-approve ng Admin...</h3>
+                        <p className="text-xs text-slate-550 font-bold leading-relaxed">
+                          Hiniling mo ang <span className="text-indigo-600 font-black">{user.subscription.requestedPlanName}</span>. Mangyaring magdeposito ng exact amount <span className="text-emerald-600 font-black">₱{user.subscription.requestedAmount}</span> sa Authorize Gcash:
+                        </p>
+                        <div className="bg-slate-50 border border-slate-150 p-3 rounded-2xl mt-2 select-all font-mono font-black text-center text-indigo-700 text-sm tracking-wide">
+                          GCASH NO: 09914089646
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-amber-50/70 border border-amber-150 rounded-2xl p-4 text-xs font-bold text-amber-900 space-y-2 leading-relaxed">
+                      <p>💡 **Para sa mabilis na pagsuri (Review & Testing):**</p>
+                      <ul className="list-disc pl-4 space-y-1">
+                        <li>Mag hintay ng approval ng system at kung medyo matagal ang proseso maaring mag email sa aming helpline</li>
+                        <li>Email: <span className="font-mono bg-white px-1 py-0.2 rounded border select-all font-bold text-slate-800">Info.echozone@yahoo.com</span></li>
+                        <li>Password: <span className="font-mono bg-white px-1 py-0.2 rounded border select-all font-bold text-slate-800">or mag message sa inyong upline, team leader, coach, or group chat or sa aming official Facebook page Z-oneApp2026</span></li>
+                        <li>**THANK YOU**</li>
+                      </ul>
+                    </div>
+
+                    <div className="flex gap-3 pt-2">
+                      <button
+                        onClick={() => fetchUserProfile(token)}
+                        className="flex-1 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 transition py-3 rounded-2xl text-slate-950 font-black text-xs cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                      >
+                        <RefreshCw className="w-4 h-4 animate-spin-slow" />
+                        <span>I-refresh ang Status ng Aking Account</span>
+                      </button>
+                      <button
+                        onClick={handleLogout}
+                        className="bg-slate-100 hover:bg-slate-200 transition px-5 py-3 rounded-2xl text-slate-650 font-black text-xs cursor-pointer"
+                      >
+                        Mag-logout
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* SELECTING A SUBSCRIPTION PLAN */
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-lg space-y-6">
+                    <div className="text-center space-y-1">
+                      <span className="bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] uppercase font-black px-2.5 py-0.5 rounded-full select-none">
+                        Mabilisang Pagpipilian (Subscription Plans)
+                      </span>
+                      <h3 className="font-extrabold text-slate-900 text-sm">Pumili ng Subscription Plan Upang Mag-patuloy</h3>
+                      <p className="text-xs text-slate-450 font-semibold max-w-sm mx-auto mt-1">
+                        Kapag napili ang nais na plan, awtomatikong ipadadala ang iyong hiling sa admin queue para sa mabilisang validation.
+                      </p>
+                    </div>
+
+                    {/* PLANS GRID */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {(() => {
+                        const basePlans = [
+                          { id: '1month', name: '1 Month Access', price: 200, desc: '₱200 para sa 30 araw na tuloy-tuloy na earn at cashouts.' },
+                          { id: '2months', name: '2 Months Access', price: 500, desc: '₱500 para sa 60 araw na pinalawak na access.' },
+                          { id: '3months', name: '3 Months Access', price: 1000, desc: '₱1000 para sa 90 araw na tanyag na VIP access.' },
+                          { id: '4months', name: '4 Months Access', price: 2000, desc: '₱2000 para sa 120 araw ng walang katapusang earning portal.' }
+                        ];
+                        if ((stats.balance || 0) < 50) {
+                          return [
+                            { id: '7days', name: '7 Days Special Access', price: 20, desc: '₱20 para sa 7 araw na mabilisang trial access habang nag-iipon.' },
+                            ...basePlans
+                          ];
+                        }
+                        return basePlans;
+                      })().map((plan) => (
+                        <div 
+                          key={plan.id}
+                          className="border border-slate-200 rounded-2xl p-4 hover:border-blue-450 hover:shadow-md transition duration-300 flex flex-col justify-between space-y-4"
+                        >
+                          <div className="space-y-1">
+                            <h4 className="font-extrabold text-slate-900 text-xs">{plan.name}</h4>
+                            <div className="text-xl font-bold font-mono text-indigo-650">₱{plan.price}</div>
+                            <p className="text-[10px] text-slate-450 leading-relaxed font-semibold">{plan.desc}</p>
+                          </div>
+                          
+                          <button
+                            onClick={() => handleSubscriptionRequest(plan.id)}
+                            disabled={submittingSubscription}
+                            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition py-2 text-white font-black text-xs rounded-xl cursor-pointer shadow-sm text-center"
+                          >
+                            Bilhin ang Plan na ito
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="border-t border-slate-100 pt-5 flex items-center justify-between text-xs font-semibold text-slate-500">
+                      <span>Hindi pa handang magbayad?</span>
+                      <button
+                        onClick={handleLogout}
+                        className="text-indigo-650 hover:underline font-black cursor-pointer"
+                      >
+                        I-logout ang aking Account
+                      </button>
                     </div>
 
                   </div>
                 )}
 
               </div>
+            ) : activeTab === 'zone' && user ? (
+              <div className="animate-fadeIn w-full">
+                <ZoneFeed
+                  token={token || ''}
+                  user={user}
+                  setUser={setUser}
+                  triggerNotification={triggerNotification}
+                  onRefreshProfile={() => fetchUserProfile(token || '')}
+                  language={language}
+                />
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+              
+              {/* TAB SHEETS ZONE (LHS - 3 COLUMNS) */}
+              <div className="lg:col-span-3 space-y-6">
+                
+                {/* TAB 1: EARN CONTENT (VISITOR AD BLOCK) */}
+                {activeTab === 'earn' && (
+                  <div className="space-y-6 animate-fadeIn">
+                    
+                    {/* Intro Title */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                      <div>
+                        <h2 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+                          <Compass className="w-5 h-5 text-blue-600" />
+                          <span>Mga Pinagtitiwalaang Web Campaigns ngayong araw</span>
+                        </h2>
+                        <p className="text-xs text-slate-500 mt-1">Mag-click at manatili sa target homepage para makuha ang automated GCash bonus.</p>
+                      </div>
+                      <div className="text-xs font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200/50 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                        <span>Naka-ipon ngayon: {stats.completedTasksCount} Website Views</span>
+                      </div>
+                    </div>
+
+                    {/* INTERACTIVE FORM: CREATE CUSTOM WEBSITE AD CAMPAIGN WITH EARNING RULES */}
+                    {user && user.isAdmin && (
+                      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+                        
+                        <div className="border-b border-slate-100 pb-3">
+                          <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+                            <PlusCircle className="w-5 h-5 text-indigo-600" />
+                            <span>Mag-add ng Bagong Campaign (Admin Only)</span>
+                          </h3>
+                          <p className="text-[11px] text-slate-550 mt-0.5">Ipasok ang link, reward, at tagal ng pagbisita upang gawing available sa mga users.</p>
+                        </div>
+
+                        <form onSubmit={handleCreateCustomCampaign} className="grid grid-cols-1 md:grid-cols-6 gap-4 text-xs font-semibold">
+                          
+                          {/* Title input */}
+                          <div className="space-y-1 md:col-span-2">
+                            <label className="text-slate-500 font-bold block">Pangalan ng Website / Title *</label>
+                            <input 
+                              type="text" 
+                              required
+                              placeholder="Hal. My Personal Blog" 
+                              value={customTitle}
+                              onChange={(e) => setCustomTitle(e.target.value)}
+                              className="w-full bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-hidden font-semibold transition"
+                            />
+                          </div>
+
+                          {/* URL input */}
+                          <div className="space-y-1 md:col-span-2">
+                            <label className="text-slate-550 font-bold block">Website Homepage URL *</label>
+                            <input 
+                              type="text" 
+                              required
+                              placeholder="Hal. myhomepage.com o blog.org" 
+                              value={customUrl}
+                              onChange={(e) => setCustomUrl(e.target.value)}
+                              className="w-full bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-hidden font-semibold transition"
+                            />
+                          </div>
+
+                          {/* Reward amount */}
+                          <div className="space-y-1 md:col-span-1">
+                            <label className="text-slate-550 font-bold block">Reward (₱) *</label>
+                            <input 
+                              type="number" 
+                              step="0.01"
+                              min="0.01"
+                              required
+                              placeholder="Hal. 2.50" 
+                              value={customReward}
+                              onChange={(e) => setCustomReward(e.target.value)}
+                              className="w-full bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-hidden font-semibold transition"
+                            />
+                          </div>
+
+                          {/* Timer */}
+                          <div className="space-y-1 md:col-span-1">
+                            <label className="text-slate-550 font-bold block">Timer (segundo) *</label>
+                            <input 
+                              type="number" 
+                              min="5"
+                              required
+                              placeholder="Hal. 15" 
+                              value={customTimer}
+                              onChange={(e) => setCustomTimer(e.target.value)}
+                              className="w-full bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-hidden font-semibold transition"
+                            />
+                          </div>
+
+                          {/* Description input */}
+                          <div className="space-y-1 md:col-span-6">
+                            <label className="text-slate-550 font-bold block">Paglalarawan / Description of Website</label>
+                            <textarea 
+                              placeholder="Hal. Isang mahusay na blog tungkol sa tech at balita sa bansa." 
+                              value={customDescription}
+                              onChange={(e) => setCustomDescription(e.target.value)}
+                              rows={2}
+                              className="w-full bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-hidden font-semibold transition resize-none"
+                            />
+                          </div>
+
+                          {/* Action Submit full row */}
+                          <div className="md:col-span-6 flex justify-end">
+                            <button
+                              type="submit"
+                              id="create-custom-campaign-btn"
+                              className="bg-slate-900 hover:bg-slate-800 text-white font-extrabold px-6 py-2.5 rounded-xl cursor-pointer transition flex items-center justify-center gap-1.5"
+                            >
+                              <Plus className="w-4 h-4 text-emerald-400" />
+                              <span>Mag-add Campaign</span>
+                            </button>
+                          </div>
+
+                        </form>
+
+                      </div>
+                    )}
+
+                    {/* Filter and Category toggles */}
+                    <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs font-semibold">
+                      
+                      <div className="flex items-center gap-2">
+                        <ListFilter className="w-4 h-4 text-slate-500" />
+                        <span className="text-slate-500 mr-1.5">Suriin ang Campaigns:</span>
+                        {[
+                          { id: 'all', label: 'Lahat ng Webs' },
+                          { id: 'high', label: 'Mataas ang Kita (≥ ₱1.00)' },
+                          { id: 'available', label: 'Hindi pa Nabibisita' }
+                        ].map(f => (
+                          <button
+                            key={f.id}
+                            id={`filter-btn-${f.id}`}
+                            onClick={() => setCampaignFilter(f.id as any)}
+                            className={`px-3 py-1.5 rounded-xl border cursor-pointer transition ${
+                              campaignFilter === f.id 
+                                ? 'bg-slate-950 border-slate-950 text-white' 
+                                : 'bg-slate-50 border-slate-200 text-slate-650 hover:bg-slate-100'
+                            }`}
+                          >
+                            {f.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <span className="text-[10px] text-slate-400 font-extrabold uppercase">
+                        Kabuuang nahanap: {filteredCampaigns.length} available
+                      </span>
+                    </div>
+
+                    {/* WEBSITE GRID CARDS LIST */}
+                    <div id="website-campaigns-grid" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {filteredCampaigns.map((camp) => (
+                        <div 
+                          key={camp.id}
+                          id={`camp-card-${camp.id}`}
+                          className={`bg-white border rounded-2xl p-5 hover:shadow-md transition-all flex flex-col justify-between gap-5 relative overflow-hidden ${
+                            camp.completed 
+                              ? 'border-emerald-250 bg-emerald-50/10' 
+                              : 'border-slate-200'
+                          }`}
+                        >
+                          {/* Top row label and rewards badge */}
+                          <div className="flex justify-between items-start gap-3">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="bg-slate-100 text-slate-600 font-bold text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                {camp.category}
+                              </span>
+                              {user && user.isAdmin && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteCampaign(camp.id, camp.title);
+                                  }}
+                                  title="Tanggalin/Burahin ang Campaign"
+                                  className="text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/55 p-1 rounded-lg transition duration-200 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                            
+                            <span className="bg-emerald-50 border border-emerald-100 text-[12px] font-black text-emerald-700 px-2.5 py-1 rounded-xl">
+                              ₱{camp.reward.toFixed(2)}
+                            </span>
+                          </div>
+
+                          {/* Middle row main title */}
+                          <div className="space-y-1.5">
+                            <h4 className="font-extrabold text-slate-900 leading-snug line-clamp-2" title={camp.title}>
+                              {camp.title}
+                            </h4>
+                            <p className="text-[10px] text-slate-400 truncate font-mono">{camp.url}</p>
+                            {camp.description && (
+                              <p className="text-[11px] text-slate-500 font-semibold leading-relaxed mt-1 line-clamp-2" title={camp.description}>
+                                {camp.description}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Bottom meta rules & Action triggers */}
+                          <div className="flex items-center justify-between border-t border-slate-100 pt-3.5 mt-1">
+                            <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-bold">
+                              <Clock className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                              <span>{camp.timer} segundo</span>
+                            </div>
+
+                            {camp.completed ? (
+                              <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-3 py-1.5 rounded-xl flex items-center gap-1 animate-fadeIn">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Tagumpay na nakuha!</span>
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => handleOpenCampaign(camp)}
+                                className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-black px-4 py-2 rounded-xl transition shadow shadow-blue-100 flex items-center gap-1 cursor-pointer hover:scale-[1.03]"
+                              >
+                                <Eye className="w-3.5 h-3.5 shrink-0" />
+                                <span>Buksan Homepage</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+
+                      {filteredCampaigns.length === 0 && (
+                        <div className="col-span-full bg-white border border-slate-200 rounded-3xl p-10 text-center space-y-2">
+                          <Compass className="w-10 h-10 stroke-1 mx-auto text-slate-350" />
+                          <h4 className="font-extrabold text-slate-800">Walang makitang website campaign.</h4>
+                          <p className="text-xs text-slate-500 max-w-sm mx-auto font-semibold">
+                            Subukang palitan ang list filter o lumapit sa Administrator para sa mga bagong campaign!
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
+                )}
+
+                {/* TAB 2: CASHOUT (WITHDRAW GCASH INTEGRATOR) */}
+                {activeTab === 'cashout' && (
+                  <div className="animate-fadeIn">
+                    <GCashCashout 
+                      stats={stats} 
+                      withdrawals={withdrawals} 
+                      onWithdrawSubmit={handleWithdrawalRequest} 
+                      language={language}
+                    />
+                  </div>
+                )}
+
+
+
+                {/* TAB 3: FAQ GUIDE */}
+                {activeTab === 'guide' && (
+                  <div className="space-y-6 animate-fadeIn">
+                    {/* Interactive Animated Promo Video / Presentation */}
+                    <ZonePromoVideo 
+                      language={language} 
+                      onNavigateTab={(tab) => setActiveTab(tab)} 
+                    />
+
+                    <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6 text-xs leading-relaxed text-slate-600">
+                      
+                      <div className="border-b border-slate-150 pb-4">
+                        <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                          <HelpCircle className="w-5 h-5 text-indigo-600" />
+                          <span>Gabay at FAQs sa Pag-open ng Homepage Simulator</span>
+                        </h2>
+                        <p className="text-slate-400 font-bold mt-1">Dito nakasaad ang detalyadong mekanismo kung paano gumagana ang aming real-time system.</p>
+                      </div>
+
+                      <div className="space-y-4 font-semibold">
+                        
+                        <div className="space-y-1.5 border-b border-slate-100 pb-3">
+                          <h4 className="font-extrabold text-[#0F172A] text-sm">💡 1. Paano ako makaka-ipon ng totoong pera sa app na ito?</h4>
+                          <p>
+                            Ang bawat kumpanya ay nangangailangan ng 'Traffic Value' o pagbisita sa kanilang homepage upang mapataas ang kanilang ranking sa search engines. Binabayaran nila ang simulator upang maikalat ang kanilang Links. Sa pamamagitan ng pagbukas at pananatili sa links nang ilang segundo, nakakatulong ka sa kanilang analytics at binibigyan ka ng gantimpalang pondo.
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5 border-b border-slate-100 pb-3">
+                          <h4 className="font-extrabold text-[#0F172A] text-sm">💡 2. Pwede ko ba talagang i-withdraw ang naipon ko sa pamamagitan ng GCash?</h4>
+                          <p>
+                            Oo, handog ng interface ang interactive simulated GCash payout workflow! Kapag umabot sa minimum limit na ₱100.00 ang inyong balance, magpunta sa "GCash Cash-Out" tab, ilagay ang iyong GCash details at sumite. Kapag inaprubahan ito ng administrative system sa server, kaagad itong sasalamin sa iyong logs, at sasagutin ng simulated network SMS confirmation!
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5 border-b border-slate-100 pb-3">
+                          <h4 className="font-extrabold text-[#0F172A] text-sm">
+                            {language === 'tl' ? "💡 3. Paano pinoproseso ang administrative dashboard?" : "💡 3. How is the administrative dashboard processed?"}
+                          </h4>
+                          <p>
+                            {language === 'tl' 
+                              ? "Ang bawat rehistradong transaksyon ay ipinapadala sa aming administrative system. Ang mga awtorisadong system administrators lamang ang may ganap na kapangyarihan upang pumasok at mag-suri ng registered users, tignan ang kanilang wallet balance, at mag-approve o mag-decline ng withdrawals nang manu-mano sa server."
+                              : "Every registered transaction is sent to our administrative system. Only authorized system administrators have the permission to enter and review registered users, check wallet balances, and manually approve or decline withdrawals securely on the server."}
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5 pb-2">
+                          <h4 className="font-extrabold text-[#0F172A] text-sm">💡 4. Bakit kailangang mag-antay ng "Admin Approval" sa withdrawals?</h4>
+                          <p>
+                            Ito ay para mapigilan ang mga mapagsamantalang gumagamit ng auto-clicker scripts o bots. Ang administrative approval system ay ang opisyal na tagasubaybay ng bawat activity logs bago tuluyang maproseso ang transaksyon papasok sa mock GCash core network.
+                          </p>
+                        </div>
+
+                      </div>
+
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 4: ADVANCED SECURE ADMIN WORKSPACE */}
+                {activeTab === 'admin' && user.isAdmin && (
+                  <div className="animate-fadeIn">
+                    <AdminPanel 
+                      token={token} 
+                      triggerNotification={triggerNotification} 
+                    />
+                  </div>
+                )}
+
+                {/* TAB 5: MERCHANT PORTAL (NEGOSYO PROMOTION HUB) */}
+                {activeTab === 'negosyo' && (
+                  <div className="animate-fadeIn">
+                    <MerchantPortal
+                      token={token}
+                      language={language}
+                      triggerNotification={triggerNotification}
+                    />
+                  </div>
+                )}
+
+              </div>
+
+              {/* SIDEBAR ZONE (RHS - 1 COLUMN) */}
+              <div className="space-y-6">
+                
+                {/* REFERRAL INVITE PANEL IN SIDEBAR */}
+                <ReferralPanel
+                  referralCode={user.referralCode}
+                  referredFriends={referredFriends}
+                  token={token}
+                  onRefreshProfile={() => fetchUserProfile(token)}
+                  triggerNotification={triggerNotification}
+                  language={language}
+                />
+
+                {/* 🔒 CENTRAL ACCESS & EXPIRE TIMER WIDGET */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-indigo-600 animate-spin-slow" />
+                      <h4 className="font-extrabold text-slate-900 text-xs tracking-wider uppercase">
+                        {language === 'tl' ? 'Aktibong Access Status' : 'Active Access Status'}
+                      </h4>
+                    </div>
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${getAccessStatusInfo().badgeColor}`}>
+                      {getAccessStatusInfo().type.toUpperCase()}
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl space-y-1">
+                      <span className="text-[9px] text-slate-400 block font-black uppercase tracking-wider">
+                        {language === 'tl' ? 'Antas ng Access' : 'Access Level'}
+                      </span>
+                      <span className="font-extrabold text-slate-900 text-xs flex items-center gap-1.5">
+                        <span className={`h-2.5 w-2.5 rounded-full ${getAccessStatusInfo().isExpired ? 'bg-rose-500' : 'bg-emerald-500'} animate-pulse`} />
+                        {getAccessStatusInfo().label}
+                      </span>
+                    </div>
+
+                    <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl space-y-1">
+                      <span className="text-[9px] text-slate-400 block font-black uppercase tracking-wider">
+                        {language === 'tl' ? 'Oras ng Pag-expire' : 'Expiration Time'}
+                      </span>
+                      <span className="font-bold text-slate-800 text-xs block font-mono">
+                        {getAccessStatusInfo().expiresAtString}
+                      </span>
+                      {getAccessStatusInfo().expiresAt && (
+                        <span className="text-[10px] text-indigo-600 font-extrabold block mt-1">
+                          ⏳ {getRemainingTimeText(getAccessStatusInfo().expiresAt)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* CORE USER STATUS MOCK WIDGET */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <TrendingUp className="w-4 h-4 text-emerald-600 animate-pulse" />
+                    <h4 className="font-extrabold text-slate-900 text-xs tracking-wider uppercase">Live Activity Status</h4>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-center text-xs font-bold leading-tight text-slate-700">
+                    <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl">
+                      <span className="text-[9px] text-slate-400 block font-black">Lifetime Profit</span>
+                      <span className="text-emerald-600 font-extrabold text-sm font-mono mt-1 block">
+                        ₱{stats.lifetimeEarnings.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl">
+                      <span className="text-[9px] text-slate-400 block font-black">Referred list</span>
+                      <span className="text-red-600 font-extrabold text-sm block mt-1">
+                        {referredFriends.length} invitees
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* MINI INTERNAL AUDIT LIST */}
+                  <div className="space-y-1.5 pt-1.5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[9px] font-mono text-slate-400 font-bold">Your Recent Activity Logs</span>
+                    </div>
+
+                    <div className="space-y-2 overflow-y-auto max-h-[220px] pr-1">
+                      {activityLogs.map((log) => (
+                        <div key={log.id} className="p-2 bg-slate-50 rounded-xl border border-slate-100 text-[10px] space-y-1">
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className={`text-[8px] font-black px-1.5 py-0.2 rounded uppercase ${
+                              log.type === 'bonus' 
+                                ? 'bg-amber-100 text-amber-800'
+                                : log.type === 'reward'
+                                ? 'bg-blue-100 text-blue-800'
+                                : 'bg-indigo-100 text-indigo-800'
+                            }`}>
+                              {log.type}
+                            </span>
+                            <span className="text-[8px] text-slate-400 font-mono">
+                              {log.timestamp.includes(',') ? log.timestamp.split(',')[1].trim() : log.timestamp}
+                            </span>
+                          </div>
+
+                          <h5 className="font-extrabold text-slate-900 leading-tight">{log.title}</h5>
+                          <p className="text-slate-500 text-[9px] leading-tight leading-normal">{log.details}</p>
+                          
+                          <div className="text-right text-[10px] font-black font-mono mt-0.5">
+                            {log.type === 'withdraw' ? (
+                              <span className="text-red-600">-₱{log.amount.toFixed(2)}</span>
+                            ) : (
+                              <span className="text-emerald-600">+₱{log.amount.toFixed(2)}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {activityLogs.length === 0 && (
+                        <p className="text-center py-5 italic text-slate-400 text-[10px]">Wala pang naitalang kasanayan.</p>
+                      )}
+                    </div>
+
+                  </div>
+
+                  {/* Simulated SMS Alert Preview screen mock for GCash users */}
+                  <div className="bg-slate-950 text-white rounded-2xl p-4 shadow-xl border border-slate-800 font-mono relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-1">
+                      <div className="h-2 w-2 rounded-full bg-red-400 animate-pulse"></div>
+                    </div>
+                    <p className="text-[9px] text-emerald-400 font-bold uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                      <span>📱 Simulated GCash SMS Monitor</span>
+                    </p>
+                    <div className="border border-slate-800 rounded bg-slate-900 p-2 text-[10px] text-slate-300 leading-relaxed max-h-[140px] overflow-y-auto">
+                      {withdrawals.some(w => w.status === 'success') ? (
+                        <div>
+                          <p className="text-slate-400 text-[8px] font-semibold">Just Now • Globe Network</p>
+                          <p className="text-white mt-1 text-[10px]">
+                            "You have received <strong className="text-emerald-400 font-extrabold">₱{withdrawals.find(w => w.status === 'success')?.amount.toFixed(2)}</strong> of GCash from VisitorRewards on {new Date().toLocaleDateString()}. Ref: {withdrawals.find(w => w.status === 'success')?.referenceNo}."
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-slate-500 italic text-center py-4">Naghihintay ng matagumpay na simulated withdrawal request...</p>
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+
+              </div>
+
             </div>
+            )}
           </div>
-        )}
-      </AnimatePresence>
+
+          {/* 🌐 VIRTUAL BROWSER SIMULATOR CORE IFRAME PORTAL MODAL OVERLAY */}
+          <AnimatePresence>
+            {currentViewingCampaign && (
+              <BrowserSimulator
+                campaign={currentViewingCampaign}
+                onComplete={handleCompleteCampaignView}
+                onClose={() => setCurrentViewingCampaign(null)}
+                language={language}
+              />
+            )}
+          </AnimatePresence>
+
+          {/* FOOTER */}
+          <footer id="dashboard-footer" className="bg-white border-t border-slate-200 mt-12 py-6">
+            <div className="max-w-7xl mx-auto px-4 text-center space-y-2 text-xs">
+              <p className="font-bold text-slate-500">
+                © 2026 Website Visitor and GCash Rewards Simulation.
+              </p>
+              <p className="text-[10px] text-slate-400 max-w-xl mx-auto leading-relaxed font-semibold">
+                Ang platform na ito ay isang interactive gamified web interface na idinisenyo para sa pag-explore ng featured content at pag-unawa sa mga konsepto ng modernong digital advertising at automated systems.
+
+Ang mga aktibidad na isinasagawa sa loob ng platform ay para sa layunin ng pakikilahok at karanasan ng gumagamit. Ang platform ay hindi nag-aalok ng garantisadong resulta, hindi nangangako ng anumang partikular na benepisyo, at hindi dapat ituring bilang isang oportunidad sa pamumuhunan o paraan ng mabilisang pagkakaroon ng kita.
+
+Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidelines, at iba pang naaangkop na patakaran.
+
+              </p>
+            </div>
+          </footer>
+        </>
+      )}
 
     </div>
   );

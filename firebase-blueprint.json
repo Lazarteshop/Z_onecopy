@@ -1,61 +1,27 @@
 {
   "entities": {
-    "Campaign": {
-      "title": "Campaign",
-      "description": "A sponsored website campaign that users can view to earn rewards",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "title": { "type": "string" },
-        "description": { "type": "string" },
-        "url": { "type": "string" },
-        "reward": { "type": "number" },
-        "duration": { "type": "number" },
-        "category": { "type": "string" },
-        "views": { "type": "number" }
-      },
-      "required": ["id", "title", "description", "url", "reward", "duration", "category", "views"]
-    },
-    "Cashout": {
-      "title": "Cashout",
-      "description": "A cashout request made by a user via GCash",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "number": { "type": "string" },
-        "amount": { "type": "number" },
-        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
-        "date": { "type": "string" },
-        "userId": { "type": "string" }
-      },
-      "required": ["id", "name", "number", "amount", "status", "date", "userId"]
-    },
     "User": {
       "title": "User",
-      "description": "User wallet state and completed tasks",
+      "description": "Represents a GCash Click-Earn user profile with their sub status and statistics.",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "balance": { "type": "number" },
-        "completedCampaigns": { "type": "array" },
-        "createdAt": { "type": "string" }
-      },
-      "required": ["id", "balance", "completedCampaigns"]
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "avatar": { "type": "string" },
+        "referralCode": { "type": "string" },
+        "invitedBy": { "type": "string" },
+        "isAdmin": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "subscription": { "type": "object" },
+        "stats": { "type": "object" },
+        "lastActivities": { "type": "array" }
+      }
     }
   },
   "firestore": {
-    "/campaigns/{campaignId}": {
-      "schema": "Campaign",
-      "description": "Collection of available sponsored campaigns"
-    },
-    "/cashouts/{cashoutId}": {
-      "schema": "Cashout",
-      "description": "Collection of all user cashout requests"
-    },
-    "/users/{userId}": {
+    "users/{userId}": {
       "schema": "User",
-      "description": "Collection of user details containing balances and completed campaign lists"
+      "description": "User records mapping to individual user profiles."
     }
   }
 }

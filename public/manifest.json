@@ -1,0 +1,25 @@
+{
+  "name": "Z-oneApp: Website Viewer & GCash Rewards",
+  "short_name": "Z-oneApp",
+  "description": "Isang ligtas at nakakaaliw na app para sa pag-browse ng mga partner sites at pagkakaroon ng reward points na maaring ma-withdraw via simulated GCash!",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#4f46e5",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/pwa-icon-512.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/pwa-icon-512.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}
