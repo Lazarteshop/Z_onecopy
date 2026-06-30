@@ -2504,12 +2504,27 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
                     </h3>
                     <p className="text-[11px] text-indigo-200 font-bold mt-0.5">
                       {language === 'tl' 
-                        ? 'Sinuportahan sa lahat ng Android, iOS (iPhone/iPad), at PC worldwide!' 
-                        : 'Supported on all Android, iOS (iPhone/iPad), and PC worldwide!'}
+                        ? 'Awtomatikong magda-download sa lahat ng Android, iOS (iPhone/iPad), at PC worldwide!' 
+                        : 'Automatically download on all Android, iOS (iPhone/iPad), and PC worldwide!'}
                     </p>
                   </div>
                 </div>
               </div>
+
+              {/* ⚠️ Sandbox/iFrame Notification for Developers/Users */}
+              {window.self !== window.top && (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4.5 mx-6 mt-6 space-y-1.5 shadow-sm">
+                  <p className="text-xs font-black text-amber-900 flex items-center gap-1.5">
+                    <span className="animate-pulse text-base">⚠️</span>
+                    <span>{language === 'tl' ? 'Babala sa AI Studio Preview Iframe:' : 'AI Studio Preview Iframe Detected:'}</span>
+                  </p>
+                  <p className="text-[11px] text-amber-800 leading-relaxed font-semibold">
+                    {language === 'tl' 
+                      ? 'Hinaharang ng browser ang awtomatikong download/install window kapag nasa loob ng iframe box. Upang maranasan ang tuluy-tuloy na Awtomatikong 1-Click Install sa iyong gadyet, mangyaring pindutin ang "Open in new tab" (↗) button sa kanang itaas ng AI Studio!' 
+                      : 'Web browsers block native one-click automatic installation prompts when inside preview iframe sandbox layouts. To trigger the seamless 1-Click Automatic Install directly on your device, please click the "Open in new tab" (↗) button at the top-right of your AI Studio panel!'}
+                  </p>
+                </div>
+              )}
 
               {/* Modal Body */}
               <div className="p-6 space-y-5 flex-1 overflow-y-auto max-h-[70vh]">
