@@ -10,7 +10,7 @@ const ASSETS_TO_CACHE = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      console.log('📦 PWA Service Worker: Caching critical shell assets...');
+      console.log('馃摝 PWA Service Worker: Caching critical shell assets...');
       return cache.addAll(ASSETS_TO_CACHE);
     }).then(() => self.skipWaiting())
   );
@@ -23,7 +23,7 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         cacheNames.map((cache) => {
           if (cache !== CACHE_NAME) {
-            console.log('🗑️ PWA Service Worker: Clearing old cache:', cache);
+            console.log('馃棏锔� PWA Service Worker: Clearing old cache:', cache);
             return caches.delete(cache);
           }
         })
@@ -70,8 +70,7 @@ self.addEventListener('fetch', (event) => {
         return response;
       }).catch(() => {
         // Offline Fallback for html pages
-        const acceptHeader = event.request.headers.get('accept');
-        if (acceptHeader && acceptHeader.includes('text/html')) {
+        if (event.request.headers.get('accept').includes('text/html')) {
           return caches.match('/');
         }
       });
