@@ -201,12 +201,37 @@ interface ActiveCall {
   receiverCandidates?: string;
 }
 
+interface MerchantAd {
+  id: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  title: string;
+  url: string;
+  description: string;
+  logo: string;
+  category: 'Shopping' | 'Balita' | 'Teknolohiya' | 'E-Services' | 'Kultura';
+  primaryColor: string;
+  accentColor: string;
+  planId: 'bronze' | 'silver' | 'gold' | 'platinum';
+  planName: string;
+  price: number;
+  durationDays: number;
+  gcashSenderNumber: string;
+  gcashReferenceNo: string;
+  status: 'pending' | 'active' | 'declined' | 'expired';
+  createdAt: string;
+  approvedAt?: string;
+  expiresAt?: string;
+}
+
 interface DBStructure {
   users: UserSession[];
   campaigns?: any[];
   posts?: any[];
   directMessages?: DirectMessage[];
   activeCalls?: ActiveCall[];
+  merchantAds?: MerchantAd[];
 }
 
 // --- HELPER TO INITIALIZE AND GET DATABASE ---
@@ -237,6 +262,7 @@ function loadDB(): DBStructure {
         admin.password = envAdminPassword;
         admin.name = envAdminName;
       }
+      loaded.merchantAds = loaded.merchantAds || [];
       if (!loaded.campaigns || loaded.campaigns.length < INITIAL_CAMPAIGNS.length) {
         const existingIds = new Set(loaded.campaigns ? loaded.campaigns.map((c: any) => c.id) : []);
         const newCampaignsToAdd = INITIAL_CAMPAIGNS.filter(c => !existingIds.has(c.id));
@@ -422,7 +448,8 @@ function loadDB(): DBStructure {
         referredFriends: []
       }
     ],
-    campaigns: INITIAL_CAMPAIGNS
+    campaigns: INITIAL_CAMPAIGNS,
+    merchantAds: []
   };
 
   // Add Maria Clara as admin's referred friend at the start
@@ -1227,7 +1254,13 @@ app.get('/api/campaigns', (req, res) => {
   }
 
   const rand = mulberry32(Math.abs(hash));
-  const pool = [...allCampaigns];
+  // Filter out campaigns that reached their maximum clicks limit
+  const pool = allCampaigns.filter((c: any) => {
+    if (c.maxClicks !== undefined && c.clicks !== undefined) {
+      return c.clicks < c.maxClicks;
+    }
+    return true;
+  });
   const selected: any[] = [];
   const count = Math.min(3, pool.length);
 
@@ -1314,6 +1347,239 @@ app.delete('/api/admin/campaigns/:id', async (req, res) => {
   res.json({ success: true, campaigns: db.campaigns });
 });
 
+// 1. GET /api/merchant/ads -> list all ads of the current user
+app.get('/api/merchant/ads', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Sapat na login ay kailangan.' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  const ads = (db.merchantAds || []).filter(ad => ad.userId === userId);
+  res.json({ ads });
+});
+
+// 2. POST /api/merchant/ads -> create a new merchant ad request
+app.post('/api/merchant/ads', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Sapat na login ay kailangan.' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  const {
+    title,
+    url,
+    description,
+    logo,
+    category,
+    primaryColor,
+    accentColor,
+    planId,
+    gcashSenderNumber,
+    gcashReferenceNo
+  } = req.body;
+
+  if (!title || !url || !description || !planId || !gcashSenderNumber || !gcashReferenceNo) {
+    return res.status(400).json({ error: 'Pakikumpleto ang lahat ng kinakailangang impormasyon.' });
+  }
+
+  // Determine plan specs
+  let planName = 'Bronze';
+  let price = 299;
+  let durationDays = 7;
+  if (planId === 'silver') {
+    planName = 'Silver';
+    price = 999;
+    durationDays = 30;
+  } else if (planId === 'gold') {
+    planName = 'Gold';
+    price = 2499;
+    durationDays = 90;
+  } else if (planId === 'platinum') {
+    planName = 'Platinum';
+    price = 7999;
+    durationDays = 365;
+  }
+
+  const newAd: MerchantAd = {
+    id: 'ad-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+    userId: user.id,
+    userName: user.name,
+    userAvatar: user.avatar,
+    title,
+    url,
+    description,
+    logo: logo || 'ShoppingBag',
+    category: category || 'Shopping',
+    primaryColor: primaryColor || '#2563EB',
+    accentColor: accentColor || '#10B981',
+    planId,
+    planName,
+    price,
+    durationDays,
+    gcashSenderNumber,
+    gcashReferenceNo,
+    status: 'pending',
+    createdAt: new Date().toISOString()
+  };
+
+  db.merchantAds = db.merchantAds || [];
+  db.merchantAds.push(newAd);
+  saveDB(db);
+
+  res.json({ success: true, ad: newAd });
+});
+
+// 3. GET /api/admin/merchant/ads -> admin lists all merchant ads
+app.get('/api/admin/merchant/ads', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user || !user.isAdmin) {
+    return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
+  }
+
+  res.json({ ads: db.merchantAds || [] });
+});
+
+// 4. POST /api/admin/merchant/ads/:id/action -> approve or decline
+app.post('/api/admin/merchant/ads/:id/action', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user || !user.isAdmin) {
+    return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
+  }
+
+  const { action } = req.body; // 'approve' | 'decline'
+  if (!action || (action !== 'approve' && action !== 'decline')) {
+    return res.status(400).json({ error: 'Invalid action.' });
+  }
+
+  db.merchantAds = db.merchantAds || [];
+  const ad = db.merchantAds.find(a => a.id === req.params.id);
+  if (!ad) {
+    return res.status(404).json({ error: 'Hindi mahanap ang merchant ad request.' });
+  }
+
+  if (ad.status !== 'pending') {
+    return res.status(400).json({ error: 'Ang promotion request na ito ay naproseso na.' });
+  }
+
+  if (action === 'decline') {
+    ad.status = 'declined';
+    saveDB(db);
+    return res.json({ success: true, ad });
+  }
+
+  // Calculate expiration dates
+  const now = new Date();
+  const expiry = new Date();
+  expiry.setDate(now.getDate() + ad.durationDays);
+
+  ad.status = 'active';
+  ad.approvedAt = now.toISOString();
+  ad.expiresAt = expiry.toISOString();
+
+  // Determine rewards amount based on plan
+  let rewardAmount = 1.50;
+  let maxClicks = 150;
+  if (ad.planId === 'silver') {
+    rewardAmount = 2.50;
+    maxClicks = 300;
+  } else if (ad.planId === 'gold') {
+    rewardAmount = 3.50;
+    maxClicks = 550;
+  } else if (ad.planId === 'platinum') {
+    rewardAmount = 5.00;
+    maxClicks = 1200;
+  }
+
+  // Generate a mock WebsiteCampaign
+  const newCampaign = {
+    id: 'campaign-merchant-' + ad.id,
+    title: ad.title,
+    url: ad.url,
+    reward: rewardAmount,
+    timer: 10,
+    logo: ad.logo || 'ShoppingBag',
+    category: ad.category || 'Shopping',
+    description: ad.description,
+    completed: false,
+    clicks: 0,
+    maxClicks: maxClicks,
+    mockPageContent: {
+      heroTitle: `⭐ ${ad.title}`,
+      heroSubtitle: `Sponsored Promotion - Bisitahin ang website upang makakuha ng Reward!`,
+      primaryColor: ad.primaryColor || '#2563EB',
+      accentColor: ad.accentColor || '#10B981',
+      paragraphs: [
+        ad.description,
+        `Salamat sa pagsuporta sa aming lokal na negosyo! Ang pagbisita sa aming page ay nagbibigay-daan sa amin na lumago. Ikinagalak naming makita ka!`
+      ],
+      features: [
+        `🔗 Opisyal na Website: Bisitahin ang link para sa karagdagang impormasyon`,
+        `💵 Gantimpala: ₱${rewardAmount.toFixed(2)} pagkatapos basahin ng 10 segundo`,
+        `🏷️ Alok: Magtanong o makipag-ugnay sa merchant para sa discounts`,
+        `🛡️ Ligtas at beripikadong negosyo sa Z-one`
+      ]
+    }
+  };
+
+  db.campaigns = db.campaigns || [];
+  db.campaigns.unshift(newCampaign);
+
+  // Generate a sponsored Social Post inside the community feed!
+  const sponsorPost = {
+    id: 'post-ad-' + ad.id,
+    userId: 'merchant-' + ad.id,
+    userName: ad.title + ' 📢 [Sponsor]',
+    userAvatar: '🏢',
+    text: `${ad.description}\n\n👉 Bisitahin kami sa aming pahina sa: ${ad.url}\n\n✨ (Maaari mo ring mahanap ang aming promotion sa 'Mag-ipon' tab para makakuha ng ₱${rewardAmount.toFixed(2)} reward!)`,
+    mediaUrl: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&auto=format&fit=crop&q=60',
+    likes: [],
+    comments: [],
+    createdAt: new Date().toISOString()
+  };
+
+  db.posts = db.posts || [];
+  db.posts.unshift(sponsorPost);
+
+  saveDB(db);
+
+  // Sync campaign and post to Firestore if active
+  if (isFirestoreActive && firestore) {
+    try {
+      firestore.collection('campaigns').doc(newCampaign.id).set(newCampaign).catch((e: any) => console.error(e));
+      firestore.collection('posts').doc(sponsorPost.id).set(sponsorPost).catch((e: any) => console.error(e));
+      console.log(`🔥 Synced new merchant campaign and sponsor post to Firestore.`);
+    } catch (fsErr) {
+      console.error(`❌ Firestore sync error for merchant ad approval:`, fsErr);
+    }
+  }
+
+  res.json({ success: true, ad });
+});
+
 // COMPLETED TASK REWARD SYNC
 app.post('/api/user/task-complete', (req, res) => {
   const userId = req.headers.authorization;
@@ -1344,6 +1610,23 @@ app.post('/api/user/task-complete', (req, res) => {
     }
     if (!user.completedCampaignIds.includes(campaignId)) {
       user.completedCampaignIds.push(campaignId);
+    }
+
+    // Increment click counts for merchant campaigns to guarantee admin margins
+    if (campaignId.startsWith('campaign-merchant-')) {
+      const merchantCamp = (db.campaigns || []).find((c: any) => c.id === campaignId);
+      if (merchantCamp) {
+        merchantCamp.clicks = (merchantCamp.clicks || 0) + 1;
+        
+        // Sync with Firestore if active
+        if (isFirestoreActive && firestore) {
+          try {
+            firestore.collection('campaigns').doc(campaignId).update({ clicks: merchantCamp.clicks }).catch((e: any) => console.error(e));
+          } catch (fsErr) {
+            console.error('❌ Firestore click count update error:', fsErr);
+          }
+        }
+      }
     }
   }
 

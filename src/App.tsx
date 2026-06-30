@@ -45,7 +45,8 @@ import {
   Tv,
   Users,
   Ban,
-  Upload
+  Upload,
+  Megaphone
 } from 'lucide-react';
 import { INITIAL_CAMPAIGNS } from './data/campaigns';
 import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend } from './types';
@@ -55,6 +56,7 @@ import ReferralPanel from './components/ReferralPanel';
 import AdminPanel from './components/AdminPanel';
 import ZoneFeed from './components/ZoneFeed';
 import ZonePromoVideo from './components/ZonePromoVideo';
+import MerchantPortal from './components/MerchantPortal';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -154,7 +156,7 @@ export default function App() {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [referredFriends, setReferredFriends] = useState<ReferralFriend[]>([]);
   
-  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin'>('earn');
+  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo'>('earn');
   const [currentViewingCampaign, setCurrentViewingCampaign] = useState<WebsiteCampaign | null>(null);
 
   // Add custom campaigns state
@@ -1642,11 +1644,12 @@ export default function App() {
           <div id="dashboard-navigation-tabs" className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
             <div className="max-w-7xl mx-auto px-4 flex items-center justify-between gap-4">
               
-              <div className={`w-full grid py-2.5 gap-1 shrink-0 ${user.isAdmin ? 'grid-cols-5' : 'grid-cols-4'} md:flex md:w-auto md:py-3 md:gap-1`}>
+              <div className={`w-full grid py-2.5 gap-1 shrink-0 ${user.isAdmin ? 'grid-cols-6' : 'grid-cols-5'} md:flex md:w-auto md:py-3 md:gap-1`}>
                 {[
                   { id: 'earn', textMobile: 'Mag-ipon', textDesktop: ' (Website Lists)', icon: Globe },
                   { id: 'cashout', textMobile: 'GCash Cash-Out', textDesktop: ' (Withdraw)', icon: Wallet },
                   { id: 'zone', textMobile: 'Z-one Social', textDesktop: ' (Community Feed)', icon: Users },
+                  { id: 'negosyo', textMobile: 'Negosyo', textDesktop: ' (Promotion)', icon: Megaphone },
                   { id: 'guide', textMobile: 'Gabay', textDesktop: ' (FAQs)', icon: HelpCircle },
                   // Dynamic Admin tab if the session yields an admin role
                   ...(user.isAdmin ? [{ id: 'admin', textMobile: 'Admin Control', textDesktop: ' Panel', icon: Shield }] : [])
@@ -2169,6 +2172,17 @@ export default function App() {
                     <AdminPanel 
                       token={token} 
                       triggerNotification={triggerNotification} 
+                    />
+                  </div>
+                )}
+
+                {/* TAB 5: MERCHANT PORTAL (NEGOSYO PROMOTION HUB) */}
+                {activeTab === 'negosyo' && (
+                  <div className="animate-fadeIn">
+                    <MerchantPortal
+                      token={token}
+                      language={language}
+                      triggerNotification={triggerNotification}
                     />
                   </div>
                 )}

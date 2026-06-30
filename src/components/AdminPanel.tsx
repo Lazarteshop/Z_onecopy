@@ -14,9 +14,10 @@ import {
   CornerDownRight,
   Sparkles,
   RefreshCw,
-  Award
+  Award,
+  Megaphone
 } from 'lucide-react';
-import { ActivityLog, UserStats, WithdrawalRequest, Subscription } from '../types';
+import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd } from '../types';
 
 interface AdminDashboardData {
   users: {
@@ -53,10 +54,25 @@ export default function AdminPanel({
 }: AdminPanelProps) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<AdminDashboardData | null>(null);
+  const [merchantAds, setMerchantAds] = useState<MerchantAd[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'subscriptions' | 'users'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'subscriptions' | 'users' | 'merchant_ads'>('overview');
+
+  const fetchMerchantAds = async () => {
+    try {
+      const res = await fetch('/api/admin/merchant/ads', {
+        headers: { 'Authorization': token }
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setMerchantAds(result.ads || []);
+      }
+    } catch (e) {
+      console.error('Error fetching merchant ads:', e);
+    }
+  };
 
   // Helper function to render avatar gracefully regardless of type (emoji or base64 or URL)
   const renderAvatar = (avatar: string | undefined, sizeClass: string = "w-6 h-6") => {
@@ -104,8 +120,9 @@ export default function AdminPanel({
   useEffect(() => {
     if (token) {
       fetchAdminData();
+      fetchMerchantAds();
     }
-  }, [token]);
+  }, [token, activeSubTab]);
 
   // Approve or decline withdrawal request
   const handleWithdrawalAction = async (withdrawId: string, action: 'approve' | 'decline') => {
@@ -160,6 +177,38 @@ export default function AdminPanel({
         );
         // Refresh dashboard data
         await fetchAdminData();
+      } else {
+        triggerNotification(`⚠️ ${result.error || 'Hindi maipatupad ang aksyon.'}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      triggerNotification('⚠️ Error communicating with server.', 'error');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleMerchantAdAction = async (adId: string, action: 'approve' | 'decline') => {
+    setProcessingId(adId);
+    try {
+      const res = await fetch(`/api/admin/merchant/ads/${adId}/action`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ action })
+      });
+      const result = await res.json();
+      if (res.ok) {
+        triggerNotification(
+          action === 'approve' 
+            ? `🟢 Promosyon ng Negosyo ay Inaprubahan! Aktibo na ito sa Z-one.`
+            : `🔴 Promosyon ay Tinanggihan!`,
+          action === 'approve' ? 'success' : 'info'
+        );
+        fetchMerchantAds();
+        fetchAdminData();
       } else {
         triggerNotification(`⚠️ ${result.error || 'Hindi maipatupad ang aksyon.'}`, 'error');
       }
@@ -370,6 +419,21 @@ export default function AdminPanel({
           }`}
         >
           Users Registry
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('merchant_ads'); }}
+          className={`px-4 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 ${
+            activeSubTab === 'merchant_ads'
+              ? 'border-indigo-600 text-indigo-600 bg-white/70'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <span>Merchant Promos</span>
+          {merchantAds.filter(a => a.status === 'pending').length > 0 && (
+            <span className="bg-rose-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold animate-pulse">
+              {merchantAds.filter(a => a.status === 'pending').length}
+            </span>
+          )}
         </button>
       </div>
 
@@ -856,6 +920,175 @@ export default function AdminPanel({
             )}
           </div>
 
+        </div>
+      )}
+
+      {/* SECTION 4: MERCHANT ADS MANAGEMENT */}
+      {activeSubTab === 'merchant_ads' && (
+        <div className="space-y-6">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="font-black text-slate-950 text-base flex items-center gap-2">
+                  <Megaphone className="w-5 h-5 text-indigo-600" />
+                  <span>Merchant Promotions Registry & Verification</span>
+                </h3>
+                <p className="text-xs text-slate-500 font-bold">
+                  Suriin ang mga GCash payment reference number at pamahalaan ang mga sponsored advertisements.
+                </p>
+              </div>
+              <span className="bg-indigo-100 text-indigo-800 text-xs font-black px-3 py-1 rounded-xl">
+                Pending Requests: {merchantAds.filter(a => a.status === 'pending').length}
+              </span>
+            </div>
+
+            {/* PENDING QUEUE */}
+            <div className="mt-6 space-y-4">
+              <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">⏳ Pending Verification Queue</h4>
+              {merchantAds.filter(a => a.status === 'pending').length === 0 ? (
+                <div className="border border-dashed border-slate-200 rounded-2xl p-8 text-center text-slate-450 font-bold text-xs select-none">
+                  🎉 Magaling! Walang nakabinbing merchant promotion requests na kailangang suriin.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {merchantAds.filter(a => a.status === 'pending').map(ad => (
+                    <div key={ad.id} className="border border-amber-200 bg-amber-50/20 rounded-2xl p-4.5 space-y-4">
+                      <div className="flex justify-between items-start gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <div className="h-10 w-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-lg shadow-xs shrink-0">
+                            {ad.logo === 'ShoppingBag' ? '🛍️' : 
+                             ad.logo === 'Utensils' ? '🍽️' :
+                             ad.logo === 'Laptop' ? '💻' :
+                             ad.logo === 'Compass' ? '✈️' :
+                             ad.logo === 'Activity' ? '🏥' :
+                             ad.logo === 'Newspaper' ? '📰' :
+                             ad.logo === 'Wifi' ? '📶' :
+                             ad.logo === 'PiggyBank' ? '💰' : '⭐'}
+                          </div>
+                          <div>
+                            <h4 className="font-black text-slate-950 text-xs leading-snug">{ad.title}</h4>
+                            <span className="text-[10px] text-amber-800 font-black tracking-wide uppercase bg-amber-100 px-1.5 py-0.5 rounded-md">
+                              {ad.planName} (₱{ad.price})
+                            </span>
+                          </div>
+                        </div>
+
+                        <span className="bg-amber-100 text-amber-800 text-[9px] font-black px-2 py-0.5 rounded-full uppercase animate-pulse">
+                          Pending GCash Pay
+                        </span>
+                      </div>
+
+                      <div className="text-xs space-y-1.5 font-semibold text-slate-700 bg-white/60 rounded-xl p-3 border border-slate-150">
+                        <div className="flex justify-between text-[10px] text-slate-400 border-b border-slate-100 pb-1.5 mb-1.5">
+                          <span>SENDER DETALYE:</span>
+                          <span className="font-bold text-indigo-700">User ID: {ad.userId}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          👤 <span>Merchant:</span> 
+                          <strong className="text-slate-900 font-bold">{ad.userName}</strong>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          📱 <span>GCash Number:</span> 
+                          <strong className="text-slate-950 font-black">{ad.gcashSenderNumber}</strong>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          🔑 <span>Reference No:</span> 
+                          <strong className="text-emerald-700 font-black select-all bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">{ad.gcashReferenceNo}</strong>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Ad Content & Target Link:</h5>
+                        <p className="text-[11px] text-slate-600 font-medium leading-relaxed bg-white p-2 rounded-lg border border-slate-150 line-clamp-3">
+                          {ad.description}
+                        </p>
+                        <a 
+                          href={ad.url} 
+                          target="_blank" 
+                          rel="noreferrer" 
+                          className="text-[10px] text-blue-600 hover:underline font-bold truncate block"
+                        >
+                          🔗 Link: {ad.url}
+                        </a>
+                      </div>
+
+                      <div className="flex gap-2.5 pt-2 border-t border-slate-150 justify-end">
+                        <button
+                          disabled={processingId !== null}
+                          onClick={() => handleMerchantAdAction(ad.id, 'decline')}
+                          className="bg-rose-50 hover:bg-rose-100 text-rose-700 font-black text-[10px] px-3.5 py-2 rounded-xl transition cursor-pointer"
+                        >
+                          Decline Request
+                        </button>
+                        <button
+                          disabled={processingId !== null}
+                          onClick={() => handleMerchantAdAction(ad.id, 'approve')}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] px-4.5 py-2 rounded-xl transition cursor-pointer shadow-md shadow-emerald-600/10"
+                        >
+                          Approve & Go Live ✔️
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* PROCESSED HISTORY */}
+            <div className="mt-8 space-y-4">
+              <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">📋 Verified Ads Registry & History</h4>
+              {merchantAds.filter(a => a.status !== 'pending').length === 0 ? (
+                <div className="text-center py-6 text-slate-400 text-xs font-semibold">
+                  Walang nakaraang natapos na promosyon request.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs font-semibold text-slate-700 border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 text-[10px] uppercase font-black text-slate-400 tracking-wider border-b border-slate-200">
+                        <th className="p-3">Ad Title / Merchant</th>
+                        <th className="p-3">Plan Details</th>
+                        <th className="p-3">GCash Verification</th>
+                        <th className="p-3">Status</th>
+                        <th className="p-3">Created At</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {merchantAds.filter(a => a.status !== 'pending').map(ad => (
+                        <tr key={ad.id} className="hover:bg-slate-50/50">
+                          <td className="p-3 space-y-0.5">
+                            <div className="font-black text-slate-950">{ad.title}</div>
+                            <div className="text-[10px] text-slate-400 font-medium">Merchant: {ad.userName} (ID: {ad.userId})</div>
+                          </td>
+                          <td className="p-3">
+                            <div className="font-extrabold text-indigo-700">{ad.planName}</div>
+                            <div className="text-[10px] text-slate-550 font-bold">Paid ₱{ad.price} for {ad.durationDays} Days</div>
+                          </td>
+                          <td className="p-3 text-[10px] font-mono leading-relaxed">
+                            <div>From: <strong className="text-slate-800">{ad.gcashSenderNumber}</strong></div>
+                            <div>Ref: <strong className="text-slate-800">{ad.gcashReferenceNo}</strong></div>
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                              ad.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
+                              ad.status === 'declined' ? 'bg-rose-100 text-rose-800' :
+                              'bg-slate-100 text-slate-600'
+                            }`}>
+                              {ad.status}
+                            </span>
+                          </td>
+                          <td className="p-3 text-[10px] text-slate-400 font-mono">
+                            {new Date(ad.createdAt).toLocaleString('fil-PH', { hour12: true })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+          </div>
         </div>
       )}
 

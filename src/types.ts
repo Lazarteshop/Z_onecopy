@@ -99,3 +99,28 @@ export interface ZonePost {
   };
 }
 
+export interface MerchantAd {
+  id: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  title: string;
+  url: string;
+  description: string;
+  logo: string;
+  category: 'Shopping' | 'Balita' | 'Teknolohiya' | 'E-Services' | 'Kultura';
+  primaryColor: string;
+  accentColor: string;
+  planId: 'bronze' | 'silver' | 'gold' | 'platinum';
+  planName: string;
+  price: number;
+  durationDays: number;
+  gcashSenderNumber: string;
+  gcashReferenceNo: string;
+  status: 'pending' | 'active' | 'declined' | 'expired';
+  createdAt: string;
+  approvedAt?: string;
+  expiresAt?: string;
+}
+
+
