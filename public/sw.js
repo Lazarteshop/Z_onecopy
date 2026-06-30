@@ -70,7 +70,8 @@ self.addEventListener('fetch', (event) => {
         return response;
       }).catch(() => {
         // Offline Fallback for html pages
-        if (event.request.headers.get('accept').includes('text/html')) {
+        const acceptHeader = event.request.headers.get('accept');
+        if (acceptHeader && acceptHeader.includes('text/html')) {
           return caches.match('/');
         }
       });
