@@ -3291,6 +3291,25 @@ app.post('/api/zone/calls/end', (req, res) => {
 });
 
 
+// Custom high-compatibility route to serve the Android APK securely
+app.get('/Z-oneApp.apk', (req, res) => {
+  const apkPath = path.join(process.cwd(), 'public', 'Z-oneApp.apk');
+  if (fs.existsSync(apkPath)) {
+    const stats = fs.statSync(apkPath);
+    res.writeHead(200, {
+      'Content-Type': 'application/vnd.android.package-archive',
+      'Content-Length': stats.size,
+      'Content-Disposition': 'attachment; filename="Z-oneApp.apk"',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    });
+    const readStream = fs.createReadStream(apkPath);
+    readStream.pipe(res);
+  } else {
+    res.status(404).send('APK file not found on server.');
+  }
+});
+
+
 // ============================================
 //            VITE MIDDLEWARE SETUP
 // ============================================
