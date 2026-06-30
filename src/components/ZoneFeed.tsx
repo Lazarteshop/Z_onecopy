@@ -122,10 +122,58 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const [posts, setPosts] = useState<ZonePost[]>(() => {
     try {
       const cached = localStorage.getItem('zone_posts_cache');
-      return cached ? JSON.parse(cached) : [];
-    } catch {
-      return [];
-    }
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    
+    // Fallback to high-speed seed posts for instant zero-waiting rendering
+    return [
+      {
+        id: 'post-welcome',
+        userId: 'admin-rosco',
+        userName: 'System Administrator',
+        userAvatar: '👑',
+        text: 'Welcome sa Z-one! Ang pinakabagong social media portal kung saan pwede kayong mag-post, mag-like, mag-comment, at mag-Zone (Follow) sa bawat isa. Iwasan po natin ang bastos/pornographic na content at bad words upang maiwasan ang ma-banned. Happy Click-Earning!',
+        mediaUrl: 'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=800&auto=format&fit=crop&q=60',
+        mediaType: 'image',
+        likes: [],
+        comments: [
+          {
+            id: 'comment-seed-1',
+            userId: 'user-juan',
+            userName: 'Juan Dela Cruz',
+            userAvatar: '👨‍💻',
+            text: 'Wow, napakagandang platform naman nito! Salamat admin!',
+            createdAt: new Date(Date.now() - 3600000).toISOString()
+          }
+        ],
+        createdAt: new Date(Date.now() - 7200000).toISOString()
+      },
+      {
+        id: 'post-seed-cashout',
+        userId: 'user-juan',
+        userName: 'Juan Dela Cruz',
+        userAvatar: '👨‍💻',
+        text: 'Salamat po Admin Rosco! Nakuha ko na ang pangalawang GCash Cashout ko ngayong linggo! ₱500.00 success! Sobrang legit at bilis ng approval. Post ko lang para ganahan ang lahat! Click lang nang click! 💸🔥',
+        mediaUrl: 'https://images.unsplash.com/photo-1559526324-4b87b5e36e44?w=800&auto=format&fit=crop&q=60',
+        mediaType: 'image',
+        likes: ['admin-rosco'],
+        comments: [],
+        createdAt: new Date(Date.now() - 14400000).toISOString()
+      },
+      {
+        id: 'post-seed-community',
+        userId: 'user-maria',
+        userName: 'Maria Clara',
+        userAvatar: '👩‍🦰',
+        text: 'Mag-Zone Back (Follow Back) po ako agad sa lahat ng mag-Zone sa akin! Tulungan po tayo rito sa Z-one community para sama-sama tayong lumago at kumita. Good morning clickers! ☀️✨',
+        likes: [],
+        comments: [],
+        createdAt: new Date(Date.now() - 21600000).toISOString()
+      }
+    ];
   });
   const [loadingPosts, setLoadingPosts] = useState(false);
 
@@ -1409,24 +1457,16 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   }, [posts, outbox, user.id, user.name, user.avatar]);
 
   useEffect(() => {
-    // Zero Waiting: If we already have cached posts in localStorage, fetch silently in the background
-    let hasCached = false;
-    try {
-      const cached = localStorage.getItem('zone_posts_cache');
-      if (cached && JSON.parse(cached).length > 0) {
-        hasCached = true;
-      }
-    } catch (e) {}
-
-    fetchPosts(hasCached);
+    // Zero Waiting: Always fetch silently in the background so the user never sees any loading blocks
+    fetchPosts(true);
     if (user.isAdmin) {
       fetchModUsers();
     }
 
-    // Auto-refresh the feed every 2 seconds silently like Facebook (Zero Waiting)
+    // Auto-refresh the feed every 15 seconds silently like Facebook (Optimized to prevent network congestion on weak signals)
     const interval = setInterval(() => {
       fetchPosts(true);
-    }, 2000);
+    }, 15000);
 
     return () => clearInterval(interval);
   }, [token]);
@@ -1861,7 +1901,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       if (res.ok) {
         triggerNotification(data.message, 'success');
         fetchModUsers();
-        fetchPosts(); // Refresh avatars/posts in case they were banned
+        fetchPosts(true); // Refresh avatars/posts in case they were banned
       } else {
         triggerNotification(data.error || 'Moderation error.', 'error');
       }
@@ -1984,7 +2024,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
               )}
             </button>
             <button
-              onClick={fetchPosts}
+              onClick={() => fetchPosts(true)}
               className="bg-white/10 hover:bg-white/20 text-white border border-white/20 font-bold text-xs px-4 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-1.5"
             >
               <Users className="w-4 h-4" />
