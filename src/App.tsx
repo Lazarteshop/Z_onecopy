@@ -24,6 +24,15 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import soundEffects from './utils/audio';
+import { db } from './firebase';
+import { 
+  collection, 
+  doc, 
+  setDoc, 
+  updateDoc, 
+  deleteDoc, 
+  onSnapshot 
+} from 'firebase/firestore';
 
 // Types
 interface Campaign {
@@ -44,6 +53,7 @@ interface CashoutRequest {
   amount: number;
   status: 'pending' | 'approved' | 'rejected';
   date: string;
+  userId: string;
 }
 
 interface Referral {
@@ -53,9 +63,52 @@ interface Referral {
   date: string;
 }
 
+// Error Handling for Firebase Integration Skill
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: localStorage.getItem('zone_user_id'),
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
 export default function App() {
   // Global App States
   const [language, setLanguage] = useState<'en' | 'tl'>('tl'); // Default to Tagalog
+  
+  // Unique User/Client ID for Firebase Sync
+  const [userId] = useState<string>(() => {
+    let id = localStorage.getItem('zone_user_id');
+    if (!id) {
+      id = 'usr_' + Math.random().toString(36).substring(2, 11);
+      localStorage.setItem('zone_user_id', id);
+    }
+    return id;
+  });
+
   const [balance, setBalance] = useState<number>(() => {
     const saved = localStorage.getItem('zone_balance');
     return saved ? parseFloat(saved) : 150.00; // Starter balance
@@ -121,12 +174,80 @@ export default function App() {
   const [cashoutHistory, setCashoutHistory] = useState<CashoutRequest[]>(() => {
     const saved = localStorage.getItem('zone_cashout_history');
     return saved ? JSON.parse(saved) : [
-      { id: 'wd1', name: 'JUAN DELA CRUZ', number: '09123456789', amount: 100, status: 'approved', date: '2026-06-28' },
-      { id: 'wd2', name: 'MARIA SANTOS', number: '09876543210', amount: 250, status: 'pending', date: '2026-06-29' }
+      { id: 'wd1', name: 'JUAN DELA CRUZ', number: '09123456789', amount: 100, status: 'approved', date: '2026-06-28', userId: 'default' },
+      { id: 'wd2', name: 'MARIA SANTOS', number: '09876543210', amount: 250, status: 'pending', date: '2026-06-29', userId: 'default' }
     ];
   });
 
-  // Keep localStorage synced
+  // =========================================
+  // 🔥 REAL-TIME FIREBASE SYNCHRONIZER
+  // =========================================
+  useEffect(() => {
+    // 1. Sync User Document: /users/{userId}
+    const userDocRef = doc(db, 'users', userId);
+    const unsubscribeUser = onSnapshot(userDocRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (data.balance !== undefined) setBalance(data.balance);
+        if (data.completedCampaigns !== undefined) setCompletedCampaigns(data.completedCampaigns);
+      } else {
+        // Initialize user record in Firestore
+        setDoc(userDocRef, {
+          id: userId,
+          balance: balance,
+          completedCampaigns: completedCampaigns,
+          createdAt: new Date().toISOString()
+        }).catch((err) => handleFirestoreError(err, OperationType.WRITE, `users/${userId}`));
+      }
+    }, (err) => handleFirestoreError(err, OperationType.GET, `users/${userId}`));
+
+    // 2. Sync Campaigns: /campaigns
+    const campaignsColRef = collection(db, 'campaigns');
+    const unsubscribeCampaigns = onSnapshot(campaignsColRef, (snapshot) => {
+      if (snapshot.empty) {
+        // Seed default campaigns if none exist in Firestore
+        const defaultCampaigns = [
+          { id: 'c1', title: 'GCash Free Promos', description: 'Tingnan ang pinakabagong GCash promos para kumita ng instant points.', url: 'https://www.gcash.com/promos', reward: 8.50, duration: 10, category: 'Promos', views: 423 },
+          { id: 'c2', title: 'Shopee Piso Deals', description: 'Tuklasin ang pinakamurang Shopee piso deals ngayon.', url: 'https://shopee.ph/m/piso-deals', reward: 12.00, duration: 15, category: 'Shopping', views: 890 },
+          { id: 'c3', title: 'Lazada Free Shipping', description: 'Kolektahin ang mga voucher para sa libreng pagpapadala.', url: 'https://www.lazada.com.ph/free-shipping', reward: 10.50, duration: 12, category: 'Vouchers', views: 561 },
+          { id: 'c4', title: 'Smart GigaLife Offers', description: 'Suriin ang mga bagong gigalife internet data packages.', url: 'https://smart.com.ph/gigalife', reward: 9.00, duration: 10, category: 'Telecom', views: 231 },
+          { id: 'c5', title: 'Z-one Official Website', description: 'Sponsor website para sa mabilis na high-paying points.', url: 'https://z-one-app.com/rewards', reward: 15.00, duration: 15, category: 'Sponsor', views: 1450 }
+        ];
+        defaultCampaigns.forEach((camp) => {
+          setDoc(doc(db, 'campaigns', camp.id), camp).catch((err) => handleFirestoreError(err, OperationType.WRITE, `campaigns/${camp.id}`));
+        });
+      } else {
+        const loadedCampaigns: Campaign[] = [];
+        snapshot.forEach((docSnap) => {
+          loadedCampaigns.push(docSnap.data() as Campaign);
+        });
+        setCampaigns(loadedCampaigns);
+      }
+    }, (err) => handleFirestoreError(err, OperationType.GET, 'campaigns'));
+
+    // 3. Sync Cashouts: /cashouts
+    const cashoutsColRef = collection(db, 'cashouts');
+    const unsubscribeCashouts = onSnapshot(cashoutsColRef, (snapshot) => {
+      const loadedCashouts: CashoutRequest[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as CashoutRequest;
+        // Admins see all requests. Normal users only see their own requests.
+        if (isAdminAuthenticated || data.userId === userId) {
+          loadedCashouts.push(data);
+        }
+      });
+      loadedCashouts.sort((a, b) => b.id.localeCompare(a.id));
+      setCashoutHistory(loadedCashouts);
+    }, (err) => handleFirestoreError(err, OperationType.GET, 'cashouts'));
+
+    return () => {
+      unsubscribeUser();
+      unsubscribeCampaigns();
+      unsubscribeCashouts();
+    };
+  }, [userId, isAdminAuthenticated]);
+
+  // Keep localStorage synced as fallback
   useEffect(() => {
     localStorage.setItem('zone_balance', balance.toFixed(2));
   }, [balance]);
@@ -191,11 +312,26 @@ export default function App() {
     } else if (activeViewingCampaign && viewerTimeLeft === 0) {
       // Completed!
       setIsViewerSuccessful(true);
-      setBalance(prev => prev + activeViewingCampaign.reward);
-      setCompletedCampaigns(prev => [...prev, activeViewingCampaign.id]);
+      const newBalance = balance + activeViewingCampaign.reward;
+      const newCompleted = [...completedCampaigns, activeViewingCampaign.id];
       
-      // Update campaigns view counts
-      setCampaigns(prev => prev.map(c => c.id === activeViewingCampaign.id ? { ...c, views: c.views + 1 } : c));
+      setBalance(newBalance);
+      setCompletedCampaigns(newCompleted);
+
+      // Save to Firestore
+      const userDocRef = doc(db, 'users', userId);
+      setDoc(userDocRef, {
+        id: userId,
+        balance: newBalance,
+        completedCampaigns: newCompleted,
+        updatedAt: new Date().toISOString()
+      }, { merge: true }).catch((err) => handleFirestoreError(err, OperationType.WRITE, `users/${userId}`));
+      
+      // Update campaigns view counts in Firestore
+      const campDocRef = doc(db, 'campaigns', activeViewingCampaign.id);
+      updateDoc(campDocRef, {
+        views: (activeViewingCampaign.views || 0) + 1
+      }).catch((err) => handleFirestoreError(err, OperationType.WRITE, `campaigns/${activeViewingCampaign.id}`));
       
       playSfx('reward');
       setActiveViewingCampaign(null);
@@ -225,24 +361,39 @@ export default function App() {
 
     setIsWithdrawing(true);
     
-    // Simulate approval delay
-    setTimeout(() => {
-      setBalance(prev => prev - selectedWithdrawAmount);
-      const newRequest: CashoutRequest = {
-        id: 'wd' + Date.now(),
-        name: gcashName.toUpperCase(),
-        number: gcashNumber,
-        amount: selectedWithdrawAmount,
-        status: 'pending',
-        date: new Date().toISOString().split('T')[0]
-      };
-      setCashoutHistory(prev => [newRequest, ...prev]);
-      setIsWithdrawing(false);
-      setWithdrawSuccess(true);
-      playSfx('withdraw');
-      setGcashName('');
-      setGcashNumber('');
-    }, 2000);
+    const newBalance = balance - selectedWithdrawAmount;
+    setBalance(newBalance);
+
+    // Save wallet balance update in Firestore
+    const userDocRef = doc(db, 'users', userId);
+    updateDoc(userDocRef, {
+      balance: newBalance
+    }).catch((err) => handleFirestoreError(err, OperationType.WRITE, `users/${userId}`));
+
+    // Add cashout request document to Firestore
+    const cashoutId = 'wd' + Date.now();
+    const newRequest: CashoutRequest = {
+      id: cashoutId,
+      name: gcashName.toUpperCase(),
+      number: gcashNumber,
+      amount: selectedWithdrawAmount,
+      status: 'pending',
+      date: new Date().toISOString().split('T')[0],
+      userId: userId
+    };
+
+    setDoc(doc(db, 'cashouts', cashoutId), newRequest)
+      .then(() => {
+        setIsWithdrawing(false);
+        setWithdrawSuccess(true);
+        playSfx('withdraw');
+        setGcashName('');
+        setGcashNumber('');
+      })
+      .catch((err) => {
+        setIsWithdrawing(false);
+        handleFirestoreError(err, OperationType.WRITE, `cashouts/${cashoutId}`);
+      });
   };
 
   // Referral Copy
@@ -280,8 +431,9 @@ export default function App() {
       alert('Paki-punan ang lahat ng fields!');
       return;
     }
+    const campId = 'c' + Date.now();
     const newCamp: Campaign = {
-      id: 'c' + Date.now(),
+      id: campId,
       title: newCampaignTitle,
       description: `Suriin ang sponsor website na ito upang kumita ng instant cash reward.`,
       url: newCampaignUrl,
@@ -290,25 +442,37 @@ export default function App() {
       category: newCampaignCategory,
       views: 0
     };
-    setCampaigns(prev => [newCamp, ...prev]);
-    setNewCampaignTitle('');
-    setNewCampaignUrl('');
-    alert('Sponsor Campaign matagumpay na naidagdag!');
+    
+    setDoc(doc(db, 'campaigns', campId), newCamp)
+      .then(() => {
+        setNewCampaignTitle('');
+        setNewCampaignUrl('');
+        alert('Sponsor Campaign matagumpay na naidagdag!');
+      })
+      .catch((err) => handleFirestoreError(err, OperationType.WRITE, `campaigns/${campId}`));
   };
 
   const handleDeleteCampaign = (id: string) => {
     playSfx('click');
-    setCampaigns(prev => prev.filter(c => c.id !== id));
+    const campDocRef = doc(db, 'campaigns', id);
+    deleteDoc(campDocRef)
+      .catch((err) => handleFirestoreError(err, OperationType.DELETE, `campaigns/${id}`));
   };
 
   const handleApproveWithdrawal = (id: string) => {
     playSfx('reward');
-    setCashoutHistory(prev => prev.map(w => w.id === id ? { ...w, status: 'approved' } : w));
+    const cashoutDocRef = doc(db, 'cashouts', id);
+    updateDoc(cashoutDocRef, {
+      status: 'approved'
+    }).catch((err) => handleFirestoreError(err, OperationType.WRITE, `cashouts/${id}`));
   };
 
   const handleRejectWithdrawal = (id: string) => {
     playSfx('click');
-    setCashoutHistory(prev => prev.map(w => w.id === id ? { ...w, status: 'rejected' } : w));
+    const cashoutDocRef = doc(db, 'cashouts', id);
+    updateDoc(cashoutDocRef, {
+      status: 'rejected'
+    }).catch((err) => handleFirestoreError(err, OperationType.WRITE, `cashouts/${id}`));
   };
 
   return (
