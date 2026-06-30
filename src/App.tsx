@@ -46,7 +46,8 @@ import {
   Users,
   Ban,
   Upload,
-  Megaphone
+  Megaphone,
+  Smartphone
 } from 'lucide-react';
 import { INITIAL_CAMPAIGNS } from './data/campaigns';
 import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend } from './types';
@@ -57,6 +58,7 @@ import AdminPanel from './components/AdminPanel';
 import ZoneFeed from './components/ZoneFeed';
 import ZonePromoVideo from './components/ZonePromoVideo';
 import MerchantPortal from './components/MerchantPortal';
+import AppInstallationPanel from './components/AppInstallationPanel';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -143,6 +145,10 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [showGoogleChooser, setShowGoogleChooser] = useState(false);
 
+  // PWA Installation States
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallPwaBtn, setShowInstallPwaBtn] = useState(false);
+
   // --- CORE APP STATES ---
   const [stats, setStats] = useState<UserStats>({
     balance: 25.00,
@@ -177,6 +183,32 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('user_lang', language);
   }, [language]);
+
+  // Capture standard browser PWA install event
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallPwaBtn(true);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallPWA = async () => {
+    if (!deferredPrompt) return;
+    try {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log(`User choice outcome: ${outcome}`);
+    } catch (err) {
+      console.error("PWA Prompt Error:", err);
+    }
+    setDeferredPrompt(null);
+    setShowInstallPwaBtn(false);
+  };
 
   // Dynamically backup active user profile and stats locally to recover transparently after server cold starts/reboots
   useEffect(() => {
@@ -1502,6 +1534,27 @@ export default function App() {
 
               {/* USER PROFILE CARD AND METRICS */}
               <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto justify-between sm:justify-end">
+                {/* 📱 Mobile Installer header link */}
+                <button
+                  onClick={() => {
+                    const el = document.getElementById('pwa-apk-installation-panel');
+                    if (el) {
+                      el.scrollIntoView({ behavior: 'smooth' });
+                    } else {
+                      const link = document.createElement('a');
+                      link.href = '/Z-oneApp.apk';
+                      link.download = 'Z-oneApp.apk';
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                    }
+                  }}
+                  className="bg-indigo-650 hover:bg-indigo-600 hover:scale-[1.03] active:scale-[0.97] text-white text-[9px] sm:text-[10px] font-black px-2.5 py-1.5 rounded-xl transition flex items-center gap-1 cursor-pointer shrink-0 shadow-sm"
+                >
+                  <Smartphone className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
+                  <span>{language === 'tl' ? 'Install CP App' : 'Install App'}</span>
+                </button>
+
                 {/* 🌍 LANGUAGE SELECT SWITCH */}
                 <div className="flex items-center gap-0.5 sm:gap-1 bg-slate-950/65 border border-slate-800 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl shadow-inner shrink-0">
                   <button
@@ -2198,6 +2251,15 @@ export default function App() {
                   referredFriends={referredFriends}
                   token={token}
                   onRefreshProfile={() => fetchUserProfile(token)}
+                  triggerNotification={triggerNotification}
+                  language={language}
+                />
+
+                {/* MOBILE WEB APP & APK INSTALLATION CONTROL PANEL */}
+                <AppInstallationPanel
+                  deferredPrompt={deferredPrompt}
+                  showInstallPwaBtn={showInstallPwaBtn}
+                  onInstallPwa={handleInstallPWA}
                   triggerNotification={triggerNotification}
                   language={language}
                 />
