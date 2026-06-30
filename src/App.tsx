@@ -46,7 +46,9 @@ import {
   Users,
   Ban,
   Upload,
-  Megaphone
+  Megaphone,
+  Download,
+  Smartphone
 } from 'lucide-react';
 import { INITIAL_CAMPAIGNS } from './data/campaigns';
 import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend } from './types';
@@ -173,6 +175,74 @@ export default function App() {
   
   // Language switcher state (English default)
   const [language, setLanguage] = useState<'en' | 'tl'>((localStorage.getItem('user_lang') as 'en' | 'tl') || 'en');
+
+  // PWA (Progressive Web App) Installation States
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [showPwaGuideModal, setShowPwaGuideModal] = useState(false);
+  const [activePwaGuideTab, setActivePwaGuideTab] = useState<'android' | 'ios' | 'desktop'>('android');
+  const [isPwaButtonDismissed, setIsPwaButtonDismissed] = useState(() => {
+    return sessionStorage.getItem('pwa_prompt_dismissed') === 'true';
+  });
+
+  useEffect(() => {
+    // Check if app is running in standalone mode (installed)
+    const checkStandalone = () => {
+      const standalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true;
+      setIsStandalone(standalone);
+    };
+    checkStandalone();
+
+    // Listen for standard PWA install prompt event
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      console.log('✨ PWA install prompt event captured!');
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    // Track when PWA is successfully installed
+    const handleAppInstalled = () => {
+      setIsStandalone(true);
+      setDeferredPrompt(null);
+      triggerNotification(
+        language === 'tl'
+          ? '🎉 Maraming salamat sa pag-install ng Z-oneApp! Maaari mo na itong buksan mula sa iyong home screen.'
+          : '🎉 Thank you for installing Z-oneApp! You can now open it directly from your home screen.',
+        'success'
+      );
+    };
+
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, [language]);
+
+  const triggerPwaInstall = async () => {
+    if (deferredPrompt) {
+      soundEffects.playClick();
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log(`User response to the install prompt: ${outcome}`);
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+      }
+    } else {
+      // Prompt not supported (e.g. iOS Safari, Firefox, or already installed, or in-iframe)
+      soundEffects.playClick();
+      setShowPwaGuideModal(true);
+    }
+  };
+
+  const dismissPwaButton = () => {
+    soundEffects.playClick();
+    setIsPwaButtonDismissed(true);
+    sessionStorage.setItem('pwa_prompt_dismissed', 'true');
+  };
 
   useEffect(() => {
     localStorage.setItem('user_lang', language);
@@ -2368,6 +2438,298 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
           </footer>
         </>
       )}
+
+      {/* 📱 PWA FLOATING ACTION BUTTON */}
+      <AnimatePresence>
+        {!isStandalone && !isPwaButtonDismissed && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.8, y: 50 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.8, y: 20 }}
+            className="fixed bottom-6 right-6 z-40 flex items-center gap-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white pl-4 pr-3 py-3 rounded-2xl shadow-[0_10px_30px_rgba(79,70,229,0.4)] border border-indigo-400/30 transition hover:scale-105 animate-bounce-slow"
+          >
+            <button
+              onClick={triggerPwaInstall}
+              className="flex items-center gap-2 font-black text-xs uppercase tracking-wider cursor-pointer"
+            >
+              <Smartphone className="w-5 h-5 text-yellow-300 animate-pulse" />
+              <span>
+                {language === 'tl' ? 'I-install ang App' : 'Install Z-oneApp'}
+              </span>
+            </button>
+            <div className="h-4 w-[1px] bg-indigo-400/40 mx-1"></div>
+            <button
+              onClick={dismissPwaButton}
+              className="p-1 hover:bg-white/10 rounded-lg cursor-pointer transition text-indigo-200 hover:text-white"
+              title="Close / Hide"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ℹ️ PWA MANUAL INSTALLATION GUIDE MODAL */}
+      <AnimatePresence>
+        {showPwaGuideModal && (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl border border-slate-100 flex flex-col"
+            >
+              {/* Modal Header */}
+              <div className="bg-gradient-to-br from-indigo-900 to-slate-900 text-white p-6 relative">
+                <button
+                  onClick={() => {
+                    soundEffects.playClick();
+                    setShowPwaGuideModal(false);
+                  }}
+                  className="absolute top-5 right-5 text-indigo-200 hover:text-white p-1 rounded-full hover:bg-white/10 transition cursor-pointer"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+                <div className="flex items-center gap-3">
+                  <div className="bg-gradient-to-tr from-yellow-300 to-amber-500 p-2.5 rounded-2xl shadow-lg shadow-amber-500/20">
+                    <Smartphone className="w-6 h-6 text-slate-900" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black tracking-tight leading-tight">
+                      {language === 'tl' ? 'I-install ang Z-oneApp PWA' : 'Install Z-oneApp PWA'}
+                    </h3>
+                    <p className="text-[11px] text-indigo-200 font-bold mt-0.5">
+                      {language === 'tl' 
+                        ? 'Sinuportahan sa lahat ng Android, iOS (iPhone/iPad), at PC worldwide!' 
+                        : 'Supported on all Android, iOS (iPhone/iPad), and PC worldwide!'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-5 flex-1 overflow-y-auto max-h-[70vh]">
+                {/* Advantages list */}
+                <div className="bg-indigo-50/70 rounded-2xl p-4 border border-indigo-100 space-y-3">
+                  <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wider flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-indigo-600" />
+                    <span>{language === 'tl' ? 'Bakit mo dapat i-install ang App?' : 'Why install the App?'}</span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-[11px]">
+                    <div className="flex items-start gap-2 text-slate-700">
+                      <span className="text-emerald-500 font-extrabold mt-0.5">✔</span>
+                      <div>
+                        <strong className="text-slate-900">{language === 'tl' ? 'Walang Waiting Time' : 'Zero Waiting Time'}</strong>
+                        <p className="text-slate-500 text-[10px] mt-0.5">
+                          {language === 'tl' ? 'Naka-cache na ang files kaya mabilis mag-load kahit mahina ang signal.' : 'Pre-cached files ensure fast loading even on weak connections.'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2 text-slate-700">
+                      <span className="text-emerald-500 font-extrabold mt-0.5">✔</span>
+                      <div>
+                        <strong className="text-slate-900">{language === 'tl' ? 'Mababang Data Usage' : 'Saves Internet Data'}</strong>
+                        <p className="text-slate-500 text-[10px] mt-0.5">
+                          {language === 'tl' ? 'Hindi paulit-ulit na niloload ang website assets para makatipid sa data.' : 'Does not reload identical assets, saving your internet package.'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2 text-slate-700">
+                      <span className="text-emerald-500 font-extrabold mt-0.5">✔</span>
+                      <div>
+                        <strong className="text-slate-900">{language === 'tl' ? 'Fullscreen View' : 'Fullscreen Browsing'}</strong>
+                        <p className="text-slate-500 text-[10px] mt-0.5">
+                          {language === 'tl' ? 'Parang native app na walang nakaharang na browser navigation bar.' : 'Feels like a native store app without standard browser layout bars.'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2 text-slate-700">
+                      <span className="text-emerald-500 font-extrabold mt-0.5">✔</span>
+                      <div>
+                        <strong className="text-slate-900">{language === 'tl' ? 'Home Screen Icon' : 'Home Screen Access'}</strong>
+                        <p className="text-slate-500 text-[10px] mt-0.5">
+                          {language === 'tl' ? 'Isang pindot lang mula sa iyong home screen para kumita agad.' : 'One tap from your mobile app grid to start click-earning.'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Devices tab headers */}
+                <div className="flex border border-slate-200 rounded-xl overflow-hidden p-1 bg-slate-50">
+                  <button
+                    onClick={() => {
+                      soundEffects.playClick();
+                      setActivePwaGuideTab('android');
+                    }}
+                    className={`flex-1 text-center py-2 text-xs font-extrabold rounded-lg transition cursor-pointer ${
+                      activePwaGuideTab === 'android' ? 'bg-white shadow-sm text-indigo-600 border border-slate-100' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    🤖 Android
+                  </button>
+                  <button
+                    onClick={() => {
+                      soundEffects.playClick();
+                      setActivePwaGuideTab('ios');
+                    }}
+                    className={`flex-1 text-center py-2 text-xs font-extrabold rounded-lg transition cursor-pointer ${
+                      activePwaGuideTab === 'ios' ? 'bg-white shadow-sm text-indigo-600 border border-slate-100' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    🍎 iPhone / iOS
+                  </button>
+                  <button
+                    onClick={() => {
+                      soundEffects.playClick();
+                      setActivePwaGuideTab('desktop');
+                    }}
+                    className={`flex-1 text-center py-2 text-xs font-extrabold rounded-lg transition cursor-pointer ${
+                      activePwaGuideTab === 'desktop' ? 'bg-white shadow-sm text-indigo-600 border border-slate-100' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    💻 Laptop / PC
+                  </button>
+                </div>
+
+                {/* Tab contents */}
+                <div className="text-xs font-semibold text-slate-700 leading-relaxed bg-slate-50/60 p-4 rounded-2xl border border-slate-100">
+                  {activePwaGuideTab === 'android' && (
+                    <div className="space-y-3 animate-fade-in">
+                      <p className="font-bold text-slate-900 border-b pb-1.5 flex items-center gap-1">
+                        <span>📱</span>
+                        <span>{language === 'tl' ? 'Mga hakbang para sa Android (Samsung, Xiaomi, Oppo, atbp):' : 'Steps for Android devices (Samsung, Xiaomi, Oppo, etc):'}</span>
+                      </p>
+                      <ol className="list-decimal pl-4 space-y-2 text-slate-600">
+                        <li>
+                          {language === 'tl' 
+                            ? 'Buksan ang app gamit ang iyong default na mobile browser gaya ng ' 
+                            : 'Open this website in your default mobile browser like '}
+                          <strong className="text-slate-900 font-extrabold">Google Chrome</strong>.
+                        </li>
+                        <li>
+                          {language === 'tl' 
+                            ? 'Pindutin ang tatlong tuldok (menu icon) ' 
+                            : 'Tap the three dots (menu icon) '}
+                          <span className="font-extrabold text-slate-900">⋮</span>
+                          {language === 'tl' 
+                            ? ' sa kanang itaas na bahagi ng browser.' 
+                            : ' in the top-right corner of the browser.'}
+                        </li>
+                        <li>
+                          {language === 'tl' 
+                            ? 'Hanapin at i-tap ang ' 
+                            : 'Find and tap '}
+                          <span className="text-indigo-600 font-extrabold">"Install App"</span>
+                          {language === 'tl' 
+                            ? ' o ' 
+                            : ' or '}
+                          <span className="text-indigo-600 font-extrabold">"Add to Home Screen"</span> (Idagdag sa Home Screen).
+                        </li>
+                        <li>
+                          {language === 'tl' 
+                            ? 'Kumpirmahin sa pamamagitan ng pag-tap sa "Install". Ang icon ay makikita na sa iyong phone app drawer!' 
+                            : 'Confirm by tapping "Install". The icon is now available on your home screen and drawer!'}
+                        </li>
+                      </ol>
+                    </div>
+                  )}
+
+                  {activePwaGuideTab === 'ios' && (
+                    <div className="space-y-3 animate-fade-in">
+                      <p className="font-bold text-slate-900 border-b pb-1.5 flex items-center gap-1">
+                        <span>📱</span>
+                        <span>{language === 'tl' ? 'Mga hakbang para sa iPhone at iPad (Apple iOS):' : 'Steps for iPhone and iPad (Apple iOS):'}</span>
+                      </p>
+                      <ol className="list-decimal pl-4 space-y-2 text-slate-600">
+                        <li>
+                          {language === 'tl' 
+                            ? 'Tiyaking binuksan mo ang website na ito gamit ang opisyal na ' 
+                            : 'Make sure you are viewing this app using the official '}
+                          <strong className="text-slate-900 font-extrabold">Safari Browser</strong> (iPhone default browser).
+                        </li>
+                        <li>
+                          {language === 'tl' 
+                            ? 'Pindutin ang ' 
+                            : 'Tap the '}
+                          <strong className="text-slate-900 font-extrabold">{language === 'tl' ? 'Share button' : 'Share button'}</strong>
+                          {language === 'tl' 
+                            ? ' (ang kahon na may arrow pataas) sa ilalim ng screen (o sa itaas sa iPad).' 
+                            : ' (the box with an up arrow) in the bottom navigation bar (or top for iPad).'}
+                        </li>
+                        <li>
+                          {language === 'tl' 
+                            ? 'Mag-scroll pababa at pindutin ang ' 
+                            : 'Scroll down the share sheet options and tap '}
+                          <span className="text-indigo-600 font-extrabold">"Add to Home Screen"</span> (Idagdag sa Home Screen).
+                        </li>
+                        <li>
+                          {language === 'tl' 
+                            ? 'Pindutin ang "Add" o "Idagdag" sa kanang itaas ng screen para makumpleto ang pag-install!' 
+                            : 'Tap "Add" in the top-right corner to complete the installation!'}
+                        </li>
+                      </ol>
+                    </div>
+                  )}
+
+                  {activePwaGuideTab === 'desktop' && (
+                    <div className="space-y-3 animate-fade-in">
+                      <p className="font-bold text-slate-900 border-b pb-1.5 flex items-center gap-1">
+                        <span>💻</span>
+                        <span>{language === 'tl' ? 'Mga hakbang para sa Desktop, Laptop, Mac, o Chromebook:' : 'Steps for Desktop, Laptop, Mac, or Chromebook:'}</span>
+                      </p>
+                      <ol className="list-decimal pl-4 space-y-2 text-slate-600">
+                        <li>
+                          {language === 'tl' 
+                            ? 'Buksan ang app gamit ang ' 
+                            : 'Open this app in '}
+                          <strong className="text-slate-900 font-extrabold">Google Chrome, Microsoft Edge, o Brave</strong>.
+                        </li>
+                        <li>
+                          {language === 'tl' 
+                            ? 'Tingnan ang kanang bahagi ng address bar sa itaas (malapit sa bookmark star symbol).' 
+                            : 'Look at the right side of the address bar at the top of the browser window.'}
+                        </li>
+                        <li>
+                          {language === 'tl' 
+                            ? 'I-click ang ' 
+                            : 'Click the '}
+                          <strong className="text-indigo-600 font-extrabold">{language === 'tl' ? 'Install Icon' : 'Install Icon'}</strong>
+                          {language === 'tl' 
+                            ? ' (parang monitor o plus icon sa bilog).' 
+                            : ' (looks like a screen monitor or a plus icon inside a circle).'}
+                        </li>
+                        <li>
+                          {language === 'tl' 
+                            ? 'I-click ang "Install" upang gawing standalone desktop app ang Z-oneApp.' 
+                            : 'Click "Install" to place a direct launcher shortcut on your desktop!'}
+                        </li>
+                      </ol>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="bg-slate-50 p-5 border-t border-slate-100 flex justify-end">
+                <button
+                  onClick={() => {
+                    soundEffects.playClick();
+                    setShowPwaGuideModal(false);
+                  }}
+                  className="px-5 py-2.5 bg-slate-900 text-white rounded-xl font-bold text-xs hover:bg-slate-800 transition cursor-pointer"
+                >
+                  {language === 'tl' ? 'Naintindihan ko' : 'I Understand'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );
