@@ -47,7 +47,8 @@ import {
   Ban,
   Upload,
   Megaphone,
-  Smartphone
+  Smartphone,
+  Bell
 } from 'lucide-react';
 import { INITIAL_CAMPAIGNS } from './data/campaigns';
 import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend } from './types';
@@ -206,9 +207,109 @@ export default function App() {
 
   // --- NOTIFICATION BANNER STATE ---
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
-  
+  const [notificationPermission, setNotificationPermission] = useState<string>('default');
+
+  useEffect(() => {
+    if ('Notification' in window) {
+      setNotificationPermission(Notification.permission);
+    }
+  }, []);
+
+  const showDeviceNotification = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
+    if (!('Notification' in window)) return;
+    
+    if (Notification.permission === 'granted') {
+      const cleanMessage = message.replace(/<[^>]*>/g, ''); // strip any HTML tags safely
+      const title = type === 'success' 
+        ? '🎉 Z-oneApp Reward' 
+        : type === 'error' 
+          ? '⚠️ Z-oneApp Alert' 
+          : '🔔 Z-oneApp Notification';
+          
+      const options = {
+        body: cleanMessage,
+        icon: '/icons/icon-192.png',
+        badge: '/icons/icon-192.png',
+        vibrate: [100, 50, 100],
+        tag: 'zone-app-notif',
+        renotify: true,
+        data: {
+          url: window.location.origin
+        }
+      };
+
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.ready.then((registration) => {
+          registration.showNotification(title, options).catch((err) => {
+            console.warn('SW registration showNotification failed:', err);
+            try {
+              new Notification(title, options);
+            } catch (e) {
+              console.error('Standard Notification fallback failed:', e);
+            }
+          });
+        }).catch(() => {
+          try {
+            new Notification(title, options);
+          } catch (e) {
+            console.error('Standard Notification failed:', e);
+          }
+        });
+      } else {
+        try {
+          new Notification(title, options);
+        } catch (e) {
+          console.error('Standard Notification failed:', e);
+        }
+      }
+    }
+  };
+
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      triggerNotification(
+        language === 'tl'
+          ? '⚠️ Hindi suportado ng iyong device ang system notifications.'
+          : '⚠️ Your device does not support system notifications.',
+        'error'
+      );
+      return;
+    }
+
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      if (permission === 'granted') {
+        triggerNotification(
+          language === 'tl'
+            ? '🎉 Matagumpay na pinagana ang notifications sa iyong device!'
+            : '🎉 Device notifications successfully enabled!',
+          'success'
+        );
+        setTimeout(() => {
+          showDeviceNotification(
+            language === 'tl'
+              ? 'Salamat sa pag-enable! Makakatanggap ka na ng balita at update dito.'
+              : 'Thank you for enabling! You will now receive alerts and updates here.',
+            'success'
+          );
+        }, 1000);
+      } else if (permission === 'denied') {
+        triggerNotification(
+          language === 'tl'
+            ? '⚠️ Na-deny ang notifications. I-reset ang settings ng iyong Chrome/browser para payagan ito.'
+            : '⚠️ Notifications denied. Please reset your browser/Chrome settings to allow them.',
+          'error'
+        );
+      }
+    } catch (err) {
+      console.error('Error requesting notification permission:', err);
+    }
+  };
+
   const triggerNotification = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
     setNotification({ message, type });
+    showDeviceNotification(message, type);
     setTimeout(() => {
       setNotification((curr) => curr?.message === message ? null : curr);
     }, 4500);
@@ -1524,6 +1625,18 @@ export default function App() {
                   <span>{language === 'tl' ? 'Install CP App' : 'Install App'}</span>
                 </button>
 
+                {/* 🔔 Allow Device Notifications Prompt if state is default */}
+                {notificationPermission === 'default' && (
+                  <button
+                    onClick={requestNotificationPermission}
+                    className="bg-emerald-600 hover:bg-emerald-500 hover:scale-[1.03] active:scale-[0.97] text-white text-[9px] sm:text-[10px] font-black px-2.5 py-1.5 rounded-xl transition flex items-center gap-1 cursor-pointer shrink-0 shadow-sm"
+                    title={language === 'tl' ? 'Paganahin ang Notifications sa CP / Device' : 'Enable Device Notifications'}
+                  >
+                    <Bell className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
+                    <span>{language === 'tl' ? 'Payagan Notif' : 'Allow Notif'}</span>
+                  </button>
+                )}
+
                 {/* 🌍 LANGUAGE SELECT SWITCH */}
                 <div className="flex items-center gap-0.5 sm:gap-1 bg-slate-950/65 border border-slate-800 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl shadow-inner shrink-0">
                   <button
@@ -1580,15 +1693,6 @@ export default function App() {
                     <p className="text-[8px] sm:text-[9px] text-slate-400 mt-0.5 sm:mt-1 font-semibold truncate max-w-[80px] xs:max-w-[120px] sm:max-w-[130px]" title={user.email}>
                       {user.email}
                     </p>
-                    {!user.isAdmin && (
-                      <button
-                        onClick={handleSimulateTrialExpiration}
-                        className="text-[7px] sm:text-[8px] bg-red-650 hover:bg-red-600 hover:scale-105 active:scale-95 text-white font-black py-0.5 px-1 sm:px-1.5 rounded-sm mt-0.5 sm:mt-1 transition leading-none select-none cursor-pointer inline-block"
-                        title="Isimula ang 1-Day Trial Expiration para sa pagsusulit!"
-                      >
-                        ⚡ Sim Expire
-                      </button>
-                    )}
                   </div>
                   
                   {/* LOGOUT */}
