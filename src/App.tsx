@@ -1604,26 +1604,7 @@ export default function App() {
 
               {/* USER PROFILE CARD AND METRICS */}
               <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto justify-between sm:justify-end">
-                {/* 📱 Mobile Installer header link */}
-                <button
-                  onClick={() => {
-                    const el = document.getElementById('pwa-apk-installation-panel');
-                    if (el) {
-                      el.scrollIntoView({ behavior: 'smooth' });
-                    } else {
-                      const link = document.createElement('a');
-                      link.href = '/Z-oneApp.apk';
-                      link.download = 'Z-oneApp.apk';
-                      document.body.appendChild(link);
-                      link.click();
-                      document.body.removeChild(link);
-                    }
-                  }}
-                  className="bg-indigo-650 hover:bg-indigo-600 hover:scale-[1.03] active:scale-[0.97] text-white text-[9px] sm:text-[10px] font-black px-2.5 py-1.5 rounded-xl transition flex items-center gap-1 cursor-pointer shrink-0 shadow-sm"
-                >
-                  <Smartphone className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
-                  <span>{language === 'tl' ? 'Install CP App' : 'Install App'}</span>
-                </button>
+
 
                 {/* 🔔 Allow Device Notifications Prompt if state is default */}
                 {notificationPermission === 'default' && (
