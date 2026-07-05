@@ -139,6 +139,7 @@ interface UserSession {
   createdAt?: string;
   subscription?: Subscription;
   completedCampaignIds?: string[]; // track completed campaigns centrally
+  lastCampaignDateKey?: string; // tracks daily campaign resets at 6am PST
   stats: {
     balance: number;
     lifetimeEarnings: number;
@@ -1214,6 +1215,21 @@ app.post('/api/user/update-profile', (req, res) => {
 });
 
 // --- CAMPAIGNS ENDPOINTS ---
+// Helper to get Philippine Standard Time (PST, UTC+8) date key shifted by 6 hours so it resets at exactly 6:00 AM PST
+function getPST6AMDateKey(): string {
+  const now = Date.now();
+  // Philippine Standard Time is UTC+8.
+  // We want to shift PST back by 6 hours so that the reset boundary is at 6:00 AM PST.
+  // Shifting PST back by 6 hours means: shiftedTime = now + 8 hours - 6 hours = now + 2 hours.
+  const shiftedMs = now + (2 * 60 * 60 * 1000);
+  const shiftedDate = new Date(shiftedMs);
+  
+  const year = shiftedDate.getUTCFullYear();
+  const month = String(shiftedDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(shiftedDate.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 app.get('/api/campaigns', (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
@@ -1234,7 +1250,20 @@ app.get('/api/campaigns', (req, res) => {
   }
 
   // Regular users see exactly 3 random (deterministic per day, per user) campaigns
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getPST6AMDateKey();
+  
+  // If the 6 AM PST transition day has changed, clear the user's completed campaign list
+  let dbChanged = false;
+  if (user.lastCampaignDateKey !== todayStr) {
+    user.completedCampaignIds = [];
+    user.lastCampaignDateKey = todayStr;
+    dbChanged = true;
+  }
+
+  if (dbChanged) {
+    saveDB(db);
+  }
+
   const selectionSeedStr = `${todayStr}-${user.id}`;
   
   // Seeded Random helper function

@@ -7,12 +7,12 @@
     <meta name="monetag" content="11e081287c25e53b58eb8233ab78e674">
     
     <!-- PWA Settings -->
-    <link rel="manifest" href="/manifest.json">
+    <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#2196f3">
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Z-oneApp" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
     
     <style>
       .install-btn {
@@ -44,7 +44,7 @@
   <body>
     <button id="installBtn" class="install-btn">Install App</button>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="src/main.tsx"></script>
     
     <!-- PWA Installation Script & Service Worker Registration -->
     <script>
@@ -58,7 +58,7 @@
       });
 
       installBtn.addEventListener("click", () => {
-        window.location.href = "/appstore.html";
+        window.location.href = "appstore.html";
       });
 
       window.addEventListener("load", () => {
@@ -71,7 +71,7 @@
       });
 
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("/sw.js")
+        navigator.serviceWorker.register("sw.js")
           .then(() => console.log("SW registered"))
           .catch(err => console.log("SW failed", err));
       }
