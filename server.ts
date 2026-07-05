@@ -224,6 +224,7 @@ interface MerchantAd {
   createdAt: string;
   approvedAt?: string;
   expiresAt?: string;
+  aiCommercial?: any;
 }
 
 interface DBStructure {
@@ -1486,8 +1487,189 @@ app.get('/api/admin/merchant/ads', (req, res) => {
   res.json({ ads: db.merchantAds || [] });
 });
 
+function getCuratedImagesForCategory(category: string): string[] {
+  const lower = (category || '').toLowerCase();
+  if (lower.includes('shop') || lower.includes('bili') || lower.includes('retail') || lower.includes('shopping')) {
+    return [
+      'https://images.unsplash.com/photo-1472851294608-062f824d296e?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1555529669-e69e7aa0ba9a?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?w=800&auto=format&fit=crop&q=80'
+    ];
+  }
+  if (lower.includes('balita') || lower.includes('news') || lower.includes('ulat')) {
+    return [
+      'https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1495020689067-958852a6565d?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1588681664899-f142ff2bac99?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1511649475100-a101ee9d1362?w=800&auto=format&fit=crop&q=80'
+    ];
+  }
+  if (lower.includes('tech') || lower.includes('computer') || lower.includes('software') || lower.includes('teknolohiya')) {
+    return [
+      'https://images.unsplash.com/photo-1518770660439-4636190af475?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1519389950473-47ba0277781c?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=800&auto=format&fit=crop&q=80'
+    ];
+  }
+  if (lower.includes('kultura') || lower.includes('sining') || lower.includes('art') || lower.includes('travel') || lower.includes('culture')) {
+    return [
+      'https://images.unsplash.com/photo-1499781350541-7783f6c6a0c8?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1531243269054-5ebf6f3b0b6e?w=800&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=800&auto=format&fit=crop&q=80'
+    ];
+  }
+  // Default / E-Services
+  return [
+    'https://images.unsplash.com/photo-1521791136364-7286d35243dd?w=800&auto=format&fit=crop&q=80',
+    'https://images.unsplash.com/photo-1553878827-4760f31f712e?w=800&auto=format&fit=crop&q=80',
+    'https://images.unsplash.com/photo-1507537297725-24a1c029d3ca?w=800&auto=format&fit=crop&q=80',
+    'https://images.unsplash.com/photo-1515378791036-0648a3ef77b2?w=800&auto=format&fit=crop&q=80'
+  ];
+}
+
+function getFallbackAICommercial(ad: any): any {
+  const images = getCuratedImagesForCategory(ad.category);
+  return {
+    title: `Sikat na ${ad.title} Patalastas`,
+    musicMood: "Upbeat & Inspiring Corporate Beat",
+    ctaText: "Bisitahin kami ngayon sa Z-oneApp!",
+    scenes: [
+      {
+        id: "scene-1",
+        text: `Naghahanap ka ba ng maaasahang serbisyo? Ipakikilala namin ang ${ad.title}!`,
+        visualDescription: `Isang malinis at modernong pasimula na nagpapakita ng pangalan ng ${ad.title}.`,
+        imageUrl: images[0]
+      },
+      {
+        id: "scene-2",
+        text: `${ad.description}`,
+        visualDescription: `Isang eksena na nagpapakita ng mga benepisyo at mga tampok ng serbisyong ito.`,
+        imageUrl: images[1]
+      },
+      {
+        id: "scene-3",
+        text: "Mabilis, maaasahan, at ginawa para sa bawat Pilipino saanman sa bansa.",
+        visualDescription: `Masasayang tao na gumagamit ng kanilang mga mobile phone nang may ngiti.`,
+        imageUrl: images[2]
+      },
+      {
+        id: "scene-4",
+        text: `Subukan ang ${ad.title} ngayon! Bisitahin ang aming link upang makakuha ng reward!`,
+        visualDescription: `Isang kaakit-akit na pagtatapos na may logo ng ${ad.title} at button na bumisita.`,
+        imageUrl: images[3]
+      }
+    ]
+  };
+}
+
+async function generateAICommercial(ad: any): Promise<any> {
+  const fallback = getFallbackAICommercial(ad);
+  const ai = getGeminiClient();
+  if (!ai) {
+    console.log("No Gemini API key available. Using high-quality fallback commercial.");
+    return fallback;
+  }
+
+  try {
+    const prompt = `Gawa ka ng isang kapana-panabik at kaakit-akit na AI Commercial para sa sumusunod na negosyo sa Pilipinas.
+Pangalan ng Negosyo: ${ad.title}
+Kategorya: ${ad.category}
+Deskripsyon: ${ad.description}
+
+Gumawa ng eksaktong 4 na magkakasunod na scenes (Scene 1 hanggang 4) para sa patalastas na ito.
+Ang bawat scene ay dapat magkaroon ng:
+1. text: Isang kapana-panabik at kaakit-akit na maikling voiceover (na isusulat sa natural na Tagalog o nakaka-engganyong Taglish). Dapat ay 1 hanggang 2 maiikling pangungusap lamang na madaling basahin sa loob ng 5 segundo.
+2. visualDescription: Isang detalyadong visual description para sa scene (hal. "Isang malapit na kuha ng masayang tindera na may ngiti sa labi habang iniaabot ang produkto").
+
+Ibalik ang tugon sa format ng JSON na may eksaktong ganitong structure:
+{
+  "title": "Pamagat ng Commercial",
+  "musicMood": "Uri ng background music (hal. Upbeat & Happy Pop, Cool Tech Synth, Warm acoustic guitar)",
+  "ctaText": "Call to action text (hal. Bisitahin kami sa Z-oneApp ngayon!)",
+  "scenes": [
+    {
+      "id": "scene-1",
+      "text": "Voiceover script ng Scene 1...",
+      "visualDescription": "Visual description ng Scene 1..."
+    },
+    {
+      "id": "scene-2",
+      "text": "Voiceover script ng Scene 2...",
+      "visualDescription": "Visual description ng Scene 2..."
+    },
+    {
+      "id": "scene-3",
+      "text": "Voiceover script ng Scene 3...",
+      "visualDescription": "Visual description ng Scene 3..."
+    },
+    {
+      "id": "scene-4",
+      "text": "Voiceover script ng Scene 4...",
+      "visualDescription": "Visual description ng Scene 4..."
+    }
+  ]
+}`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            title: { type: "STRING" },
+            musicMood: { type: "STRING" },
+            ctaText: { type: "STRING" },
+            scenes: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  id: { type: "STRING" },
+                  text: { type: "STRING" },
+                  visualDescription: { type: "STRING" }
+                },
+                required: ["id", "text", "visualDescription"]
+              }
+            }
+          },
+          required: ["title", "musicMood", "ctaText", "scenes"]
+        }
+      }
+    });
+
+    const text = response.text;
+    if (text) {
+      const parsed = JSON.parse(text.trim());
+      if (parsed && Array.isArray(parsed.scenes) && parsed.scenes.length === 4) {
+        const images = getCuratedImagesForCategory(ad.category);
+        const scenesWithImages = parsed.scenes.map((scene: any, index: number) => ({
+          ...scene,
+          id: scene.id || `scene-${index + 1}`,
+          imageUrl: images[index] || images[0]
+        }));
+        return {
+          title: parsed.title || fallback.title,
+          musicMood: parsed.musicMood || fallback.musicMood,
+          ctaText: parsed.ctaText || fallback.ctaText,
+          scenes: scenesWithImages,
+          duration: 20
+        };
+      }
+    }
+  } catch (error) {
+    console.error("Failed to generate AI Commercial via Gemini:", error);
+  }
+
+  return fallback;
+}
+
 // 4. POST /api/admin/merchant/ads/:id/action -> approve or decline
-app.post('/api/admin/merchant/ads/:id/action', (req, res) => {
+app.post('/api/admin/merchant/ads/:id/action', async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -1529,6 +1711,10 @@ app.post('/api/admin/merchant/ads/:id/action', (req, res) => {
   ad.approvedAt = now.toISOString();
   ad.expiresAt = expiry.toISOString();
 
+  // Generate AI Commercial (100% related to the business promotion!)
+  const aiCommercial = await generateAICommercial(ad);
+  ad.aiCommercial = aiCommercial;
+
   // Determine rewards amount based on plan
   let rewardAmount = 1.50;
   let maxClicks = 150;
@@ -1556,6 +1742,7 @@ app.post('/api/admin/merchant/ads/:id/action', (req, res) => {
     completed: false,
     clicks: 0,
     maxClicks: maxClicks,
+    aiCommercial: aiCommercial,
     mockPageContent: {
       heroTitle: `⭐ ${ad.title}`,
       heroSubtitle: `Sponsored Promotion - Bisitahin ang website upang makakuha ng Reward!`,

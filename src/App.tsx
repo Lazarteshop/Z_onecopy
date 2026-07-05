@@ -59,6 +59,7 @@ import AdminPanel from './components/AdminPanel';
 import ZoneFeed from './components/ZoneFeed';
 import ZonePromoVideo from './components/ZonePromoVideo';
 import MerchantPortal from './components/MerchantPortal';
+import AICommercialPlayer from './components/AICommercialPlayer';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -160,6 +161,7 @@ export default function App() {
   
   const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo'>('earn');
   const [currentViewingCampaign, setCurrentViewingCampaign] = useState<WebsiteCampaign | null>(null);
+  const [activeCommercialCamp, setActiveCommercialCamp] = useState<WebsiteCampaign | null>(null);
 
   // Add custom campaigns state
   const [customTitle, setCustomTitle] = useState('');
@@ -2168,20 +2170,35 @@ export default function App() {
                               <span>{camp.timer} segundo</span>
                             </div>
 
-                            {camp.completed ? (
-                              <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-3 py-1.5 rounded-xl flex items-center gap-1 animate-fadeIn">
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                <span>Tagumpay na nakuha!</span>
-                              </span>
-                            ) : (
-                              <button
-                                onClick={() => handleOpenCampaign(camp)}
-                                className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-black px-4 py-2 rounded-xl transition shadow shadow-blue-100 flex items-center gap-1 cursor-pointer hover:scale-[1.03]"
-                              >
-                                <Eye className="w-3.5 h-3.5 shrink-0" />
-                                <span>Buksan Homepage</span>
-                              </button>
-                            )}
+                            <div className="flex items-center gap-1.5">
+                              {camp.aiCommercial && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveCommercialCamp(camp);
+                                  }}
+                                  className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-black px-3 py-2 rounded-xl transition flex items-center gap-1 cursor-pointer hover:scale-[1.03] animate-pulse"
+                                >
+                                  <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                  <span>Commercial</span>
+                                </button>
+                              )}
+                              {camp.completed ? (
+                                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-3 py-1.5 rounded-xl flex items-center gap-1 animate-fadeIn">
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>Tagumpay na nakuha!</span>
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => handleOpenCampaign(camp)}
+                                  className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-black px-4 py-2 rounded-xl transition shadow shadow-blue-100 flex items-center gap-1 cursor-pointer hover:scale-[1.03]"
+                                >
+                                  <Eye className="w-3.5 h-3.5 shrink-0" />
+                                  <span>Buksan Homepage</span>
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -2456,6 +2473,38 @@ export default function App() {
               />
             )}
           </AnimatePresence>
+
+          {/* 🎬 AI COMMERCIAL POPUP PLAYER */}
+          {activeCommercialCamp && (
+            <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+              <div className="bg-slate-950 border border-slate-800 rounded-3xl p-1 max-w-4xl w-full relative shadow-2xl">
+                <button
+                  onClick={() => setActiveCommercialCamp(null)}
+                  className="absolute -top-12 right-0 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs px-4 py-2 rounded-full border border-slate-700 cursor-pointer select-none transition z-50 flex items-center gap-1"
+                >
+                  ✕ {language === 'tl' ? 'Isara' : 'Close'}
+                </button>
+                {activeCommercialCamp.aiCommercial ? (
+                  <AICommercialPlayer
+                    commercial={activeCommercialCamp.aiCommercial}
+                    businessUrl={activeCommercialCamp.url}
+                    businessTitle={activeCommercialCamp.title}
+                    onClose={() => setActiveCommercialCamp(null)}
+                  />
+                ) : (
+                  <div className="p-8 text-center space-y-4">
+                    <p className="text-slate-400 font-bold text-sm">Walang nahanap na AI Commercial para sa campaign na ito.</p>
+                    <button 
+                      onClick={() => setActiveCommercialCamp(null)}
+                      className="bg-indigo-600 text-white px-4 py-2 rounded-xl font-bold cursor-pointer"
+                    >
+                      Isara
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* FOOTER */}
           <footer id="dashboard-footer" className="bg-white border-t border-slate-200 mt-12 py-6">

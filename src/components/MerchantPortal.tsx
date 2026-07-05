@@ -18,6 +18,7 @@ import {
   Award
 } from 'lucide-react';
 import { MerchantAd } from '../types';
+import AICommercialPlayer from './AICommercialPlayer';
 
 interface MerchantPortalProps {
   token: string | null;
@@ -79,6 +80,7 @@ export default function MerchantPortal({
 
   // Preview State
   const [previewAd, setPreviewAd] = useState<MerchantAd | null>(null);
+  const [activeCommercialAd, setActiveCommercialAd] = useState<MerchantAd | null>(null);
 
   const fetchMyAds = async () => {
     if (!token) return;
@@ -311,6 +313,38 @@ export default function MerchantPortal({
                 *Ganito eksakto ang makikita ng ibang mga user upang sila ay maengganyong bumisita sa iyong negosyo!
               </p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🎬 AI COMMERCIAL POPUP PLAYER */}
+      {activeCommercialAd && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-slate-950 border border-slate-800 rounded-3xl p-1 max-w-4xl w-full relative shadow-2xl">
+            <button
+              onClick={() => setActiveCommercialAd(null)}
+              className="absolute -top-12 right-0 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs px-4 py-2 rounded-full border border-slate-700 cursor-pointer select-none transition z-50 flex items-center gap-1"
+            >
+              ✕ {language === 'tl' ? 'Isara' : 'Close'}
+            </button>
+            {activeCommercialAd.aiCommercial ? (
+              <AICommercialPlayer
+                commercial={activeCommercialAd.aiCommercial}
+                businessUrl={activeCommercialAd.url}
+                businessTitle={activeCommercialAd.title}
+                onClose={() => setActiveCommercialAd(null)}
+              />
+            ) : (
+              <div className="p-8 text-center space-y-4">
+                <p className="text-slate-400 font-bold text-sm">Walang nahanap na AI Commercial para sa promotion na ito.</p>
+                <button 
+                  onClick={() => setActiveCommercialAd(null)}
+                  className="bg-indigo-600 text-white px-4 py-2 rounded-xl font-bold cursor-pointer"
+                >
+                  Isara
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -646,13 +680,25 @@ export default function MerchantPortal({
                       <span>{new Date(ad.createdAt).toLocaleDateString('fil-PH', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                     </span>
 
-                    <button
-                      onClick={() => { setPreviewAd(ad); }}
-                      className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-black text-[10px] px-3 py-1.5 rounded-xl flex items-center gap-1 transition cursor-pointer"
-                    >
-                      <Eye className="w-3.5 h-3.5 text-slate-600" />
-                      <span>{language === 'tl' ? 'I-preview' : 'Preview'}</span>
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      {ad.status === 'active' && (
+                        <button
+                          type="button"
+                          onClick={() => { setActiveCommercialAd(ad); }}
+                          className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-black text-[10px] px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition cursor-pointer select-none animate-pulse"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>{language === 'tl' ? 'AI Commercial' : 'AI Commercial'}</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={() => { setPreviewAd(ad); }}
+                        className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-black text-[10px] px-3 py-1.5 rounded-xl flex items-center gap-1 transition cursor-pointer"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-slate-600" />
+                        <span>{language === 'tl' ? 'I-preview' : 'Preview'}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}

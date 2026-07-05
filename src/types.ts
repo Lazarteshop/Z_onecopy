@@ -17,6 +17,7 @@ export interface WebsiteCampaign {
     features?: string[];
     offers?: string[];
   };
+  aiCommercial?: any;
 }
 
 export interface WithdrawalRequest {
@@ -121,6 +122,7 @@ export interface MerchantAd {
   createdAt: string;
   approvedAt?: string;
   expiresAt?: string;
+  aiCommercial?: any;
 }
 
 
