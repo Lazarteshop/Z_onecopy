@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Z-oneApp Store - EchoZone PH</title>
+
+<!-- Import Clean Modern Font -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+body {
+  font-family: 'Inter', sans-serif;
+  background: #090d16;
+  color: #f8fafc;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+.header {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 18px;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  border-bottom: 1px solid #1e293b;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+.container {
+  max-width: 480px;
+  width: 90%;
+  margin: 40px auto;
+  background: #1e293b;
+  border-radius: 20px;
+  border: 1px solid #334155;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 40px rgba(99, 102, 241, 0.1);
+  overflow: hidden;
+}
+.app-header {
+  display: flex;
+  align-items: center;
+  padding: 24px;
+  border-bottom: 1px solid #334155;
+}
+.app-icon {
+  width: 88px;
+  height: 88px;
+  border-radius: 22px;
+  object-fit: cover;
+  border: 2px solid #6366f1;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+}
+.app-info {
+  margin-left: 20px;
+}
+.app-name {
+  font-size: 24px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.025em;
+  margin-bottom: 4px;
+}
+.app-developer {
+  font-size: 14px;
+  color: #a5b4fc;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+.app-meta {
+  font-size: 12px;
+  color: #94a3b8;
+}
+.install-btn {
+  display: block;
+  margin: 20px 24px;
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+  color: #ffffff;
+  text-align: center;
+  padding: 14px;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+  transition: all 0.2s ease-in-out;
+}
+.install-btn:hover {
+  background: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+}
+.install-btn:active {
+  transform: translateY(0);
+}
+.screenshots-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #94a3b8;
+  padding: 10px 24px 5px 24px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.screenshots {
+  display: flex;
+  overflow-x: auto;
+  padding: 10px 24px 20px 24px;
+  gap: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: #475569 #1e293b;
+}
+.screenshots::-webkit-scrollbar {
+  height: 6px;
+}
+.screenshots::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+.screenshots::-webkit-scrollbar-thumb {
+  background-color: #475569;
+  border-radius: 3px;
+}
+.screenshots img {
+  width: 180px;
+  height: auto;
+  border-radius: 14px;
+  border: 1px solid #475569;
+  transition: transform 0.2s;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+.screenshots img:hover {
+  transform: scale(1.02);
+}
+.description {
+  padding: 24px;
+  border-top: 1px solid #334155;
+  background: #111827;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #cbd5e1;
+}
+.description b {
+  color: #ffffff;
+  font-size: 16px;
+}
+.footer {
+  text-align: center;
+  font-size: 12px;
+  color: #475569;
+  margin-top: auto;
+  padding: 20px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="header">Z-oneApp Store</div>
+
+<div class="container">
+
+  <div class="app-header">
+    <img src="/pwa-icon-512.jpg" class="app-icon" alt="Z-oneApp Icon" onerror="this.src='/icon-192.png'">
+    <div class="app-info">
+      <div class="app-name">Z-oneApp</div>
+      <div class="app-developer">Developer: EchoZone PH</div>
+      <div class="app-meta">Version 1.0 • Android PWA App</div>
+    </div>
+  </div>
+
+  <!-- INSTALL BUTTON -->
+  <a class="install-btn" href="#" onclick="installApp(event)">Install Z-oneApp</a>
+
+  <!-- Screenshots -->
+  <div class="screenshots-title">Screenshots</div>
+  <div class="screenshots">
+    <img src="https://echozoneph.vercel.app/1771133882319.jpg" alt="Screenshot 1">
+    <img src="https://echozoneph.vercel.app/1771133892953.jpg" alt="Screenshot 2">
+    <img src="https://echozoneph.vercel.app/1771133936006.jpg" alt="Screenshot 3">
+  </div>
+
+  <div class="description">
+    <b>About this app</b><br><br>
+    Kumita habang nanonood ng mga campaign links at sponsored website homepages sa Z-oneApp.<br><br>
+    Mag-register ng account, bisitahin ang mga verified websites upang makalikom ng rewards, mag-cashout sa GCash gamit ang interactive simulator, at i-enjoy ang buong earning platform araw-araw!
+  </div>
+
+</div>
+
+<div class="footer">
+  &copy; 2026 EchoZone PH. All rights reserved.
+</div>
+
+<script>
+function installApp(event){
+  event.preventDefault();
+  if(confirm("Gusto mo bang i-download at i-install ang Z-oneApp?")){
+    window.location.href="https://echozoneph.vercel.app/echozoneph(v1)_20260215_132439.apk";
+  }
+}
+</script>
+
+</body>
+</html>

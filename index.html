@@ -17,18 +17,27 @@
     <style>
       .install-btn {
         position: fixed;
-        bottom: 70px;
+        bottom: 75px;
         right: 20px;
-        background: #0a4fb3;
+        background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
         color: #fff;
-        border: none;
-        padding: 12px 18px;
-        border-radius: 25px;
-        font-weight: bold;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        padding: 12px 20px;
+        border-radius: 9999px;
+        font-weight: 800;
         cursor: pointer;
         display: none;
         z-index: 9999;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.5), 0 8px 10px -6px rgba(99, 102, 241, 0.5);
+        letter-spacing: -0.01em;
+        transition: all 0.2s ease-in-out;
+      }
+      .install-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 30px -5px rgba(99, 102, 241, 0.6);
+      }
+      .install-btn:active {
+        transform: translateY(1px);
       }
     </style>
   </head>
@@ -48,21 +57,15 @@
         installBtn.style.display = "block";
       });
 
-      installBtn.addEventListener("click", async () => {
-        if (deferredPrompt) {
-          deferredPrompt.prompt();
-          await deferredPrompt.userChoice;
-          deferredPrompt = null;
-        } else {
-          alert("Tap menu (⋮) then 'Add to Home Screen'");
-        }
+      installBtn.addEventListener("click", () => {
+        window.location.href = "/appstore.html";
       });
 
       window.addEventListener("load", () => {
         setTimeout(() => {
           if (!deferredPrompt) {
             installBtn.style.display = "block";
-            installBtn.innerText = "Install (Use menu ⋮)";
+            installBtn.innerText = "Install App 📱";
           }
         }, 3000);
       });
