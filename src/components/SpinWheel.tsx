@@ -354,16 +354,7 @@ export default function SpinWheel({ token, onAccessGranted }: SpinWheelProps) {
             </div>
           )}
 
-          {/* MARKETING DISCLOSURE NOTE */}
-          <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3.5 flex items-start gap-2.5 max-w-sm text-[10px] text-slate-400 leading-relaxed font-semibold">
-            <Info className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <span className="text-indigo-300 font-extrabold block">Gabay sa Spin Wheel:</span>
-              <span>
-                Ang cash amounts na nakikita sa gulong ay para lamang sa disenyo at hindi aktwal na premyo. Tanging ang <span className="text-yellow-400 font-black">3-Hours Free Access</span> at <span className="text-rose-400 font-black">Please Come Back Tomorrow</span> ang tunay na lalabas. Sa lahat ng expired users, tanging isang maswerteng tao lang ang makakakuha ng libreng access kada araw!
-              </span>
-            </div>
-          </div>
+          {/* GABAY SA SPIN WHEEL (PRIVATE SOURCE-ONLY NOTE: Ang cash amounts na nakikita sa gulong ay para lamang sa disenyo at hindi aktwal na premyo. Tanging ang 3-Hours Free Access at Please Come Back Tomorrow ang tunay na lalabas. Sa lahat ng expired users, tanging isang maswerteng tao lang ang makakakuha ng libreng access kada araw!) */}
 
         </div>
       )}
