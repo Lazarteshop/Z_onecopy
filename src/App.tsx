@@ -48,7 +48,9 @@ import {
   Upload,
   Megaphone,
   Smartphone,
-  Bell
+  Bell,
+  QrCode,
+  Download
 } from 'lucide-react';
 import { INITIAL_CAMPAIGNS } from './data/campaigns';
 import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend } from './types';
@@ -1855,7 +1857,7 @@ export default function App() {
 
                 {/* IF THE REQUEST IS PENDING */}
                 {user.subscription?.status === 'pending' ? (
-                  <div className="bg-white border-2 border-amber-400 rounded-3xl p-6 shadow-lg space-y-5">
+                  <div className="bg-white border-2 border-amber-400 rounded-3xl p-6 shadow-lg space-y-6">
                     <div className="flex items-start gap-4">
                       <div className="bg-amber-100 p-3 rounded-2xl shrink-0 text-amber-600 animate-pulse">
                         <Clock className="w-6 h-6" />
@@ -1863,21 +1865,73 @@ export default function App() {
                       <div className="space-y-1">
                         <h3 className="font-extrabold text-slate-900 text-sm">📨 Naghihintay ng Pag-approve ng Admin...</h3>
                         <p className="text-xs text-slate-550 font-bold leading-relaxed">
-                          Hiniling mo ang <span className="text-indigo-600 font-black">{user.subscription.requestedPlanName}</span>. Mangyaring magdeposito ng exact amount <span className="text-emerald-600 font-black">₱{user.subscription.requestedAmount}</span> sa Authorize Gcash:
+                          Hiniling mo ang <span className="text-indigo-600 font-black">{user.subscription.requestedPlanName}</span>. Mangyaring magdeposito ng eksaktong halaga na <span className="text-emerald-605 font-black">₱{user.subscription.requestedAmount}</span> sa pamamagitan ng pag-scan sa aming official GCash InstaPay QR Code sa ibaba:
                         </p>
-                        <div className="bg-slate-50 border border-slate-150 p-3 rounded-2xl mt-2 select-all font-mono font-black text-center text-indigo-700 text-sm tracking-wide">
-                          GCASH NO: 09914089646
-                        </div>
                       </div>
                     </div>
 
+                    {/* QR CODE CONTAINER */}
+                    <div className="bg-slate-50 border border-slate-150 rounded-2xl p-5 flex flex-col items-center justify-center text-center space-y-4">
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-md relative group">
+                        <img 
+                          src="/admin_gcash_qr.png" 
+                          alt="Z-oneApp Admin GCash QR" 
+                          className="w-56 h-56 object-contain rounded-lg mx-auto"
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="absolute top-2 right-2 bg-indigo-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow">
+                          INSTAPAY
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5 w-full max-w-sm">
+                        <span className="text-indigo-600 font-black text-xs block">🛡️ SECURE INSTAPAY MERCHANT QR</span>
+                        <a 
+                          href="/admin_gcash_qr.png" 
+                          download="Z-oneApp_Admin_GCash_QR.png"
+                          className="inline-flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 transition px-4 py-2 rounded-xl text-indigo-700 font-black text-[11px] cursor-pointer shadow-sm border border-indigo-150 mx-auto"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>I-download ang QR Code</span>
+                        </a>
+                      </div>
+                    </div>
+
+                    {/* SCAN INSTRUCTIONS */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4.5 space-y-3">
+                      <h4 className="font-black text-slate-900 text-xs flex items-center gap-2">
+                        <QrCode className="w-4 h-4 text-indigo-600" />
+                        <span>Gabay sa Pag-Scan Gamit ang GCash (How to Pay):</span>
+                      </h4>
+                      <ol className="list-decimal pl-4.5 text-xs text-slate-600 font-bold space-y-2 leading-relaxed">
+                        <li>
+                          I-click ang <span className="text-indigo-600 font-black">"I-download ang QR Code"</span> sa itaas o kumuha ng screenshot ng QR Code.
+                        </li>
+                        <li>
+                          Buksan ang iyong <span className="text-blue-600 font-black">GCash App</span>.
+                        </li>
+                        <li>
+                          Piliin ang <span className="text-slate-900 font-black">"QR"</span> o <span className="text-slate-900 font-black">"Scan QR"</span> sa ibaba ng iyong home screen sa GCash.
+                        </li>
+                        <li>
+                          I-click ang <span className="text-indigo-600 font-black">"Upload from Gallery"</span> at piliin ang larawan ng QR Code na iyong na-save.
+                        </li>
+                        <li>
+                          I-input ang tamang halaga ng subscription plan: <span className="text-emerald-600 font-black">₱{user.subscription.requestedAmount}</span>.
+                        </li>
+                        <li>
+                          Kumuha ng screenshot ng iyong <span className="text-amber-600 font-black">Success Receipt</span> para sa mabilis na pag-verify.
+                        </li>
+                      </ol>
+                    </div>
+
                     <div className="bg-amber-50/70 border border-amber-150 rounded-2xl p-4 text-xs font-bold text-amber-900 space-y-2 leading-relaxed">
-                      <p>💡 **Para sa mabilis na pagsuri (Review & Testing):**</p>
+                      <p>💡 **Para sa mabilis na pagsuri at tulong (Support Helpdesk):**</p>
                       <ul className="list-disc pl-4 space-y-1">
-                        <li>Mag hintay ng approval ng system at kung medyo matagal ang proseso maaring mag email sa aming helpline</li>
+                        <li>Maghintay ng approval mula sa system. Kung medyo matagal ang proseso, maaari kayong mag-email sa aming helpline:</li>
                         <li>Email: <span className="font-mono bg-white px-1 py-0.2 rounded border select-all font-bold text-slate-800">Info.echozone@yahoo.com</span></li>
-                        <li>Password: <span className="font-mono bg-white px-1 py-0.2 rounded border select-all font-bold text-slate-800">or mag message sa inyong upline, team leader, coach, or group chat or sa aming official Facebook page Z-oneApp2026</span></li>
-                        <li>**THANK YOU**</li>
+                        <li>O magpadala ng mensahe sa iyong upline, team leader, coach, o sa aming opisyal na Facebook page: <span className="font-black text-indigo-700">Z-oneApp2026</span>.</li>
+                        <li>**THANK YOU FOR YOUR SUBSCRIPTION**</li>
                       </ul>
                     </div>
 
