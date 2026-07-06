@@ -1865,7 +1865,7 @@ export default function App() {
                       <div className="space-y-1">
                         <h3 className="font-extrabold text-slate-900 text-sm">📨 Naghihintay ng Pag-approve ng Admin...</h3>
                         <p className="text-xs text-slate-550 font-bold leading-relaxed">
-                          Hiniling mo ang <span className="text-indigo-600 font-black">{user.subscription.requestedPlanName}</span>. Mangyaring magdeposito ng eksaktong halaga na <span className="text-emerald-605 font-black">₱{user.subscription.requestedAmount}</span> sa pamamagitan ng pag-scan sa aming official GCash InstaPay QR Code sa ibaba:
+                          Hiniling mo ang <span className="text-indigo-600 font-black">{user.subscription.requestedPlanName}</span>. Mangyaring magdeposito ng eksaktong halaga na <span className="text-emerald-600 font-black">₱{user.subscription.requestedAmount}</span> sa pamamagitan ng pag-scan sa aming official GCash InstaPay QR Code sa ibaba:
                         </p>
                       </div>
                     </div>
