@@ -60,6 +60,7 @@ import ZoneFeed from './components/ZoneFeed';
 import ZonePromoVideo from './components/ZonePromoVideo';
 import MerchantPortal from './components/MerchantPortal';
 import AICommercialPlayer from './components/AICommercialPlayer';
+import SpinWheel from './components/SpinWheel';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -617,6 +618,13 @@ export default function App() {
   const isSubscriptionExpired = () => {
     if (!user) return false;
     if (user.isAdmin) return false;
+
+    // Check if free access is active from Spin Wheel
+    if (user.freeAccessExpiresAt) {
+      if (new Date(user.freeAccessExpiresAt).getTime() > now.getTime()) {
+        return false; // NOT expired! They have active 3-hour access
+      }
+    }
     
     // Check registration creation date
     const regDate = user.createdAt ? new Date(user.createdAt) : new Date();
@@ -1815,6 +1823,12 @@ export default function App() {
                     </p>
                   </div>
                 </div>
+
+                {/* DAILY LUCKY SPIN WHEEL */}
+                <SpinWheel 
+                  token={token} 
+                  onAccessGranted={() => fetchUserProfile(token)} 
+                />
 
                 {/* ACCOUNT ACCESS STATUS SUMMARY (EXPIRED STATE) */}
                 <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-3">

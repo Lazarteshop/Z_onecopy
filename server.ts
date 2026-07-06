@@ -140,6 +140,9 @@ interface UserSession {
   subscription?: Subscription;
   completedCampaignIds?: string[]; // track completed campaigns centrally
   lastCampaignDateKey?: string; // tracks daily campaign resets at 6am PST
+  freeAccessExpiresAt?: string; // 3-Hour free access from spin wheel
+  lastSpinDateKey?: string; // daily track for spin wheel YYYY-MM-DD PST
+  wonFreeAccessDateKey?: string; // daily track to ensure ONLY ONE winner per day in system
   stats: {
     balance: number;
     lifetimeEarnings: number;
@@ -473,7 +476,8 @@ const lastSyncedCache = {
   users: new Map<string, string>(),
   campaigns: new Map<string, string>(),
   posts: new Map<string, string>(),
-  directMessages: new Map<string, string>()
+  directMessages: new Map<string, string>(),
+  merchantAds: new Map<string, string>()
 };
 
 function initLastSyncedCache(data: DBStructure) {
@@ -495,6 +499,11 @@ function initLastSyncedCache(data: DBStructure) {
   if (lastSyncedCache.directMessages.size === 0 && data.directMessages && data.directMessages.length > 0) {
     for (const dm of data.directMessages) {
       lastSyncedCache.directMessages.set(dm.id, JSON.stringify(dm));
+    }
+  }
+  if (lastSyncedCache.merchantAds.size === 0 && data.merchantAds && data.merchantAds.length > 0) {
+    for (const ma of data.merchantAds) {
+      lastSyncedCache.merchantAds.set(ma.id, JSON.stringify(ma));
     }
   }
 }
@@ -607,6 +616,25 @@ async function uploadToFirestore(data: DBStructure) {
       }
     }
 
+    const maPromises: Promise<any>[] = [];
+    if (data.merchantAds) {
+      for (const ma of data.merchantAds) {
+        const maStr = JSON.stringify(ma);
+        if (lastSyncedCache.merchantAds.get(ma.id) !== maStr) {
+          maPromises.push((async () => {
+            try {
+              const maDocRef = firestore!.collection('merchant_ads').doc(ma.id);
+              const { id, ...maWithoutId } = ma;
+              await maDocRef.set(maWithoutId);
+              lastSyncedCache.merchantAds.set(ma.id, maStr);
+            } catch (maErr) {
+              console.error(`Error saving Merchant Ad ${ma.id} to Firestore:`, maErr);
+            }
+          })());
+        }
+      }
+    }
+
     const deletionPromises: Promise<any>[] = [];
     
     const currentPostIds = new Set(data.posts ? data.posts.map(p => p.id) : []);
@@ -637,6 +665,20 @@ async function uploadToFirestore(data: DBStructure) {
       }
     }
 
+    const currentMaIds = new Set(data.merchantAds ? data.merchantAds.map(ma => ma.id) : []);
+    for (const cachedId of lastSyncedCache.merchantAds.keys()) {
+      if (!currentMaIds.has(cachedId)) {
+        deletionPromises.push((async () => {
+          try {
+            await firestore!.collection('merchant_ads').doc(cachedId).delete();
+            lastSyncedCache.merchantAds.delete(cachedId);
+          } catch (delErr) {
+            console.error(`Error deleting Merchant Ad ${cachedId} from Firestore:`, delErr);
+          }
+        })());
+      }
+    }
+
     const currentUserIds = new Set(data.users.map(u => u.id));
     for (const cachedId of lastSyncedCache.users.keys()) {
       if (!currentUserIds.has(cachedId)) {
@@ -651,7 +693,7 @@ async function uploadToFirestore(data: DBStructure) {
       }
     }
 
-    const allPromises = [...userPromises, ...campPromises, ...postPromises, ...dmPromises, ...deletionPromises];
+    const allPromises = [...userPromises, ...campPromises, ...postPromises, ...dmPromises, ...maPromises, ...deletionPromises];
     if (allPromises.length > 0) {
       await Promise.all(allPromises);
       console.log(`☁️ GCash Click-Earn: Firestore cloud backup completed. Synced ${allPromises.length} updates/deletes.`);
@@ -710,13 +752,25 @@ async function syncFromFirestore() {
       console.log('No direct_messages collection yet in Firestore');
     }
 
+    const maColRef = firestore.collection('merchant_ads');
+    let dbMerchantAds: any[] = [];
+    try {
+      const maSnapshot = await maColRef.get();
+      maSnapshot.forEach((docSnap) => {
+        dbMerchantAds.push({ id: docSnap.id, ...docSnap.data() });
+      });
+    } catch (e) {
+      console.log('No merchant_ads collection yet in Firestore');
+    }
+
     if (dbUsers.length > 0) {
       console.log(`📱 Found ${dbUsers.length} users in Firestore. Overwriting local cache...`);
       const loadedDB: DBStructure = { 
         users: dbUsers,
         campaigns: dbCampaigns.length > 0 ? dbCampaigns : INITIAL_CAMPAIGNS,
         posts: dbPosts.length > 0 ? dbPosts : undefined,
-        directMessages: dbDMs.length > 0 ? dbDMs : undefined
+        directMessages: dbDMs.length > 0 ? dbDMs : undefined,
+        merchantAds: dbMerchantAds.length > 0 ? dbMerchantAds : undefined
       };
       
       // Update/synchronize admin details if needed
@@ -771,7 +825,22 @@ async function syncFromFirestore() {
         });
       }
 
-      await Promise.all([...batchPromises, ...seedCampPromises, ...seedPostPromises, ...seedDmPromises]);
+      let seedMerchantPromises: Promise<any>[] = [];
+      if (localDB.merchantAds) {
+        seedMerchantPromises = localDB.merchantAds.map(async (ma) => {
+          const maDocRef = firestore.collection('merchant_ads').doc(ma.id);
+          const { id, ...maWithoutId } = ma;
+          await maDocRef.set(maWithoutId);
+        });
+      }
+
+      await Promise.all([
+        ...batchPromises, 
+        ...seedCampPromises, 
+        ...seedPostPromises, 
+        ...seedDmPromises, 
+        ...seedMerchantPromises
+      ]);
       console.log('✅ Seeding of Firestore complete.');
     }
   } catch (err) {
@@ -789,6 +858,13 @@ function generateToken(userId: string) {
 
 function hasActiveAccess(user: UserSession): boolean {
   if (user.isAdmin) return true;
+
+  // Support 3-Hour Free Access granted from Spin Wheel
+  if (user.freeAccessExpiresAt) {
+    if (new Date(user.freeAccessExpiresAt).getTime() > Date.now()) {
+      return true;
+    }
+  }
   
   const regDate = user.createdAt ? new Date(user.createdAt) : new Date();
   const passedMs = Date.now() - regDate.getTime();
@@ -2039,6 +2115,129 @@ app.post('/api/user/daily-checkin', (req, res) => {
   res.json({ user: userSafe });
 });
 
+// --- EXPIRED USERS SPIN WHEEL ENDPOINTS ---
+app.get('/api/user/spin-status', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) return res.status(401).json({ error: 'Access Denied.' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+
+  const now = Date.now();
+  const pstTime = new Date(now + (8 * 60 * 60 * 1000));
+  const pstHour = pstTime.getUTCHours();
+  const inWindow = pstHour >= 6 && pstHour < 18;
+
+  const year = pstTime.getUTCFullYear();
+  const month = String(pstTime.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(pstTime.getUTCDate()).padStart(2, '0');
+  const todayStr = `${year}-${month}-${day}`;
+
+  // Helper to check if they are generally an expired user (excluding active spin wheel 3h access)
+  const regDate = user.createdAt ? new Date(user.createdAt) : new Date();
+  const passedMs = now - regDate.getTime();
+  const trialExpired = passedMs >= 24 * 60 * 60 * 1000;
+  const noActiveSub = !user.subscription || user.subscription.status !== 'active' || (user.subscription.expiresAt && new Date(user.subscription.expiresAt).getTime() <= now);
+  const isExpiredUser = !user.isAdmin && trialExpired && noActiveSub;
+
+  const hasSpunToday = user.lastSpinDateKey === todayStr;
+  const globalWinnerExists = db.users.some(u => u.wonFreeAccessDateKey === todayStr);
+
+  res.json({
+    isExpiredUser,
+    inWindow,
+    pstHour,
+    hasSpunToday,
+    globalWinnerExists,
+    freeAccessExpiresAt: user.freeAccessExpiresAt || null,
+    freeAccessActive: user.freeAccessExpiresAt ? new Date(user.freeAccessExpiresAt).getTime() > now : false,
+    todayStr
+  });
+});
+
+app.post('/api/user/spin-wheel', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) return res.status(401).json({ error: 'Access Denied.' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+
+  const now = Date.now();
+  const pstTime = new Date(now + (8 * 60 * 60 * 1000));
+  const pstHour = pstTime.getUTCHours();
+  const inWindow = pstHour >= 6 && pstHour < 18;
+
+  if (!inWindow) {
+    return res.status(400).json({ error: 'Ang spin wheel ay bukas lamang mula 6:00 AM hanggang 6:00 PM PST.' });
+  }
+
+  const year = pstTime.getUTCFullYear();
+  const month = String(pstTime.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(pstTime.getUTCDate()).padStart(2, '0');
+  const todayStr = `${year}-${month}-${day}`;
+
+  // Check generally expired (ignoring active 3h free access for checking spin eligibility)
+  const regDate = user.createdAt ? new Date(user.createdAt) : new Date();
+  const passedMs = now - regDate.getTime();
+  const trialExpired = passedMs >= 24 * 60 * 60 * 1000;
+  const noActiveSub = !user.subscription || user.subscription.status !== 'active' || (user.subscription.expiresAt && new Date(user.subscription.expiresAt).getTime() <= now);
+  const isExpiredUser = !user.isAdmin && trialExpired && noActiveSub;
+
+  if (!isExpiredUser) {
+    return res.status(400).json({ error: 'Ang spin wheel ay para lamang sa mga expired users.' });
+  }
+
+  if (user.lastSpinDateKey === todayStr) {
+    return res.status(400).json({ error: 'Naka-spin ka na para sa araw na ito. Subukan muli bukas!' });
+  }
+
+  // Check if anyone globally won today
+  const hasWinnerToday = db.users.some(u => u.wonFreeAccessDateKey === todayStr);
+
+  let won = false;
+  if (!hasWinnerToday) {
+    // 10% chance to win if no winner exists yet today
+    won = Math.random() < 0.10;
+  }
+
+  user.lastSpinDateKey = todayStr;
+
+  if (won) {
+    const expiresAt = new Date(now + 3 * 60 * 60 * 1000); // exactly 3 hours access
+    user.freeAccessExpiresAt = expiresAt.toISOString();
+    user.wonFreeAccessDateKey = todayStr;
+
+    user.activityLogs.unshift({
+      id: 'log-spin-' + now,
+      type: 'bonus',
+      title: '🎰 Nanalo sa Spin Wheel!',
+      amount: 0,
+      timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+      details: 'Binabati kita! Nanalo ka ng libreng 3-Hour access sa Z-oneApp. Gamitin agad ito para mag-view ng campaigns!'
+    });
+
+    saveDB(db);
+    const { password: _, ...userSafe } = user as any;
+    return res.json({
+      won: true,
+      message: '🎉 Maligayang Pagbati! Nanalo ka ng libreng 3-Hour Access sa Z-oneApp! Mag-view na agad ng homepages para kumita!',
+      freeAccessExpiresAt: user.freeAccessExpiresAt,
+      user: userSafe
+    });
+  } else {
+    // If lost, return message
+    saveDB(db);
+    const { password: _, ...userSafe } = user as any;
+    return res.json({
+      won: false,
+      message: '😔 Salamat sa pag-spin! Please come back tomorrow 6am to 6pm.',
+      user: userSafe
+    });
+  }
+});
+
 
 // ============================================
 //               ADMIN FUNCTIONS
@@ -2541,11 +2740,91 @@ app.post('/api/zone/upload', (req, res) => {
     const filePath = path.join(uploadDir, filename);
     fs.writeFileSync(filePath, buffer);
 
+    // Dynamic Chunked Upload to Firestore for Persistent Storage (Solution B)
+    if (isFirestoreActive && firestore) {
+      const chunkSize = 800 * 1024; // Safe 800 KB chunk sizes to stay under 1MB document limits
+      const totalChunks = Math.ceil(buffer.length / chunkSize);
+      
+      console.log(`📦 Media Upload: Saving ${filename} (${buffer.length} bytes) to Firestore in ${totalChunks} chunks...`);
+      
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * chunkSize;
+        const end = Math.min(start + chunkSize, buffer.length);
+        const chunkBuffer = buffer.subarray(start, end);
+        const chunkBase64 = chunkBuffer.toString('base64');
+        
+        const chunkDocId = `${filename}_chunk_${i}`;
+        firestore.collection('media_storage').doc(chunkDocId).set({
+          filename,
+          chunkIndex: i,
+          totalChunks,
+          base64: chunkBase64,
+          mimeType,
+          uploadedAt: new Date().toISOString()
+        }).catch((e: any) => console.error(`❌ Error uploading chunk ${i} for ${filename}:`, e));
+      }
+    }
+
     res.json({ success: true, url: `/uploads/${filename}` });
   } catch (err: any) {
     console.error('Error writing uploaded file:', err);
     res.status(500).json({ error: 'Hindi naisulat ang media file sa server.' });
   }
+});
+
+// Dynamic Interceptor for serving uploads with transparent Firestore Chunk recovery
+app.get('/uploads/:filename', async (req, res) => {
+  const filename = req.params.filename;
+  const uploadDir = path.join(process.cwd(), 'uploads');
+  const filePath = path.join(uploadDir, filename);
+
+  // 1. If physical file exists locally on disk, serve it immediately (super fast)
+  if (fs.existsSync(filePath)) {
+    return res.sendFile(filePath);
+  }
+
+  // 2. If physical file was wiped out by a server restart, dynamically reconstruct from Firestore
+  if (isFirestoreActive && firestore) {
+    try {
+      console.log(`🔍 Media Recovery: Recovering ${filename} from Firestore media_storage collection...`);
+      const snapshot = await firestore.collection('media_storage')
+        .where('filename', '==', filename)
+        .get();
+
+      if (!snapshot.empty) {
+        const chunks: any[] = [];
+        snapshot.forEach((doc: any) => {
+          chunks.push(doc.data());
+        });
+
+        // Sort chunks sequentially by index
+        chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+        // Reconstruct raw file buffer from base64 chunks
+        const bufferChunks = chunks.map(c => Buffer.from(c.base64, 'base64'));
+        const fileBuffer = Buffer.concat(bufferChunks);
+
+        // Ensure target directory exists on container disk
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir, { recursive: true });
+        }
+
+        // Cache file back to local storage so subsequent reads are instant
+        fs.writeFileSync(filePath, fileBuffer);
+        console.log(`✅ Media Recovery: Restored ${filename} (${fileBuffer.length} bytes) to local disk cache.`);
+
+        // Serve the reconstructed file
+        return res.sendFile(filePath);
+      } else {
+        console.log(`⚠️ Media Recovery: No Firestore backup records found for filename ${filename}`);
+      }
+    } catch (err) {
+      console.error(`❌ Media Recovery Error for filename ${filename}:`, err);
+    }
+  }
+
+  // Fallback if not found on disk or Firestore
+  res.status(404).send('Not Found');
 });
 
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
@@ -3508,6 +3787,16 @@ app.post('/api/zone/calls/end', (req, res) => {
 
 
 
+
+
+// --- SERVE APP STORE PAGE ---
+app.get('/appstore.html', (req, res) => {
+  res.sendFile(path.join(process.cwd(), 'public', 'appstore.html'));
+});
+
+app.get('/appstore', (req, res) => {
+  res.sendFile(path.join(process.cwd(), 'public', 'appstore.html'));
+});
 
 
 // ============================================
