@@ -38,7 +38,7 @@ export default defineConfig(() => {
           chunkFileNames: '[name].js',
           assetFileNames: (assetInfo) => {
             if (assetInfo.name && assetInfo.name.endsWith('.css')) {
-              return 'style.css';
+              return 'style.v2.6.css';
             }
             return '[name].[ext]';
           }
