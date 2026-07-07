@@ -38,6 +38,8 @@
     "node": ">=20.0.0"
   },
   "devDependencies": {
-    "jimp": "^1.6.1"
+    "@csstools/postcss-cascade-layers": "^6.0.0",
+    "jimp": "^1.6.1",
+    "postcss": "^8.5.16"
   }
 }
