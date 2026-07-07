@@ -1079,7 +1079,7 @@ export default function App() {
   });
 
   return (
-    <div id="application-sandbox-root" className="min-h-screen bg-slate-100 flex flex-col text-slate-800 font-sans antialiased selection:bg-blue-600 selection:text-white">
+    <div id="application-sandbox-root" className="min-h-screen bg-slate-100 flex flex-col text-slate-800 font-sans antialiased selection:bg-blue-600 selection:text-white" style={{ backgroundColor: '#f1f5f9', color: '#1e293b' }}>
       
       {/* 🔔 FLOATING NOTIFICATION SYSTEM */}
       <AnimatePresence>
@@ -1434,33 +1434,33 @@ export default function App() {
 
       {/* 🚀 SCREEN GATEWAY 1: NOT AUTHENTICATED SCREEN */}
       {!token || !user ? (
-        <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 py-12 relative overflow-hidden">
+        <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 py-12 relative overflow-hidden" style={{ backgroundColor: '#020617' }}>
           
           {/* Ambient Cosmic Neon background lights */}
           <div className="absolute top-1/4 left-1/4 h-96 w-96 rounded-full bg-blue-600/10 blur-3xl" />
           <div className="absolute bottom-1/4 right-1/4 h-96 w-96 rounded-full bg-indigo-600/10 blur-3xl" />
-
+ 
           <div className="max-w-md w-full space-y-6 z-10">
             
             {/* LOGO TITLE */}
             <div className="text-center space-y-2">
-              <span className="mx-auto bg-blue-600 text-white text-[10px] font-black tracking-widest uppercase px-3 py-1 rounded-full flex items-center gap-1 w-max">
+              <span className="mx-auto bg-blue-600 text-white text-[10px] font-black tracking-widest uppercase px-3 py-1 rounded-full flex items-center gap-1 w-max" style={{ backgroundColor: '#2563eb' }}>
                 <Coins className="w-3.5 h-3.5 text-yellow-300 animate-bounce" />
                 <span>ACTIVE EARNING PORTAL</span>
               </span>
-              <h1 className="text-3xl font-black text-white tracking-tight leading-none">
+              <h1 className="text-3xl font-black text-white tracking-tight leading-none" style={{ color: '#ffffff' }}>
                 G-Click & Get rewarded every visit
               </h1>
-              <p className="text-xs text-slate-400 max-w-sm mx-auto font-semibold">
+              <p className="text-xs text-slate-400 max-w-sm mx-auto font-semibold" style={{ color: '#94a3b8' }}>
                 Simulan ang pagbisita sa mga verified web homepage upang makakuha ng automated PPV rewards!
               </p>
             </div>
-
+ 
             {/* MAIN CREDENTIAL CARD */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4 relative">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4 relative" style={{ backgroundColor: '#0f172a', borderColor: '#1e293b' }}>
               
               {/* Form Tab Toggles */}
-              <div className="flex border-b border-slate-850 gap-2 text-xs font-black">
+              <div className="flex border-b border-slate-850 gap-2 text-xs font-black" style={{ borderColor: '#1e293b' }}>
                 <button
                   onClick={() => { setAuthMode('login'); setAuthError(null); }}
                   className={`flex-1 py-2.5 transition rounded-t-xl cursor-pointer ${
@@ -1468,6 +1468,7 @@ export default function App() {
                       ? 'border-b-2 border-blue-500 text-blue-400 bg-white/5' 
                       : 'text-slate-500 hover:text-slate-350'
                   }`}
+                  style={authMode === 'login' ? { color: '#60a5fa', borderBottom: '2px solid #3b82f6', backgroundColor: 'rgba(255, 255, 255, 0.05)' } : { color: '#64748b' }}
                 >
                   Naka-rehistro (Login)
                 </button>
@@ -1478,18 +1479,19 @@ export default function App() {
                       ? 'border-b-2 border-blue-500 text-blue-400 bg-white/5' 
                       : 'text-slate-500 hover:text-slate-350'
                   }`}
+                  style={authMode === 'register' ? { color: '#60a5fa', borderBottom: '2px solid #3b82f6', backgroundColor: 'rgba(255, 255, 255, 0.05)' } : { color: '#64748b' }}
                 >
                   Gawa ng Account (Register)
                 </button>
               </div>
-
+ 
               {/* AUTH FORM */}
               <form onSubmit={handleAuthSubmit} className="space-y-3.5 text-xs text-slate-300">
                 
                 {/* Name - Register only */}
                 {authMode === 'register' && (
                   <div className="space-y-1.5">
-                    <label className="font-bold text-slate-400 flex items-center gap-1.5">
+                    <label className="font-bold text-slate-400 flex items-center gap-1.5" style={{ color: '#94a3b8' }}>
                       <User className="w-4 h-4" />
                       <span>Buong Pangalan (Profile Name-Admin Visibility)</span>
                     </label>
@@ -1500,13 +1502,14 @@ export default function App() {
                       value={nameInput}
                       onChange={(e) => setNameInput(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 hover:border-slate-700 p-3 rounded-xl outline-none font-bold text-white transition placeholder:font-normal placeholder:text-slate-600"
+                      style={{ backgroundColor: '#020617', borderColor: '#1e293b', color: '#ffffff' }}
                     />
                   </div>
                 )}
-
+ 
                 {/* Email */}
                 <div className="space-y-1.5">
-                  <label className="font-bold text-slate-400 flex items-center gap-1.5">
+                  <label className="font-bold text-slate-400 flex items-center gap-1.5" style={{ color: '#94a3b8' }}>
                     <Mail className="w-4 h-4" />
                     <span>Email Address</span>
                   </label>
@@ -1517,12 +1520,13 @@ export default function App() {
                     value={emailInput}
                     onChange={(e) => setEmailInput(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 hover:border-slate-700 p-3 rounded-xl outline-none font-bold text-white transition placeholder:font-normal placeholder:text-slate-600"
+                    style={{ backgroundColor: '#020617', borderColor: '#1e293b', color: '#ffffff' }}
                   />
                 </div>
-
+ 
                 {/* Password */}
                 <div className="space-y-1.5">
-                  <label className="font-bold text-slate-400 flex items-center gap-1.5">
+                  <label className="font-bold text-slate-400 flex items-center gap-1.5" style={{ color: '#94a3b8' }}>
                     <Lock className="w-4 h-4" />
                     <span>Password</span>
                   </label>
@@ -1533,13 +1537,14 @@ export default function App() {
                     value={passwordInput}
                     onChange={(e) => setPasswordInput(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 hover:border-slate-700 p-3 rounded-xl outline-none font-bold text-white transition placeholder:font-normal placeholder:text-slate-600"
+                    style={{ backgroundColor: '#020617', borderColor: '#1e293b', color: '#ffffff' }}
                   />
                 </div>
-
+ 
                 {/* Optional Referral Code - Register only */}
                 {authMode === 'register' && (
                   <div className="space-y-1.5 animate-fadeIn">
-                    <label className="font-bold text-slate-400 flex items-center gap-1.5">
+                    <label className="font-bold text-slate-400 flex items-center gap-1.5" style={{ color: '#34d399' }}>
                       <UserPlus className="w-4 h-4 text-emerald-400" />
                       <span>Referral Code (Opsyonal - pwedeng maiwan na blangko)</span>
                     </label>
@@ -1549,23 +1554,25 @@ export default function App() {
                       value={referralInput}
                       onChange={(e) => setReferralInput(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 hover:border-slate-700 p-3 rounded-xl outline-none font-bold text-white transition placeholder:font-normal placeholder:text-slate-600 truncate uppercase"
+                      style={{ backgroundColor: '#020617', borderColor: '#1e293b', color: '#ffffff' }}
                     />
                   </div>
                 )}
-
+ 
                 {/* Feedbacks */}
                 {authError && (
-                  <div className="p-3 bg-red-950/85 border border-red-900 rounded-xl flex items-start gap-2 text-[11px] text-red-300 leading-normal">
+                  <div className="p-3 bg-red-950/85 border border-red-900 rounded-xl flex items-start gap-2 text-[11px] text-red-300 leading-normal" style={{ backgroundColor: '#420b12', borderColor: '#7f1d1d' }}>
                     <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
-                    <span className="font-bold">{authError}</span>
+                    <span className="font-bold" style={{ color: '#fca5a5' }}>{authError}</span>
                   </div>
                 )}
-
+ 
                 {/* Submit button */}
                 <button
                   type="submit"
                   disabled={authLoading}
                   className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 transition py-3 rounded-xl text-white font-black text-xs uppercase tracking-wider cursor-pointer shadow-md flex items-center justify-center gap-2"
+                  style={{ backgroundColor: '#2563eb', color: '#ffffff' }}
                 >
                   {authLoading ? (
                     <RefreshCw className="w-4 h-4 animate-spin" />
@@ -1575,17 +1582,17 @@ export default function App() {
                     'Gumawa ng Account at Simulan'
                   )}
                 </button>
-
+ 
               </form>
-
+ 
             </div>
-
-            <p className="text-center text-[10px] text-slate-600 leading-normal max-w-sm mx-auto">
+ 
+            <p className="text-center text-[10px] text-slate-600 leading-normal max-w-sm mx-auto" style={{ color: '#475569' }}>
               {language === 'tl'
                 ? "Sa pamamagitan ng pag-sign in, sumasang-ayon ka sa interactive simulator guidelines."
                 : "By signing in, you agree to the interactive simulator guidelines."}
             </p>
-
+ 
           </div>
         </div>
       ) : (
