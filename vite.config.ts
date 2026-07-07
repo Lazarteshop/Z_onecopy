@@ -6,11 +6,24 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     base: './',
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      {
+        name: 'remove-crossorigin',
+        transformIndexHtml(html) {
+          return html.replace(/\s+crossorigin(?=["\s>])/g, '').replace(/crossorigin="[^"]*"/g, '');
+        }
+      }
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
+    },
+    build: {
+      target: ['chrome60', 'firefox60', 'safari11', 'edge18'],
+      cssTarget: ['chrome60', 'firefox60', 'safari11', 'edge18']
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
