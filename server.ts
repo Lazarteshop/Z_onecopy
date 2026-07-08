@@ -13,6 +13,555 @@ const PORT = Number(process.env.PORT) || 3000;
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
+// --- HIGH-QUALITY TEXT-TO-SPEECH PROXY ENDPOINT ---
+function splitTextIntoChunks(text: string, maxLength: number = 150): string[] {
+  // Split by sentence boundaries but keep punctuation
+  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+/g) || [text];
+  const chunks: string[] = [];
+  let currentChunk = '';
+
+  for (const sentence of sentences) {
+    const trimmed = sentence.trim();
+    if (!trimmed) continue;
+
+    if ((currentChunk + ' ' + trimmed).trim().length <= maxLength) {
+      currentChunk = (currentChunk + ' ' + trimmed).trim();
+    } else {
+      if (currentChunk) {
+        chunks.push(currentChunk);
+      }
+      if (trimmed.length <= maxLength) {
+        currentChunk = trimmed;
+      } else {
+        // If a single sentence is longer than maxLength, split by spaces
+        const parts = trimmed.split(' ');
+        currentChunk = '';
+        for (const part of parts) {
+          if (!part) continue;
+          if ((currentChunk + ' ' + part).trim().length <= maxLength) {
+            currentChunk = (currentChunk + ' ' + part).trim();
+          } else {
+            if (currentChunk.trim()) {
+              chunks.push(currentChunk.trim());
+            }
+            currentChunk = part;
+          }
+        }
+      }
+    }
+  }
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim());
+  }
+  return chunks;
+}
+
+function numberToTagalog(n: number): string {
+  if (n === 0) return "zero";
+  
+  const ones = ["", "isa", "dalawa", "tatlo", "apat", "lima", "anim", "pito", "walo", "siyam"];
+  const tens = ["", "sampu", "dalawampu", "tatlumpu", "apatnapu", "limampu", "animnapu", "pitumpu", "walumpu", "siyamnapu"];
+  
+  if (n < 10) return ones[n];
+  
+  if (n >= 10 && n < 20) {
+    const digit = n % 10;
+    if (digit === 0) return "sampu";
+    const base = ones[digit];
+    return `labing-${base}`;
+  }
+  
+  if (n >= 20 && n < 100) {
+    const tenIndex = Math.floor(n / 10);
+    const digit = n % 10;
+    if (digit === 0) return tens[tenIndex];
+    return `${tens[tenIndex]}'t ${ones[digit]}`;
+  }
+  
+  if (n >= 100 && n < 1000) {
+    const hundredDigit = Math.floor(n / 100);
+    const remaining = n % 100;
+    
+    let hundredStr = "";
+    if (hundredDigit === 1) {
+      hundredStr = "isang daan";
+    } else if (hundredDigit === 2) {
+      hundredStr = "dalawang daan";
+    } else if (hundredDigit === 3) {
+      hundredStr = "tatlong daan";
+    } else if (hundredDigit === 4) {
+      hundredStr = "apat na raan";
+    } else if (hundredDigit === 5) {
+      hundredStr = "limang daan";
+    } else if (hundredDigit === 6) {
+      hundredStr = "anim na raan";
+    } else if (hundredDigit === 7) {
+      hundredStr = "pitong daan";
+    } else if (hundredDigit === 8) {
+      hundredStr = "walong daan";
+    } else if (hundredDigit === 9) {
+      hundredStr = "siyam na raan";
+    }
+    
+    if (remaining === 0) return hundredStr;
+    return `${hundredStr} at ${numberToTagalog(remaining)}`;
+  }
+  
+  if (n >= 1000 && n < 1000000) {
+    const thousandPart = Math.floor(n / 1000);
+    const remaining = n % 1000;
+    
+    let thousandStr = "";
+    if (thousandPart === 1) {
+      thousandStr = "isang libo";
+    } else {
+      const thousandSpoken = numberToTagalog(thousandPart);
+      let linker = "ng";
+      if (thousandSpoken.endsWith("a") || thousandSpoken.endsWith("o") || thousandSpoken.endsWith("u")) {
+        linker = "ng";
+      } else if (thousandSpoken.endsWith("n")) {
+        linker = "g";
+      } else {
+        linker = " na";
+      }
+      
+      if (thousandSpoken.endsWith("'t")) {
+        thousandStr = `${thousandSpoken} libo`;
+      } else {
+        thousandStr = `${thousandSpoken}${linker} libo`;
+      }
+    }
+    
+    if (remaining === 0) return thousandStr;
+    return `${thousandStr} at ${numberToTagalog(remaining)}`;
+  }
+  
+  return n.toString();
+}
+
+function normalizeFilipinoText(input: string): string {
+  if (!input) return "";
+  let result = input;
+
+  // 1. First, replace known system names and abbreviations with high-quality phonetic representations
+  // This ensures the neural TTS model pronounces "Z-one" exactly as the premium brand "Zee-one" instead of "Zohn"
+  result = result.replace(/Z-oneApp/gi, 'Zee-one App');
+  result = result.replace(/Z-one Feed/gi, 'Zee-one Feed');
+  result = result.replace(/Z-one/gi, 'Zee-one');
+  result = result.replace(/GCash/gi, 'G Cash');
+  result = result.replace(/SMS/gi, 'S M S');
+  result = result.replace(/FAQs/gi, 'F A Qs');
+
+  // 2. Format 11-digit mobile numbers (e.g., 09171234567 or +639171234567) to space-separated digits
+  // so that the TTS reads them naturally as individual digits (e.g. "0 9 1 7...") instead of a massive number
+  result = result.replace(/(?:\+63|0)9\d{9}\b/g, (match) => {
+    return match.split('').join(' ');
+  });
+
+  // 3. Process Filipino Peso currency notations (e.g. ₱100.00, ₱ 5.50, PHP 50)
+  result = result.replace(/(?:₱|PHP)\s*([\d,]+)(?:\.(\d+))?/gi, (match, numStr, centStr) => {
+    const rawNum = parseInt(numStr.replace(/,/g, ''), 10);
+    const cents = centStr ? parseInt(centStr.substring(0, 2), 10) : 0;
+    
+    if (isNaN(rawNum)) return match;
+    
+    const spokenAmount = numberToTagalog(rawNum);
+    
+    let currencySuffix = " piso";
+    if (spokenAmount.endsWith("n")) {
+      currencySuffix = "g piso";
+    } else if (spokenAmount.endsWith("a") || spokenAmount.endsWith("o") || spokenAmount.endsWith("u")) {
+      currencySuffix = "ng piso";
+    } else if (spokenAmount.endsWith("t") || spokenAmount.endsWith("m")) {
+      currencySuffix = " na piso";
+    }
+
+    let spokenCents = "";
+    if (cents > 0) {
+      const centSpoken = numberToTagalog(cents);
+      let centSuffix = " sentimo";
+      if (centSpoken.endsWith("n")) {
+        centSuffix = "g sentimo";
+      } else if (centSpoken.endsWith("a") || centSpoken.endsWith("o") || centSpoken.endsWith("u")) {
+        centSuffix = "ng sentimo";
+      } else if (centSpoken.endsWith("t") || centSpoken.endsWith("m")) {
+        centSuffix = " na sentimo";
+      }
+      spokenCents = " at " + centSpoken + centSuffix;
+    }
+    
+    return `${spokenAmount}${currencySuffix}${spokenCents}`;
+  });
+
+  // 4. Remove commas from general standalone numbers (e.g. 1,500 -> 1500) so they can be parsed as a single number
+  result = result.replace(/\b(\d{1,3})(?:,(\d{3}))+\b/g, (match) => {
+    return match.replace(/,/g, '');
+  });
+
+  // 5. Clean trailing decimals from general standalone numbers (e.g. 100.00 -> 100) to avoid "point zero zero"
+  result = result.replace(/(\d+)\.00\b/g, '$1');
+  result = result.replace(/(\d+)\.0\b/g, '$1');
+
+  // 6. Replace general standalone decimal numbers (e.g., 1.5, 3.14) with Tagalog "punto" words
+  result = result.replace(/(\d+)\.(\d+)\b/g, (match, intPart, decPart) => {
+    const intSpoken = numberToTagalog(parseInt(intPart, 10));
+    const decSpoken = numberToTagalog(parseInt(decPart, 10));
+    return `${intSpoken} punto ${decSpoken}`;
+  });
+
+  // 7. Explicitly handle common seconds / timing phrases in Tagalog
+  result = result.replace(/5-segundong/g, 'limang segundong');
+  result = result.replace(/5 segundo/g, 'limang segundo');
+  result = result.replace(/1-segundong/g, 'isang segundong');
+  result = result.replace(/1 segundo/g, 'isang segundo');
+  result = result.replace(/3-segundong/g, 'tatlong segundong');
+  result = result.replace(/3 segundo/g, 'tatlong segundo');
+  result = result.replace(/10-segundong/g, 'sampung segundong');
+  result = result.replace(/10 segundo/g, 'sampung segundo');
+
+  // 8. Find any remaining standalone numbers (1 to 6 digits) and convert them to Tagalog words
+  // We use word boundaries to avoid matching digits inside English words (like in HTML classes or IDs)
+  result = result.replace(/\b\d{1,6}\b/g, (match) => {
+    const n = parseInt(match, 10);
+    if (isNaN(n)) return match;
+    return numberToTagalog(n);
+  });
+
+  // 9. Deeply clean up special characters and punctuation that can trigger unnatural neural pauses,
+  // stutters, or mechanical glitches in the TTS model. We want the text to be a pure, flowing script.
+  result = result.replace(/['"`]/g, ''); // Strip all quotation marks to avoid hesitations
+  result = result.replace(/[()]/g, ' '); // Replace parentheses with warm breathing spaces
+  result = result.replace(/&/g, ' and '); // Convert raw ampersands to natural "and"
+  result = result.replace(/[-]/g, ' ');  // Replace stray hyphens with brief pauses (spaces)
+
+  return result;
+}
+
+function stripSSML(input: string): string {
+  if (!input) return "";
+  return input.replace(/<\/?[^>]+(>|$)/g, ""); // Strip any HTML/XML tags
+}
+
+function getVoiceForMode(voiceMode: string): string {
+  switch (voiceMode) {
+    case 'happy': return 'Puck';
+    case 'sad': return 'Charon';
+    case 'horror': return 'Fenrir';
+    case 'news': return 'Kore';
+    case 'romance': return 'Aoede';
+    default: return 'Aoede';
+  }
+}
+
+function buildSystemInstruction(
+  voiceMode: string,
+  clientRate?: string,
+  clientPitch?: string,
+  options?: {
+    speakNaturally?: boolean;
+    warmTone?: boolean;
+    pauseNaturally?: boolean;
+    newsPresenter?: boolean;
+    emotionEmphasis?: boolean;
+    ssmlMode?: boolean;
+  }
+): string {
+  const speakNaturally = options?.speakNaturally ?? true;
+  const warmTone = options?.warmTone ?? true;
+  const pauseNaturally = options?.pauseNaturally ?? true;
+  const newsPresenter = options?.newsPresenter ?? false;
+  const emotionEmphasis = options?.emotionEmphasis ?? true;
+  const ssmlMode = options?.ssmlMode ?? true;
+
+  const rateDetail = clientRate ? ` speaking rate of ${clientRate}x,` : '';
+  const pitchDetail = clientPitch ? ` pitch level of ${clientPitch},` : '';
+
+  let directives: string[] = [];
+
+  if (speakNaturally) {
+    directives.push("Speak naturally like a real human. Do NOT sound like an AI assistant or reading machine. Speak with highly natural human inflection, realistic micro-breathing sounds, and native-like Taglish pronunciation.");
+  }
+  if (warmTone) {
+    directives.push("Use a warm, conversational, and friendly tone of voice. Sound approachable, helpful, and authentic, as if having a personal discussion with a friend or viewer.");
+  }
+  if (pauseNaturally) {
+    directives.push("Pause naturally between sentences and phrases. Insert tiny micro-pauses or brief breathing spaces where a real person would naturally catch their breath (e.g. at commas, periods, and ellipses), making the rhythm flow smoothly.");
+  }
+  if (newsPresenter || voiceMode === 'news') {
+    directives.push("Sound like a professional, articulate Filipino news presenter or broadcast journalist. Use perfect pronunciation, formal authoritative emphasis, and clear, crisp evening news intonation.");
+  }
+  if (emotionEmphasis) {
+    directives.push("Add slight emotion and appropriate vocal emphasis. Convey the actual feeling behind the words (e.g., excitement for rewards, trust for security) and emphasize important UI names and terms naturally.");
+  }
+  if (ssmlMode) {
+    directives.push("Interpret the script structure as if reading SSML prosody guidelines: slow down for explanatory points, raise pitch slightly for warm expressions, and vary speaking rate and volume to keep the content highly engaging and human.");
+  }
+
+  // Base voice character
+  let baseRole = "You are a warm, extremely friendly, and 100% real human narrator.";
+  if (voiceMode === 'happy') {
+    baseRole = "You are an exceptionally happy, lively, and enthusiastic human narrator.";
+  } else if (voiceMode === 'romance') {
+    baseRole = "You are an intimate, soft, and extremely warm human narrator speaking closely to the microphone.";
+  } else if (voiceMode === 'sad') {
+    baseRole = "You are a deeply emotional, somber, and sincere human narrator speaking with a heavy heart.";
+  } else if (voiceMode === 'horror') {
+    baseRole = "You are a suspenseful, creepy, and terrifyingly realistic narrator speaking with deep whispers.";
+  } else if (newsPresenter || voiceMode === 'news') {
+    baseRole = "You are an articulate, professional, and formal native Filipino news reporter.";
+  }
+
+  return `${baseRole} Speak with a${rateDetail}${pitchDetail} custom-tuned voice.
+Specific voice directives to follow:
+${directives.map((d, i) => `${i + 1}. ${d}`).join('\n')}
+
+The script is in Taglish (Tagalog-English code-switching). Read English words (like "Register", "G-Cash", "Browse & Earn", "SMS", "status", "posts", "wallet") with a highly natural, fluent, and lifelike Filipino-English accent—exactly how a real Filipino content creator or vlogger would say them in a video. Absolutely zero mechanical or flat cadence. Do not add any introductory remarks, notes, or explanations. Only read the script text provided, verbatim.`;
+}
+
+async function preProcessWithAI(
+  rawInput: string, 
+  voiceMode: string, 
+  clientRate?: string, 
+  clientPitch?: string,
+  options?: {
+    speakNaturally?: boolean;
+    warmTone?: boolean;
+    pauseNaturally?: boolean;
+    newsPresenter?: boolean;
+    emotionEmphasis?: boolean;
+    highQualityAI?: boolean;
+    autoPunctuate?: boolean;
+    ssmlMode?: boolean;
+    verbatim?: boolean;
+  }
+): Promise<{ spokenText: string; systemInstruction: string; voiceName: string }> {
+  const ai = getGeminiClient();
+  const defaultVoice = getVoiceForMode(voiceMode);
+  const defaultInstruction = buildSystemInstruction(voiceMode, clientRate, clientPitch, options);
+
+  const speakNaturally = options?.speakNaturally ?? true;
+  const warmTone = options?.warmTone ?? true;
+  const pauseNaturally = options?.pauseNaturally ?? true;
+  const newsPresenter = options?.newsPresenter ?? false;
+  const emotionEmphasis = options?.emotionEmphasis ?? true;
+  const highQualityAI = options?.highQualityAI ?? true;
+  const autoPunctuate = options?.autoPunctuate ?? true;
+  const ssmlMode = options?.ssmlMode ?? true;
+  const verbatim = options?.verbatim ?? false;
+
+  if (!ai || !highQualityAI) {
+    console.log(`[TTS Preprocessor] Skipping AI study (highQualityAI: ${highQualityAI}, aiClientAvailable: ${!!ai})`);
+    return {
+      spokenText: normalizeFilipinoText(stripSSML(rawInput)),
+      systemInstruction: defaultInstruction,
+      voiceName: defaultVoice
+    };
+  }
+
+  const activeDirectives: string[] = [];
+  if (speakNaturally) activeDirectives.push("- Speak naturally: Avoid monotonic, word-by-word reading. Blend phrases naturally with proper liaison.");
+  if (verbatim) activeDirectives.push("- Verbatim Speech: The user requested to read their custom script EXACTLY as written. Under NO circumstances should you rewrite, substitute, or delete any words. Keep every word, number, and abbreviation of the Input Text exactly as-is in your 'optimizedSpokenText' output, but still generate a masterclass system instruction for reading this exact text with a natural human voice.");
+  if (warmTone) activeDirectives.push("- Warm and conversational: Use a friendly, natural vlogger-like voice tone.");
+  if (pauseNaturally) activeDirectives.push("- Pause naturally between sentences: Use ellipses (...) or commas (,) or line breaks to inject natural human breathing pauses.");
+  if (newsPresenter || voiceMode === 'news') activeDirectives.push("- Filipino news presenter: Speak with professional, articulate evening-news authority and crystal-clear pronunciation.");
+  if (emotionEmphasis) activeDirectives.push("- Add slight emotion and emphasis: Stress key reward values and UI names with authentic emotional touchpoints.");
+  if (autoPunctuate) activeDirectives.push("- Tamang Punctuation: Ensure commas, periods, ellipses, and paragraph breaks are placed perfectly to force the voice synthesizer to pause and pace itself exactly like a real person.");
+  if (ssmlMode) activeDirectives.push("- SSML Prosody simulation: Study the text's semantic meaning. Slow down at detailed instructions, and speed up or raise pitch slightly during happy/community sections, using formatting/punctuation and detailed direction to achieve this.");
+
+  const prompt = `You are an elite, professional voiceover director and phonetic scriptwriter. 
+Your goal is to study the following input text paragraph and optimize it into an absolute masterpiece of natural, human-sounding, fluent conversational script in Taglish (Tagalog-English code-switching) as spoken by a 100% real human narrator.
+
+Input Text to study and rewrite:
+"""
+${rawInput}
+"""
+
+Voice Style Mode requested: ${voiceMode}
+Prosody Rate requested: ${clientRate || 'normal/1.0'}
+Prosody Pitch requested: ${clientPitch || 'normal/0%'}
+
+ACTIVE HUMAN VOICE TUNING DIRECTIVES TO INTEGRATE:
+${activeDirectives.join('\n')}
+
+Guidelines for studying the paragraph and translating/rewriting it:
+1. **Word-by-word Elimination**:
+   - Do NOT read word-by-word. Real humans speak in rhythmic thought-groups.
+   - Insert commas, periods, ellipses "...", and line breaks to naturally force the TTS voice to take a breath and pause.
+   - Group Taglish phrases beautifully so they flow seamlessly.
+2. **Taglish & Pronunciation Rules**:
+   - Keep standard English UI terms (like "Register", "G-Cash", "Browse & Earn", "Sponsor Website Simulator", "SMS", "Posts", "Wallet", "Countdown", "Campaign") in fluent Taglish. Do NOT translate them to mechanical Tagalog. Write them exactly as a real Filipino content creator would say them in a vlog!
+   - Expand numbers and symbols into fluent spoken words (e.g., change "₱5.00" to "limang piso", "₱100.00" to "isang daang piso", "5-segundong" to "limang segundong") so they sound perfectly integrated instead of mathematically read.
+3. **Voice Directive Construction**:
+   - Create a tailored, highly specific, 1-paragraph system instruction for the neural TTS model to read this script.
+   - Include the active directives (like conversational warm tone, natural pausing, vlogger style, etc.) in the instruction so the TTS voice engine knows exactly what emotion and pacing to apply.
+
+Provide your output in EXACTLY the following JSON format:
+{
+  "optimizedSpokenText": "the fully studied, custom punctuated, highly conversational script with natural commas, periods, and ellipses for the TTS model to read",
+  "tailoredSystemInstruction": "a detailed, custom 1-paragraph system instruction for the TTS model explaining the exact tone, pacing, emphasis, and emotion to use to sound 100% human for this script",
+  "recommendedVoiceName": "the prebuilt voice to use (choose from: Aoede, Puck, Charon, Kore, Fenrir)"
+}
+
+Ensure your response is valid JSON and nothing else.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.5-flash',
+      contents: [{ text: prompt }],
+      config: {
+        responseMimeType: 'application/json',
+        temperature: 0.15
+      }
+    });
+
+    const responseText = response.text;
+    if (responseText) {
+      const parsed = JSON.parse(responseText.trim());
+      if (parsed.optimizedSpokenText && parsed.tailoredSystemInstruction) {
+        console.log(`[TTS Preprocessor] AI studied paragraph successfully using gemini-3.5-flash.`);
+        console.log(`[TTS Preprocessor] Original: "${rawInput.substring(0, 50)}..."`);
+        console.log(`[TTS Preprocessor] Optimized: "${parsed.optimizedSpokenText.substring(0, 60)}..."`);
+        console.log(`[TTS Preprocessor] Voice recommended: ${parsed.recommendedVoiceName || defaultVoice}`);
+        return {
+          spokenText: verbatim ? rawInput : parsed.optimizedSpokenText,
+          systemInstruction: parsed.tailoredSystemInstruction,
+          voiceName: parsed.recommendedVoiceName || defaultVoice
+        };
+      }
+    }
+  } catch (err) {
+    console.error(`[TTS Preprocessor] AI preprocessing failed, using standard heuristics. Error:`, err);
+  }
+
+  return {
+    spokenText: normalizeFilipinoText(stripSSML(rawInput)),
+    systemInstruction: defaultInstruction,
+    voiceName: defaultVoice
+  };
+}
+
+app.get('/api/tts', async (req, res) => {
+  const rawText = req.query.text as string;
+  const lang = (req.query.lang as string) || 'tl';
+  const voiceMode = (req.query.voiceMode as string) || 'normal';
+  const clientRate = req.query.rate as string; // Optional speaking rate parameter
+  const clientPitch = req.query.pitch as string; // Optional pitch parameter
+  
+  // Custom Human Tuning parameters from client
+  const speakNaturally = req.query.speakNaturally === 'true';
+  const warmTone = req.query.warmTone === 'true';
+  const pauseNaturally = req.query.pauseNaturally === 'true';
+  const newsPresenter = req.query.newsPresenter === 'true';
+  const emotionEmphasis = req.query.emotionEmphasis === 'true';
+  const highQualityAI = req.query.highQualityAI !== 'false';
+  const autoPunctuate = req.query.autoPunctuate !== 'false';
+  const ssmlMode = req.query.ssmlMode !== 'false';
+  const verbatim = req.query.verbatim === 'true';
+
+  if (!rawText) {
+    return res.status(400).send('Missing text parameter');
+  }
+
+  // Preprocess input text (including any SSML tags) with AI to optimize spoken text and system instruction
+  const { spokenText, systemInstruction, voiceName } = await preProcessWithAI(rawText, voiceMode, clientRate, clientPitch, {
+    speakNaturally,
+    warmTone,
+    pauseNaturally,
+    newsPresenter,
+    emotionEmphasis,
+    highQualityAI,
+    autoPunctuate,
+    ssmlMode,
+    verbatim
+  });
+
+  // Attempt to use Gemini TTS for high fidelity human voiceover
+  const ai = getGeminiClient();
+  if (ai) {
+    try {
+      console.log(`[TTS] Requesting Gemini TTS (model: gemini-3.1-flash-tts-preview, voice: ${voiceName}, mode: ${voiceMode}) for text: "${spokenText.substring(0, 50)}..."`);
+
+      // We send the 100% pure studied script text inside 'contents' to prevent the model from getting confused
+      // or trying to read prompt instructions. The voice behavior is controlled entirely by the systemInstruction.
+      const ttsResponse = await ai.models.generateContent({
+        model: 'gemini-3.1-flash-tts-preview',
+        contents: [{ 
+          parts: [{ text: spokenText }] 
+        }],
+        config: {
+          responseModalities: ['AUDIO'],
+          systemInstruction: systemInstruction,
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName }
+            }
+          }
+        }
+      });
+
+      const base64Audio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio) {
+        console.log(`[TTS] Gemini TTS synthesized successfully!`);
+        const audioBuffer = Buffer.from(base64Audio, 'base64');
+        res.setHeader('Content-Type', 'audio/mp3');
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        return res.send(audioBuffer);
+      } else {
+        console.warn(`[TTS] Gemini TTS did not return audio data for text: "${spokenText.substring(0, 30)}". Falling back to Google Translate TTS.`);
+      }
+    } catch (err) {
+      console.error(`[TTS] Gemini TTS failed. Falling back to Google Translate TTS. Error:`, err);
+    }
+  }
+
+  // FALLBACK: Google Translate TTS Proxy (stipping SSML tags to avoid robotic reads of XML)
+  const cleanFallbackText = normalizeFilipinoText(stripSSML(rawText));
+  try {
+    const textChunks = splitTextIntoChunks(cleanFallbackText, 150);
+    const buffers: Buffer[] = [];
+
+    for (const chunk of textChunks) {
+      if (!chunk.trim()) continue;
+      const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=${lang}&client=tw-ob`;
+      
+      const response = await fetch(ttsUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.5005.63 Safari/537.36'
+        }
+      });
+
+      if (!response.ok) {
+        console.warn(`Google TTS returned status ${response.status} for chunk: ${chunk}`);
+        continue;
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      buffers.push(Buffer.from(arrayBuffer));
+    }
+
+    if (buffers.length === 0) {
+      throw new Error("Failed to synthesize any text chunks");
+    }
+
+    const mergedBuffer = Buffer.concat(buffers);
+
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.send(mergedBuffer);
+  } catch (error) {
+    console.error('Text-to-speech proxy failure:', error);
+    res.status(500).send('Failed to synthesize speech');
+  }
+});
+
 // --- IN-MEMORY USER ONLINE STATUS TRACKING ---
 const activeUsersMap: Record<string, number> = {};
 
@@ -3784,6 +4333,239 @@ app.post('/api/zone/calls/end', (req, res) => {
   }
   res.json({ success: false, message: 'Wala nang active call session.' });
 });
+
+// --- PROMPT-BASED VIDEO TOUR GENERATOR ENDPOINT ---
+app.post('/api/gemini/generate-video-script', async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt || typeof prompt !== 'string') {
+    return res.status(400).json({ error: 'Kinakailangan ang prompt parameter.' });
+  }
+
+  const aiClient = getGeminiClient();
+
+  if (!aiClient) {
+    console.warn("Gemini Client not available. Utilizing predefined high-quality Tagalog tour fallback scripts.");
+    return res.json({
+      success: true,
+      fallback: true,
+      scenes: getPredefinedTourScenes(prompt)
+    });
+  }
+
+  try {
+    const response = await aiClient.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: `Generate a custom video script in Tagalog/Filipino for the prompt: "${prompt}"` }]
+        }
+      ],
+      config: {
+        systemInstruction: `You are an expert video creator and script writer for Z-oneApp (Z-one), a social earning platform in the Philippines.
+Your task is to generate a custom-themed video tour script in Tagalog/Filipino based on the user's prompt.
+
+You MUST detect and explain the actual, real implemented features of the Z-oneApp system without omitting any critical details:
+1. Quick & Secure Registration/Login: fast 5-second mobile number based account setup.
+2. Browse & Earn Campaigns (Browser Simulator): opening sponsor web links inside the app, completing a 5-second countdown timer, and instantly earning ₱5.00 cash directly to the wallet balance.
+3. Lucky Spin Wheel of Fortune: spinning a colorful wheel to win extra coin credits and multipliers.
+4. Z-one Social Feed & Community Hub: a lively social community to post text updates, upload device photos, react with hearts, and exchange comments with other Pinoy members.
+5. Real-time Messaging & Call Simulator: secured direct text chats and live voice/video call simulations with active connectivity.
+6. Secured GCash Cash-out / Wallet Withdrawal: direct secure payout once reaching the ₱100.00 minimum threshold, with SMS alert verification.
+7. Referral Invitation System: sharing unique invite codes with friends to earn ₱10.00 referral bonuses.
+8. Merchant Portal / Sponsor Platform: allowing local businesses to register, top up, launch traffic campaigns, and monitor statistics.
+
+You MUST produce exactly 3 to 5 scenes in a JSON array.
+Each scene MUST have:
+1. "title": A short catchy Tagalog scene title (e.g. "1. Paano Kumita sa Campaigns").
+2. "subtitle": A brief description of what is happening.
+3. "narration": The spoken Tagalog voice-over text. Make it flow nicely, warm, enthusiastic, and natural (150-300 characters long).
+4. "visualType": One of these specific visual presets:
+   - "registration": Shows a clean registration form simulation with mobile number and password fields.
+   - "campaigns": Shows browse & earn campaigns, task active simulation, or countdown reward cards (₱5.00).
+   - "spin": Shows a colorful spin wheel of fortune with coin prizes.
+   - "feed": Shows the social feed screen where users upload photos, write posts, and click hearts (likes).
+   - "cashout": Shows GCash/wallet withdrawal completion with green success badges (₱100.00 cashout).
+   - "info": Shows a general info card with charts, stats, or support details.
+
+CRITICAL SECURITY RULE (MUTING THE ADMIN PANEL):
+- NEVER mention, show, reference, or hint at anything about "system administrator", "admin console", "admin panel", "administrator role", "moderator panel", "banning users", or administrative controls. Keep all administrative features completely hidden. Focus 100% on the general user features, advertiser tools, community bonding, and earnings.
+
+Write the narration text entirely in warm, clear, conversational Filipino/Tagalog (e.g. "Mabuhay! Gusto mo bang kumita habang sumasali sa aming komunidad?...").
+Return ONLY a raw JSON array matching this typescript definition:
+  Array<{ title: string; subtitle: string; narration: string; visualType: "registration" | "campaigns" | "spin" | "feed" | "cashout" | "info" }>
+Do not output any markdown code blocks, backticks, or "json" labels in your output. Just return the clean JSON string.
+`
+      }
+    });
+
+    const rawText = (response.text || '').trim();
+    // Strip markdown formatting if any was generated
+    const cleanJson = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    const scenes = JSON.parse(cleanJson);
+    return res.json({ success: true, scenes });
+  } catch (error) {
+    console.error("Gemini video script generation failed, fallback to presets:", error);
+    return res.json({
+      success: true,
+      fallback: true,
+      scenes: getPredefinedTourScenes(prompt)
+    });
+  }
+});
+
+function getPredefinedTourScenes(prompt: string): any[] {
+  const lower = prompt.toLowerCase();
+  
+  if (lower.includes('feed') || lower.includes('social') || lower.includes('komunidad') || lower.includes('santos') || lower.includes('post') || lower.includes('chat') || lower.includes('tawag') || lower.includes('call')) {
+    return [
+      {
+        title: "1. Komunidad ng Z-one Social Feed",
+        subtitle: "Sama-samang magbahagi ng magagandang alaala at status",
+        narration: "Maligayang pagdating sa ating Pinoy komunidad! Sa Z-one Feed, maaari kang mag-post ng iyong paboritong larawan, sumulat ng makabuluhang status, mag-react ng puso, at mag-comment sa posts ng iba para sa mas masayang talakayan.",
+        visualType: "feed"
+      },
+      {
+        title: "2. Secured Direct Messaging at Calls",
+        subtitle: "Libreng tawag, video call, at chat simulator",
+        narration: "Bukod sa pag-post, maaari ka ring makipag-chat at makipag-tawagan gamit ang ating real-time voice at video call simulator. Manatiling konektado sa iyong mga kaibigan nang ligtas at mabilis.",
+        visualType: "info"
+      },
+      {
+        title: "3. Paano Sumali sa Pamilya",
+        subtitle: "Mabilis na mobile registration sa loob ng 5 segundo",
+        narration: "Huwag nang pahuhuli! Sumali na sa pinakamasayang komunidad ngayon. Magrehistro gamit ang iyong mobile number, gumawa ng secured password, at simulang maranasan ang tunay na ugnayang Pilipino.",
+        visualType: "registration"
+      }
+    ];
+  }
+
+  if (lower.includes('cashout') || lower.includes('withdraw') || lower.includes('pera') || lower.includes('gcash') || lower.includes('payout') || lower.includes('wallet')) {
+    return [
+      {
+        title: "1. Pag-ipon ng Wallet Balance",
+        subtitle: "Tingnan ang iyong naipong rewards mula sa campaigns",
+        narration: "Araw-araw, ang iyong mga tagumpay sa pagbisita sa sponsors ay awtomatikong naiipon sa iyong secure wallet balance. Ang bawat kumpletong visit ay katumbas ng Limang Piso.",
+        visualType: "campaigns"
+      },
+      {
+        title: "2. Mabilis na GCash Withdrawal",
+        subtitle: "Pumunta sa Cash-out tab at ilagay ang detalye",
+        narration: "Kapag umabot na sa Isang Daang Piso ang iyong kabuuang balanse, maaari mo na itong i-withdraw! Pumunta sa GCash Cash-out page, ilagay ang iyong GCash Name at Number, at i-click ang submit.",
+        visualType: "cashout"
+      },
+      {
+        title: "3. Secure Gateway Verification",
+        subtitle: "Direktang payout na may kasamang SMS alert",
+        narration: "Ang aming ligtas na server ay magpapadala ng iyong pondo diretso sa iyong GCash account. Makakatanggap ka rin ng simulated network SMS alert para kumpirmahin ang matagumpay na payout.",
+        visualType: "cashout"
+      }
+    ];
+  }
+
+  if (lower.includes('spin') || lower.includes('gulong') || lower.includes('lucky') || lower.includes('wheel') || lower.includes('swerte')) {
+    return [
+      {
+        title: "1. Spin Wheel of Fortune",
+        subtitle: "Paikutin ang gulong para sa karagdagang premyo",
+        narration: "Gusto mo pa ba ng mas maraming rewards? Subukan ang ating Lucky Spin! Dito ay may tsansa kang manalo ng karagdagang barya, wallet rewards, o multipliers na makakatulong sa iyo.",
+        visualType: "spin"
+      },
+      {
+        title: "2. Subukan ang Swerte Araw-araw",
+        subtitle: "I-click lamang ang SPIN para makuha ang premyo",
+        narration: "Walang limitasyon ang swerte! Araw-araw ay maaari mong subukan ang gulong ng kapalaran upang mapabilis ang iyong pag-abot sa withdrawal threshold na Isang Daang Piso.",
+        visualType: "spin"
+      },
+      {
+        title: "3. Direct Wallet Addition",
+        subtitle: "Awtomatikong dagdag sa iyong wallet balance",
+        narration: "Lahat ng iyong mapapanalunan sa Lucky Spin ay direktang papasok sa iyong wallet balance nang walang bawas, ligtas, at real-time para sa iyong kapanatagan.",
+        visualType: "campaigns"
+      }
+    ];
+  }
+
+  if (lower.includes('merchant') || lower.includes('ads') || lower.includes('sponsor') || lower.includes('advertiser') || lower.includes('benta') || lower.includes('negosyo')) {
+    return [
+      {
+        title: "1. Merchant Portal para sa Negosyo",
+        subtitle: "Palaguin ang iyong traffic at online presence",
+        narration: "Mayroon ka bang negosyo o website na nais mong i-promote? Maligayang pagdating sa ating Merchant Portal! Dito ay maaari mong i-advertise ang iyong brand sa libu-libong miyembro.",
+        visualType: "info"
+      },
+      {
+        title: "2. Pag-setup ng Traffic Campaigns",
+        subtitle: "Ilagay ang iyong landing page link at badyet",
+        narration: "Madali lamang gumawa ng traffic campaign. Mag-deposit lamang ng pondo, ilagay ang iyong URL link, at itakda ang reward. Ang bawat miyembro ay bibisita sa iyong site ng 5 segundo.",
+        visualType: "campaigns"
+      },
+      {
+        title: "3. Real-time Traffic Analytics",
+        subtitle: "Subaybayan ang clicks at engagements ng iyong ad",
+        narration: "Sa iyong dashboard, makikita mo ang real-time statistics ng iyong campaigns. Secure, transparent, at garantisadong totoong tao ang bumibisita sa iyong website.",
+        visualType: "info"
+      }
+    ];
+  }
+
+  if (lower.includes('referral') || lower.includes('invite') || lower.includes('imbita') || lower.includes('code') || lower.includes('kaibigan')) {
+    return [
+      {
+        title: "1. Referral Invitation System",
+        subtitle: "Mag-imbita ng kaibigan at kumita ng Sampung Piso",
+        narration: "Ibahagi ang saya ng Z-oneApp! Gamitin ang iyong unique referral code upang mag-imbita ng mga kaibigan, kapamilya, o kakilala na sumali sa ating lumalagong plataporma.",
+        visualType: "registration"
+      },
+      {
+        title: "2. Madaling Pag-track ng Reperals",
+        subtitle: "Tingnan ang listahan ng mga matagumpay na inimbita",
+        narration: "Sa iyong Referral Panel, makikita mo ang listahan ng lahat ng mga gumamit ng iyong code. Awtomatikong madaragdag ang Sampung Piso sa bawat matagumpay nilang pagpaparehistro.",
+        visualType: "info"
+      },
+      {
+        title: "3. Sabay-sabay na Pag-unlad",
+        subtitle: "Tulungan ang bawat Pilipino na magkaroon ng kita",
+        narration: "Habang dumarami ang iyong inirerekomenda, mas mabilis mong maaabot ang iyong pangarap na payout. Sama-sama nating tulungan ang bawat pamilyang Pilipino!",
+        visualType: "cashout"
+      }
+    ];
+  }
+
+  // Default General Tour of all key user features (NO system admin mention whatsoever!)
+  return [
+    {
+      title: "1. Z-oneApp Pangkabuhayan Tour",
+      subtitle: "Ang bagong paraan para kumonekta at kumita",
+      narration: "Mabuhay at maligayang pagdating sa Z-oneApp! Ang pinaka-bago at pinaka-secure na social earning system sa Pilipinas na naglalayong tulungan ang bawat Pilipino na kumonekta at kumita gamit ang kanilang mobile phone.",
+      visualType: "registration"
+    },
+    {
+      title: "2. Simple at Madaling Campaigns",
+      subtitle: "Mag-browse ng sponsors para sa Limang Piso",
+      narration: "Paano nga ba kumita? Simple lang! Pumunta sa Campaigns section at mag-open ng sponsor links. Maghintay lang ng limang segundo sa aming interactive simulator, at awtomatikong may Limang Piso ka na!",
+      visualType: "campaigns"
+    },
+    {
+      title: "3. Gulong ng Kapalaran",
+      subtitle: "Subukan ang swerte sa Lucky Spin",
+      narration: "Subukan ang iyong swerte sa aming interactive Spin Wheel! May tsansa kang manalo ng karagdagang wallet credits, coin multipliers, at mga kapana-panabik na surpresa bawat spin.",
+      visualType: "spin"
+    },
+    {
+      title: "4. Masiglang Komunidad at Messaging",
+      subtitle: "Ibahagi ang saya sa Z-one Feed",
+      narration: "Hindi lang ito pangkabuhayan, ito rin ay lugar para kumonekta! Mag-upload ng mga paboritong larawan, mag-comment sa posts, at mag-chat o mag-tawagan sa ating live-simulator.",
+      visualType: "feed"
+    },
+    {
+      title: "5. Ligtas na GCash Cash-out",
+      subtitle: "I-withdraw ang iyong ipon sa isang click",
+      narration: "Kapag naabot mo na ang Isang Daang Piso na minimum balance, madali mo na itong maiwi-withdraw diretso sa iyong sariling GCash wallet. Mabilis, ligtas, at garantisado!",
+      visualType: "cashout"
+    }
+  ];
+}
 
 
 
