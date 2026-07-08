@@ -1017,6 +1017,85 @@ export default function ZoneTagalogExplainer() {
     setGeneratingScript(true);
     setGeneratorError(null);
     setGenerationSuccess(false);
+
+    if (ttsVerbatim) {
+      try {
+        // Split by empty lines or double newlines
+        let paragraphs = promptText.split(/\n\s*\n+/).map(p => p.trim()).filter(Boolean);
+        if (paragraphs.length === 1) {
+          const lines = promptText.split('\n').map(l => l.trim()).filter(Boolean);
+          if (lines.length > 1 && lines.length <= 6) {
+            paragraphs = lines;
+          } else if (promptText.length > 250) {
+            const sentences = promptText.match(/[^.!?\n]+[.!?\n]+/g);
+            if (sentences && sentences.length > 1) {
+              paragraphs = sentences.map(s => s.trim()).filter(Boolean);
+            }
+          }
+        }
+
+        const mappedSlides = paragraphs.map((para, index) => {
+          const lowerPara = para.toLowerCase();
+          let visualType: 'registration' | 'campaigns' | 'spin' | 'feed' | 'cashout' | 'info' = 'info';
+          let icon = <Sparkles className="w-5 h-5 text-indigo-400" />;
+          let accentColor = "from-indigo-600 to-purple-600";
+
+          if (lowerPara.includes('register') || lowerPara.includes('rehistro') || lowerPara.includes('login') || lowerPara.includes('pasok')) {
+            visualType = 'registration';
+            icon = <UserPlus className="w-5 h-5 text-blue-400" />;
+            accentColor = "from-blue-600 to-indigo-600";
+          } else if (lowerPara.includes('campaign') || lowerPara.includes('kita') || lowerPara.includes('pera') || lowerPara.includes('piso') || lowerPara.includes('browse')) {
+            visualType = 'campaigns';
+            icon = <Coins className="w-5 h-5 text-yellow-400" />;
+            accentColor = "from-amber-500 to-yellow-500";
+          } else if (lowerPara.includes('spin') || lowerPara.includes('wheel') || lowerPara.includes('pito') || lowerPara.includes('lucky')) {
+            visualType = 'spin';
+            icon = <RefreshCw className="w-5 h-5 text-pink-400 animate-spin-slow" />;
+            accentColor = "from-pink-600 to-rose-600";
+          } else if (lowerPara.includes('feed') || lowerPara.includes('post') || lowerPara.includes('share') || lowerPara.includes('chat') || lowerPara.includes('tawag') || lowerPara.includes('komunidad')) {
+            visualType = 'feed';
+            icon = <Users className="w-5 h-5 text-emerald-400" />;
+            accentColor = "from-emerald-600 to-teal-600";
+          } else if (lowerPara.includes('cashout') || lowerPara.includes('withdraw') || lowerPara.includes('gcash') || lowerPara.includes('payout')) {
+            visualType = 'cashout';
+            icon = <Wallet className="w-5 h-5 text-indigo-400" />;
+            accentColor = "from-indigo-600 to-purple-600";
+          }
+
+          let title = `Eksena ${index + 1}: Impormasyon`;
+          if (visualType === 'registration') title = `Eksena ${index + 1}: Paggawa ng Account`;
+          else if (visualType === 'campaigns') title = `Eksena ${index + 1}: Pag-browse at Kita`;
+          else if (visualType === 'spin') title = `Eksena ${index + 1}: Lucky Spin Wheel`;
+          else if (visualType === 'feed') title = `Eksena ${index + 1}: Z-one Community Feed`;
+          else if (visualType === 'cashout') title = `Eksena ${index + 1}: GCash Withdrawal`;
+
+          return {
+            title,
+            subtitle: `Seksyon ng custom script na inihanda mo.`,
+            narration: para,
+            icon,
+            accentColor,
+            visualType,
+            visual: renderVisualNode(visualType, index)
+          };
+        });
+
+        setSlides(mappedSlides);
+        setActiveSlide(0);
+        setGenerationSuccess(true);
+        try {
+          soundEffects.playReward();
+        } catch (e) {}
+        setGeneratingScript(false);
+        return;
+      } catch (err: any) {
+        console.error("Failed to parse verbatim script:", err);
+        setGeneratorError("May aberya sa pag-parse ng iyong custom script. Paki-check ang iyong spelling o subukan muli.");
+        setGeneratingScript(false);
+        return;
+      }
+    }
+
     try {
       const response = await fetch('/api/gemini/generate-video-script', {
         method: 'POST',
@@ -1713,7 +1792,19 @@ export default function ZoneTagalogExplainer() {
               <div className="md:col-span-4 bg-slate-900/60 p-4 rounded-xl border border-slate-800/80 space-y-4">
                 {/* AI PROMPT INPUT SECTION */}
                 <div className="space-y-3 pb-3 border-b border-slate-800/80">
-                  <span className="text-[9px] text-indigo-400 font-black uppercase tracking-wider block">✨ AI Video Tour Prompt:</span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-indigo-400 font-black uppercase tracking-wider block">✨ AI Video Tour Prompt:</span>
+                    <label className="flex items-center gap-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={ttsVerbatim}
+                        onChange={(e) => setTtsVerbatim(e.target.checked)}
+                        className="rounded border-slate-800 bg-slate-950 text-indigo-500 focus:ring-0 focus:ring-offset-0 w-3 h-3 cursor-pointer"
+                      />
+                      <span className="text-[8.5px] text-amber-400 font-bold">📝 Basahin nang Buo (Verbatim)</span>
+                    </label>
+                  </div>
+
                   <textarea
                     value={userPrompt}
                     onChange={(e) => {
@@ -1721,9 +1812,19 @@ export default function ZoneTagalogExplainer() {
                       setGeneratorError(null);
                       setGenerationSuccess(false);
                     }}
-                    placeholder="Halimbawa: Paano mag-cashout ng ating ipon sa GCash na mabilis..."
-                    className="w-full h-20 p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-[10.5px] font-semibold text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition resize-none leading-relaxed"
+                    placeholder={ttsVerbatim ? "I-paste ang inyong script dito... Ang bawat talata o pangungusap ay gagawing hiwalay na eksena na may boses na tapat sa inyong isinulat!" : "Halimbawa: Paano mag-cashout ng ating ipon sa GCash na mabilis..."}
+                    className="w-full h-24 p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-[10.5px] font-semibold text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition resize-none leading-relaxed"
                   />
+
+                  {ttsVerbatim ? (
+                    <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-[8.5px] text-amber-300 font-semibold leading-relaxed">
+                      💡 <strong>Verbatim Script Active:</strong> Kung ano ang sinulat mo sa kahon ay iyon ang eksaktong babasahin ng AI voice na walang anumang salitang babaguhin. Gumamit ng double newlines o periods para magdagdag ng mga eksena!
+                    </div>
+                  ) : (
+                    <div className="p-2.5 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-[8.5px] text-indigo-300 font-semibold leading-relaxed">
+                      ✨ <strong>Smart AI Mode Active:</strong> Sumulat ng maikling prompt at ang aming intelligent system ang mag-aayos ng kumpletong 3-5 scenes script para sa iyo.
+                    </div>
+                  )}
                   
                   {generatorError && (
                     <p className="text-[9px] text-rose-400 font-bold bg-rose-500/5 p-2 rounded-lg border border-rose-500/10">
@@ -1733,24 +1834,24 @@ export default function ZoneTagalogExplainer() {
 
                   {generationSuccess && (
                     <p className="text-[9px] text-emerald-400 font-bold bg-emerald-500/5 p-2 rounded-lg border border-emerald-500/10">
-                      ✓ Nagawa ang custom AI script! Handa na itong i-play sa interactive preview o i-record sa ibaba.
+                      ✓ Tagumpay na naiload ang inyong script! Handa na itong pakinggan, baguhin, o i-record sa ibaba.
                     </p>
                   )}
 
                   <button
                     onClick={() => handleGenerateScript(userPrompt)}
                     disabled={generatingScript || !userPrompt.trim()}
-                    className="w-full py-2 bg-gradient-to-r from-indigo-500 to-purple-600 hover:brightness-110 disabled:opacity-50 disabled:pointer-events-none text-white rounded-lg text-[9.5px] font-black uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 transition shadow-md shadow-indigo-950/20"
+                    className="w-full py-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:brightness-110 disabled:opacity-50 disabled:pointer-events-none text-white rounded-lg text-[9.5px] font-black uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 transition shadow-md shadow-indigo-950/20"
                   >
                     {generatingScript ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>Nag-iisip ng Script...</span>
+                        <span>Inihahanda ang Script...</span>
                       </>
                     ) : (
                       <>
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>I-generate ang Video Script</span>
+                        <span>{ttsVerbatim ? "I-load ang Custom Script (Verbatim)" : "I-generate gamit ang AI"}</span>
                       </>
                     )}
                   </button>
@@ -1763,6 +1864,7 @@ export default function ZoneTagalogExplainer() {
                     <button
                       onClick={() => {
                         const prompt = "Kumpletong pangkalahatang tour ng Z-oneApp para sa bagong miyembro";
+                        setTtsVerbatim(false);
                         setUserPrompt(prompt);
                         handleGenerateScript(prompt);
                       }}
@@ -1775,6 +1877,7 @@ export default function ZoneTagalogExplainer() {
                     <button
                       onClick={() => {
                         const prompt = "Paano kumita ng limang piso sa browse and earn campaigns";
+                        setTtsVerbatim(false);
                         setUserPrompt(prompt);
                         handleGenerateScript(prompt);
                       }}
@@ -1787,6 +1890,7 @@ export default function ZoneTagalogExplainer() {
                     <button
                       onClick={() => {
                         const prompt = "Ang masayang komunidad ng mga Pilipino sa Z-one social feed";
+                        setTtsVerbatim(false);
                         setUserPrompt(prompt);
                         handleGenerateScript(prompt);
                       }}
@@ -1799,6 +1903,7 @@ export default function ZoneTagalogExplainer() {
                     <button
                       onClick={() => {
                         const prompt = "Paano mag-withdraw at mag-cashout ng payout sa GCash";
+                        setTtsVerbatim(false);
                         setUserPrompt(prompt);
                         handleGenerateScript(prompt);
                       }}
@@ -1814,11 +1919,29 @@ export default function ZoneTagalogExplainer() {
                 <span className="text-[9px] text-slate-500 font-black uppercase tracking-wider block">MGA CONFIGURATION:</span>
                 
                 <div className="space-y-1.5">
-                  <div className="text-[10px] font-bold text-slate-300">Wika (Voice Language)</div>
-                  <div className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-[10px] font-extrabold text-indigo-400 flex items-center gap-2">
-                    <Globe className="w-3.5 h-3.5" />
-                    <span>Tagalog (Filipino Voice)</span>
+                  <div className="text-[10px] font-bold text-slate-300 flex items-center justify-between">
+                    <span>Modernong AI Voice (Likas na Tao)</span>
+                    <span className="bg-indigo-500/10 text-indigo-400 text-[7px] font-black px-1 py-0.5 rounded uppercase">Free Neural</span>
                   </div>
+                  <select
+                    value={voiceMode}
+                    onChange={(e) => {
+                      setVoiceMode(e.target.value as any);
+                      // Preview voice immediately
+                      setTimeout(() => speakText(slides[activeSlide].narration), 150);
+                    }}
+                    className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-[10px] font-extrabold text-indigo-400 focus:outline-none focus:border-indigo-500 transition cursor-pointer"
+                  >
+                    <option value="happy">😊 Masigla at Masaya (Boses ng TikToker / Puck) - Lalaki</option>
+                    <option value="normal">🗣️ Warm Vlogger (Boses ng Friendly Vlogger / Aoede) - Babae</option>
+                    <option value="romance">💖 Romance (Malambing at Malambot / Aoede) - Babae</option>
+                    <option value="sad">😢 Kalmadong Narrator (Tutorial Mentor / Charon) - Lalaki</option>
+                    <option value="news">📢 Balitang Patrol (TV Reporter / Kore) - Babae</option>
+                    <option value="horror">👻 Dramatikong Voice (Deep Cinema Trailer / Fenrir) - Lalaki</option>
+                  </select>
+                  <p className="text-[8px] text-slate-500 font-semibold leading-relaxed">
+                    🎤 Gumagamit ng high-fidelity neural AI voice models na naririnig sa mga viral videos ngayon online. Masigla, may emosyon, at hindi robotic.
+                  </p>
                 </div>
 
                 <div className="space-y-1.5">
@@ -1872,57 +1995,172 @@ export default function ZoneTagalogExplainer() {
               </div>
 
               {/* VIDEO PREVIEW BOX */}
-              <div className="md:col-span-8 bg-slate-950 rounded-xl border border-slate-800/80 p-4 flex flex-col items-center justify-center text-center relative overflow-hidden min-h-[220px]">
-                {exporting ? (
-                  <div className="space-y-3 z-10">
-                    <Loader2 className="w-8 h-8 text-emerald-400 animate-spin mx-auto" />
-                    <p className="text-xs text-white font-black">Huwag isara o i-refresh ang page</p>
-                    <p className="text-[10px] text-slate-400 font-semibold">Inire-record ang canvas frames at boses mula sa virtual player...</p>
-                  </div>
-                ) : videoDownloadUrl ? (
-                  <div className="space-y-4 z-10 w-full p-2 flex flex-col items-center">
-                    <div className="flex items-center justify-between w-full mb-1">
-                      <span className="text-[10px] bg-emerald-500/20 text-emerald-400 font-black px-2.5 py-1 rounded-full flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping" />
-                        Live Explainer Video Preview
-                      </span>
-                      <button
-                        onClick={() => setVideoDownloadUrl(null)}
-                        className="text-[9px] text-slate-500 hover:text-rose-400 font-bold transition cursor-pointer"
-                      >
-                        ✕ I-clear / Ulitin ang Pag-generate
-                      </button>
+              <div className="md:col-span-8 space-y-5">
+                <div className="bg-slate-950 rounded-xl border border-slate-800/80 p-4 flex flex-col items-center justify-center text-center relative overflow-hidden min-h-[220px]">
+                  {exporting ? (
+                    <div className="space-y-3 z-10">
+                      <Loader2 className="w-8 h-8 text-emerald-400 animate-spin mx-auto" />
+                      <p className="text-xs text-white font-black">Huwag isara o i-refresh ang page</p>
+                      <p className="text-[10px] text-slate-400 font-semibold">Inire-record ang canvas frames at boses mula sa virtual player...</p>
                     </div>
+                  ) : videoDownloadUrl ? (
+                    <div className="space-y-4 z-10 w-full p-2 flex flex-col items-center">
+                      <div className="flex items-center justify-between w-full mb-1">
+                        <span className="text-[10px] bg-emerald-500/20 text-emerald-400 font-black px-2.5 py-1 rounded-full flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping" />
+                          Live Explainer Video Preview
+                        </span>
+                        <button
+                          onClick={() => setVideoDownloadUrl(null)}
+                          className="text-[9px] text-slate-500 hover:text-rose-400 font-bold transition cursor-pointer"
+                        >
+                          ✕ I-clear / Ulitin ang Pag-generate
+                        </button>
+                      </div>
 
-                    {/* INTERACTIVE VIDEO PLAYER PREVIEW */}
-                    <div className="w-full relative aspect-video bg-black rounded-xl overflow-hidden border-2 border-emerald-500/30 shadow-2xl">
-                      <video 
-                        src={videoDownloadUrl}
-                        controls
-                        autoPlay
-                        className="w-full h-full object-contain"
-                        style={{ maxHeight: '320px' }}
-                      />
+                      {/* INTERACTIVE VIDEO PLAYER PREVIEW */}
+                      <div className="w-full relative aspect-video bg-black rounded-xl overflow-hidden border-2 border-emerald-500/30 shadow-2xl">
+                        <video 
+                          src={videoDownloadUrl}
+                          controls
+                          autoPlay
+                          className="w-full h-full object-contain"
+                          style={{ maxHeight: '320px' }}
+                        />
+                      </div>
+
+                      <div className="text-left w-full bg-slate-900/60 p-3 rounded-xl border border-slate-800 space-y-1">
+                        <h5 className="text-[11px] font-black text-white flex items-center gap-1.5">
+                          🎉 Tapos na ang pag-record!
+                        </h5>
+                        <p className="text-[10px] text-slate-400 font-semibold leading-normal">
+                          I-play ang video sa itaas upang pakinggan ang high-fidelity Tagalog voice-over at panoorin ang kasabay na app tour animations. Maaari mo ring i-download ito gamit ang button sa kaliwa!
+                        </p>
+                      </div>
                     </div>
-
-                    <div className="text-left w-full bg-slate-900/60 p-3 rounded-xl border border-slate-800 space-y-1">
-                      <h5 className="text-[11px] font-black text-white flex items-center gap-1.5">
-                        🎉 Tapos na ang pag-record!
-                      </h5>
-                      <p className="text-[10px] text-slate-400 font-semibold leading-normal">
-                        I-play ang video sa itaas upang pakinggan ang high-fidelity Tagalog voice-over at panoorin ang kasabay na app tour animations. Maaari mo ring i-download ito gamit ang button sa kaliwa!
+                  ) : (
+                    <div className="space-y-3 z-10 max-w-sm">
+                      <Video className="w-8 h-8 text-slate-600 mx-auto" />
+                      <h5 className="text-xs font-black text-slate-300">Handa nang gumawa ng video</h5>
+                      <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
+                        I-click ang **Simulan ang Pag-generate** sa kaliwa. Mag-re-record ang platform sa background habang nagpapatugtog ng Tagalog boses.
                       </p>
                     </div>
+                  )}
+                </div>
+
+                {/* INTERACTIVE SCENE EDITOR & AUDIO SCRIPT MANAGER */}
+                <div className="bg-slate-900/40 rounded-xl border border-slate-800/80 p-4 text-left space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+                    <div>
+                      <h5 className="text-xs font-black text-white flex items-center gap-1.5">
+                        <span>📝 Editor ng bawat Eksena (Interactive Scene Editor)</span>
+                      </h5>
+                      <p className="text-[9.5px] text-slate-400 font-semibold mt-0.5">
+                        Maaari mong baguhin ang pamagat at ang eksaktong narration sa bawat eksena sa ibaba. Awtomatikong magbabago ang sasabihin ng boses!
+                      </p>
+                    </div>
+                    <span className="text-[9px] bg-indigo-500/10 text-indigo-400 font-black px-2 py-0.5 rounded border border-indigo-500/20 uppercase shrink-0">
+                      {slides.length} Eksena
+                    </span>
                   </div>
-                ) : (
-                  <div className="space-y-3 z-10 max-w-sm">
-                    <Video className="w-8 h-8 text-slate-600 mx-auto" />
-                    <h5 className="text-xs font-black text-slate-300">Handa nang gumawa ng video</h5>
-                    <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
-                      I-click ang **Simulan ang Pag-generate** sa kaliwa. Mag-re-record ang platform sa background habang nagpapatugtog ng Tagalog boses.
-                    </p>
+
+                  <div className="space-y-3.5 max-h-[380px] overflow-y-auto pr-1 custom-scrollbar">
+                    {slides.map((sc, index) => (
+                      <div 
+                        key={index} 
+                        className={`p-3.5 rounded-xl border transition-all duration-200 ${
+                          activeSlide === index 
+                            ? 'bg-indigo-500/5 border-indigo-500/40 shadow-md shadow-indigo-950/25' 
+                            : 'bg-slate-950/60 border-slate-850 hover:border-slate-800'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <button
+                            onClick={() => {
+                              setActiveSlide(index);
+                              speakText(sc.narration);
+                            }}
+                            className="text-[10px] font-black text-indigo-300 hover:text-indigo-200 flex items-center gap-1.5 cursor-pointer transition"
+                          >
+                            <span>🔊 Scene {index + 1}:</span>
+                            <span className="text-white hover:underline">{sc.title}</span>
+                          </button>
+
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[8.5px] bg-slate-900 text-slate-400 px-2 py-0.5 rounded border border-slate-800 font-extrabold uppercase tracking-wider">
+                              {sc.visualType}
+                            </span>
+                            <button
+                              onClick={() => {
+                                setActiveSlide(index);
+                                speakText(sc.narration);
+                              }}
+                              className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition cursor-pointer"
+                              title="Pakinggan ang Boses"
+                            >
+                              <Volume2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Title & Narration Editable Inputs */}
+                        <div className="space-y-2.5">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[8px] text-slate-500 font-black uppercase tracking-wider block mb-1">Pamagat ng Eksena (Title):</label>
+                              <input
+                                type="text"
+                                value={sc.title}
+                                onChange={(e) => {
+                                  const updatedSlides = [...slides];
+                                  updatedSlides[index] = {
+                                    ...sc,
+                                    title: e.target.value
+                                  };
+                                  setSlides(updatedSlides);
+                                }}
+                                className="w-full px-2.5 py-1 bg-slate-950 border border-slate-850 rounded text-[9.5px] font-bold text-white focus:outline-none focus:border-indigo-500 transition"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[8px] text-slate-500 font-black uppercase tracking-wider block mb-1">Sub-label ng Eksena (Subtitle):</label>
+                              <input
+                                type="text"
+                                value={sc.subtitle}
+                                onChange={(e) => {
+                                  const updatedSlides = [...slides];
+                                  updatedSlides[index] = {
+                                    ...sc,
+                                    subtitle: e.target.value
+                                  };
+                                  setSlides(updatedSlides);
+                                }}
+                                className="w-full px-2.5 py-1 bg-slate-950 border border-slate-850 rounded text-[9.5px] font-semibold text-slate-300 focus:outline-none focus:border-indigo-500 transition"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-[8px] text-slate-500 font-black uppercase tracking-wider block mb-1">Tekstong Sasabihin ng Boses (Narration Script):</label>
+                            <textarea
+                              value={sc.narration}
+                              onChange={(e) => {
+                                const updatedSlides = [...slides];
+                                updatedSlides[index] = {
+                                  ...sc,
+                                  narration: e.target.value
+                                };
+                                setSlides(updatedSlides);
+                              }}
+                              className="w-full h-14 px-2.5 py-1.5 bg-slate-950 border border-slate-850 rounded text-[9.5px] font-semibold text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition resize-none leading-relaxed"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                )}
+                </div>
               </div>
             </div>
           </div>
