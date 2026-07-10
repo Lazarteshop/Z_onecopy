@@ -249,6 +249,7 @@ function getVoiceForMode(voiceMode: string): string {
     case 'horror': return 'Fenrir';
     case 'news': return 'Kore';
     case 'romance': return 'Aoede';
+    case 'wizard': return 'Fenrir';
     default: return 'Aoede';
   }
 }
@@ -307,6 +308,8 @@ function buildSystemInstruction(
     baseRole = "You are a deeply emotional, somber, and sincere human narrator speaking with a heavy heart.";
   } else if (voiceMode === 'horror') {
     baseRole = "You are a suspenseful, creepy, and terrifyingly realistic narrator speaking with deep whispers.";
+  } else if (voiceMode === 'wizard') {
+    baseRole = "You are a wise, mystical, deep-voiced, and ancient wizard narrator speaking with great authority and magical resonance.";
   } else if (newsPresenter || voiceMode === 'news') {
     baseRole = "You are an articulate, professional, and formal native Filipino news reporter.";
   }
@@ -478,6 +481,9 @@ app.get('/api/tts', async (req, res) => {
   // Attempt to use Gemini TTS for high fidelity human voiceover
   const ai = getGeminiClient();
   if (ai) {
+    let base64Audio: string | undefined;
+
+    // First attempt: gemini-3.1-flash-tts-preview
     try {
       console.log(`[TTS] Requesting Gemini TTS (model: gemini-3.1-flash-tts-preview, voice: ${voiceName}, mode: ${voiceMode}) for text: "${spokenText.substring(0, 50)}..."`);
 
@@ -499,22 +505,49 @@ app.get('/api/tts', async (req, res) => {
         }
       });
 
-      const base64Audio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (base64Audio) {
-        console.log(`[TTS] Gemini TTS synthesized successfully!`);
-        const audioBuffer = Buffer.from(base64Audio, 'base64');
-        res.setHeader('Content-Type', 'audio/mp3');
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-        return res.send(audioBuffer);
-      } else {
-        console.warn(`[TTS] Gemini TTS did not return audio data for text: "${spokenText.substring(0, 30)}". Falling back to Google Translate TTS.`);
-      }
+      base64Audio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     } catch (err) {
-      console.error(`[TTS] Gemini TTS failed. Falling back to Google Translate TTS. Error:`, err);
+      console.warn(`[TTS] Primary gemini-3.1-flash-tts-preview failed, attempting fallback to gemini-2.5-flash-preview-tts. Error:`, err);
+    }
+
+    // Fallback: gemini-2.5-flash-preview-tts
+    if (!base64Audio) {
+      try {
+        console.log(`[TTS] Requesting Fallback Gemini TTS (model: gemini-2.5-flash-preview-tts, voice: ${voiceName}, mode: ${voiceMode})`);
+        const ttsResponse = await ai.models.generateContent({
+          model: 'gemini-2.5-flash-preview-tts',
+          contents: [{ 
+            parts: [{ text: spokenText }] 
+          }],
+          config: {
+            responseModalities: ['AUDIO'],
+            systemInstruction: systemInstruction,
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName }
+              }
+            }
+          }
+        });
+
+        base64Audio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      } catch (err) {
+        console.error(`[TTS] Fallback gemini-2.5-flash-preview-tts failed. Error:`, err);
+      }
+    }
+
+    if (base64Audio) {
+      console.log(`[TTS] Gemini TTS synthesized successfully!`);
+      const audioBuffer = Buffer.from(base64Audio, 'base64');
+      res.setHeader('Content-Type', 'audio/mp3');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      return res.send(audioBuffer);
+    } else {
+      console.warn(`[TTS] Both Gemini TTS models did not return audio data for text: "${spokenText.substring(0, 30)}". Falling back to Google Translate TTS.`);
     }
   }
 

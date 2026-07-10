@@ -291,7 +291,7 @@ export default function MerchantPortal({
             </button>
           </div>
 
-          <div className="border border-slate-700 rounded-2xl overflow-hidden shadow-xl" style={{ backgroundColor: '#ffffff' }}>
+          <div className="border border-slate-700 rounded-2xl overflow-hidden shadow-xl bg-white">
             <div className="p-6 text-slate-900 text-center space-y-4" style={{ backgroundColor: previewAd.primaryColor, color: '#ffffff' }}>
               <span className="bg-white/20 text-white text-[10px] font-black tracking-widest px-3 py-1 rounded-full uppercase">
                 📢 SPONSORED PROMOTION
