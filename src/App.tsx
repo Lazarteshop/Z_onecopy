@@ -1248,13 +1248,14 @@ export default function App() {
                       reader.readAsDataURL(file);
                     }}
                   />
-                  <label
-                    htmlFor="profile-pic-upload"
+                  <button
+                    type="button"
+                    onClick={() => document.getElementById('profile-pic-upload')?.click()}
                     className="w-full border border-dashed border-indigo-300 hover:border-indigo-500 hover:bg-indigo-50/20 p-2.5 rounded-2xl text-[11px] text-indigo-750 font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5"
                   >
                     <Upload className="w-4 h-4 text-indigo-600" />
                     <span>{language === 'tl' ? 'Mag-upload ng Larawan mula sa Gallery' : 'Upload Image from Gallery'}</span>
-                  </label>
+                  </button>
                 </div>
 
                 {/* Custom Avatar URL or Custom Emoji */}

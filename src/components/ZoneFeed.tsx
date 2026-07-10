@@ -2211,8 +2211,9 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   id="local-media-upload"
                   disabled={isUploadingLocalFile}
                 />
-                <label
-                  htmlFor="local-media-upload"
+                <button
+                  type="button"
+                  onClick={() => document.getElementById('local-media-upload')?.click()}
                   className="w-full border border-dashed border-indigo-300 hover:border-indigo-500 hover:bg-indigo-50/20 p-2.5 rounded-2xl text-[11px] text-indigo-750 font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5"
                 >
                   {isUploadingLocalFile ? (
@@ -2225,7 +2226,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                       ? (language === 'tl' ? 'Binabasa ang file...' : 'Reading file...') 
                       : (language === 'tl' ? 'Kumuha sa Phone Gallery (Multi-Upload)' : 'Choose from Phone Gallery (Multi-Upload)')}
                   </span>
-                </label>
+                </button>
 
                 <button
                   type="button"
