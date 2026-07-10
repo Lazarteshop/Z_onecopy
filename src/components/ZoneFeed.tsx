@@ -3450,14 +3450,14 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       <AnimatePresence>
         {activeDmUser && (
           <div 
-            className="fixed left-0 right-0 top-0 z-50 flex items-end sm:items-center justify-center p-4 max-sm:p-0 bg-slate-900/60 backdrop-blur-xs overflow-hidden"
+            className="fixed left-0 right-0 top-0 z-50 flex items-end sm:items-center justify-center p-4 max-sm:p-0 bg-slate-900/60 max-sm:bg-white backdrop-blur-xs overflow-hidden"
             style={visualViewportHeight ? { height: `${visualViewportHeight}px` } : { height: '100vh' }}
           >
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-3xl max-sm:rounded-b-none max-sm:rounded-t-[24px] max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden flex flex-col h-[520px] max-sm:h-[85vh] max-sm:max-h-full text-slate-800"
+              className="bg-white rounded-3xl max-sm:rounded-none max-w-md w-full shadow-2xl border border-slate-100 max-sm:border-none overflow-hidden flex flex-col h-[520px] max-sm:h-full text-slate-800"
             >
               {/* Header */}
               <div className="p-4 flex items-center justify-between border-b border-slate-100 bg-slate-50/50">
