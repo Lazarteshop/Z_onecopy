@@ -1970,7 +1970,14 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       </div>
       
       {/* 👑 BRAND HEADER */}
-      <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 rounded-3xl p-6 text-white shadow-md relative overflow-hidden">
+      <div 
+        className="bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 rounded-3xl p-6 text-white shadow-md relative overflow-hidden"
+        style={{ 
+          background: 'linear-gradient(135deg, #2563eb 0%, #4f46e5 50%, #4338ca 100%)', 
+          backgroundColor: '#3b82f6', 
+          color: '#ffffff' 
+        }}
+      >
         <div className="absolute top-0 right-0 p-8 opacity-10">
           <Users className="w-48 h-48 rotate-12" />
         </div>
@@ -2379,7 +2386,13 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
               </div>
 
               {outbox.length > 0 && (
-                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-xs font-bold text-blue-900 shadow-xs animate-pulse">
+                <div 
+                  className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-xs font-bold text-blue-900 shadow-xs animate-pulse"
+                  style={{
+                    background: 'linear-gradient(135deg, #eff6ff 0%, #e0e7ff 100%)',
+                    backgroundColor: '#eff6ff'
+                  }}
+                >
                   <div className="flex items-center gap-2.5">
                     <RefreshCw className="w-4 h-4 text-blue-600 shrink-0 animate-spin" />
                     <div>
@@ -3041,7 +3054,14 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
             return (
               <div className="space-y-6 animate-fadeIn">
                 {/* Header Banner */}
-                <div className="bg-gradient-to-r from-rose-600 via-red-600 to-indigo-700 text-white rounded-3xl p-6 shadow-md relative overflow-hidden flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div 
+                  className="bg-gradient-to-r from-rose-600 via-red-600 to-indigo-700 text-white rounded-3xl p-6 shadow-md relative overflow-hidden flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
+                  style={{
+                    background: 'linear-gradient(135deg, #e11d48 0%, #dc2626 50%, #4338ca 100%)',
+                    backgroundColor: '#dc2626',
+                    color: '#ffffff'
+                  }}
+                >
                   <div className="absolute top-0 right-0 transform translate-x-4 -translate-y-4 text-white/10 text-9xl font-black select-none pointer-events-none font-mono">LIVE</div>
                   <div className="relative z-10 space-y-2 flex-1">
                     <span className="bg-white/20 text-white text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-full border border-white/10">Z-one Broadcast TV</span>
@@ -3963,6 +3983,11 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           whileTap={{ scale: 0.95 }}
           onClick={handleOpenInbox}
           className="relative flex items-center justify-center w-14 h-14 rounded-full bg-gradient-to-r from-indigo-600 via-indigo-700 to-indigo-800 text-white shadow-2xl hover:from-indigo-700 hover:to-indigo-900 cursor-pointer border border-indigo-500 transition-colors"
+          style={{
+            background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 50%, #312e81 100%)',
+            backgroundColor: '#4338ca',
+            color: '#ffffff'
+          }}
           title={language === 'tl' ? 'Buksan ang Inbox' : 'Open Inbox'}
         >
           <MessageSquare className="w-6 h-6 animate-pulse" />

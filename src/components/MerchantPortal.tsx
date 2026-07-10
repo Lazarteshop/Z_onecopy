@@ -227,7 +227,14 @@ export default function MerchantPortal({
     <div className="space-y-6">
       
       {/* 🚀 PROMOTION MAIN BANNER */}
-      <div className="bg-gradient-to-br from-indigo-900 to-slate-900 text-white rounded-3xl p-6 md:p-8 shadow-md relative overflow-hidden">
+      <div 
+        className="bg-gradient-to-br from-indigo-900 to-slate-900 text-white rounded-3xl p-6 md:p-8 shadow-md relative overflow-hidden"
+        style={{ 
+          background: 'linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%)', 
+          backgroundColor: '#0f172a', 
+          color: '#ffffff' 
+        }}
+      >
         <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
         <div className="absolute -bottom-10 -left-10 w-48 h-48 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none"></div>
         

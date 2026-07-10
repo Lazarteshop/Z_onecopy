@@ -80,9 +80,29 @@
   --color-amber-950: #451a03;
 }
 
-body {
+html, body {
   font-family: var(--font-sans);
   background-color: #020617; /* Changed default body bg to dark as safe fallback */
+  color: #f1f5f9;
+  
+  /* Enable native-feeling high-speed momentum/inertial scrolling in WebViews */
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+  scroll-behavior: smooth !important;
+  overscroll-behavior-y: auto !important;
+}
+
+#root, #application-sandbox-root {
+  width: 100%;
+  min-height: 100%;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #020617;
   color: #f1f5f9;
 }
 
@@ -178,5 +198,16 @@ body {
   background-color: #ffffff !important;
   border-color: #cbd5e1 !important;
   color: #0f172a !important;
+}
+
+/* Enable momentum scrolling globally on all scroll containers */
+.overflow-y-auto, .overflow-y-scroll, [class*="overflow-y-"] {
+  -webkit-overflow-scrolling: touch !important;
+  scroll-behavior: smooth !important;
+}
+
+/* Force GPU acceleration on the main containers to prevent touch/scroll lag in WebViews */
+#main-content-layout, #application-sandbox-root, body, html {
+  will-change: transform;
 }
 
