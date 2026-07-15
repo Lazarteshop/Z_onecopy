@@ -15,7 +15,10 @@ import {
   Sparkles,
   RefreshCw,
   Award,
-  Megaphone
+  Megaphone,
+  Settings,
+  Upload,
+  QrCode
 } from 'lucide-react';
 import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd } from '../types';
 
@@ -58,7 +61,62 @@ export default function AdminPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'subscriptions' | 'users' | 'merchant_ads'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'subscriptions' | 'users' | 'merchant_ads' | 'settings'>('overview');
+
+  // QR Code upload states
+  const [qrUploading, setQrUploading] = useState(false);
+  const [qrPreview, setQrPreview] = useState<string | null>(null);
+  const [qrTimestamp, setQrTimestamp] = useState(Date.now());
+
+  const handleQrUploadChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      triggerNotification('Masyadong malaki ang file. Dapat mas maliit sa 10MB.', 'error');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setQrPreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveQrCode = async () => {
+    if (!qrPreview) {
+      triggerNotification('Mangyaring pumili muna ng bagong QR Code image.', 'error');
+      return;
+    }
+
+    setQrUploading(true);
+    try {
+      const res = await fetch('/api/admin/update-qr', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ dataUrl: qrPreview })
+      });
+
+      if (res.ok) {
+        await res.json();
+        triggerNotification('🎉 Tagumpay na na-update ang iyong GCash QR Code!', 'success');
+        setQrPreview(null);
+        setQrTimestamp(Date.now()); // force image reload
+      } else {
+        const err = await res.json();
+        triggerNotification(`❌ Error: ${err.error || 'Hindi ma-save ang QR code.'}`, 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification('❌ Hindi makakonekta sa server.', 'error');
+    } finally {
+      setQrUploading(false);
+    }
+  };
 
   const fetchMerchantAds = async () => {
     try {
@@ -434,6 +492,17 @@ export default function AdminPanel({
               {merchantAds.filter(a => a.status === 'pending').length}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('settings'); }}
+          className={`px-4 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 ${
+            activeSubTab === 'settings'
+              ? 'border-indigo-600 text-indigo-600 bg-white/70'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Settings className="w-3.5 h-3.5" />
+          <span>App Settings</span>
         </button>
       </div>
 
@@ -1086,6 +1155,136 @@ export default function AdminPanel({
                   </table>
                 </div>
               )}
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 5: APP SETTINGS (GCASH QR UPDATE) */}
+      {activeSubTab === 'settings' && (
+        <div className="space-y-6 animate-fadeIn">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="font-black text-slate-950 text-base flex items-center gap-2">
+                  <Settings className="w-5 h-5 text-indigo-600" />
+                  <span>App System Configuration</span>
+                </h3>
+                <p className="text-xs text-slate-500 font-bold">
+                  Pamahalaan ang mga dynamic configuration at resources ng iyong application.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-6">
+              {/* CURRENT QR PREVIEW & INFO */}
+              <div className="bg-slate-50 border border-slate-100 p-6 rounded-2xl space-y-4 flex flex-col items-center justify-between">
+                <div className="text-center space-y-1.5 w-full">
+                  <h4 className="font-black text-slate-900 text-xs uppercase tracking-wider flex items-center justify-center gap-1.5">
+                    <QrCode className="w-4 h-4 text-indigo-600" />
+                    <span>Kasalukuyang GCash QR Code</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-500 leading-normal font-semibold">
+                    Ito ang QR Code na kasalukuyang nakikita at dina-download ng mga user sa website.
+                  </p>
+                </div>
+
+                <div className="bg-white p-3.5 border border-slate-200 rounded-2xl shadow-xs max-w-[240px] w-full flex items-center justify-center overflow-hidden">
+                  <img
+                    src={`/admin_gcash_qr.png?t=${qrTimestamp}`}
+                    alt="Current Admin GCash QR"
+                    className="max-h-[220px] object-contain rounded-lg shadow-xs"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement;
+                      target.src = "https://placehold.co/300x400/f1f5f9/64748b?text=Walang+QR+Code";
+                    }}
+                  />
+                </div>
+
+                <div className="text-center text-[10px] text-slate-400 font-mono">
+                  Route: /admin_gcash_qr.png
+                </div>
+              </div>
+
+              {/* UPLOAD NEW QR */}
+              <div className="bg-white border border-slate-200/80 p-6 rounded-2xl space-y-5">
+                <div className="space-y-1">
+                  <h4 className="font-extrabold text-slate-950 text-sm">
+                    Mag-upload ng Bagong GCash QR Code
+                  </h4>
+                  <p className="text-[11px] text-slate-500 leading-normal font-semibold">
+                    Pumili ng malinaw na larawan ng iyong GCash QR Code (InstaPay Merchant QR o personal GCash QR) para mapalitan ang luma.
+                  </p>
+                </div>
+
+                {/* DRAG AND DROP / FILE SELECTOR */}
+                <div className="border-2 border-dashed border-slate-200 hover:border-indigo-500 rounded-2xl p-6 transition text-center space-y-3 bg-slate-50/50 relative">
+                  <input
+                    type="file"
+                    id="new-gcash-qr-upload"
+                    accept="image/*"
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    onChange={handleQrUploadChange}
+                  />
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <div className="bg-indigo-50 p-2.5 rounded-full text-indigo-600">
+                      <Upload className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-xs font-black text-slate-700 block">
+                        {qrPreview ? 'May napili nang bagong larawan!' : 'I-click o i-drag ang larawan dito'}
+                      </span>
+                      <span className="text-[10px] text-slate-400 block">
+                        Dapat ay PNG, JPG, o JPEG format (Max 10MB)
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SELECTED PREVIEW */}
+                {qrPreview && (
+                  <div className="space-y-2 animate-fadeIn border border-indigo-100 bg-indigo-50/20 p-4 rounded-xl flex items-center gap-4">
+                    <img
+                      src={qrPreview}
+                      alt="Selected QR Preview"
+                      className="w-14 h-18 object-contain rounded border border-indigo-200"
+                    />
+                    <div className="flex-1 space-y-1">
+                      <span className="text-[11px] font-extrabold text-indigo-950 block">Preview ng Bagong Larawan</span>
+                      <p className="text-[9px] text-slate-500 font-semibold leading-tight">
+                        Ito ang bagong GCash QR na ipapalit sa kasalukuyang imahe. Siguraduhing malinaw ang QR details.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* ACTION BUTTON */}
+                <button
+                  type="button"
+                  onClick={handleSaveQrCode}
+                  disabled={qrUploading || !qrPreview}
+                  className={`w-full py-3 rounded-xl font-black text-xs transition duration-200 flex items-center justify-center gap-2 shadow-xs cursor-pointer ${
+                    qrUploading
+                      ? 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'
+                      : !qrPreview
+                        ? 'bg-slate-100 border border-slate-150 text-slate-400 cursor-not-allowed'
+                        : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-100'
+                  }`}
+                >
+                  {qrUploading ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Inia-update ang QR Code...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      <span>I-save at Ilapat ang Bagong QR Code</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
           </div>

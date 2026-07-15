@@ -3360,6 +3360,99 @@ app.post('/api/zone/upload', (req, res) => {
   }
 });
 
+// --- DYNAMIC GCASH QR CODE SERVICE WITH CLOUD FIRESTORE DURA-BACKUP ---
+app.get('/admin_gcash_qr.png', async (req, res) => {
+  // 1. Try to fetch from persistent cloud storage (Firestore) first so restarts never wipe it out
+  if (isFirestoreActive && firestore) {
+    try {
+      const doc = await firestore.collection('app_settings').doc('gcash_qr').get();
+      if (doc.exists) {
+        const data = doc.data();
+        if (data && data.base64) {
+          const buffer = Buffer.from(data.base64, 'base64');
+          res.setHeader('Content-Type', data.mimeType || 'image/png');
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+          return res.send(buffer);
+        }
+      }
+    } catch (err) {
+      console.error('❌ Firestore QR recovery error:', err);
+    }
+  }
+
+  // 2. Fallback to local files if Firestore document is not found or inactive
+  const publicPath = path.join(process.cwd(), 'public', 'admin_gcash_qr.png');
+  if (fs.existsSync(publicPath)) {
+    return res.sendFile(publicPath);
+  }
+
+  const distPath = path.join(process.cwd(), 'dist', 'admin_gcash_qr.png');
+  if (fs.existsSync(distPath)) {
+    return res.sendFile(distPath);
+  }
+
+  res.status(404).send('QR Code image not found.');
+});
+
+// --- ADMIN ENDPOINT TO UPDATE GCASH QR CODE ---
+app.post('/api/admin/update-qr', async (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna bilang admin.' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user || !user.isAdmin) {
+    return res.status(403).json({ error: 'Bawal ma-access ito ng hindi admin.' });
+  }
+
+  const { dataUrl } = req.body;
+  if (!dataUrl || !dataUrl.startsWith('data:')) {
+    return res.status(400).json({ error: 'Walang valid image data na natanggap.' });
+  }
+
+  try {
+    const matches = dataUrl.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
+      return res.status(400).json({ error: 'Hindi maproseso ang format ng larawan.' });
+    }
+
+    const mimeType = matches[1];
+    const base64Data = matches[2];
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    // Save physically to public folder
+    const publicDir = path.join(process.cwd(), 'public');
+    if (!fs.existsSync(publicDir)) {
+      fs.mkdirSync(publicDir, { recursive: true });
+    }
+    fs.writeFileSync(path.join(publicDir, 'admin_gcash_qr.png'), buffer);
+
+    // Save physically to dist folder (if exists)
+    const distDir = path.join(process.cwd(), 'dist');
+    if (fs.existsSync(distDir)) {
+      fs.writeFileSync(path.join(distDir, 'admin_gcash_qr.png'), buffer);
+    }
+
+    // Save persistently to Firestore
+    if (isFirestoreActive && firestore) {
+      await firestore.collection('app_settings').doc('gcash_qr').set({
+        base64: base64Data,
+        mimeType,
+        updatedAt: new Date().toISOString(),
+        updatedBy: userId
+      });
+      console.log('☁️ Persistent custom GCash QR saved to Cloud Firestore.');
+    }
+
+    res.json({ success: true, message: 'Tagumpay na napalitan ang iyong GCash QR Code!' });
+  } catch (err: any) {
+    console.error('Error saving custom QR code:', err);
+    res.status(500).json({ error: 'May naganap na error habang sine-save ang QR code.' });
+  }
+});
+
 // Dynamic Interceptor for serving uploads with transparent Firestore Chunk recovery
 app.get('/uploads/:filename', async (req, res) => {
   const filename = req.params.filename;
