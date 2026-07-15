@@ -307,171 +307,42 @@ export default function BrowserSimulator({ campaign, onComplete, onClose, langua
         </div>
       </div>
 
-      {/* 🖥️ Simulated Virtual Webpage Area (Scrollable Canvas Container) */}
+      {/* ℹ️ Informative Banner for Iframe Compatibility and Analytics Transmission */}
+      <div className="bg-indigo-950/90 text-white border-b border-indigo-900 px-4 py-2 flex flex-col sm:flex-row items-center justify-between gap-2.5 text-[11px] font-sans">
+        <div className="flex items-center gap-2 leading-relaxed">
+          <span className="flex h-2 w-2 relative shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <span className="text-slate-250 font-medium">
+            {isTl 
+              ? "Upang mag-record ang iyong view sa web analytics (Google Analytics, Pixels) ng advertiser mula sa Z-oneApp, maaari mo ring buksan ang website sa bagong tab." 
+              : "To ensure your view gets counted in the advertiser's web analytics (Google Analytics, Pixels) from Z-oneApp, you can also open the website in a new tab."}
+          </span>
+        </div>
+        <a 
+          href={campaign.url} 
+          target="_blank" 
+          rel="noopener"
+          className="shrink-0 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-lg transition text-[10px] uppercase font-black tracking-wider flex items-center gap-1.5 cursor-pointer shadow-sm select-none"
+        >
+          <Compass className="w-3.5 h-3.5 animate-spin-slow" />
+          <span>{isTl ? "Buksan sa Bagong Tab" : "Open in New Tab"}</span>
+        </a>
+      </div>
+
+      {/* 🖥️ Real Live Webpage Area (Iframe View) */}
       <div 
         id="browser-webpage-viewport"
-        ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto bg-slate-50 text-slate-800"
+        className="flex-1 bg-white relative w-full h-full overflow-hidden"
       >
-        <div className="max-w-4xl mx-auto px-4 py-8 md:py-12">
-          
-          {/* Mock Website Container Card */}
-          <div 
-            id="simulated-campaign-page-frame"
-            className="bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200"
-            style={{ borderTop: `6px solid ${campaign.mockPageContent.primaryColor}` }}
-          >
-            
-            {/* Header / Brand Area */}
-            <div className="px-6 py-6 md:py-8 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-50/50">
-              <div>
-                <span className="text-[10px] font-bold tracking-widest text-slate-400 uppercase">{isTl ? "Adbins Partner Advertiser" : "Partner Advertiser"}</span>
-                <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 mt-1 font-sans">
-                  {campaign.mockPageContent.heroTitle}
-                </h1>
-                <p className="text-xs md:text-sm text-slate-600 mt-1 font-medium">
-                  {campaign.mockPageContent.heroSubtitle}
-                </p>
-              </div>
-              <div 
-                className="self-start md:self-center px-4 py-1.5 rounded-full text-xs font-bold text-white shadow-sm flex items-center gap-1"
-                style={{ backgroundColor: campaign.mockPageContent.primaryColor }}
-              >
-                <Compass className="w-3.5 h-3.5 animate-spin-slow" />
-                <span>{isTl ? "Bisita muna" : "Visiting"}</span>
-              </div>
-            </div>
-
-            {/* Grid layout with Main story/content and sidebar */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 p-6">
-              
-              {/* Main Content Pane */}
-              <div className="lg:col-span-2 space-y-6">
-                
-                {/* Paragraphs */}
-                {campaign.mockPageContent.paragraphs.map((p, idx) => (
-                  <p key={idx} className="text-slate-700 leading-relaxed text-sm md:text-base">
-                    {p}
-                  </p>
-                ))}
-
-                {/* Highly Dynamic Features/Guides */}
-                {campaign.mockPageContent.features && (
-                  <div className="bg-slate-50 rounded-xl p-5 border border-slate-100">
-                    <h3 className="font-bold text-slate-950 mb-3 flex items-center gap-1.5 text-sm md:text-base">
-                      <TrendingUp className="w-5 h-5 text-indigo-500" />
-                      <span>{isTl ? "Mga Tampok na Impormasyon / Hakbang:" : "Key Features & Steps Guide:"}</span>
-                    </h3>
-                    <ul className="space-y-3">
-                      {campaign.mockPageContent.features.map((feat, idx) => (
-                        <li key={idx} className="flex gap-2.5 text-xs md:text-sm text-slate-700">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                          <span>{feat}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Offers/Rates lists if any */}
-                {campaign.mockPageContent.offers && (
-                  <div className="space-y-3">
-                    <h4 className="font-bold text-slate-900 text-sm md:text-base">{isTl ? "🔥 Espesyal na mga Alok at Presyo ngayon:" : "🔥 Special Today: Deals & Promo Rates:"}</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {campaign.mockPageContent.offers.map((offer, idx) => (
-                        <div key={idx} className="p-3.5 bg-yellow-50 border border-yellow-200/60 rounded-xl text-xs md:text-sm text-yellow-900 flex justify-between items-center">
-                          <span className="font-semibold">{offer.split(' - ')[0]}</span>
-                          <span className="bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded text-[11px] shrink-0 ml-2">
-                            {offer.split(' - ')[1] || (isTl ? 'Tingnan' : 'View')}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Static Interactive Elements for simulated landing page engagement */}
-                <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
-                  <div className="text-xs text-slate-500">
-                    © 2026 {campaign.title.split(' ')[0]} Media. {isTl ? "Nakareserba lahat ng karapatan." : "All rights reserved."}
-                  </div>
-                  <div className="flex gap-2">
-                    <button className="px-3 py-1.5 bg-slate-150 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition cursor-pointer">
-                      {isTl ? "Ibahagi ang Tipid Hacks" : "Share Life Hacks"}
-                    </button>
-                    <button className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition cursor-pointer">
-                      {isTl ? "Mag-subscribe sa Alerts" : "Subscribe to Alerts"}
-                    </button>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* Sidebar Section */}
-              <div className="space-y-6">
-                
-                {/* Simulated Ads Widget */}
-                <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-100 rounded-xl p-5 text-center">
-                  <div className="bg-indigo-100 text-indigo-700 text-[9px] font-bold tracking-wider rounded px-1.5 py-0.5 uppercase inline-block mx-auto mb-2">
-                    Simulated Sponsor Card
-                  </div>
-                  <h4 className="font-bold text-slate-900 text-sm mb-1">{isTl ? "May sarili ka bang Negosyo?" : "Own a Business?"}</h4>
-                  <p className="text-xs text-slate-600 mb-4 leading-relaxed">
-                    {isTl 
-                      ? "Maaari mo ring i-advertise ang iyong website homepage dito para makakuha ng libo-libong organic na bisita kada araw!" 
-                      : "You can also advertise your website homepage here to reach thousands of organic simulated visitors daily!"}
-                  </p>
-                  <button className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition cursor-not-allowed" disabled>
-                    {isTl ? "I-promote ang Aking Web (Soon)" : "Promote My Web (Soon)"}
-                  </button>
-                </div>
-
-                {/* Simulated Security Check */}
-                <div className="border border-slate-200 rounded-xl p-4 space-y-3 bg-white">
-                  <h5 className="font-bold text-xs text-slate-400 tracking-wider uppercase">{isTl ? "Seguridad at Privacy" : "Security & Privacy"}</h5>
-                  
-                  <div className="flex items-start gap-2 text-xs">
-                    <Lock className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-bold text-slate-800">SSL Encrypted</p>
-                      <p className="text-slate-500">{isTl ? "Ang iyong session ay ligtas at mayroong end-to-end security certificate." : "Your slot session is guarded with trusted end-to-end encryption."}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-2 text-xs pt-2 border-t border-slate-100">
-                    <Smartphone className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-bold text-slate-800">Multi-Device Compatible</p>
-                      <p className="text-slate-500">{isTl ? "Mabilis na naglo-load sa Cellphone, Tablet, at desktop monitor." : "Loads beautifully responsive on Mobile devices, Tablets and Desktops."}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Friendly tips */}
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4.5">
-                  <div className="flex gap-2">
-                    <AlertCircle className="w-4.5 h-4.5 text-amber-600 shrink-0" />
-                    <div className="text-xs text-amber-900">
-                      <p className="font-bold">{isTl ? "May problem ba sa countdown?" : "Stuck Countdown?"}</p>
-                      <p className="mt-1 leading-relaxed">
-                        {isTl 
-                          ? <>Maaari mong pabilisin o i-restart ang tracker gamit ang <RotateCw className="inline w-3 h-3 mx-0.5" /> Reload icon sa Address bar.</>
-                          : <>You can easily boost or restart the timer with the <RotateCw className="inline w-3 h-3 mx-0.5" /> Reload Icon in the Address bar.</>}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-
-            </div>
-
-          </div>
-
-          {/* Spacer to make it scrollable */}
-          <div className="h-20"></div>
-
-        </div>
+        <iframe 
+          src={campaign.url}
+          className="w-full h-full border-0 bg-white"
+          title={campaign.title}
+          referrerPolicy="no-referrer-when-downgrade"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+        />
       </div>
     
     </div>
