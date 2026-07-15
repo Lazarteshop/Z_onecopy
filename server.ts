@@ -2469,8 +2469,16 @@ app.post('/api/user/task-complete', (req, res) => {
     return res.status(404).json({ error: 'Hindi mahanap ang gumagamit.' });
   }
 
+  const allCampaigns = db.campaigns || INITIAL_CAMPAIGNS;
+  const matchCamp = allCampaigns.find((c: any) => c.id === campaignId);
+  const actualReward = matchCamp ? matchCamp.reward : Number(rewardAmount);
+
   if (!hasActiveAccess(user)) {
-    return res.status(403).json({ error: 'Expired na ang iyong trial o subscription. Mangyaring kumuha ng access plan upang magpatuloy.' });
+    if (actualReward >= 1.00 && actualReward <= 1.99) {
+      // Allowed for expired users
+    } else {
+      return res.status(403).json({ error: 'Expired na ang iyong trial o subscription. Ang maaari mo lamang buksan at makumpleto ay mga website campaign na may reward na ₱1.00 up to ₱1.99 lamang.' });
+    }
   }
 
   const reward = Number(rewardAmount);
@@ -2669,9 +2677,7 @@ app.post('/api/user/daily-checkin', (req, res) => {
   const user = db.users.find(u => u.id === userId);
   if (!user) return res.status(404).json({ error: 'User not found.' });
 
-  if (!hasActiveAccess(user)) {
-    return res.status(403).json({ error: 'Expired na ang iyong trial o subscription. Mangyaring kumuha ng access plan upang magpatuloy.' });
-  }
+  // Allowed for both active and expired users to participate in daily earning features (1.00 check-in reward is in the allowed 1.00-1.99 range)
 
   const todayStr = new Date().toLocaleDateString('fil-PH');
   if (user.stats.dailyCheckInDate === todayStr) {
