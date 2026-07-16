@@ -32,7 +32,8 @@ import {
   RefreshCw,
   Film,
   Pencil,
-  Trash2
+  Trash2,
+  Newspaper
 } from 'lucide-react';
 import { ZonePost } from '../types';
 
@@ -176,6 +177,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     ];
   });
   const [loadingPosts, setLoadingPosts] = useState(false);
+  const [postFilter, setPostFilter] = useState<'all' | 'news' | 'community'>('all');
 
   // --- PRIVATE DIRECT MESSAGE (DM) STATES ---
   const [activeDmUser, setActiveDmUser] = useState<{ id: string; name: string; avatar: string } | null>(null);
@@ -1456,6 +1458,17 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     return [...outboxPosts, ...nonOutboxPosts];
   }, [posts, outbox, user.id, user.name, user.avatar]);
 
+  // Memoized filtered posts list based on selected filter
+  const filteredPosts = React.useMemo(() => {
+    if (postFilter === 'news') {
+      return visiblePosts.filter(p => (p as any).isRss === true || p.userId === 'balita-rss-author');
+    }
+    if (postFilter === 'community') {
+      return visiblePosts.filter(p => !(p as any).isRss && p.userId !== 'balita-rss-author');
+    }
+    return visiblePosts;
+  }, [visiblePosts, postFilter]);
+
   useEffect(() => {
     // Zero Waiting: Always fetch silently in the background so the user never sees any loading blocks
     fetchPosts(true);
@@ -2371,19 +2384,75 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         <div className="lg:col-span-2 space-y-6">
           
           <div className="space-y-6 animate-fadeIn">
-              <div className="flex items-center justify-between">
-                <h3 className="font-black text-slate-950 text-xs tracking-wider uppercase flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-yellow-500 animate-pulse" />
-                  <span>Mga Balita at Kwento (Z-one Live Feed)</span>
-                  {loadingPosts && (
-                    <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-md font-black animate-pulse tracking-normal normal-case border border-blue-100">
-                      Ina-update...
+              <div className="flex flex-col gap-3.5">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-black text-slate-950 text-xs tracking-wider uppercase flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-yellow-500 animate-pulse" />
+                    <span>Mga Balita at Kwento (Z-one Live Feed)</span>
+                    {loadingPosts && (
+                      <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-md font-black animate-pulse tracking-normal normal-case border border-blue-100">
+                        Ina-update...
+                      </span>
+                    )}
+                  </h3>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase">
+                    {filteredPosts.length} / {visiblePosts.length} Posts
+                  </span>
+                </div>
+
+                {/* 🏷️ Interactive Post Filter Tabs */}
+                <div className="bg-slate-150/60 p-1.5 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5 border border-slate-200/50">
+                  <button
+                    onClick={() => setPostFilter('all')}
+                    className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer select-none ${
+                      postFilter === 'all'
+                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                    }`}
+                  >
+                    <Sparkles className={`w-3.5 h-3.5 ${postFilter === 'all' ? 'text-indigo-600' : 'text-slate-400'}`} />
+                    <span>{language === 'tl' ? 'Lahat ng Post' : 'All Posts'}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                      postFilter === 'all' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-200/60 text-slate-550'
+                    }`}>
+                      {visiblePosts.length}
                     </span>
-                  )}
-                </h3>
-                <span className="text-[10px] text-slate-400 font-bold uppercase">
-                  {visiblePosts.length} Active Posts
-                </span>
+                  </button>
+
+                  <button
+                    onClick={() => setPostFilter('news')}
+                    className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer select-none ${
+                      postFilter === 'news'
+                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                    }`}
+                  >
+                    <Newspaper className={`w-3.5 h-3.5 ${postFilter === 'news' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                    <span>{language === 'tl' ? 'Mga Balita' : 'News Updates'}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                      postFilter === 'news' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-200/60 text-slate-550'
+                    }`}>
+                      {visiblePosts.filter(p => (p as any).isRss === true || p.userId === 'balita-rss-author').length}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setPostFilter('community')}
+                    className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer select-none ${
+                      postFilter === 'community'
+                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                    }`}
+                  >
+                    <Users className={`w-3.5 h-3.5 ${postFilter === 'community' ? 'text-blue-600' : 'text-slate-400'}`} />
+                    <span>{language === 'tl' ? 'Komunidad' : 'Community Posts'}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                      postFilter === 'community' ? 'bg-blue-50 text-blue-700' : 'bg-slate-200/60 text-slate-550'
+                    }`}>
+                      {visiblePosts.filter(p => !(p as any).isRss && p.userId !== 'balita-rss-author').length}
+                    </span>
+                  </button>
+                </div>
               </div>
 
               {outbox.length > 0 && (
@@ -2413,18 +2482,22 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 </div>
               )}
 
-              {loadingPosts && visiblePosts.length === 0 ? (
+              {loadingPosts && filteredPosts.length === 0 ? (
                 <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-500 text-xs font-bold">
                   Kinukuha ang pinakabagong posts sa Z-one...
                 </div>
-              ) : visiblePosts.length === 0 ? (
-                <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-400 text-xs font-bold space-y-1">
-                  <p>📭 Walang laman ang Z-one feed sa ngayon.</p>
-                  <p className="text-[10px] text-slate-450 font-normal">Maging kauna-unahang clicker na mag-post sa komunidad!</p>
+              ) : filteredPosts.length === 0 ? (
+                <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-400 text-xs font-bold space-y-2">
+                  <p className="text-sm font-black text-slate-700">📭 {language === 'tl' ? 'Walang makitang post dito' : 'No posts found'}</p>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    {postFilter === 'news'
+                      ? (language === 'tl' ? 'Kasalukuyang walang balita o ina-update pa ang RSS feed mula sa Manila Bulletin. Mangyaring subukan muli maya-maya.' : 'Currently no news or updating the RSS feed from Manila Bulletin. Please check back in a moment.')
+                      : (language === 'tl' ? 'Maging kauna-unahang clicker na mag-post sa komunidad!' : 'Be the first clicker to post in the community!')}
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-4">
-              {visiblePosts.map((post) => {
+              {filteredPosts.map((post) => {
                 const hasLiked = post.likes.includes(user.id);
                 const isMyOwnPost = post.userId === user.id;
                 const userZoned = isUserZoned(post.userId);

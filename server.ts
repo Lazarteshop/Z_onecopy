@@ -3513,12 +3513,18 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 // --- MANILA BULLETIN BALITA RSS FEED INTEGRATION ---
 async function fetchBalitaRSS(): Promise<any[]> {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5 seconds timeout
+
     const res = await fetch('https://balita.mb.com.ph/rss', {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
         'Accept': 'application/rss+xml, application/xml, text/xml, */*'
-      }
+      },
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
+
     if (!res.ok) {
       console.error(`Failed to fetch Balita RSS: ${res.status} ${res.statusText}`);
       return [];
@@ -3654,17 +3660,18 @@ async function syncRssToDatabase() {
 }
 
 // 1. GET ALL POSTS
-app.get('/api/zone/posts', (req, res) => {
-  const db = loadDB();
-  const posts = db.posts || [];
-  const userId = req.headers.authorization;
-
-  // Sync RSS feed asynchronously in the background (throttled to 5 minutes)
+app.get('/api/zone/posts', async (req, res) => {
+  // Sync RSS feed before loading posts if expired, so we get them instantly on load!
   const now = Date.now();
   if (now - lastRssSyncTime > 5 * 60 * 1000) {
     lastRssSyncTime = now;
-    syncRssToDatabase().catch(err => console.error('Background RSS sync failed:', err));
+    console.log('🔄 Performing real-time Manila Bulletin RSS sync...');
+    await syncRssToDatabase().catch(err => console.error('Real-time RSS sync failed:', err));
   }
+
+  const db = loadDB();
+  const posts = db.posts || [];
+  const userId = req.headers.authorization;
 
   // Sort posts: always newest first
   const sortedPosts = [...posts].sort((a, b) => {
