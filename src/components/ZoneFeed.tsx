@@ -1057,7 +1057,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     }
 
     if (userId) {
-      const isOnline = userId === user.id || onlineUserIds.includes(userId);
+      const isOnline = userId === 'balita-rss-author' || userId === user.id || onlineUserIds.includes(userId);
       return (
         <div className="relative inline-block shrink-0">
           {avatarEl}
@@ -2444,24 +2444,41 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                     {/* Header */}
                     <div className="p-4 flex items-center justify-between gap-3 border-b border-slate-50">
                       <div className="flex items-center gap-3">
-                        <button
-                          onClick={() => !isPending && !isFailed && handleOpenDm({ id: post.userId, name: post.userName, avatar: post.userAvatar || '👤' })}
-                          className={`leading-none shrink-0 select-none block hover:scale-105 transition text-left focus:outline-hidden ${isPending || isFailed ? 'cursor-not-allowed' : 'cursor-pointer'}`}
-                          title={isPending || isFailed ? undefined : "I-Message o Tawagan"}
-                        >
-                          {renderFeedAvatar(post.userAvatar, post.userName, "w-10 h-10", "text-xl", post.userId)}
-                        </button>
+                        {post.userId === 'balita-rss-author' ? (
+                          <div className="leading-none shrink-0 select-none block">
+                            {renderFeedAvatar(post.userAvatar, post.userName, "w-10 h-10", "text-xl", post.userId)}
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => !isPending && !isFailed && handleOpenDm({ id: post.userId, name: post.userName, avatar: post.userAvatar || '👤' })}
+                            className={`leading-none shrink-0 select-none block hover:scale-105 transition text-left focus:outline-hidden ${isPending || isFailed ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                            title={isPending || isFailed ? undefined : "I-Message o Tawagan"}
+                          >
+                            {renderFeedAvatar(post.userAvatar, post.userName, "w-10 h-10", "text-xl", post.userId)}
+                          </button>
+                        )}
                         <div>
-                          <div className="font-extrabold text-slate-900 text-xs flex items-center gap-1.5">
-                            <button
-                              onClick={() => !isPending && !isFailed && handleOpenDm({ id: post.userId, name: post.userName, avatar: post.userAvatar || '👤' })}
-                              className={`font-extrabold text-left transition focus:outline-hidden ${isPending || isFailed ? 'text-slate-500 cursor-not-allowed' : 'hover:underline hover:text-blue-600 cursor-pointer'}`}
-                              title={isPending || isFailed ? undefined : "I-Message o Tawagan"}
-                            >
-                              {post.userName}
-                            </button>
+                          <div className="font-extrabold text-slate-900 text-xs flex flex-wrap items-center gap-1.5">
+                            {post.userId === 'balita-rss-author' ? (
+                              <span className="font-extrabold text-slate-900">
+                                {post.userName}
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => !isPending && !isFailed && handleOpenDm({ id: post.userId, name: post.userName, avatar: post.userAvatar || '👤' })}
+                                className={`font-extrabold text-left transition focus:outline-hidden ${isPending || isFailed ? 'text-slate-500 cursor-not-allowed' : 'hover:underline hover:text-blue-600 cursor-pointer'}`}
+                                title={isPending || isFailed ? undefined : "I-Message o Tawagan"}
+                              >
+                                {post.userName}
+                              </button>
+                            )}
                             {post.userId === 'admin-rosco' && (
                               <span className="bg-blue-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase">Admin</span>
+                            )}
+                            {post.userId === 'balita-rss-author' && (
+                              <span className="bg-emerald-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase flex items-center gap-0.5 shadow-xs">
+                                <CheckCircle2 className="w-2.5 h-2.5 shrink-0" /> Verified News
+                              </span>
                             )}
                           </div>
                           <span className="text-[9px] text-slate-400 block font-mono">
@@ -2472,7 +2489,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
                       <div className="flex items-center gap-2">
                         {/* Zone (Follow) Toggle */}
-                        {!isMyOwnPost && !isPending && !isFailed && (
+                        {!isMyOwnPost && post.userId !== 'balita-rss-author' && !isPending && !isFailed && (
                           <button
                             onClick={() => handleToggleZone(post.userId)}
                             className={`text-[10px] font-black px-3 py-1.5 rounded-full cursor-pointer transition flex items-center gap-1 border ${
@@ -2616,9 +2633,30 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                         </div>
                       ) : (
                         post.text && (
-                          <p className="text-slate-800 text-xs font-semibold leading-relaxed whitespace-pre-wrap">
-                            {post.text}
-                          </p>
+                          <div className="space-y-3">
+                            <p className="text-slate-800 text-xs font-semibold leading-relaxed whitespace-pre-wrap">
+                              {post.text}
+                            </p>
+                            {post.isRss && post.rssLink && (
+                              <a 
+                                href={post.rssLink} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="mt-2 block p-3.5 bg-gradient-to-r from-blue-50/50 to-indigo-50/30 hover:from-blue-50 hover:to-indigo-50 border border-blue-100 rounded-2xl transition-all duration-200 group/link"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-2 text-[10px] text-slate-600 font-bold uppercase tracking-wider">
+                                    <Sparkles className="w-4 h-4 text-emerald-500 animate-pulse" />
+                                    <span>{language === 'tl' ? 'Pumunta sa Orihinal na Balita' : 'Read Full Article on Manila Bulletin'}</span>
+                                  </div>
+                                  <span className="text-[10px] bg-blue-600 text-white px-2.5 py-1 rounded-xl font-black uppercase flex items-center gap-1 shadow-xs group-hover/link:bg-blue-700 transition">
+                                    <span>OPEN</span>
+                                    <span>↗</span>
+                                  </span>
+                                </div>
+                              </a>
+                            )}
+                          </div>
                         )
                       )}
 
