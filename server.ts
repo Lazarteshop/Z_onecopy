@@ -3514,119 +3514,52 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 async function fetchBalitaRSS(): Promise<any[]> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5 seconds timeout
+    const timeoutId = setTimeout(() => controller.abort(), 6000); // 6 seconds timeout
 
-    const res = await fetch('https://balita.mb.com.ph/rss', {
+    const res = await fetch('https://feed2json.org/convert?url=https%3A%2F%2Fbalita.mb.com.ph%2Frssfeed%2F0%2F', {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-        'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
       },
       signal: controller.signal
     });
     clearTimeout(timeoutId);
 
     if (!res.ok) {
-      console.error(`Failed to fetch Balita RSS: ${res.status} ${res.statusText}`);
+      console.error(`Failed to fetch Balita RSS via feed2json: ${res.status} ${res.statusText}`);
       return [];
     }
-    const xml = await res.text();
-    
-    // Parse articles
-    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-    const items: any[] = [];
-    let match;
-    
-    while ((match = itemRegex.exec(xml)) !== null) {
-      const itemContent = match[1];
-      
-      const extractTag = (tag: string): string => {
-        const regex = new RegExp(`<${tag}>(?:<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>|([\\s\\S]*?))<\/${tag}>`, 'i');
-        const m = itemContent.match(regex);
-        if (m) {
-          return (m[1] || m[2] || '').trim();
-        }
-        return '';
-      };
-      
-      let title = extractTag('title');
-      let link = extractTag('link');
-      let description = extractTag('description');
-      let pubDate = extractTag('pubDate');
-      
-      // Clean HTML from title
-      title = title.replace(/<\/?[^>]+(>|$)/g, "");
-      
-      let mediaUrl = '';
-      
-      // 1. Enclosure URL
-      const enclosureMatch = itemContent.match(/<enclosure[^>]+url=["']([^"']+)["']/i);
-      if (enclosureMatch) {
-        mediaUrl = enclosureMatch[1];
-      }
-      
-      // 2. media:content or media:thumbnail
-      if (!mediaUrl) {
-        const mediaMatch = itemContent.match(/<media:(?:content|thumbnail)[^>]+url=["']([^"']+)["']/i);
-        if (mediaMatch) {
-          mediaUrl = mediaMatch[1];
-        }
-      }
-      
-      // 3. Extract from inside description
-      if (!mediaUrl && description) {
-        const imgMatch = description.match(/<img[^>]+src=["']([^"']+)["']/i);
-        if (imgMatch) {
-          mediaUrl = imgMatch[1];
-        }
-      }
-      
-      let textDescription = description;
-      textDescription = textDescription.replace(/<style[\s\S]*?<\/style>/gi, '');
-      textDescription = textDescription.replace(/<script[\s\S]*?<\/script>/gi, '');
-      textDescription = textDescription.replace(/<\/?[^>]+(>|$)/g, "");
-      
-      textDescription = textDescription
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&nbsp;/g, ' ');
-      
-      textDescription = textDescription.trim();
-      
-      let createdAt = new Date().toISOString();
-      if (pubDate) {
-        try {
-          const d = new Date(pubDate);
-          if (!isNaN(d.getTime())) {
-            createdAt = d.toISOString();
-          }
-        } catch {}
-      }
-      
+    const data = await res.json() as any;
+    const items = data.items || [];
+    const formattedPosts: any[] = [];
+
+    for (const item of items) {
+      const title = (item.title || '').trim();
+      const link = item.url || item.guid || '';
+      const summary = (item.summary || item.content_html || '').trim();
+      const datePublished = item.date_published || new Date().toISOString();
+
+      if (!title) continue;
+
       const uniqueInput = link || title;
       const cleanId = 'post-rss-' + Buffer.from(uniqueInput).toString('base64').replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
-      
-      items.push({
+
+      formattedPosts.push({
         id: cleanId,
         userId: 'balita-rss-author',
         userName: 'Balita (Manila Bulletin)',
         userAvatar: '📰',
-        text: `📰 **${title}**\n\n${textDescription}\n\n🔗 Basahin ang buong balita rito:\n${link}`,
-        mediaUrl: mediaUrl || undefined,
-        mediaType: mediaUrl ? 'image' : undefined,
+        text: `📰 **${title}**\n\n${summary}\n\n🔗 Basahin ang buong balita rito:\n${link}`,
         likes: [],
         comments: [],
-        createdAt: createdAt,
+        createdAt: datePublished,
         isRss: true,
         rssLink: link
       });
     }
-    
-    return items;
+
+    return formattedPosts;
   } catch (err) {
-    console.error('Error fetching Balita RSS:', err);
+    console.error('Error fetching Balita RSS via feed2json:', err);
     return [];
   }
 }
