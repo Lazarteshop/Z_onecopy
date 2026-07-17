@@ -3541,7 +3541,7 @@ async function fetchBalitaRSS(): Promise<any[]> {
       if (!title) continue;
 
       const uniqueInput = link || title;
-      const cleanId = 'post-rss-' + Buffer.from(uniqueInput).toString('base64').replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
+      const cleanId = 'post-rss-' + Buffer.from(uniqueInput).toString('base64').replace(/[^a-zA-Z0-9]/g, '');
 
       formattedPosts.push({
         id: cleanId,
