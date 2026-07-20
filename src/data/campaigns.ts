@@ -4,16 +4,16 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-1',
     title: 'Shopee PH Tipid Hacks 2026',
-    url: 'https://shopee.ph/m/piso-deals-today',
+    url: 'https://invl.me/clnnowp',
     reward: 12.50,
     timer: 15,
     logo: 'ShoppingBag',
     category: 'Shopping',
-    description: 'Basahin ang gabay para sa Piso Sale at libreng shipping voucher ngayon para makatipid sa iyong susunod na budol!',
+    description: 'Basahin ang gabay para sa flash Sale at libreng shipping voucher ngayon para makatipid sa iyong susunod na budol!',
     completed: false,
     mockPageContent: {
-      heroTitle: '🧡 Shopee PH Piso Deals & Discount Codes',
-      heroSubtitle: 'Pinaka-kumpletong listahan ng Voucher Codes ngayong Hunyo 2026',
+      heroTitle: '🧡 Shopee PH  flash sale & Discount Codes',
+      heroSubtitle: 'Pinaka-kumpletong listahan ng Voucher Codes ngayong Hulyo 2026',
       primaryColor: '#EE4D2D', // Shopee Orange
       accentColor: '#FFC72C',
       paragraphs: [
@@ -63,7 +63,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-3',
     title: 'GCash Promos & Cashbacks',
-    url: 'https://www.gcash.com/promos/earn-extra-load',
+    url: 'https://gcash.com/',
     reward: 15.00,
     timer: 18,
     logo: 'Wallet',
@@ -153,7 +153,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-6',
     title: 'TechPinoy Gadget & Budget Phone Reviews',
-    url: 'https://techpinoy.com/best-phones-under-10k-2026',
+    url: 'https://techpinoy.com/',
     reward: 10.00,
     timer: 15,
     logo: 'Cpu',
@@ -207,7 +207,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-8',
     title: 'DITO Sim Sulit Promos 2026',
-    url: 'https://dito.ph/promos/sulit-data',
+    url: 'https://dito.ph',
     reward: 1.25,
     timer: 8,
     logo: 'Smartphone',
@@ -228,7 +228,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-9',
     title: 'Piso WiFi Business Guide',
-    url: 'https://pisowifi.ph/how-to-start-business',
+    url: 'https://pisowifi.ph/',
     reward: 1.85,
     timer: 10,
     logo: 'Wifi',
@@ -249,7 +249,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-10',
     title: 'Pinoy Freelancer Tutorial',
-    url: 'https://pinoyfreelance.ph/upwork-guide-2026',
+    url: 'https://pinoyfreelance.ph',
     reward: 2.02,
     timer: 12,
     logo: 'Laptop',
@@ -270,7 +270,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-11',
     title: 'Globe Prepaid GOSAKTO Hacks',
-    url: 'https://globe.com.ph/gosakto-cheap-combinations',
+    url: 'https://globe.com.ph',
     reward: 1.15,
     timer: 7,
     logo: 'Zap',
@@ -291,7 +291,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-12',
     title: 'Lazada Mega Sale Tips 2026',
-    url: 'https://lazada.com.ph/how-to-stack-vouchers',
+    url: 'https://invl.me/clnnoyy',
     reward: 1.45,
     timer: 9,
     logo: 'Gift',
@@ -312,7 +312,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-13',
     title: 'Smart Gigalife GigaPoints Tips',
-    url: 'https://smart.com.ph/gigalife-freebies',
+    url: 'https://smart.com.ph',
     reward: 1.62,
     timer: 8,
     logo: 'Sparkles',
@@ -333,7 +333,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-14',
     title: 'Quezon Province Tourism Guide',
-    url: 'https://quezon.gov.ph/tourism-beaches',
+    url: 'https://quezon.gov.ph',
     reward: 1.30,
     timer: 11,
     logo: 'Compass',
@@ -354,7 +354,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-15',
     title: 'Bitcoin PH Investment Guide',
-    url: 'https://bitcoin.com.ph/basics-for-beginners',
+    url: 'https://bitcoin.com.ph',
     reward: 1.95,
     timer: 15,
     logo: 'Coins',
@@ -375,7 +375,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-16',
     title: 'Pinoy Recipe: Crispy Sisig Secret',
-    url: 'https://lutongbahay.ph/crispy-pork-sisig',
+    url: 'https://lutongbahay.ph',
     reward: 1.10,
     timer: 6,
     logo: 'Utensils',
@@ -396,7 +396,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-17',
     title: 'Online Selling Tips: Shopee & TikTok',
-    url: 'https://sellersuccess.ph/tiktok-live-selling',
+    url: 'https://sellersuccess.ph',
     reward: 2.04,
     timer: 14,
     logo: 'TrendingUp',
@@ -417,7 +417,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-18',
     title: 'Baguio City Travel Hacks',
-    url: 'https://biyahengpinas.ph/baguio-cold-destinations',
+    url: 'https://biyahengpinas.ph',
     reward: 1.70,
     timer: 12,
     logo: 'Compass',
@@ -438,7 +438,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-19',
     title: 'G-News: DOST Libreng Scholarships',
-    url: 'https://gnews.ph/dost-scholarship-requirements',
+    url: 'https://gnews.ph',
     reward: 1.05,
     timer: 8,
     logo: 'GraduationCap',
@@ -459,7 +459,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-20',
     title: 'Home-Based Virtual Assistant Skills',
-    url: 'https://jobstreet.com.ph/skills-for-va-career',
+    url: 'https://jobstreet.com.ph',
     reward: 1.90,
     timer: 13,
     logo: 'Briefcase',
@@ -480,7 +480,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-21',
     title: 'DTI Libreng Negosyo Seminar 2026',
-    url: 'https://dti.gov.ph/free-seminars-for-msmes',
+    url: 'https://dti.gov.ph',
     reward: 1.50,
     timer: 10,
     logo: 'BookOpen',
@@ -501,7 +501,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-22',
     title: 'LTO License Renewal Guide',
-    url: 'https://lto.gov.ph/portal-renewal-appointment',
+    url: 'https://lto.gov.ph',
     reward: 1.20,
     timer: 7,
     logo: 'Shield',
@@ -522,7 +522,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-23',
     title: 'Manila Food Trip: Binondo Guide',
-    url: 'https://lutongbahay.ph/binondo-chinatown-food-trip',
+    url: 'https://lutongbahay.ph',
     reward: 1.65,
     timer: 11,
     logo: 'Utensils',
@@ -543,7 +543,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-24',
     title: 'PhilHealth Online Contribution Guide',
-    url: 'https://philhealth.gov.ph/member-portal-access',
+    url: 'https://philhealth.gov.ph',
     reward: 1.35,
     timer: 9,
     logo: 'Activity',
@@ -564,7 +564,7 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
   {
     id: 'campaign-25',
     title: 'Pag-IBIG MP2 Savings Hack',
-    url: 'https://pagibigfund.gov.ph/mp2-high-dividend',
+    url: 'https://pagibigfund.gov.ph',
     reward: 1.80,
     timer: 12,
     logo: 'PiggyBank',
@@ -603,24 +603,24 @@ export const INITIAL_CAMPAIGNS: WebsiteCampaign[] = [
       ]
     }
   },
-  {
+{
     id: 'campaign-27',
-    title: 'SSS Salary Loan Online Guide',
-    url: 'https://sss.gov.ph/salary-loan-application',
-    reward: 1.40,
-    timer: 9,
-    logo: 'Banknote',
-    category: 'E-Services',
-    description: 'Hakbang sa pag-apply ng SSS Salary Loan gamit ang My.SSS Portal para sa mabilis na approval.',
+    title: 'Z-oneApp advertiser',
+    url: 'https://omg10.com/4/10633091',
+    reward: 1.55,
+    timer: 10,
+    logo: 'Compass',
+    category: 'Kultura',
+    description: 'this is partnership collaboration of Z-oneApp.',
     completed: false,
     mockPageContent: {
-      heroTitle: '🏦 Paano Mag-apply ng SSS Salary Loan Online',
-      heroSubtitle: 'Mabilis na tulong pinansyal para sa mga empleyado at self-employed members',
-      primaryColor: '#1E3A8A',
-      accentColor: '#10B981',
+      heroTitle: 'this is partnership collaboration of Z-oneApp',
+      heroSubtitle: 'this is partnership collaboration of Z-oneApp',
+      primaryColor: '#0F766E',
+      accentColor: '#EC4899',
       paragraphs: [
-        'Kung ikaw ay may hindi bababa sa 36 buwanang kontribusyon, maaari kang mag-apply ng Salary Loan sa SSS. Direct-to-bank o direct-to-e-wallet na ang payout ngayon sa loob ng 3 hanggang 5 working days.',
-        'Sundin ang gabay sa tamang pag-upload ng iyong disbursement account at selfie requirements sa portal.'
+        'Ang Tagaytay ay sikat sa malamig na simoy ng hangin at masasarap na Bulalo. Isang biyaheng bus o kotse lamang mula sa Maynila at narito ka na sa loob ng dalawang oras.',
+        'Inirerekomenda nomad naming bisitahin ang Picnic Grove, People’s Park in the Sky, at sumubok sa mga patok na café sa gilid ng bundok.'
       ]
     }
   }
