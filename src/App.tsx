@@ -62,6 +62,7 @@ import ZoneFeed from './components/ZoneFeed';
 import MerchantPortal from './components/MerchantPortal';
 import AICommercialPlayer from './components/AICommercialPlayer';
 import SpinWheel from './components/SpinWheel';
+import PayoutMarquee from './components/PayoutMarquee';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -1087,6 +1088,13 @@ export default function App() {
   return (
     <div id="application-sandbox-root" className="min-h-screen bg-slate-100 flex flex-col text-slate-800 font-sans antialiased selection:bg-blue-600 selection:text-white">
       
+      {/* 💸 TOP SCROLLING LIVE PAYOUT MARQUEE (1,000+ Users Paid) */}
+      <PayoutMarquee 
+        realUserWithdrawals={withdrawals} 
+        currentUserName={user?.name} 
+        language={language} 
+      />
+
       {/* 🔔 FLOATING NOTIFICATION SYSTEM */}
       <AnimatePresence>
         {notification && (

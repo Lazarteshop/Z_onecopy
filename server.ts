@@ -2609,6 +2609,39 @@ app.post('/api/user/claim-referral-bonus', (req, res) => {
   res.json({ user: userSafe });
 });
 
+// GET RECENT REAL PAYOUTS FOR MARQUEE
+app.get('/api/payouts/recent', (req, res) => {
+  try {
+    const db = loadDB();
+    const allWithdrawals: any[] = [];
+    
+    if (Array.isArray(db.users)) {
+      db.users.forEach(u => {
+        if (Array.isArray(u.withdrawals)) {
+          u.withdrawals.forEach(w => {
+            const displayName = (w.accountName || u.name || '').trim();
+            if (displayName && !displayName.toLowerCase().includes('unknown') && !/^\d+$/.test(displayName)) {
+              allWithdrawals.push({
+                id: w.id,
+                userName: displayName,
+                amount: w.amount,
+                status: w.status,
+                createdAt: w.createdAt,
+                referenceNo: w.referenceNo,
+                isReal: true
+              });
+            }
+          });
+        }
+      });
+    }
+
+    res.json({ payouts: allWithdrawals });
+  } catch (err) {
+    res.status(500).json({ payouts: [] });
+  }
+});
+
 // SUBMIT WITHDRAWAL REQUEST
 app.post('/api/user/withdraw', (req, res) => {
   const userId = req.headers.authorization;
