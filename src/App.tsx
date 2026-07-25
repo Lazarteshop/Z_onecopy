@@ -286,7 +286,7 @@ export default function App() {
         embedUrl: parsed.embedUrl,
         platform: parsed.platform,
         title: title || (parsed.platform === 'tiktok' ? '🎵 TikTok Reel Video' : parsed.platform === 'facebook' ? '📘 FB Reel Video' : '🎬 Reel Video'),
-        likes: Math.floor(Math.random() * 50) + 10,
+        likes: 0,
         addedBy: addedByName,
         createdAt: new Date().toISOString()
       };

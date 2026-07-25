@@ -2093,7 +2093,7 @@ app.post('/api/reels', (req, res) => {
     embedUrl: embedUrl || url,
     platform: platform || 'tiktok',
     title: title || (platform === 'tiktok' ? '🎵 TikTok Reel Video' : platform === 'facebook' ? '📘 FB Reel Video' : '🎬 Reel Video'),
-    likes: Math.floor(Math.random() * 50) + 10,
+    likes: 0,
     addedBy: addedBy || 'Admin',
     createdAt: new Date().toISOString()
   };

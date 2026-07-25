@@ -126,7 +126,9 @@ export default function ReelsFloatingWidget({
   const backdropRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  const activeReels = reels && reels.length > 0 ? reels : [];
+  const activeReels = reels && reels.length > 0 
+    ? [...reels].sort((a, b) => a.likes - b.likes) 
+    : [];
 
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -537,7 +539,12 @@ export default function ReelsFloatingWidget({
                     </span>
                     {index === 0 && (
                       <span className="bg-emerald-500/20 text-emerald-300 font-extrabold px-1.5 py-0.5 rounded-md border border-emerald-500/30 uppercase text-[8px]">
-                        ✨ BAGO
+                        ⚡ PINAKAMABABANG LIKES
+                      </span>
+                    )}
+                    {index === activeReels.length - 1 && activeReels.length > 1 && (
+                      <span className="bg-amber-500/20 text-amber-300 font-extrabold px-1.5 py-0.5 rounded-md border border-amber-500/30 uppercase text-[8px]">
+                        🔥 MARAMING LIKES
                       </span>
                     )}
                   </span>
