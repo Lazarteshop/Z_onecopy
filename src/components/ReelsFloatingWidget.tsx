@@ -19,6 +19,7 @@ interface ReelsFloatingWidgetProps {
   reels: ReelVideo[];
   isAdmin?: boolean;
   currentUserName?: string;
+  isLoggedIn?: boolean;
   language?: 'tl' | 'en';
   onAddReel: (url: string, title?: string) => void;
   onDeleteReel: (id: string) => void;
@@ -94,12 +95,20 @@ export function parseVideoUrl(inputUrl: string): { embedUrl: string; platform: '
 export default function ReelsFloatingWidget({
   reels,
   isAdmin = false,
+  isLoggedIn = false,
   language = 'tl',
   onAddReel,
   onDeleteReel,
   onLikeReel
 }: ReelsFloatingWidgetProps) {
   const [isOpen, setIsOpen] = useState(true);
+
+  // Listen for open event from header button
+  useEffect(() => {
+    const handleOpenWidget = () => setIsOpen(true);
+    window.addEventListener('open-reels-widget', handleOpenWidget);
+    return () => window.removeEventListener('open-reels-widget', handleOpenWidget);
+  }, []);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showAddForm, setShowAddForm] = useState(false);
   const [inputUrl, setInputUrl] = useState('');
@@ -314,6 +323,10 @@ export default function ReelsFloatingWidget({
 
   // Closed Trigger Floating Button (Vibrant Solid Gradient & Draggable)
   if (!isOpen) {
+    if (isLoggedIn || (typeof document !== 'undefined' && document.body.classList.contains('user-logged-in'))) {
+      return null;
+    }
+
     const posStyle = btnPos
       ? { left: `${btnPos.x}px`, top: `${btnPos.y}px` }
       : { bottom: '16px', right: '16px' };

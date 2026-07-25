@@ -1750,19 +1750,20 @@ export default function App() {
                   </button>
                 )}
 
-                {/* 🎬 WATCH REELS HEADER BUTTON (Replaces Language Flags) */}
+                {/* 🎬 WATCH REELS HEADER BUTTON (Smaller & Compact, next to Allow Notif) */}
                 <button
                   onClick={() => {
+                    window.dispatchEvent(new Event('open-reels-widget'));
                     const openBtn = document.getElementById('reels-widget-open-btn');
                     if (openBtn) {
                       openBtn.click();
                     }
                   }}
-                  className="bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl sm:rounded-2xl shadow-lg shadow-rose-600/30 border border-white/30 flex items-center gap-1.5 sm:gap-2 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none"
+                  className="bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg sm:rounded-xl shadow-md shadow-rose-600/25 border border-white/20 flex items-center gap-1 sm:gap-1.5 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none"
                   title={language === 'tl' ? 'Panoorin ang Reels' : 'Watch Reels'}
                 >
-                  <Tv className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 animate-pulse shrink-0" />
-                  <span className="text-[10px] sm:text-xs uppercase font-extrabold tracking-wider whitespace-nowrap">
+                  <Tv className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-300 animate-pulse shrink-0" />
+                  <span className="text-[9px] sm:text-[10px] uppercase font-black tracking-wider whitespace-nowrap">
                     🎬 WATCH REELS
                   </span>
                 </button>
@@ -2750,6 +2751,7 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
         reels={reels}
         isAdmin={user?.isAdmin || false}
         currentUserName={user?.name}
+        isLoggedIn={!!user}
         language={language}
         onAddReel={handleAddReel}
         onDeleteReel={handleDeleteReel}
