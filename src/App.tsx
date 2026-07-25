@@ -221,52 +221,136 @@ export default function App() {
     ];
   });
 
-  const handleAddReel = (url: string, title?: string) => {
-    const parsed = parseVideoUrl(url);
-    const newReel: ReelVideo = {
-      id: 'reel-' + Date.now(),
-      url,
-      embedUrl: parsed.embedUrl,
-      platform: parsed.platform,
-      title: title || (parsed.platform === 'tiktok' ? '🎵 TikTok Reel Video' : parsed.platform === 'facebook' ? '📘 FB Reel Video' : '🎬 Reel Video'),
-      likes: Math.floor(Math.random() * 50) + 10,
-      addedBy: user?.name || 'Admin',
-      createdAt: new Date().toISOString()
-    };
-    const updated = [newReel, ...reels];
-    setReels(updated);
+  const fetchReels = async () => {
     try {
-      localStorage.setItem('gcash_reels_data', JSON.stringify(updated));
+      const res = await fetch('/api/reels');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.reels && Array.isArray(data.reels)) {
+          setReels(data.reels);
+          localStorage.setItem('gcash_reels_data', JSON.stringify(data.reels));
+        }
+      }
     } catch (e) {
-      console.error('Failed to save reels', e);
+      console.error('Error fetching reels:', e);
     }
+  };
+
+  useEffect(() => {
+    fetchReels();
+    const interval = setInterval(fetchReels, 15000);
+    const handleOpen = () => fetchReels();
+    window.addEventListener('open-reels-widget', handleOpen);
+    window.addEventListener('refresh-reels', handleOpen);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('open-reels-widget', handleOpen);
+      window.removeEventListener('refresh-reels', handleOpen);
+    };
+  }, []);
+
+  const handleAddReel = async (url: string, title?: string) => {
+    const parsed = parseVideoUrl(url);
+    const addedByName = user?.name || 'Admin';
+
+    try {
+      const res = await fetch('/api/reels', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(user?.id ? { 'Authorization': user.id } : {})
+        },
+        body: JSON.stringify({
+          url,
+          embedUrl: parsed.embedUrl,
+          platform: parsed.platform,
+          title: title || (parsed.platform === 'tiktok' ? '🎵 TikTok Reel Video' : parsed.platform === 'facebook' ? '📘 FB Reel Video' : '🎬 Reel Video'),
+          addedBy: addedByName
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.reels) {
+          setReels(data.reels);
+          localStorage.setItem('gcash_reels_data', JSON.stringify(data.reels));
+        }
+      } else {
+        throw new Error('Failed to save reel on server');
+      }
+    } catch (e) {
+      console.error('Failed to save reel on server, using local fallback:', e);
+      const newReel: ReelVideo = {
+        id: 'reel-' + Date.now(),
+        url,
+        embedUrl: parsed.embedUrl,
+        platform: parsed.platform,
+        title: title || (parsed.platform === 'tiktok' ? '🎵 TikTok Reel Video' : parsed.platform === 'facebook' ? '📘 FB Reel Video' : '🎬 Reel Video'),
+        likes: Math.floor(Math.random() * 50) + 10,
+        addedBy: addedByName,
+        createdAt: new Date().toISOString()
+      };
+      const updated = [newReel, ...reels];
+      setReels(updated);
+      try {
+        localStorage.setItem('gcash_reels_data', JSON.stringify(updated));
+      } catch (err) {
+        console.error('Failed to save reels', err);
+      }
+    }
+
     triggerNotification(
       language === 'tl' ? '🚀 Matagumpay na na-publish ang Reel Video!' : '🚀 Reel Video successfully published!',
       'success'
     );
   };
 
-  const handleDeleteReel = (id: string) => {
-    const updated = reels.filter(r => r.id !== id);
-    setReels(updated);
+  const handleDeleteReel = async (id: string) => {
     try {
-      localStorage.setItem('gcash_reels_data', JSON.stringify(updated));
+      const res = await fetch(`/api/reels/${id}`, {
+        method: 'DELETE',
+        headers: {
+          ...(user?.id ? { 'Authorization': user.id } : {})
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.reels) {
+          setReels(data.reels);
+          localStorage.setItem('gcash_reels_data', JSON.stringify(data.reels));
+        }
+      } else {
+        throw new Error('Failed to delete reel on server');
+      }
     } catch (e) {
-      console.error('Failed to save reels', e);
+      console.error('Failed to delete reel on server, deleting locally:', e);
+      const updated = reels.filter(r => r.id !== id);
+      setReels(updated);
+      try {
+        localStorage.setItem('gcash_reels_data', JSON.stringify(updated));
+      } catch (err) {
+        console.error('Failed to save reels', err);
+      }
     }
+
     triggerNotification(
       language === 'tl' ? '🗑️ Na-delete ang Reel Video.' : '🗑️ Reel Video deleted.',
       'info'
     );
   };
 
-  const handleLikeReel = (id: string, delta: number = 1) => {
+  const handleLikeReel = async (id: string, delta: number = 1) => {
     const updated = reels.map(r => r.id === id ? { ...r, likes: Math.max(0, r.likes + delta) } : r);
     setReels(updated);
     try {
       localStorage.setItem('gcash_reels_data', JSON.stringify(updated));
+      await fetch(`/api/reels/${id}/like`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delta })
+      });
     } catch (e) {
-      console.error('Failed to save reels', e);
+      console.error('Failed to save like on server:', e);
     }
   };
   

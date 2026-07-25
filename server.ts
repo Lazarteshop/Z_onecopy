@@ -812,6 +812,47 @@ interface MerchantAd {
   aiCommercial?: any;
 }
 
+interface ReelVideo {
+  id: string;
+  url: string;
+  embedUrl: string;
+  platform: 'tiktok' | 'facebook' | 'youtube' | 'direct';
+  title?: string;
+  likes: number;
+  addedBy?: string;
+  createdAt: string;
+}
+
+const INITIAL_REELS: ReelVideo[] = [
+  {
+    id: 'reel-1',
+    url: 'https://www.youtube.com/shorts/dQw4w9WgXcQ',
+    embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=0&loop=1&playlist=dQw4w9WgXcQ',
+    platform: 'youtube',
+    title: '🔥 Actual GCash Cashout Proof - Daily PPV Earning Reel',
+    likes: 1248,
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'reel-2',
+    url: 'https://www.tiktok.com/@tiktok/video/7100000000000000000',
+    embedUrl: 'https://www.youtube.com/embed/L_LUpnjgPso?autoplay=0&loop=1&playlist=L_LUpnjgPso',
+    platform: 'tiktok',
+    title: '🎵 TikTok Viral Earning Hack - Mag-click lang at kumita ng GCash!',
+    likes: 3890,
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'reel-3',
+    url: 'https://www.facebook.com/reel/100000000000000',
+    embedUrl: 'https://www.youtube.com/embed/kJQP7kiw5Fk?autoplay=0&loop=1&playlist=kJQP7kiw5Fk',
+    platform: 'facebook',
+    title: '📘 FB Reels Feature Preview - PAUTANG NO MORE!',
+    likes: 2150,
+    createdAt: new Date().toISOString()
+  }
+];
+
 interface DBStructure {
   users: UserSession[];
   campaigns?: any[];
@@ -819,6 +860,7 @@ interface DBStructure {
   directMessages?: DirectMessage[];
   activeCalls?: ActiveCall[];
   merchantAds?: MerchantAd[];
+  reels?: ReelVideo[];
 }
 
 // --- HELPER TO INITIALIZE AND GET DATABASE ---
@@ -884,6 +926,9 @@ function loadDB(): DBStructure {
             createdAt: new Date(Date.now() - 7200000).toISOString()
           }
         ];
+      }
+      if (!loaded.reels || loaded.reels.length === 0) {
+        loaded.reels = INITIAL_REELS;
       }
       cachedDB = loaded;
       return loaded;
@@ -1036,7 +1081,8 @@ function loadDB(): DBStructure {
       }
     ],
     campaigns: INITIAL_CAMPAIGNS,
-    merchantAds: []
+    merchantAds: [],
+    reels: INITIAL_REELS
   };
 
   // Add Maria Clara as admin's referred friend at the start
@@ -1059,7 +1105,8 @@ const lastSyncedCache = {
   campaigns: new Map<string, string>(),
   posts: new Map<string, string>(),
   directMessages: new Map<string, string>(),
-  merchantAds: new Map<string, string>()
+  merchantAds: new Map<string, string>(),
+  reels: new Map<string, string>()
 };
 
 function initLastSyncedCache(data: DBStructure) {
@@ -1086,6 +1133,11 @@ function initLastSyncedCache(data: DBStructure) {
   if (lastSyncedCache.merchantAds.size === 0 && data.merchantAds && data.merchantAds.length > 0) {
     for (const ma of data.merchantAds) {
       lastSyncedCache.merchantAds.set(ma.id, JSON.stringify(ma));
+    }
+  }
+  if (lastSyncedCache.reels.size === 0 && data.reels && data.reels.length > 0) {
+    for (const r of data.reels) {
+      lastSyncedCache.reels.set(r.id, JSON.stringify(r));
     }
   }
 }
@@ -1217,7 +1269,40 @@ async function uploadToFirestore(data: DBStructure) {
       }
     }
 
+    const reelPromises: Promise<any>[] = [];
+    if (data.reels) {
+      for (const r of data.reels) {
+        const rStr = JSON.stringify(r);
+        if (lastSyncedCache.reels.get(r.id) !== rStr) {
+          reelPromises.push((async () => {
+            try {
+              const rDocRef = firestore!.collection('reels').doc(r.id);
+              const { id, ...rWithoutId } = r;
+              await rDocRef.set(rWithoutId);
+              lastSyncedCache.reels.set(r.id, rStr);
+            } catch (reelErr) {
+              console.error(`Error saving Reel ${r.id} to Firestore:`, reelErr);
+            }
+          })());
+        }
+      }
+    }
+
     const deletionPromises: Promise<any>[] = [];
+    
+    const currentReelIds = new Set(data.reels ? data.reels.map(r => r.id) : []);
+    for (const cachedId of lastSyncedCache.reels.keys()) {
+      if (!currentReelIds.has(cachedId)) {
+        deletionPromises.push((async () => {
+          try {
+            await firestore!.collection('reels').doc(cachedId).delete();
+            lastSyncedCache.reels.delete(cachedId);
+          } catch (delErr) {
+            console.error(`Error deleting Reel ${cachedId} from Firestore:`, delErr);
+          }
+        })());
+      }
+    }
     
     const currentPostIds = new Set(data.posts ? data.posts.map(p => p.id) : []);
     for (const cachedId of lastSyncedCache.posts.keys()) {
@@ -1275,7 +1360,7 @@ async function uploadToFirestore(data: DBStructure) {
       }
     }
 
-    const allPromises = [...userPromises, ...campPromises, ...postPromises, ...dmPromises, ...maPromises, ...deletionPromises];
+    const allPromises = [...userPromises, ...campPromises, ...postPromises, ...dmPromises, ...maPromises, ...reelPromises, ...deletionPromises];
     if (allPromises.length > 0) {
       await Promise.all(allPromises);
       console.log(`☁️ GCash Click-Earn: Firestore cloud backup completed. Synced ${allPromises.length} updates/deletes.`);
@@ -1345,6 +1430,17 @@ async function syncFromFirestore() {
       console.log('No merchant_ads collection yet in Firestore');
     }
 
+    const reelsColRef = firestore.collection('reels');
+    let dbReels: any[] = [];
+    try {
+      const reelsSnapshot = await reelsColRef.get();
+      reelsSnapshot.forEach((docSnap) => {
+        dbReels.push({ id: docSnap.id, ...docSnap.data() });
+      });
+    } catch (e) {
+      console.log('No reels collection yet in Firestore');
+    }
+
     if (dbUsers.length > 0) {
       console.log(`📱 Found ${dbUsers.length} users in Firestore. Overwriting local cache...`);
       const loadedDB: DBStructure = { 
@@ -1352,7 +1448,8 @@ async function syncFromFirestore() {
         campaigns: dbCampaigns.length > 0 ? dbCampaigns : INITIAL_CAMPAIGNS,
         posts: dbPosts.length > 0 ? dbPosts : undefined,
         directMessages: dbDMs.length > 0 ? dbDMs : undefined,
-        merchantAds: dbMerchantAds.length > 0 ? dbMerchantAds : undefined
+        merchantAds: dbMerchantAds.length > 0 ? dbMerchantAds : undefined,
+        reels: dbReels.length > 0 ? dbReels : INITIAL_REELS
       };
       
       // Update/synchronize admin details if needed
@@ -1416,12 +1513,22 @@ async function syncFromFirestore() {
         });
       }
 
+      let seedReelPromises: Promise<any>[] = [];
+      if (localDB.reels) {
+        seedReelPromises = localDB.reels.map(async (r) => {
+          const rDocRef = firestore.collection('reels').doc(r.id);
+          const { id, ...rWithoutId } = r;
+          await rDocRef.set(rWithoutId);
+        });
+      }
+
       await Promise.all([
         ...batchPromises, 
         ...seedCampPromises, 
         ...seedPostPromises, 
         ...seedDmPromises, 
-        ...seedMerchantPromises
+        ...seedMerchantPromises,
+        ...seedReelPromises
       ]);
       console.log('✅ Seeding of Firestore complete.');
     }
@@ -1871,6 +1978,62 @@ app.post('/api/user/update-profile', (req, res) => {
   saveDB(db);
   const { password: _, ...userSafe } = user as any;
   res.json({ success: true, user: userSafe, message: 'Matagumpay na na-update ang iyong profile!' });
+});
+
+// --- REELS & SHORTS API ENDPOINTS ---
+app.get('/api/reels', (req, res) => {
+  const db = loadDB();
+  if (!db.reels || db.reels.length === 0) {
+    db.reels = [...INITIAL_REELS];
+    saveDB(db);
+  }
+  res.json({ reels: db.reels });
+});
+
+app.post('/api/reels', (req, res) => {
+  const { url, embedUrl, platform, title, addedBy } = req.body;
+  if (!url) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+
+  const db = loadDB();
+  db.reels = db.reels || [...INITIAL_REELS];
+
+  const newReel: ReelVideo = {
+    id: 'reel-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    url,
+    embedUrl: embedUrl || url,
+    platform: platform || 'tiktok',
+    title: title || (platform === 'tiktok' ? '🎵 TikTok Reel Video' : platform === 'facebook' ? '📘 FB Reel Video' : '🎬 Reel Video'),
+    likes: Math.floor(Math.random() * 50) + 10,
+    addedBy: addedBy || 'Admin',
+    createdAt: new Date().toISOString()
+  };
+
+  db.reels.unshift(newReel);
+  saveDB(db);
+
+  res.json({ success: true, reel: newReel, reels: db.reels });
+});
+
+app.delete('/api/reels/:id', (req, res) => {
+  const { id } = req.params;
+  const db = loadDB();
+  db.reels = (db.reels || [...INITIAL_REELS]).filter(r => r.id !== id);
+  saveDB(db);
+  res.json({ success: true, reels: db.reels });
+});
+
+app.post('/api/reels/:id/like', (req, res) => {
+  const { id } = req.params;
+  const { delta } = req.body;
+  const d = typeof delta === 'number' ? delta : 1;
+  const db = loadDB();
+  db.reels = (db.reels || [...INITIAL_REELS]).map(r => 
+    r.id === id ? { ...r, likes: Math.max(0, r.likes + d) } : r
+  );
+  saveDB(db);
+  res.json({ success: true, reels: db.reels });
 });
 
 // --- CAMPAIGNS ENDPOINTS ---
