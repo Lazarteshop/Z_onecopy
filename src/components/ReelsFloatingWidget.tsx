@@ -114,22 +114,42 @@ export default function ReelsFloatingWidget({
   });
 
   const widgetRef = useRef<HTMLDivElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const activeReels = reels && reels.length > 0 ? reels : [];
 
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Natively intercept and isolate ad popups without breaking native touch scrolling
+  // COMPLETELY BLOCK ALL MONETAG ADS & POPUNDERS WHEN REELS WIDGET IS OPEN
   useEffect(() => {
-    const originalWindowOpen = window.open;
+    if (!isOpen) return;
 
+    // 1. Immediately remove Monetag ad script tag if present
+    const monetagScript = document.getElementById('monetag-login-ads-script');
+    if (monetagScript) {
+      monetagScript.remove();
+    }
+
+    // 2. Safely override window.open to permanently block ad popunders while Reels Widget is active
+    const originalWindowOpen = window.open;
+    window.open = function (url?: string | URL, target?: string, features?: string) {
+      const activeEl = document.activeElement as HTMLElement | null;
+      const isExplicitUserLink = activeEl && (activeEl.tagName === 'A' || activeEl.closest('a'));
+      if (isExplicitUserLink && url) {
+        return originalWindowOpen.call(window, url, target || '_blank', features);
+      }
+      console.log('Blocked Monetag / Ad popunder attempt while Reels widget is open:', url);
+      return null;
+    };
+
+    // 3. Intercept & stop immediate propagation of capture events inside widget or backdrop
     const handleGlobalCapture = (e: Event) => {
       const el = widgetRef.current;
-      if (!el) return;
-
+      const backdrop = backdropRef.current;
       const target = e.target as HTMLElement | null;
-      if (el.contains(target) || target === el) {
+
+      if ((el && (el.contains(target) || target === el)) || (backdrop && (backdrop.contains(target) || target === backdrop))) {
         // Handle Close and Open buttons directly
         if (target && (target.id === 'reels-widget-close-btn' || target.closest('#reels-widget-close-btn'))) {
           setIsOpen(false);
@@ -138,31 +158,18 @@ export default function ReelsFloatingWidget({
           setIsOpen(true);
         }
 
-        // Only stop propagation for click/mouseup events to isolate Monetag ads while keeping touch scrolling 100% smooth
-        if (e.type === 'click' || e.type === 'mouseup' || e.type === 'pointerup') {
+        // Prevent Monetag and any global ad scripts on document/window from seeing this event
+        if (e.type === 'click' || e.type === 'pointerup' || e.type === 'mouseup' || e.type === 'touchend') {
           e.stopPropagation();
           if (typeof e.stopImmediatePropagation === 'function') {
             e.stopImmediatePropagation();
           }
         }
-
-        // Block window.open popunder attempts unless clicking an explicit user link
-        const isExternalLink = target && (target.tagName === 'A' || target.closest('a'));
-        if (!isExternalLink) {
-          window.open = function (...args) {
-            console.log('Blocked popunder ad attempt in Reels Widget:', args);
-            return null;
-          };
-          setTimeout(() => {
-            window.open = originalWindowOpen;
-          }, 300);
-        }
       }
     };
 
-    const events = ['click', 'mouseup', 'pointerup', 'touchstart', 'touchend'];
+    const events = ['click', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend'];
     
-    // Attach capture listeners on window and document
     events.forEach((evt) => {
       window.addEventListener(evt, handleGlobalCapture, { capture: true, passive: true });
       document.addEventListener(evt, handleGlobalCapture, { capture: true, passive: true });
@@ -283,10 +290,23 @@ export default function ReelsFloatingWidget({
   }
 
   return (
-    <div 
-      ref={widgetRef}
-      className="fixed bottom-3 right-3 sm:bottom-5 sm:right-5 z-50 max-w-[340px] w-[92vw] bg-slate-950/98 border border-slate-800 backdrop-blur-2xl rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.9)] overflow-hidden flex flex-col transition duration-300 animate-fadeIn"
-    >
+    <>
+      {/* 🌑 BACKDROP OVERLAY to completely lock and freeze background Login/Register area when widget is open */}
+      <div 
+        ref={backdropRef}
+        className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs transition-opacity duration-300 animate-fadeIn touch-none"
+        onClick={() => setIsOpen(false)}
+        onTouchMove={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+      />
+
+      <div 
+        ref={widgetRef}
+        onTouchMove={(e) => e.stopPropagation()}
+        className="fixed bottom-3 right-3 sm:bottom-5 sm:right-5 z-50 max-w-[340px] w-[92vw] bg-slate-950/98 border border-slate-800 backdrop-blur-2xl rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.9)] overflow-hidden flex flex-col transition duration-300 animate-fadeIn"
+      >
       
       {/* 🔮 HEADER BAR WITH NAVIGATION CONTROLS */}
       <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-3 border-b border-slate-800 flex items-center justify-between gap-1.5 shrink-0 select-none">
@@ -441,7 +461,7 @@ export default function ReelsFloatingWidget({
             }, 120);
           }
         }}
-        className="p-3 space-y-4 max-h-[70vh] sm:max-h-[460px] overflow-y-auto scroll-smooth touch-pan-y overscroll-contain snap-y snap-proximity"
+        className="reels-widget-scroll-container p-3 space-y-4 max-h-[70vh] sm:max-h-[460px] overflow-y-auto scroll-smooth touch-pan-y overscroll-contain snap-y snap-proximity"
         style={{
           scrollbarWidth: 'thin',
           scrollbarColor: '#4f46e5 #0f172a'
@@ -642,6 +662,7 @@ export default function ReelsFloatingWidget({
       )}
 
     </div>
+    </>
   );
 }
 
