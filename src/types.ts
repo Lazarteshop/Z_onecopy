@@ -125,4 +125,15 @@ export interface MerchantAd {
   aiCommercial?: any;
 }
 
+export interface ReelVideo {
+  id: string;
+  url: string;
+  embedUrl: string;
+  platform: 'tiktok' | 'facebook' | 'youtube' | 'direct';
+  title?: string;
+  likes: number;
+  addedBy?: string;
+  createdAt: string;
+}
+
 

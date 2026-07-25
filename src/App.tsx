@@ -53,7 +53,7 @@ import {
   Download
 } from 'lucide-react';
 import { INITIAL_CAMPAIGNS } from './data/campaigns';
-import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend } from './types';
+import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend, ReelVideo } from './types';
 import BrowserSimulator from './components/BrowserSimulator';
 import GCashCashout from './components/GCashCashout';
 import ReferralPanel from './components/ReferralPanel';
@@ -63,6 +63,7 @@ import MerchantPortal from './components/MerchantPortal';
 import AICommercialPlayer from './components/AICommercialPlayer';
 import SpinWheel from './components/SpinWheel';
 import PayoutMarquee from './components/PayoutMarquee';
+import ReelsFloatingWidget, { parseVideoUrl } from './components/ReelsFloatingWidget';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -177,6 +178,97 @@ export default function App() {
   // Animation states
   const [floatingCoinReward, setFloatingCoinReward] = useState<number | null>(null);
   const [showConfetti, setShowConfetti] = useState(false);
+  
+  // Floating Reels & Shorts State
+  const [reels, setReels] = useState<ReelVideo[]>(() => {
+    try {
+      const saved = localStorage.getItem('gcash_reels_data');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.error('Error loading reels', e);
+    }
+    return [
+      {
+        id: 'reel-1',
+        url: 'https://www.youtube.com/shorts/dQw4w9WgXcQ',
+        embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=0&loop=1&playlist=dQw4w9WgXcQ',
+        platform: 'youtube',
+        title: '🔥 Actual GCash Cashout Proof - Daily PPV Earning Reel',
+        likes: 1248,
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'reel-2',
+        url: 'https://www.tiktok.com/@tiktok/video/7100000000000000000',
+        embedUrl: 'https://www.youtube.com/embed/L_LUpnjgPso?autoplay=0&loop=1&playlist=L_LUpnjgPso',
+        platform: 'tiktok',
+        title: '🎵 TikTok Viral Earning Hack - Mag-click lang at kumita ng GCash!',
+        likes: 3890,
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'reel-3',
+        url: 'https://www.facebook.com/reel/100000000000000',
+        embedUrl: 'https://www.youtube.com/embed/kJQP7kiw5Fk?autoplay=0&loop=1&playlist=kJQP7kiw5Fk',
+        platform: 'facebook',
+        title: '📘 FB Reels Feature Preview - PAUTANG NO MORE!',
+        likes: 2150,
+        createdAt: new Date().toISOString()
+      }
+    ];
+  });
+
+  const handleAddReel = (url: string, title?: string) => {
+    const parsed = parseVideoUrl(url);
+    const newReel: ReelVideo = {
+      id: 'reel-' + Date.now(),
+      url,
+      embedUrl: parsed.embedUrl,
+      platform: parsed.platform,
+      title: title || (parsed.platform === 'tiktok' ? '🎵 TikTok Reel Video' : parsed.platform === 'facebook' ? '📘 FB Reel Video' : '🎬 Reel Video'),
+      likes: Math.floor(Math.random() * 50) + 10,
+      addedBy: user?.name || 'Admin',
+      createdAt: new Date().toISOString()
+    };
+    const updated = [newReel, ...reels];
+    setReels(updated);
+    try {
+      localStorage.setItem('gcash_reels_data', JSON.stringify(updated));
+    } catch (e) {
+      console.error('Failed to save reels', e);
+    }
+    triggerNotification(
+      language === 'tl' ? '🚀 Matagumpay na na-publish ang Reel Video!' : '🚀 Reel Video successfully published!',
+      'success'
+    );
+  };
+
+  const handleDeleteReel = (id: string) => {
+    const updated = reels.filter(r => r.id !== id);
+    setReels(updated);
+    try {
+      localStorage.setItem('gcash_reels_data', JSON.stringify(updated));
+    } catch (e) {
+      console.error('Failed to save reels', e);
+    }
+    triggerNotification(
+      language === 'tl' ? '🗑️ Na-delete ang Reel Video.' : '🗑️ Reel Video deleted.',
+      'info'
+    );
+  };
+
+  const handleLikeReel = (id: string) => {
+    const updated = reels.map(r => r.id === id ? { ...r, likes: r.likes + 1 } : r);
+    setReels(updated);
+    try {
+      localStorage.setItem('gcash_reels_data', JSON.stringify(updated));
+    } catch (e) {
+      console.error('Failed to save reels', e);
+    }
+  };
   
   // Language switcher state (English default)
   const [language, setLanguage] = useState<'en' | 'tl'>((localStorage.getItem('user_lang') as 'en' | 'tl') || 'en');
@@ -2648,6 +2740,17 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
           </footer>
         </>
       )}
+
+      {/* 🎬 FLOATING REELS & SHORTS WIDGET (Accessible to Users & Non-Users / Visitors) */}
+      <ReelsFloatingWidget
+        reels={reels}
+        isAdmin={user?.isAdmin || false}
+        currentUserName={user?.name}
+        language={language}
+        onAddReel={handleAddReel}
+        onDeleteReel={handleDeleteReel}
+        onLikeReel={handleLikeReel}
+      />
 
     </div>
   );
