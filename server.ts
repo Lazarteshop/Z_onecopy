@@ -443,6 +443,94 @@ Ensure your response is valid JSON and nothing else.`;
   };
 }
 
+// Proxy endpoint to strip X-Frame-Options and Content-Security-Policy so external websites can be viewed inside BrowserSimulator without net::ERR_BLOCKED_BY_RESPONSE errors
+app.get('/api/proxy-web', async (req, res) => {
+  const targetUrl = req.query.url as string;
+  if (!targetUrl || !/^https?:\/\//i.test(targetUrl)) {
+    return res.status(400).send('Invalid or missing URL parameter.');
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+    const response = await fetch(targetUrl, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,tl;q=0.8'
+      },
+      redirect: 'follow'
+    });
+    clearTimeout(timeoutId);
+
+    const contentType = response.headers.get('content-type') || 'text/html; charset=utf-8';
+    res.setHeader('Content-Type', contentType);
+
+    // Strip frame-blocking headers
+    res.removeHeader('X-Frame-Options');
+    res.removeHeader('Content-Security-Policy');
+    res.removeHeader('Frame-Options');
+
+    if (contentType.includes('text/html')) {
+      let body = await response.text();
+      
+      try {
+        const parsed = new URL(targetUrl);
+        const baseUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+        // Inject <base> tag to resolve relative paths
+        if (!/<base\s/i.test(body)) {
+          body = body.replace(/<head[^>]*>/i, (match) => `${match}\n<base href="${baseUrl}">`);
+        }
+      } catch (e) {
+        // ignore parse error
+      }
+
+      // Neutralize framebuster scripts like `if (top != self) top.location = self.location`
+      body = body.replace(/top\.location\s*=/gi, 'void 0 =')
+                 .replace(/parent\.location\s*=/gi, 'void 0 =')
+                 .replace(/top\.location\.href\s*=/gi, 'void 0 =')
+                 .replace(/window\.top\.location\s*=/gi, 'void 0 =');
+
+      return res.send(body);
+    } else {
+      // Stream or send non-HTML content (e.g. css/js/images)
+      const arrayBuffer = await response.arrayBuffer();
+      return res.send(Buffer.from(arrayBuffer));
+    }
+  } catch (err: any) {
+    console.error(`Error in /api/proxy-web for ${targetUrl}:`, err.message);
+    res.status(200).send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 24px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh; }
+            .card { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 24px; max-width: 480px; width: 100%; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5); }
+            h2 { color: #38bdf8; margin-top: 0; font-size: 20px; }
+            p { color: #94a3b8; font-size: 14px; line-height: 1.5; margin-bottom: 20px; }
+            .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: #10b981; color: white; padding: 12px 24px; border-radius: 12px; font-weight: 700; text-decoration: none; font-size: 15px; transition: background 0.2s; box-shadow: 0 4px 12px rgba(16,185,129,0.3); }
+            .btn:hover { background: #059669; }
+            .badge { display: inline-block; background: rgba(56, 189, 248, 0.1); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.2); padding: 4px 10px; border-radius: 20px; font-size: 12px; margin-bottom: 12px; font-weight: 600; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <div class="badge">🌐 Direct Connection Available</div>
+            <h2>Pumunta sa Website ng Advertiser</h2>
+            <p>Ang website na ito ay maaari mong bisitahin nang direkta sa bagong browser tab. I-click ang button sa ibaba upang buksan ito. Mananatiling aktibo ang iyong timer para makuha ang rewards!</p>
+            <a href="${targetUrl}" target="_blank" rel="noopener noreferrer" class="btn">
+              🚀 Buksan ang Website sa Bagong Tab
+            </a>
+          </div>
+        </body>
+      </html>
+    `);
+  }
+});
+
 app.get('/api/tts', async (req, res) => {
   const rawText = req.query.text as string;
   const lang = (req.query.lang as string) || 'tl';

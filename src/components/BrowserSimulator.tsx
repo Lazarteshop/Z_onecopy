@@ -44,6 +44,7 @@ export default function BrowserSimulator({ campaign, onComplete, onClose, langua
   const [captchaOptions, setCaptchaOptions] = useState<CaptchaOption[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'proxy' | 'direct' | 'reader'>('proxy');
   
   // Audio node simulation or visual pulse indicator
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -282,67 +283,133 @@ export default function BrowserSimulator({ campaign, onComplete, onClose, langua
       </AnimatePresence>
 
       {/* 🌐 Simulated Browser Navigation Bar */}
-      <div id="simulated-browser-address-bar" className="bg-slate-800 border-b border-slate-700 px-3 py-2 flex items-center gap-2.5">
+      <div id="simulated-browser-address-bar" className="bg-slate-800 border-b border-slate-700 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 text-slate-400">
-          <button className="p-1 hover:bg-slate-700 rounded transition cursor-not-allowed text-slate-600" disabled>
+          <button className="p-1 hover:bg-slate-700 rounded transition cursor-not-allowed text-slate-600" disabled title="Back">
             <ArrowLeft className="w-4 h-4" />
           </button>
-          <button className="p-1 hover:bg-slate-700 rounded transition cursor-not-allowed text-slate-600" disabled>
+          <button className="p-1 hover:bg-slate-700 rounded transition cursor-not-allowed text-slate-600" disabled title="Forward">
             <ArrowRight className="w-4 h-4" />
           </button>
-          <button className="p-1 hover:bg-slate-700 rounded transition text-slate-300 cursor-pointer" onClick={() => setSecondsLeft(campaign.timer)}>
+          <button className="p-1 hover:bg-slate-700 rounded transition text-slate-300 cursor-pointer" onClick={() => setSecondsLeft(campaign.timer)} title="Reload">
             <RotateCw className="w-4 h-4" />
           </button>
         </div>
 
-        <div id="browser-address-url-box" className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1 text-xs text-slate-300 flex items-center gap-2 max-w-xl mx-auto shadow-inner">
+        <div id="browser-address-url-box" className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-300 flex items-center gap-2 min-w-[200px] max-w-lg shadow-inner">
           <Lock className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-          <span className="text-emerald-500/80 select-all font-mono">Secure | </span>
+          <span className="text-emerald-500/80 select-all font-mono hidden sm:inline">Secure | </span>
           <span className="select-all font-mono truncate">{campaign.url}</span>
         </div>
 
-        <div className="w-16 hidden md:flex items-center justify-end text-[10px] text-slate-400 font-mono gap-1">
-          <Eye className="w-3.5 h-3.5 text-blue-400" />
-          <span>Active View</span>
+        {/* View mode switcher */}
+        <div className="flex items-center gap-1 bg-slate-900/80 p-1 rounded-lg border border-slate-700">
+          <button
+            onClick={() => setViewMode('proxy')}
+            className={`px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${viewMode === 'proxy' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+            title="Proxy Unblocker - Bypasses iframe restrictions"
+          >
+            <span>🛡️ Proxy</span>
+          </button>
+          <button
+            onClick={() => setViewMode('direct')}
+            className={`px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${viewMode === 'direct' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+            title="Direct Web - Raw website URL"
+          >
+            <span>⚡ Direct</span>
+          </button>
+          {campaign.mockPageContent && (
+            <button
+              onClick={() => setViewMode('reader')}
+              className={`px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${viewMode === 'reader' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+              title="Reader Mode - Clean app article preview"
+            >
+              <span>📖 Reader</span>
+            </button>
+          )}
         </div>
       </div>
 
       {/* ℹ️ Informative Banner for Iframe Compatibility and Analytics Transmission */}
-      <div className="bg-indigo-950/90 text-white border-b border-indigo-900 px-4 py-2 flex flex-col sm:flex-row items-center justify-between gap-2.5 text-[11px] font-sans">
+      <div className="bg-indigo-950/90 text-white border-b border-indigo-900 px-4 py-2 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] font-sans">
         <div className="flex items-center gap-2 leading-relaxed">
           <span className="flex h-2 w-2 relative shrink-0">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
           </span>
-          <span className="text-slate-250 font-medium">
+          <span className="text-slate-200 font-medium">
             {isTl 
-              ? "Upang mag-record ang iyong view sa web analytics (Google Analytics, Pixels) ng advertiser mula sa Z-oneApp, maaari mo ring buksan ang website sa bagong tab." 
-              : "To ensure your view gets counted in the advertiser's web analytics (Google Analytics, Pixels) from Z-oneApp, you can also open the website in a new tab."}
+              ? "Para sa mabilis na pagbisita, gumagana ang ating Proxy Unblocker. Pwede mo ring buksan sa bagong tab habang tumatakbo ang timer." 
+              : "Our Proxy Unblocker bypasses iframe blocks. You can also open the site in a new tab while your timer runs."}
           </span>
         </div>
         <a 
           href={campaign.url} 
           target="_blank" 
-          rel="noopener"
-          className="shrink-0 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-lg transition text-[10px] uppercase font-black tracking-wider flex items-center gap-1.5 cursor-pointer shadow-sm select-none"
+          rel="noopener noreferrer"
+          className="shrink-0 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-lg transition text-[11px] font-extrabold uppercase tracking-wider flex items-center gap-1.5 cursor-pointer shadow-md select-none"
         >
           <Compass className="w-3.5 h-3.5 animate-spin-slow" />
-          <span>{isTl ? "Buksan sa Bagong Tab" : "Open in New Tab"}</span>
+          <span>{isTl ? "Buksan sa Bagong Tab 🚀" : "Open in New Tab 🚀"}</span>
         </a>
       </div>
 
-      {/* 🖥️ Real Live Webpage Area (Iframe View) */}
+      {/* 🖥️ Real Live Webpage Area (Proxy / Direct / Reader View) */}
       <div 
         id="browser-webpage-viewport"
-        className="flex-1 bg-white relative w-full h-full overflow-hidden"
+        className="flex-1 bg-white relative w-full h-full overflow-y-auto"
       >
-        <iframe 
-          src={campaign.url}
-          className="w-full h-full border-0 bg-white"
-          title={campaign.title}
-          referrerPolicy="no-referrer-when-downgrade"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-        />
+        {viewMode === 'reader' && campaign.mockPageContent ? (
+          <div className="p-6 max-w-3xl mx-auto space-y-6 text-slate-800">
+            <div 
+              className="p-6 rounded-2xl text-white shadow-md"
+              style={{ backgroundColor: campaign.mockPageContent.primaryColor || '#002F6C' }}
+            >
+              <h1 className="text-2xl sm:text-3xl font-extrabold">{campaign.mockPageContent.heroTitle || campaign.title}</h1>
+              {campaign.mockPageContent.heroSubtitle && (
+                <p className="mt-2 text-white/90 text-sm">{campaign.mockPageContent.heroSubtitle}</p>
+              )}
+            </div>
+
+            {campaign.mockPageContent.paragraphs?.map((p, idx) => (
+              <p key={idx} className="text-base leading-relaxed text-slate-700">{p}</p>
+            ))}
+
+            {campaign.mockPageContent.features && campaign.mockPageContent.features.length > 0 && (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+                <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wide">Mga Tampok / Details:</h3>
+                <ul className="space-y-2 text-sm text-slate-700">
+                  {campaign.mockPageContent.features.map((f, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                      <span>{f}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="pt-4 border-t border-slate-200 flex justify-center">
+              <a 
+                href={campaign.url} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow transition flex items-center gap-2 text-sm"
+              >
+                <span>{isTl ? "Pumunta sa Opisyal na Website" : "Visit Official Website"}</span>
+                <ArrowRight className="w-4 h-4" />
+              </a>
+            </div>
+          </div>
+        ) : (
+          <iframe 
+            src={viewMode === 'proxy' ? `/api/proxy-web?url=${encodeURIComponent(campaign.url)}` : campaign.url}
+            className="w-full h-full border-0 bg-white"
+            title={campaign.title}
+            referrerPolicy="no-referrer-when-downgrade"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+          />
+        )}
       </div>
     
     </div>
