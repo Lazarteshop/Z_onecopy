@@ -22,7 +22,7 @@ interface ReelsFloatingWidgetProps {
   language?: 'tl' | 'en';
   onAddReel: (url: string, title?: string) => void;
   onDeleteReel: (id: string) => void;
-  onLikeReel: (id: string) => void;
+  onLikeReel: (id: string, delta?: number) => void;
 }
 
 export function parseVideoUrl(inputUrl: string): { embedUrl: string; platform: 'tiktok' | 'facebook' | 'youtube' | 'direct' } {
@@ -121,6 +121,56 @@ export default function ReelsFloatingWidget({
 
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Draggable position state for the Watch Reels floating button
+  const [btnPos, setBtnPos] = useState<{ x: number; y: number } | null>(null);
+  const dragStartRef = useRef<{ startX: number; startY: number; initialX: number; initialY: number } | null>(null);
+  const isDraggingRef = useRef(false);
+
+  // Initialize position to bottom right default if not dragged yet
+  useEffect(() => {
+    if (!btnPos && typeof window !== 'undefined') {
+      setBtnPos({
+        x: Math.max(12, window.innerWidth - 185),
+        y: Math.max(12, window.innerHeight - 75)
+      });
+    }
+  }, [btnPos]);
+
+  // Handle Drag Start (Mouse & Touch)
+  const handleDragStart = (clientX: number, clientY: number) => {
+    const currentX = btnPos ? btnPos.x : Math.max(12, window.innerWidth - 185);
+    const currentY = btnPos ? btnPos.y : Math.max(12, window.innerHeight - 75);
+    dragStartRef.current = {
+      startX: clientX,
+      startY: clientY,
+      initialX: currentX,
+      initialY: currentY,
+    };
+    isDraggingRef.current = false;
+  };
+
+  // Handle Drag Move (Mouse & Touch)
+  const handleDragMove = (clientX: number, clientY: number) => {
+    if (!dragStartRef.current) return;
+    const dx = clientX - dragStartRef.current.startX;
+    const dy = clientY - dragStartRef.current.startY;
+
+    if (Math.hypot(dx, dy) > 5) {
+      isDraggingRef.current = true;
+    }
+
+    if (isDraggingRef.current) {
+      const newX = Math.min(Math.max(8, dragStartRef.current.initialX + dx), window.innerWidth - 170);
+      const newY = Math.min(Math.max(8, dragStartRef.current.initialY + dy), window.innerHeight - 65);
+      setBtnPos({ x: newX, y: newY });
+    }
+  };
+
+  // Handle Drag End
+  const handleDragEnd = () => {
+    dragStartRef.current = null;
+  };
+
   // COMPLETELY BLOCK ALL MONETAG ADS & POPUNDERS WHEN REELS WIDGET IS OPEN
   useEffect(() => {
     if (!isOpen) return;
@@ -143,7 +193,7 @@ export default function ReelsFloatingWidget({
       return null;
     };
 
-    // 3. Intercept & stop immediate propagation of capture events inside widget or backdrop
+    // 3. Intercept events for widget open/close without blocking internal React button clicks
     const handleGlobalCapture = (e: Event) => {
       const el = widgetRef.current;
       const backdrop = backdropRef.current;
@@ -157,18 +207,9 @@ export default function ReelsFloatingWidget({
         if (target && (target.id === 'reels-widget-open-btn' || target.closest('#reels-widget-open-btn'))) {
           setIsOpen(true);
         }
-
-        // Prevent Monetag and any global ad scripts on document/window from seeing this event
-        if (e.type === 'click' || e.type === 'pointerup' || e.type === 'mouseup' || e.type === 'touchend') {
-          e.stopPropagation();
-          if (typeof e.stopImmediatePropagation === 'function') {
-            e.stopImmediatePropagation();
-          }
-        }
       }
     };
 
-    // Only intercept click and pointerup events for Monetag ad isolation (DO NOT capture touchstart/touchend so native swipe is 100% smooth)
     const events = ['click', 'pointerup', 'mouseup'];
     
     events.forEach((evt) => {
@@ -185,9 +226,11 @@ export default function ReelsFloatingWidget({
     };
   }, [isOpen]);
 
-  // Hide floating Install App button whenever Reels widget is open
+  // Hide floating Install App button whenever Reels widget is open OR when user is logged in
   useEffect(() => {
     const installBtn = document.getElementById('installBtn');
+    const isLoggedIn = document.body.classList.contains('user-logged-in');
+
     if (isOpen) {
       document.body.classList.add('reels-widget-open');
       if (installBtn) {
@@ -195,8 +238,10 @@ export default function ReelsFloatingWidget({
       }
     } else {
       document.body.classList.remove('reels-widget-open');
-      if (installBtn && installBtn.innerText) {
+      if (installBtn && !isLoggedIn) {
         installBtn.style.display = 'block';
+      } else if (installBtn && isLoggedIn) {
+        installBtn.style.setProperty('display', 'none', 'important');
       }
     }
 
@@ -234,16 +279,25 @@ export default function ReelsFloatingWidget({
     scrollToReel(prevIdx);
   };
 
-  const handleLike = (id: string) => {
-    if (!likedIds.includes(id)) {
-      const updated = [...likedIds, id];
-      setLikedIds(updated);
-      try {
-        localStorage.setItem('gcash_liked_reels', JSON.stringify(updated));
-      } catch (e) {
-        console.error('Error saving liked reels', e);
-      }
-      onLikeReel(id);
+  const handleLike = (id: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    const isLiked = likedIds.includes(id);
+    let updated: string[];
+    if (isLiked) {
+      updated = likedIds.filter(i => i !== id);
+      onLikeReel(id, -1);
+    } else {
+      updated = [...likedIds, id];
+      onLikeReel(id, 1);
+    }
+    setLikedIds(updated);
+    try {
+      localStorage.setItem('gcash_liked_reels', JSON.stringify(updated));
+    } catch (err) {
+      console.error('Error saving liked reels', err);
     }
   };
 
@@ -258,31 +312,54 @@ export default function ReelsFloatingWidget({
     scrollToReel(0);
   };
 
-  // Closed Trigger Floating Button
+  // Closed Trigger Floating Button (Vibrant Solid Gradient & Draggable)
   if (!isOpen) {
+    const posStyle = btnPos
+      ? { left: `${btnPos.x}px`, top: `${btnPos.y}px` }
+      : { bottom: '16px', right: '16px' };
+
     return (
       <div 
         ref={widgetRef}
-        className="fixed bottom-4 right-4 z-50"
+        style={posStyle}
+        className="fixed z-50 touch-none select-none"
+        onMouseDown={(e) => handleDragStart(e.clientX, e.clientY)}
+        onMouseMove={(e) => handleDragMove(e.clientX, e.clientY)}
+        onMouseUp={() => handleDragEnd()}
+        onTouchStart={(e) => {
+          if (e.touches.length === 1) {
+            handleDragStart(e.touches[0].clientX, e.touches[0].clientY);
+          }
+        }}
+        onTouchMove={(e) => {
+          if (e.touches.length === 1) {
+            handleDragMove(e.touches[0].clientX, e.touches[0].clientY);
+          }
+        }}
+        onTouchEnd={() => handleDragEnd()}
       >
         <button
           id="reels-widget-open-btn"
           type="button"
           onClick={(e) => {
             e.stopPropagation();
+            if (isDraggingRef.current) {
+              isDraggingRef.current = false;
+              return;
+            }
             setIsOpen(true);
           }}
-          className="bg-gradient-to-r from-rose-600 via-purple-600 to-indigo-600 hover:from-rose-500 hover:to-indigo-500 text-white font-black px-4 py-3 rounded-full shadow-2xl border-2 border-white/20 flex items-center gap-2.5 transition duration-300 hover:scale-105 active:scale-95 cursor-pointer group"
+          className="bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black px-5 py-3.5 rounded-full shadow-[0_12px_35px_rgba(225,29,72,0.75)] border-2 border-white flex items-center gap-2.5 transition-transform duration-150 hover:scale-105 active:scale-95 cursor-grab active:cursor-grabbing select-none"
         >
-          <div className="relative pointer-events-none">
-            <Tv className="w-5 h-5 text-amber-300 animate-pulse" />
+          <div className="relative pointer-events-none flex items-center justify-center bg-white/25 p-1.5 rounded-full shadow-inner">
+            <Tv className="w-5 h-5 text-amber-300 drop-shadow-md" />
             {activeReels.length > 0 && (
-              <span className="absolute -top-2 -right-2 bg-rose-500 text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center border border-white">
+              <span className="absolute -top-1.5 -right-1.5 bg-yellow-400 text-slate-950 text-[10px] font-black w-4.5 h-4.5 rounded-full flex items-center justify-center border-2 border-slate-950 shadow-md">
                 {activeReels.length}
               </span>
             )}
           </div>
-          <span className="text-xs uppercase tracking-wider font-extrabold pointer-events-none">
+          <span className="text-xs uppercase tracking-wider font-black text-white drop-shadow-md pointer-events-none flex items-center gap-1.5">
             🎬 {language === 'tl' ? 'Panoorin ang Reels' : 'Watch Reels'}
           </span>
         </button>
@@ -588,18 +665,16 @@ export default function ReelsFloatingWidget({
                     
                     {/* LIKE BUTTON */}
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleLike(reel.id);
-                      }}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-extrabold text-xs transition cursor-pointer active:scale-90 ${
+                      type="button"
+                      onClick={(e) => handleLike(reel.id, e)}
+                      className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-black text-xs transition-all cursor-pointer active:scale-90 select-none z-20 ${
                         likedIds.includes(reel.id)
-                          ? 'bg-rose-500/20 text-rose-400 border border-rose-500/50 shadow-[0_0_12px_rgba(244,63,94,0.3)]'
-                          : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-rose-400 border border-slate-700'
+                          ? 'bg-gradient-to-r from-rose-600 to-pink-600 text-white border border-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.6)] scale-105'
+                          : 'bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-rose-400 border border-slate-700'
                       }`}
                     >
-                      <Heart className={`w-4 h-4 transition ${likedIds.includes(reel.id) ? 'fill-rose-500 text-rose-500 scale-110' : ''}`} />
-                      <span>{reel.likes + (likedIds.includes(reel.id) ? 1 : 0)}</span>
+                      <Heart className={`w-4 h-4 transition ${likedIds.includes(reel.id) ? 'fill-white text-white scale-110' : ''}`} />
+                      <span>{reel.likes}</span>
                     </button>
 
                     {/* Open original link button */}

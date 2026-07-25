@@ -37,6 +37,8 @@
         height: 100vh !important;
         overscroll-behavior: none !important;
       }
+      body.user-logged-in #installBtn,
+      body.user-logged-in .install-btn,
       body.reels-widget-open #installBtn,
       body.reels-widget-open .install-btn {
         display: none !important;
@@ -69,19 +71,77 @@
       let deferredPrompt;
       const installBtn = document.getElementById("installBtn");
 
+      let isDraggingBtn = false;
+      let startX = 0, startY = 0, initialLeft = 0, initialTop = 0;
+
+      function onStartDrag(e) {
+        if (!installBtn) return;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        const rect = installBtn.getBoundingClientRect();
+        startX = clientX;
+        startY = clientY;
+        initialLeft = rect.left;
+        initialTop = rect.top;
+        isDraggingBtn = false;
+
+        const onMove = (me) => {
+          const moveX = me.touches ? me.touches[0].clientX : me.clientX;
+          const moveY = me.touches ? me.touches[0].clientY : me.clientY;
+          const dx = moveX - startX;
+          const dy = moveY - startY;
+          if (Math.hypot(dx, dy) > 5) {
+            isDraggingBtn = true;
+          }
+          if (isDraggingBtn) {
+            const newX = Math.min(Math.max(10, initialLeft + dx), window.innerWidth - rect.width - 10);
+            const newY = Math.min(Math.max(10, initialTop + dy), window.innerHeight - rect.height - 10);
+            installBtn.style.left = newX + "px";
+            installBtn.style.top = newY + "px";
+            installBtn.style.bottom = "auto";
+            installBtn.style.right = "auto";
+          }
+        };
+
+        const onEnd = () => {
+          window.removeEventListener("mousemove", onMove);
+          window.removeEventListener("mouseup", onEnd);
+          window.removeEventListener("touchmove", onMove);
+          window.removeEventListener("touchend", onEnd);
+        };
+
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onEnd);
+        window.addEventListener("touchmove", onMove, { passive: true });
+        window.addEventListener("touchend", onEnd);
+      }
+
+      if (installBtn) {
+        installBtn.addEventListener("mousedown", onStartDrag);
+        installBtn.addEventListener("touchstart", onStartDrag, { passive: true });
+
+        installBtn.addEventListener("click", (e) => {
+          if (isDraggingBtn) {
+            e.preventDefault();
+            e.stopPropagation();
+            isDraggingBtn = false;
+            return;
+          }
+          window.location.href = "appstore.html";
+        });
+      }
+
       window.addEventListener("beforeinstallprompt", (e) => {
         e.preventDefault();
         deferredPrompt = e;
-        installBtn.style.display = "block";
-      });
-
-      installBtn.addEventListener("click", () => {
-        window.location.href = "appstore.html";
+        if (!document.body.classList.contains('user-logged-in') && installBtn) {
+          installBtn.style.display = "block";
+        }
       });
 
       window.addEventListener("load", () => {
         setTimeout(() => {
-          if (!deferredPrompt) {
+          if (!deferredPrompt && !document.body.classList.contains('user-logged-in') && installBtn) {
             installBtn.style.display = "block";
             installBtn.innerText = "Install App 📱";
           }

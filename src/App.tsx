@@ -260,8 +260,8 @@ export default function App() {
     );
   };
 
-  const handleLikeReel = (id: string) => {
-    const updated = reels.map(r => r.id === id ? { ...r, likes: r.likes + 1 } : r);
+  const handleLikeReel = (id: string, delta: number = 1) => {
+    const updated = reels.map(r => r.id === id ? { ...r, likes: Math.max(0, r.likes + delta) } : r);
     setReels(updated);
     try {
       localStorage.setItem('gcash_reels_data', JSON.stringify(updated));
@@ -455,6 +455,19 @@ export default function App() {
       }
     };
   }, [token, user, loadingProfile]);
+
+  // Hide Install App button when user is logged in
+  useEffect(() => {
+    if (user) {
+      document.body.classList.add('user-logged-in');
+      const installBtn = document.getElementById('installBtn');
+      if (installBtn) {
+        installBtn.style.display = 'none';
+      }
+    } else {
+      document.body.classList.remove('user-logged-in');
+    }
+  }, [user]);
 
   // Fetch or sync user profile
   const fetchUserProfile = async (authToken: string) => {
