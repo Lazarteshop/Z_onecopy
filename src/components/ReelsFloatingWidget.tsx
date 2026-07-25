@@ -168,7 +168,8 @@ export default function ReelsFloatingWidget({
       }
     };
 
-    const events = ['click', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend'];
+    // Only intercept click and pointerup events for Monetag ad isolation (DO NOT capture touchstart/touchend so native swipe is 100% smooth)
+    const events = ['click', 'pointerup', 'mouseup'];
     
     events.forEach((evt) => {
       window.addEventListener(evt, handleGlobalCapture, { capture: true, passive: true });
@@ -304,7 +305,6 @@ export default function ReelsFloatingWidget({
 
       <div 
         ref={widgetRef}
-        onTouchMove={(e) => e.stopPropagation()}
         className="fixed bottom-3 right-3 sm:bottom-5 sm:right-5 z-50 max-w-[340px] w-[92vw] bg-slate-950/98 border border-slate-800 backdrop-blur-2xl rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.9)] overflow-hidden flex flex-col transition duration-300 animate-fadeIn"
       >
       
@@ -434,7 +434,7 @@ export default function ReelsFloatingWidget({
         </form>
       )}
 
-      {/* 📹 MAIN CONTENT AREA - SMOOTH SNAP-SCROLLABLE FEED */}
+      {/* 📹 MAIN CONTENT AREA - SMOOTH ULTRA-RESPONSIVE FEED */}
       <div 
         ref={scrollContainerRef}
         onScroll={() => {
@@ -458,13 +458,14 @@ export default function ReelsFloatingWidget({
             if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
             scrollTimeoutRef.current = setTimeout(() => {
               setCurrentIndex(closestIndex);
-            }, 120);
+            }, 600);
           }
         }}
-        className="reels-widget-scroll-container p-3 space-y-4 max-h-[70vh] sm:max-h-[460px] overflow-y-auto scroll-smooth touch-pan-y overscroll-contain snap-y snap-proximity"
+        className="reels-widget-scroll-container p-3 space-y-4 max-h-[68vh] sm:max-h-[460px] overflow-y-auto touch-pan-y overscroll-contain"
         style={{
           scrollbarWidth: 'thin',
-          scrollbarColor: '#4f46e5 #0f172a'
+          scrollbarColor: '#4f46e5 #0f172a',
+          WebkitOverflowScrolling: 'touch'
         }}
       >
         {activeReels.length > 0 ? (
@@ -477,8 +478,10 @@ export default function ReelsFloatingWidget({
                 onClick={() => {
                   if (!isActive) scrollToReel(index);
                 }}
-                className={`space-y-2 pb-3.5 border-b border-slate-800/90 last:border-0 last:pb-0 transition duration-300 snap-start ${
-                  isActive ? 'ring-2 ring-indigo-500/60 p-2 rounded-2xl bg-indigo-950/30' : 'opacity-85 hover:opacity-100 cursor-pointer'
+                className={`space-y-2 p-2.5 rounded-2xl border transition duration-200 ${
+                  isActive 
+                    ? 'ring-2 ring-indigo-500/60 bg-indigo-950/40 border-indigo-500/50 shadow-lg' 
+                    : 'bg-slate-900/40 border-slate-800/80 hover:border-slate-700 opacity-90 hover:opacity-100 cursor-pointer'
                 }`}
               >
                 
@@ -514,7 +517,7 @@ export default function ReelsFloatingWidget({
                 </div>
 
                 {/* Video Container Frame */}
-                <div className="relative bg-black rounded-2xl overflow-hidden border border-slate-800 aspect-[9/14] sm:aspect-[9/13] max-h-[320px] flex items-center justify-center shadow-lg group">
+                <div className="relative bg-black rounded-2xl overflow-hidden border border-slate-800 aspect-[9/14] sm:aspect-[9/13] max-h-[320px] flex items-center justify-center shadow-lg group touch-pan-y">
                   
                   {/* IF ACTIVE: Render iframe / video. IF INACTIVE: Render placeholder thumbnail preview to stop audio/video background playing */}
                   {isActive ? (
