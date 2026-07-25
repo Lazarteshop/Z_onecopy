@@ -1750,31 +1750,22 @@ export default function App() {
                   </button>
                 )}
 
-                {/* 🌍 LANGUAGE SELECT SWITCH */}
-                <div className="flex items-center gap-0.5 sm:gap-1 bg-slate-950/65 border border-slate-800 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl shadow-inner shrink-0">
-                  <button
-                    onClick={() => setLanguage('en')}
-                    className={`px-2 py-1 sm:px-3 sm:py-1.5 text-[9px] sm:text-[10px] font-black uppercase rounded-lg sm:rounded-xl transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
-                      language === 'en'
-                        ? 'bg-slate-700 text-white shadow font-black scale-105'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <span>🇺🇸</span>
-                    <span className="hidden xs:inline">EN</span>
-                  </button>
-                  <button
-                    onClick={() => setLanguage('tl')}
-                    className={`px-2 py-1 sm:px-3 sm:py-1.5 text-[9px] sm:text-[10px] font-black uppercase rounded-lg sm:rounded-xl transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
-                      language === 'tl'
-                        ? 'bg-indigo-600 text-white shadow font-black scale-105'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <span>🇵🇭</span>
-                    <span className="hidden xs:inline">TL</span>
-                  </button>
-                </div>
+                {/* 🎬 WATCH REELS HEADER BUTTON (Replaces Language Flags) */}
+                <button
+                  onClick={() => {
+                    const openBtn = document.getElementById('reels-widget-open-btn');
+                    if (openBtn) {
+                      openBtn.click();
+                    }
+                  }}
+                  className="bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl sm:rounded-2xl shadow-lg shadow-rose-600/30 border border-white/30 flex items-center gap-1.5 sm:gap-2 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none"
+                  title={language === 'tl' ? 'Panoorin ang Reels' : 'Watch Reels'}
+                >
+                  <Tv className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 animate-pulse shrink-0" />
+                  <span className="text-[10px] sm:text-xs uppercase font-extrabold tracking-wider whitespace-nowrap">
+                    🎬 WATCH REELS
+                  </span>
+                </button>
 
                 <div className="bg-slate-850 border border-slate-800 p-1.5 sm:p-2.5 rounded-xl sm:rounded-2xl flex items-center gap-2 sm:gap-2.5 shadow-sm min-w-0">
                   {/* Clickable Avatar to edit profile picture */}
