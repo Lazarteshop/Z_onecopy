@@ -478,45 +478,53 @@ export default function ReelsFloatingWidget({
 
       {/* ⚙️ ADMIN ADD REEL FORM INLINE */}
       {showAddForm && isAdmin && (
-        <form onSubmit={handlePublishSubmit} className="p-3 bg-indigo-950/90 border-b border-indigo-800/60 space-y-2 text-xs shrink-0">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-black text-indigo-300 uppercase tracking-wider flex items-center gap-1">
-              <Shield className="w-3 h-3 text-amber-300" />
+        <form onSubmit={handlePublishSubmit} className="pt-4 pb-3.5 px-3.5 mt-1 bg-slate-900/98 border-b border-indigo-500/40 space-y-3 text-xs shrink-0 shadow-xl transition-all">
+          <div className="flex items-center justify-between pb-1.5 border-b border-indigo-900/50">
+            <span className="text-[11px] font-black text-indigo-200 uppercase tracking-wider flex items-center gap-1.5">
+              <Shield className="w-3.5 h-3.5 text-amber-300" />
               <span>Admin: Mag-publish ng TikTok / FB Reel</span>
             </span>
             <button
               type="button"
               onClick={() => setShowAddForm(false)}
-              className="text-slate-400 hover:text-white text-[10px] font-extrabold"
+              className="text-slate-400 hover:text-white text-xs font-extrabold px-1.5 py-0.5 rounded-lg hover:bg-slate-800 transition cursor-pointer"
             >
               ✕
             </button>
           </div>
 
-          <div className="space-y-1">
-            <input
-              type="url"
-              required
-              value={inputUrl}
-              onChange={(e) => setInputUrl(e.target.value)}
-              placeholder="I-paste ang TikTok, FB Reel, o Shorts URL"
-              className="w-full bg-slate-900 border border-slate-700 text-white rounded-xl px-3 py-2 text-xs outline-none focus:border-indigo-400 font-mono"
-            />
-          </div>
+          <div className="space-y-2.5 pt-1.5">
+            <div>
+              <label className="block text-[10px] font-extrabold text-indigo-300 uppercase tracking-wide mb-1">
+                Link / Video URL <span className="text-rose-400">*</span>
+              </label>
+              <input
+                type="url"
+                required
+                value={inputUrl}
+                onChange={(e) => setInputUrl(e.target.value)}
+                placeholder="I-paste ang TikTok, FB Reel, o Shorts URL"
+                className="w-full bg-slate-950 border border-indigo-500/50 text-white rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 font-mono shadow-inner"
+              />
+            </div>
 
-          <div className="space-y-1">
-            <input
-              type="text"
-              value={inputTitle}
-              onChange={(e) => setInputTitle(e.target.value)}
-              placeholder="Pamagat / Description (Opsyonal)"
-              className="w-full bg-slate-900 border border-slate-700 text-white rounded-xl px-3 py-2 text-xs outline-none focus:border-indigo-400"
-            />
+            <div>
+              <label className="block text-[10px] font-extrabold text-indigo-300 uppercase tracking-wide mb-1">
+                Pamagat / Description (Opsyonal)
+              </label>
+              <input
+                type="text"
+                value={inputTitle}
+                onChange={(e) => setInputTitle(e.target.value)}
+                placeholder="Pamagat / Description ng Reel"
+                className="w-full bg-slate-950 border border-slate-700 text-white rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 shadow-inner"
+              />
+            </div>
           </div>
 
           <button
             type="submit"
-            className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black py-2 rounded-xl text-xs uppercase tracking-wider shadow-md cursor-pointer transition flex items-center justify-center gap-1.5"
+            className="w-full mt-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-400 text-white font-black py-2.5 rounded-xl text-xs uppercase tracking-wider shadow-lg shadow-emerald-950/50 cursor-pointer transition active:scale-98 flex items-center justify-center gap-1.5"
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-300" />
             <span>I-publish ang Reel Video (Unahan)</span>
