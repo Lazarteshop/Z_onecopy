@@ -476,62 +476,6 @@ export default function ReelsFloatingWidget({
         </div>
       </div>
 
-      {/* ⚙️ ADMIN ADD REEL FORM INLINE */}
-      {showAddForm && isAdmin && (
-        <form onSubmit={handlePublishSubmit} className="pt-4 pb-3.5 px-3.5 mt-1 bg-slate-900/98 border-b border-indigo-500/40 space-y-3 text-xs shrink-0 shadow-xl transition-all">
-          <div className="flex items-center justify-between pb-1.5 border-b border-indigo-900/50">
-            <span className="text-[11px] font-black text-indigo-200 uppercase tracking-wider flex items-center gap-1.5">
-              <Shield className="w-3.5 h-3.5 text-amber-300" />
-              <span>Admin: Mag-publish ng TikTok / FB Reel</span>
-            </span>
-            <button
-              type="button"
-              onClick={() => setShowAddForm(false)}
-              className="text-slate-400 hover:text-white text-xs font-extrabold px-1.5 py-0.5 rounded-lg hover:bg-slate-800 transition cursor-pointer"
-            >
-              ✕
-            </button>
-          </div>
-
-          <div className="space-y-2.5 pt-1.5">
-            <div>
-              <label className="block text-[10px] font-extrabold text-indigo-300 uppercase tracking-wide mb-1">
-                Link / Video URL <span className="text-rose-400">*</span>
-              </label>
-              <input
-                type="url"
-                required
-                value={inputUrl}
-                onChange={(e) => setInputUrl(e.target.value)}
-                placeholder="I-paste ang TikTok, FB Reel, o Shorts URL"
-                className="w-full bg-slate-950 border border-indigo-500/50 text-white rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 font-mono shadow-inner"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-extrabold text-indigo-300 uppercase tracking-wide mb-1">
-                Pamagat / Description (Opsyonal)
-              </label>
-              <input
-                type="text"
-                value={inputTitle}
-                onChange={(e) => setInputTitle(e.target.value)}
-                placeholder="Pamagat / Description ng Reel"
-                className="w-full bg-slate-950 border border-slate-700 text-white rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 shadow-inner"
-              />
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            className="w-full mt-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-400 text-white font-black py-2.5 rounded-xl text-xs uppercase tracking-wider shadow-lg shadow-emerald-950/50 cursor-pointer transition active:scale-98 flex items-center justify-center gap-1.5"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-            <span>I-publish ang Reel Video (Unahan)</span>
-          </button>
-        </form>
-      )}
-
       {/* 📹 MAIN CONTENT AREA - SMOOTH ULTRA-RESPONSIVE FEED */}
       <div 
         ref={scrollContainerRef}
@@ -734,6 +678,75 @@ export default function ReelsFloatingWidget({
           </div>
         )}
       </div>
+
+      {/* ⚙️ ADMIN ADD REEL FORM POPUP MODAL */}
+      {showAddForm && isAdmin && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="w-full max-w-md bg-slate-900 border-2 border-indigo-500/60 rounded-2xl shadow-2xl overflow-hidden p-5 space-y-4 text-xs">
+            <div className="flex items-center justify-between pb-3 border-b border-indigo-900/60">
+              <span className="text-xs font-black text-indigo-200 uppercase tracking-wider flex items-center gap-2">
+                <Shield className="w-4 h-4 text-amber-300" />
+                <span>ADMIN: MAG-PUBLISH NG TIKTOK / FB REEL</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowAddForm(false)}
+                className="text-slate-400 hover:text-white text-sm font-extrabold w-7 h-7 flex items-center justify-center rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handlePublishSubmit} className="space-y-4">
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[10px] font-black text-indigo-300 uppercase tracking-wide mb-1.5">
+                    Link / Video URL <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="url"
+                    required
+                    value={inputUrl}
+                    onChange={(e) => setInputUrl(e.target.value)}
+                    placeholder="I-paste ang TikTok, FB Reel, o Shorts URL"
+                    className="w-full bg-slate-950 border border-indigo-500/60 text-white rounded-xl px-3.5 py-3 text-xs outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 font-mono shadow-inner"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-indigo-300 uppercase tracking-wide mb-1.5">
+                    Pamagat / Description (Opsyonal)
+                  </label>
+                  <input
+                    type="text"
+                    value={inputTitle}
+                    onChange={(e) => setInputTitle(e.target.value)}
+                    placeholder="Pamagat / Description ng Reel"
+                    className="w-full bg-slate-950 border border-slate-700 text-white rounded-xl px-3.5 py-3 text-xs outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 shadow-inner"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddForm(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs uppercase cursor-pointer transition"
+                >
+                  Kanselahin
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-400 text-white font-black py-2.5 rounded-xl text-xs uppercase tracking-wider shadow-lg shadow-emerald-950/50 cursor-pointer transition active:scale-98 flex items-center justify-center gap-1.5"
+                >
+                  <Sparkles className="w-4 h-4 text-amber-300" />
+                  <span>I-PUBLISH ANG REEL VIDEO</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* 📜 BOTTOM SCROLL NAVIGATION CONTROL BAR */}
       {activeReels.length > 1 && (
