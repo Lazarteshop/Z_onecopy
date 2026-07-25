@@ -118,7 +118,9 @@ export default function ReelsFloatingWidget({
 
   const activeReels = reels && reels.length > 0 ? reels : [];
 
-  // Natively intercept and isolate all touch & click events to prevent Monetag ad popups without breaking React events
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Natively intercept and isolate ad popups without breaking native touch scrolling
   useEffect(() => {
     const originalWindowOpen = window.open;
 
@@ -128,12 +130,6 @@ export default function ReelsFloatingWidget({
 
       const target = e.target as HTMLElement | null;
       if (el.contains(target) || target === el) {
-        // Prevent Monetag and any global ad scripts on document/window from seeing this event
-        e.stopPropagation();
-        if (typeof e.stopImmediatePropagation === 'function') {
-          e.stopImmediatePropagation();
-        }
-
         // Handle Close and Open buttons directly
         if (target && (target.id === 'reels-widget-close-btn' || target.closest('#reels-widget-close-btn'))) {
           setIsOpen(false);
@@ -142,7 +138,15 @@ export default function ReelsFloatingWidget({
           setIsOpen(true);
         }
 
-        // Block window.open popunders unless clicking an explicit user link
+        // Only stop propagation for click/mouseup events to isolate Monetag ads while keeping touch scrolling 100% smooth
+        if (e.type === 'click' || e.type === 'mouseup' || e.type === 'pointerup') {
+          e.stopPropagation();
+          if (typeof e.stopImmediatePropagation === 'function') {
+            e.stopImmediatePropagation();
+          }
+        }
+
+        // Block window.open popunder attempts unless clicking an explicit user link
         const isExternalLink = target && (target.tagName === 'A' || target.closest('a'));
         if (!isExternalLink) {
           window.open = function (...args) {
@@ -156,12 +160,12 @@ export default function ReelsFloatingWidget({
       }
     };
 
-    const events = ['click', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'touchstart', 'touchend'];
+    const events = ['click', 'mouseup', 'pointerup', 'touchstart', 'touchend'];
     
-    // Attach capture listeners on window and document so Reels interactions are intercepted BEFORE any ad scripts
+    // Attach capture listeners on window and document
     events.forEach((evt) => {
-      window.addEventListener(evt, handleGlobalCapture, { capture: true, passive: false });
-      document.addEventListener(evt, handleGlobalCapture, { capture: true, passive: false });
+      window.addEventListener(evt, handleGlobalCapture, { capture: true, passive: true });
+      document.addEventListener(evt, handleGlobalCapture, { capture: true, passive: true });
     });
 
     return () => {
@@ -205,7 +209,7 @@ export default function ReelsFloatingWidget({
     if (scrollContainerRef.current) {
       const child = scrollContainerRef.current.children[index] as HTMLElement;
       if (child) {
-        child.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        child.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     }
   };
@@ -431,10 +435,13 @@ export default function ReelsFloatingWidget({
           });
 
           if (closestIndex !== currentIndex && closestIndex >= 0 && closestIndex < activeReels.length) {
-            setCurrentIndex(closestIndex);
+            if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+            scrollTimeoutRef.current = setTimeout(() => {
+              setCurrentIndex(closestIndex);
+            }, 120);
           }
         }}
-        className="p-3 space-y-4 max-h-[70vh] sm:max-h-[460px] overflow-y-auto scroll-smooth touch-pan-y snap-y snap-mandatory"
+        className="p-3 space-y-4 max-h-[70vh] sm:max-h-[460px] overflow-y-auto scroll-smooth touch-pan-y overscroll-contain snap-y snap-proximity"
         style={{
           scrollbarWidth: 'thin',
           scrollbarColor: '#4f46e5 #0f172a'
@@ -450,7 +457,7 @@ export default function ReelsFloatingWidget({
                 onClick={() => {
                   if (!isActive) scrollToReel(index);
                 }}
-                className={`space-y-2 pb-3.5 border-b border-slate-800/90 last:border-0 last:pb-0 transition duration-300 snap-start snap-always ${
+                className={`space-y-2 pb-3.5 border-b border-slate-800/90 last:border-0 last:pb-0 transition duration-300 snap-start ${
                   isActive ? 'ring-2 ring-indigo-500/60 p-2 rounded-2xl bg-indigo-950/30' : 'opacity-85 hover:opacity-100 cursor-pointer'
                 }`}
               >
