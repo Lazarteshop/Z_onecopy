@@ -50,7 +50,8 @@ import {
   Smartphone,
   Bell,
   QrCode,
-  Download
+  Download,
+  X
 } from 'lucide-react';
 import { INITIAL_CAMPAIGNS } from './data/campaigns';
 import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend, ReelVideo } from './types';
@@ -339,18 +340,63 @@ export default function App() {
     );
   };
 
-  const handleLikeReel = async (id: string, delta: number = 1) => {
-    const updated = reels.map(r => r.id === id ? { ...r, likes: Math.max(0, r.likes + delta) } : r);
-    setReels(updated);
+  const handleLikeReel = async (id: string) => {
+    if (!token || !user) {
+      triggerNotification(
+        language === 'tl'
+          ? '⚠️ Kailangan mong mag-login upang mag-like at kumita ng ₱0.05 per Reel!'
+          : '⚠️ Please login to like Reels and earn ₱0.05 per Reel!',
+        'error'
+      );
+      return;
+    }
+
+    const reel = reels.find(r => r.id === id);
+    if (reel && reel.likedBy?.includes(user.id)) {
+      triggerNotification(
+        language === 'tl'
+          ? '⚠️ Naliked mo na ang Reel na ito! Permanente na ito at hindi na pwedeng i-unlike.'
+          : '⚠️ You already liked this Reel! Unliking is not allowed.',
+        'info'
+      );
+      return;
+    }
+
     try {
-      localStorage.setItem('gcash_reels_data', JSON.stringify(updated));
-      await fetch(`/api/reels/${id}/like`, {
+      const res = await fetch(`/api/reels/${id}/like`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ delta })
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ userId: user.id })
       });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (data.reels) {
+          setReels(data.reels);
+          localStorage.setItem('gcash_reels_data', JSON.stringify(data.reels));
+        }
+        triggerNotification(
+          language === 'tl'
+            ? '🎉 +₱0.05 Reward sa pag-like ng Reel!'
+            : '🎉 +₱0.05 Reward for liking Reel!',
+          'success'
+        );
+        fetchUserProfile(token);
+      } else {
+        triggerNotification(
+          data.error || (language === 'tl' ? '⚠️ Hindi na-record ang like.' : '⚠️ Failed to like Reel.'),
+          'info'
+        );
+      }
     } catch (e) {
       console.error('Failed to save like on server:', e);
+      triggerNotification(
+        language === 'tl' ? '⚠️ Connection error sa server.' : '⚠️ Connection error.',
+        'error'
+      );
     }
   };
   
@@ -491,6 +537,16 @@ export default function App() {
   const triggerNotification = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
     setNotification({ message, type });
     showDeviceNotification(message, type);
+
+    // Play coin audio chime for reward notifications
+    if (type === 'success' || message.includes('₱') || message.toLowerCase().includes('reward') || message.toLowerCase().includes('bonus')) {
+      try {
+        soundEffects.playReward();
+      } catch (err) {
+        console.warn('Notification audio effect skipped:', err);
+      }
+    }
+
     setTimeout(() => {
       setNotification((curr) => curr?.message === message ? null : curr);
     }, 4500);
@@ -1284,31 +1340,48 @@ export default function App() {
         language={language} 
       />
 
-      {/* 🔔 FLOATING NOTIFICATION SYSTEM */}
+      {/* 🔔 FLOATING NOTIFICATION SYSTEM (GCASH REWARDS POPUP ALERT) */}
       <AnimatePresence>
         {notification && (
           <motion.div
-            initial={{ opacity: 0, y: -50, scale: 0.9 }}
+            initial={{ opacity: 0, y: -60, scale: 0.85 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            exit={{ opacity: 0, y: -30, scale: 0.9 }}
+            transition={{ type: 'spring', stiffness: 450, damping: 30 }}
             id="system-banner"
-            className={`fixed top-5 left-1/2 -translate-x-1/2 z-50 max-w-md w-[90%] p-4 rounded-2xl shadow-xl border flex items-start gap-3 backdrop-blur-md ${
+            className={`fixed top-4 left-1/2 -translate-x-1/2 z-[99999] w-[92%] sm:w-[420px] max-w-[95vw] p-4 rounded-[24px] shadow-[0_16px_48px_rgba(0,0,0,0.22)] border flex items-center gap-3.5 backdrop-blur-xl transition-all ${
               notification.type === 'success'
-                ? 'bg-emerald-50/95 border-emerald-200 text-emerald-950'
+                ? 'bg-white/95 dark:bg-slate-900/95 border-emerald-300/80 text-slate-900 dark:text-white'
                 : notification.type === 'error'
-                ? 'bg-rose-50/95 border-rose-200 text-rose-950'
-                : 'bg-indigo-50/95 border-indigo-200 text-indigo-950'
+                ? 'bg-white/95 dark:bg-slate-900/95 border-rose-300/80 text-slate-900 dark:text-white'
+                : 'bg-white/95 dark:bg-slate-900/95 border-indigo-300/80 text-slate-900 dark:text-white'
             }`}
           >
-            <div className={`p-1.5 rounded-xl shrink-0 ${
-              notification.type === 'success' ? 'bg-emerald-100' : notification.type === 'error' ? 'bg-rose-100' : 'bg-indigo-100'
+            <div className={`w-11 h-11 rounded-2xl shrink-0 flex items-center justify-center text-xl shadow-inner ${
+              notification.type === 'success'
+                ? 'bg-emerald-100 text-emerald-600'
+                : notification.type === 'error'
+                ? 'bg-rose-100 text-rose-600'
+                : 'bg-indigo-100 text-indigo-600'
             }`}>
               {notification.type === 'success' ? '💰' : notification.type === 'error' ? '🚨' : 'ℹ️'}
             </div>
-            <div className="flex-1">
-              <span className="text-xs font-extrabold block text-slate-400 uppercase tracking-widest leading-none mb-1">GCash Rewards Alert</span>
-              <p className="text-xs font-bold leading-normal">{notification.message}</p>
+            <div className="flex-1 min-w-0 pr-1">
+              <span className="text-[10px] font-black block text-slate-400 dark:text-slate-400 uppercase tracking-widest leading-none mb-1">
+                GCASH REWARDS ALERT
+              </span>
+              <p className="text-xs sm:text-sm font-extrabold leading-snug text-slate-800 dark:text-slate-100 break-words">
+                {notification.message}
+              </p>
             </div>
+            <button
+              type="button"
+              onClick={() => setNotification(null)}
+              className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition shrink-0"
+              title="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -2835,11 +2908,13 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
         reels={reels}
         isAdmin={user?.isAdmin || false}
         currentUserName={user?.name}
+        currentUserId={user?.id}
         isLoggedIn={!!user}
         language={language}
         onAddReel={handleAddReel}
         onDeleteReel={handleDeleteReel}
         onLikeReel={handleLikeReel}
+        triggerNotification={triggerNotification}
       />
 
     </div>

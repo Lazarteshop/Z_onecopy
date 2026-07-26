@@ -19,11 +19,13 @@ interface ReelsFloatingWidgetProps {
   reels: ReelVideo[];
   isAdmin?: boolean;
   currentUserName?: string;
+  currentUserId?: string;
   isLoggedIn?: boolean;
   language?: 'tl' | 'en';
   onAddReel: (url: string, title?: string) => void;
   onDeleteReel: (id: string) => void;
   onLikeReel: (id: string, delta?: number) => void;
+  triggerNotification?: (message: string, type?: 'success' | 'info' | 'error') => void;
 }
 
 export function parseVideoUrl(inputUrl: string): { embedUrl: string; platform: 'tiktok' | 'facebook' | 'youtube' | 'direct' } {
@@ -95,11 +97,13 @@ export function parseVideoUrl(inputUrl: string): { embedUrl: string; platform: '
 export default function ReelsFloatingWidget({
   reels,
   isAdmin = false,
+  currentUserId,
   isLoggedIn = false,
   language = 'tl',
   onAddReel,
   onDeleteReel,
-  onLikeReel
+  onLikeReel,
+  triggerNotification
 }: ReelsFloatingWidgetProps) {
   const [isOpen, setIsOpen] = useState(true);
 
@@ -295,15 +299,38 @@ export default function ReelsFloatingWidget({
       e.stopPropagation();
       e.preventDefault();
     }
-    const isLiked = likedIds.includes(id);
-    let updated: string[];
-    if (isLiked) {
-      updated = likedIds.filter(i => i !== id);
-      onLikeReel(id, -1);
-    } else {
-      updated = [...likedIds, id];
-      onLikeReel(id, 1);
+
+    const reel = reels.find(r => r.id === id);
+    const isLikedByServer = Boolean(currentUserId && reel?.likedBy?.includes(currentUserId));
+    const isLikedLocal = likedIds.includes(id);
+
+    if (isLikedByServer || isLikedLocal) {
+      if (triggerNotification) {
+        triggerNotification(
+          language === 'tl'
+            ? '⚠️ Naliked mo na ang Reel na ito! Permanente na ito at hindi na pwedeng i-unlike.'
+            : '⚠️ You already liked this Reel! Unliking is not allowed.',
+          'info'
+        );
+      }
+      return;
     }
+
+    if (!isLoggedIn) {
+      if (triggerNotification) {
+        triggerNotification(
+          language === 'tl'
+            ? '⚠️ Kailangan mong mag-login upang mag-like at kumita ng ₱0.05 per Reel!'
+            : '⚠️ Please login to like Reels and earn ₱0.05 per Reel!',
+          'error'
+        );
+      }
+      return;
+    }
+
+    onLikeReel(id);
+
+    const updated = [...likedIds, id];
     setLikedIds(updated);
     try {
       localStorage.setItem('gcash_liked_reels', JSON.stringify(updated));
@@ -636,18 +663,23 @@ export default function ReelsFloatingWidget({
                   <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/80">
                     
                     {/* LIKE BUTTON */}
-                    <button
-                      type="button"
-                      onClick={(e) => handleLike(reel.id, e)}
-                      className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-black text-xs transition-all cursor-pointer active:scale-90 select-none z-20 ${
-                        likedIds.includes(reel.id)
-                          ? 'bg-gradient-to-r from-rose-600 to-pink-600 text-white border border-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.6)] scale-105'
-                          : 'bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-rose-400 border border-slate-700'
-                      }`}
-                    >
-                      <Heart className={`w-4 h-4 transition ${likedIds.includes(reel.id) ? 'fill-white text-white scale-110' : ''}`} />
-                      <span>{reel.likes}</span>
-                    </button>
+                    {(() => {
+                      const isReelLiked = Boolean((currentUserId && reel.likedBy?.includes(currentUserId)) || likedIds.includes(reel.id));
+                      return (
+                        <button
+                          type="button"
+                          onClick={(e) => handleLike(reel.id, e)}
+                          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-black text-xs transition-all cursor-pointer active:scale-90 select-none z-20 ${
+                            isReelLiked
+                              ? 'bg-gradient-to-r from-rose-600 to-pink-600 text-white border border-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.6)] scale-105'
+                              : 'bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-rose-400 border border-slate-700'
+                          }`}
+                        >
+                          <Heart className={`w-4 h-4 transition ${isReelLiked ? 'fill-white text-white scale-110' : ''}`} />
+                          <span>{reel.likes}</span>
+                        </button>
+                      );
+                    })()}
 
                     {/* Open original link button */}
                     <a
