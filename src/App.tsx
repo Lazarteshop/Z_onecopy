@@ -1343,47 +1343,49 @@ export default function App() {
       {/* 🔔 FLOATING NOTIFICATION SYSTEM (GCASH REWARDS POPUP ALERT) */}
       <AnimatePresence>
         {notification && (
-          <motion.div
-            initial={{ opacity: 0, y: -60, scale: 0.85 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -30, scale: 0.9 }}
-            transition={{ type: 'spring', stiffness: 450, damping: 30 }}
-            id="system-banner"
-            className={`fixed top-3 sm:top-5 left-1/2 -translate-x-1/2 z-[9999999] w-[94%] sm:w-[420px] max-w-[96vw] p-3.5 sm:p-4 rounded-[22px] sm:rounded-[26px] bg-white border-2 flex items-center gap-3 shadow-[0_20px_50px_rgba(0,0,0,0.3)] transition-all ${
-              notification.type === 'success'
-                ? 'border-emerald-500'
-                : notification.type === 'error'
-                ? 'border-rose-500'
-                : 'border-blue-500'
-            }`}
-            style={{ backgroundColor: '#ffffff', color: '#0f172a' }}
-          >
-            <div className={`w-11 h-11 rounded-2xl shrink-0 flex items-center justify-center text-xl shadow-xs border ${
-              notification.type === 'success'
-                ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
-                : notification.type === 'error'
-                ? 'bg-rose-100 text-rose-700 border-rose-300'
-                : 'bg-blue-100 text-blue-700 border-blue-300'
-            }`}>
-              {notification.type === 'success' ? '💰' : notification.type === 'error' ? '🚨' : 'ℹ️'}
-            </div>
-            <div className="flex-1 min-w-0 pr-1">
-              <span className="text-[10px] sm:text-[11px] font-black block text-slate-500 uppercase tracking-widest leading-none mb-1">
-                GCASH REWARDS ALERT
-              </span>
-              <p className="text-xs sm:text-sm font-extrabold leading-snug text-slate-900 break-words" style={{ color: '#0f172a' }}>
-                {notification.message}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setNotification(null)}
-              className="p-2 text-slate-500 hover:text-slate-900 rounded-full bg-slate-100 hover:bg-slate-200 transition shrink-0 cursor-pointer border border-slate-200"
-              title="Close"
+          <div className="fixed top-3 sm:top-5 inset-x-0 z-[9999999] flex justify-center px-3 pointer-events-none">
+            <motion.div
+              initial={{ opacity: 0, y: -40, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.95 }}
+              transition={{ type: 'spring', stiffness: 450, damping: 30 }}
+              id="system-banner"
+              className={`pointer-events-auto w-full max-w-[420px] p-3.5 sm:p-4 rounded-[22px] sm:rounded-[26px] bg-white border-2 flex items-center gap-3 shadow-[0_20px_50px_rgba(0,0,0,0.35)] transition-all ${
+                notification.type === 'success'
+                  ? 'border-emerald-500'
+                  : notification.type === 'error'
+                  ? 'border-rose-500'
+                  : 'border-blue-500'
+              }`}
+              style={{ backgroundColor: '#ffffff', color: '#0f172a' }}
             >
-              <X className="w-4 h-4 text-slate-700" />
-            </button>
-          </motion.div>
+              <div className={`w-11 h-11 rounded-2xl shrink-0 flex items-center justify-center text-xl shadow-xs border ${
+                notification.type === 'success'
+                  ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                  : notification.type === 'error'
+                  ? 'bg-rose-100 text-rose-700 border-rose-300'
+                  : 'bg-blue-100 text-blue-700 border-blue-300'
+              }`}>
+                {notification.type === 'success' ? '💰' : notification.type === 'error' ? '🚨' : 'ℹ️'}
+              </div>
+              <div className="flex-1 min-w-0 pr-1">
+                <span className="text-[10px] sm:text-[11px] font-black block text-slate-500 uppercase tracking-widest leading-none mb-1">
+                  GCASH REWARDS ALERT
+                </span>
+                <p className="text-xs sm:text-sm font-extrabold leading-snug text-slate-900 break-words" style={{ color: '#0f172a' }}>
+                  {notification.message}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNotification(null)}
+                className="p-2 text-slate-500 hover:text-slate-900 rounded-full bg-slate-100 hover:bg-slate-200 transition shrink-0 cursor-pointer border border-slate-200"
+                title="Close"
+              >
+                <X className="w-4 h-4 text-slate-700" />
+              </button>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
