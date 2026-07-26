@@ -1349,35 +1349,35 @@ export default function App() {
             exit={{ opacity: 0, y: -30, scale: 0.9 }}
             transition={{ type: 'spring', stiffness: 450, damping: 30 }}
             id="system-banner"
-            className={`fixed top-4 left-1/2 -translate-x-1/2 z-[99999] w-[92%] sm:w-[420px] max-w-[95vw] p-4 rounded-[24px] shadow-[0_16px_48px_rgba(0,0,0,0.22)] border flex items-center gap-3.5 backdrop-blur-xl transition-all ${
+            className={`fixed top-4 sm:top-6 left-1/2 -translate-x-1/2 z-[999999] w-[92%] sm:w-[420px] max-w-[95vw] p-4 rounded-[24px] bg-slate-900 text-white border-2 flex items-center gap-3.5 shadow-[0_20px_60px_rgba(0,0,0,0.5)] backdrop-blur-2xl transition-all ${
               notification.type === 'success'
-                ? 'bg-white/95 dark:bg-slate-900/95 border-emerald-300/80 text-slate-900 dark:text-white'
+                ? 'border-emerald-500/80 shadow-emerald-950/40'
                 : notification.type === 'error'
-                ? 'bg-white/95 dark:bg-slate-900/95 border-rose-300/80 text-slate-900 dark:text-white'
-                : 'bg-white/95 dark:bg-slate-900/95 border-indigo-300/80 text-slate-900 dark:text-white'
+                ? 'border-rose-500/80 shadow-rose-950/40'
+                : 'border-amber-400/80 shadow-amber-950/40'
             }`}
           >
-            <div className={`w-11 h-11 rounded-2xl shrink-0 flex items-center justify-center text-xl shadow-inner ${
+            <div className={`w-11 h-11 rounded-2xl shrink-0 flex items-center justify-center text-xl shadow-inner border ${
               notification.type === 'success'
-                ? 'bg-emerald-100 text-emerald-600'
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                 : notification.type === 'error'
-                ? 'bg-rose-100 text-rose-600'
-                : 'bg-indigo-100 text-indigo-600'
+                ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
             }`}>
               {notification.type === 'success' ? '💰' : notification.type === 'error' ? '🚨' : 'ℹ️'}
             </div>
             <div className="flex-1 min-w-0 pr-1">
-              <span className="text-[10px] font-black block text-slate-400 dark:text-slate-400 uppercase tracking-widest leading-none mb-1">
+              <span className="text-[10px] font-black block text-amber-400 uppercase tracking-widest leading-none mb-1">
                 GCASH REWARDS ALERT
               </span>
-              <p className="text-xs sm:text-sm font-extrabold leading-snug text-slate-800 dark:text-slate-100 break-words">
+              <p className="text-xs sm:text-sm font-extrabold leading-snug text-white break-words drop-shadow-sm">
                 {notification.message}
               </p>
             </div>
             <button
               type="button"
               onClick={() => setNotification(null)}
-              className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition shrink-0"
+              className="p-1.5 text-slate-300 hover:text-white rounded-full bg-slate-800 hover:bg-slate-700 transition shrink-0 cursor-pointer"
               title="Close"
             >
               <X className="w-4 h-4" />

@@ -301,10 +301,11 @@ export default function ReelsFloatingWidget({
     }
 
     const reel = reels.find(r => r.id === id);
-    const isLikedByServer = Boolean(currentUserId && reel?.likedBy?.includes(currentUserId));
-    const isLikedLocal = likedIds.includes(id);
+    const isLiked = currentUserId
+      ? Boolean(reel?.likedBy?.includes(currentUserId))
+      : likedIds.includes(id);
 
-    if (isLikedByServer || isLikedLocal) {
+    if (isLiked) {
       if (triggerNotification) {
         triggerNotification(
           language === 'tl'
@@ -664,7 +665,11 @@ export default function ReelsFloatingWidget({
                     
                     {/* LIKE BUTTON */}
                     {(() => {
-                      const isReelLiked = Boolean((currentUserId && reel.likedBy?.includes(currentUserId)) || likedIds.includes(reel.id));
+                      const isReelLiked = Boolean(
+                        currentUserId
+                          ? reel.likedBy?.includes(currentUserId)
+                          : likedIds.includes(reel.id)
+                      );
                       return (
                         <button
                           type="button"
