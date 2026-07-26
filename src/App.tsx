@@ -399,6 +399,54 @@ export default function App() {
       );
     }
   };
+
+  const handleWatchRewardReel = async (id: string) => {
+    if (!user || !token) {
+      triggerNotification(
+        language === 'tl'
+          ? '⚠️ Mag-register o mag-login muna para makuha ang ₱0.10 Red Pocket Reward!'
+          : '⚠️ Please register or login to claim ₱0.10 Red Pocket Reward!',
+        'info'
+      );
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/reels/${id}/watch-reward`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ userId: user.id })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (data.reels) {
+          setReels(data.reels);
+          localStorage.setItem('gcash_reels_data', JSON.stringify(data.reels));
+        }
+        soundEffects.playReward();
+        setFloatingCoinReward(0.10);
+        setTimeout(() => setFloatingCoinReward(null), 3000);
+        triggerNotification(
+          language === 'tl'
+            ? '🧧 +₱0.10 Red Pocket Reel Reward na-claim!'
+            : '🧧 +₱0.10 Red Pocket Reel Reward claimed!',
+          'success'
+        );
+        fetchUserProfile(token);
+      } else {
+        triggerNotification(
+          data.error || (language === 'tl' ? '⚠️ Hindi na-claim ang Red Pocket reward.' : '⚠️ Failed to claim Red Pocket reward.'),
+          'info'
+        );
+      }
+    } catch (e) {
+      console.error('Failed to claim watch reward on server:', e);
+    }
+  };
   
   // Language switcher state (English default)
   const [language, setLanguage] = useState<'en' | 'tl'>((localStorage.getItem('user_lang') as 'en' | 'tl') || 'en');
@@ -2917,6 +2965,7 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
         onAddReel={handleAddReel}
         onDeleteReel={handleDeleteReel}
         onLikeReel={handleLikeReel}
+        onWatchRewardReel={handleWatchRewardReel}
         triggerNotification={triggerNotification}
       />
 

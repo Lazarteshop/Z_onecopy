@@ -908,6 +908,7 @@ interface ReelVideo {
   title?: string;
   likes: number;
   likedBy?: string[];
+  watchedBy?: string[];
   addedBy?: string;
   createdAt: string;
 }
@@ -2172,6 +2173,67 @@ app.post('/api/reels/:id/like', (req, res) => {
     reward: 0.05, 
     newBalance: user.stats.balance, 
     message: '🎉 +₱0.05 Reward sa pag-like ng Reel!' 
+  });
+});
+
+app.post('/api/reels/:id/watch-reward', (req, res) => {
+  const { id } = req.params;
+  const userId = req.headers.authorization || req.body?.userId;
+  const db = loadDB();
+
+  if (!db.reels) {
+    db.reels = [...INITIAL_REELS];
+  }
+
+  const reel = db.reels.find(r => r.id === id);
+  if (!reel) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
+  }
+
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan mong mag-login upang makakuha ng ₱0.10 Red Pocket Reward!' });
+  }
+
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(401).json({ error: 'Kailangan mong mag-login upang makakuha ng ₱0.10 Red Pocket Reward!' });
+  }
+
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa system.' });
+  }
+
+  reel.watchedBy = reel.watchedBy || [];
+  if (reel.watchedBy.includes(userId)) {
+    return res.status(400).json({ 
+      error: 'Napanood mo na at na-claim na ang ₱0.10 Red Pocket reward sa Reel na ito!', 
+      reels: db.reels 
+    });
+  }
+
+  // Record user watch reward (Anti-cheat: 1 reward per reel per user)
+  reel.watchedBy.push(userId);
+
+  // Award ₱0.10 to registered user's balance
+  user.stats.balance = Number(((user.stats.balance || 0) + 0.10).toFixed(2));
+  user.stats.completedTasksCount = (user.stats.completedTasksCount || 0) + 1;
+  user.activityLogs = user.activityLogs || [];
+  user.activityLogs.unshift({
+    id: 'act-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    type: 'reward',
+    title: '🧧 ₱0.10 Red Pocket Reel Reward',
+    amount: 0.10,
+    timestamp: new Date().toISOString(),
+    details: `Nakatanggap ng ₱0.10 Red Pocket reward dahil sa 100% pagtatapos ng pagpanood sa Reel video ("${reel.title || 'Reel Video'}").`
+  });
+
+  saveDB(db);
+  res.json({ 
+    success: true, 
+    reels: db.reels, 
+    reward: 0.10, 
+    newBalance: user.stats.balance, 
+    message: '🧧 +₱0.10 Red Pocket Reel Reward na-claim!' 
   });
 });
 

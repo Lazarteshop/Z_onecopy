@@ -11,6 +11,7 @@ import {
   Sparkles, 
   Shield, 
   Play, 
+  Pause,
   Video
 } from 'lucide-react';
 import { ReelVideo } from '../types';
@@ -25,6 +26,7 @@ interface ReelsFloatingWidgetProps {
   onAddReel: (url: string, title?: string) => void;
   onDeleteReel: (id: string) => void;
   onLikeReel: (id: string, delta?: number) => void;
+  onWatchRewardReel?: (id: string) => void;
   triggerNotification?: (message: string, type?: 'success' | 'info' | 'error') => void;
 }
 
@@ -103,6 +105,7 @@ export default function ReelsFloatingWidget({
   onAddReel,
   onDeleteReel,
   onLikeReel,
+  onWatchRewardReel,
   triggerNotification
 }: ReelsFloatingWidgetProps) {
   const [isOpen, setIsOpen] = useState(true);
@@ -126,6 +129,19 @@ export default function ReelsFloatingWidget({
     }
   });
 
+  const [watchedIds, setWatchedIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('gcash_watched_reels');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  const [watchProgress, setWatchProgress] = useState<number>(0);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const widgetRef = useRef<HTMLDivElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -339,6 +355,134 @@ export default function ReelsFloatingWidget({
       console.error('Error saving liked reels', err);
     }
   };
+
+  // Sync HTML5 video element play/pause state
+  useEffect(() => {
+    if (videoRef.current) {
+      if (isPlaying) {
+        videoRef.current.play().catch(() => {});
+      } else {
+        videoRef.current.pause();
+      }
+    }
+  }, [isPlaying]);
+
+  // Reset watch progress whenever active reel changes (e.g. user switches reels)
+  useEffect(() => {
+    setWatchProgress(0);
+    setIsPlaying(false);
+  }, [currentIndex]);
+
+  const handleClaimWatchReward = (id: string) => {
+    const activeReel = activeReels.find(r => r.id === id);
+    const isAlreadyClaimed = Boolean(
+      (currentUserId && activeReel?.watchedBy?.includes(currentUserId)) ||
+      watchedIds.includes(id)
+    );
+
+    if (isAlreadyClaimed) return;
+
+    const updatedWatched = Array.from(new Set([...watchedIds, id]));
+    setWatchedIds(updatedWatched);
+    try {
+      localStorage.setItem('gcash_watched_reels', JSON.stringify(updatedWatched));
+    } catch (e) {
+      console.error('Error saving watched reels:', e);
+    }
+
+    if (onWatchRewardReel) {
+      onWatchRewardReel(id);
+    }
+  };
+
+  // YouTube / Iframe postMessage event listener for synchronized video progress
+  useEffect(() => {
+    const handleWindowMessage = (event: MessageEvent) => {
+      try {
+        if (!event.data) return;
+        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+        if (!data) return;
+
+        const activeReel = activeReels[currentIndex];
+        if (!activeReel) return;
+
+        // YouTube state change (1: playing, 2: paused, 0: ended)
+        if (data.event === 'onStateChange') {
+          if (data.info === 1) setIsPlaying(true);
+          if (data.info === 2 || data.info === 3) setIsPlaying(false);
+          if (data.info === 0) {
+            setIsPlaying(false);
+            setWatchProgress(100);
+            handleClaimWatchReward(activeReel.id);
+          }
+        }
+
+        // YouTube info delivery with exact currentTime & duration
+        if (data.event === 'infoDelivery' && data.info) {
+          if (typeof data.info.playerState === 'number') {
+            if (data.info.playerState === 1) setIsPlaying(true);
+            if (data.info.playerState === 2) setIsPlaying(false);
+            if (data.info.playerState === 0) {
+              setIsPlaying(false);
+              setWatchProgress(100);
+              handleClaimWatchReward(activeReel.id);
+            }
+          }
+          if (typeof data.info.currentTime === 'number' && typeof data.info.duration === 'number' && data.info.duration > 0) {
+            const pct = Math.min(100, Math.floor((data.info.currentTime / data.info.duration) * 100));
+            setWatchProgress(pct);
+            if (pct >= 100) {
+              handleClaimWatchReward(activeReel.id);
+            }
+          }
+        }
+      } catch (e) {
+        // Ignore non-JSON messages
+      }
+    };
+
+    window.addEventListener('message', handleWindowMessage);
+    return () => window.removeEventListener('message', handleWindowMessage);
+  }, [currentIndex, activeReels]);
+
+  // Watch Timer Fallback for Embedded Iframes (only runs while isPlaying is TRUE and for non-direct video files)
+  useEffect(() => {
+    if (!isOpen || !isPlaying) return;
+    const activeReel = activeReels[currentIndex];
+    if (!activeReel) return;
+
+    // Direct MP4 videos update watchProgress via video.onTimeUpdate directly, so skip timer for direct videos
+    if (activeReel.platform === 'direct' && activeReel.embedUrl.match(/\.(mp4|webm)($|\?)/i)) {
+      return;
+    }
+
+    const isAlreadyClaimed = Boolean(
+      (currentUserId && activeReel.watchedBy?.includes(currentUserId)) ||
+      watchedIds.includes(activeReel.id)
+    );
+
+    if (isAlreadyClaimed) {
+      setWatchProgress(100);
+      return;
+    }
+
+    if (watchProgress >= 100) return;
+
+    // 250ms interval ~ 25s total reel duration sync
+    const timer = setInterval(() => {
+      setWatchProgress((prev) => {
+        const next = prev + 1;
+        if (next >= 100) {
+          clearInterval(timer);
+          handleClaimWatchReward(activeReel.id);
+          return 100;
+        }
+        return next;
+      });
+    }, 250);
+
+    return () => clearInterval(timer);
+  }, [isOpen, isPlaying, currentIndex, watchProgress, activeReels, currentUserId, watchedIds]);
 
   const handlePublishSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -596,20 +740,134 @@ export default function ReelsFloatingWidget({
                 {/* Video Container Frame */}
                 <div className="relative bg-black rounded-2xl overflow-hidden border border-slate-800 aspect-[9/14] sm:aspect-[9/13] max-h-[320px] flex items-center justify-center shadow-lg group touch-pan-y">
                   
+                  {/* 🧧 RED POCKET FLOATING BADGE WITH CIRCULAR PROGRESS RING */}
+                  {(() => {
+                    const isReelClaimed = Boolean(
+                      (currentUserId && reel.watchedBy?.includes(currentUserId)) ||
+                      watchedIds.includes(reel.id)
+                    );
+                    const currentProgress = isActive ? (isReelClaimed ? 100 : watchProgress) : (isReelClaimed ? 100 : 0);
+                    const radius = 11;
+                    const circumference = 2 * Math.PI * radius; // ~69.115
+                    const dashOffset = circumference - (circumference * currentProgress) / 100;
+
+                    return (
+                      <div className="absolute top-2 left-2 z-30 flex items-center gap-1.5 bg-black/40 backdrop-blur-sm border border-amber-500/40 p-1 pr-2.5 rounded-full shadow-lg hover:bg-black/60 transition">
+                        <div className="relative w-7 h-7 flex items-center justify-center shrink-0">
+                          <svg className="w-7 h-7 -rotate-90 transform">
+                            <circle
+                              cx="14"
+                              cy="14"
+                              r={radius}
+                              className="stroke-slate-900/80"
+                              strokeWidth="2.5"
+                              fill="transparent"
+                            />
+                            <circle
+                              cx="14"
+                              cy="14"
+                              r={radius}
+                              className={isReelClaimed ? 'stroke-emerald-400' : 'stroke-amber-400'}
+                              strokeWidth="2.5"
+                              strokeDasharray={circumference}
+                              strokeDashoffset={dashOffset}
+                              strokeLinecap="round"
+                              fill="transparent"
+                              style={{ transition: 'stroke-dashoffset 0.15s linear' }}
+                            />
+                          </svg>
+                          <div className={`absolute inset-0 m-auto w-4.5 h-4.5 rounded-full flex items-center justify-center text-[9px] shadow-sm ${
+                            isReelClaimed ? 'bg-emerald-600 text-white' : 'bg-red-600/90 text-amber-200 border border-amber-300/80 animate-pulse'
+                          }`}>
+                            {isReelClaimed ? '✅' : '🧧'}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col text-left">
+                          <span className="text-[7.5px] font-black uppercase tracking-wider text-amber-300 leading-none">
+                            {isReelClaimed ? 'RED POCKET CLAIMED' : 'RED POCKET REWARD'}
+                          </span>
+                          <span className="text-[10px] font-black text-white leading-tight flex items-center gap-1 mt-0.5">
+                            {isReelClaimed ? (
+                              <span className="text-emerald-400 font-extrabold flex items-center gap-1 text-[9px]">
+                                100% DONE (+₱0.10)
+                              </span>
+                            ) : (
+                              <>
+                                <span className="text-amber-400 font-black">{currentProgress}%</span>
+                                <span className="text-[8.5px] text-slate-200 font-semibold">
+                                  {isActive ? (isPlaying ? '▶️ Loading...' : '⏸️ Tap Play to Start') : '0%'}
+                                </span>
+                              </>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Play Button Overlay (Shown when active reel is NOT playing and NOT yet claimed) */}
+                  {(() => {
+                    const isReelClaimed = Boolean(
+                      (currentUserId && reel.watchedBy?.includes(currentUserId)) ||
+                      watchedIds.includes(reel.id)
+                    );
+                    if (isActive && !isPlaying && !isReelClaimed) {
+                      return (
+                        <div 
+                          onClick={() => setIsPlaying(true)}
+                          className="absolute inset-0 z-25 bg-slate-950/80 backdrop-blur-[2px] flex flex-col items-center justify-center p-4 text-center cursor-pointer hover:bg-slate-950/70 transition group/play"
+                        >
+                          {/* Red YouTube style Play Button */}
+                          <div className="w-16 h-12 bg-gradient-to-r from-red-600 to-rose-600 rounded-2xl border border-amber-300/60 flex items-center justify-center shadow-[0_0_25px_rgba(239,68,68,0.8)] group-hover/play:scale-110 group-hover/play:from-red-500 group-hover/play:to-rose-500 transition-all mb-3 animate-bounce">
+                            <Play className="w-8 h-8 fill-white text-white ml-1" />
+                          </div>
+                          <span className="text-xs font-black text-amber-300 uppercase tracking-wide drop-shadow-md bg-slate-900/90 px-3 py-1 rounded-full border border-amber-500/40">
+                            ▶️ PINDUTIN ANG PLAY BUTTON
+                          </span>
+                          <p className="text-[11px] font-bold text-slate-200 mt-2 max-w-[220px] leading-snug">
+                            I-click para i-play at simulan ang circular loading animation (1% ➔ 100%) para sa ₱0.10 Red Pocket reward!
+                          </p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+
                   {/* IF ACTIVE: Render iframe / video. IF INACTIVE: Render placeholder thumbnail preview to stop audio/video background playing */}
                   {isActive ? (
                     reel.platform === 'direct' && reel.embedUrl.match(/\.(mp4|webm)($|\?)/i) ? (
                       <video
+                        ref={videoRef}
                         src={reel.embedUrl}
                         controls
-                        autoPlay
-                        loop
+                        autoPlay={isPlaying}
                         playsInline
                         className="w-full h-full object-contain bg-black"
+                        onPlay={() => setIsPlaying(true)}
+                        onPause={() => setIsPlaying(false)}
+                        onTimeUpdate={(e) => {
+                          const v = e.currentTarget;
+                          if (v.duration && v.duration > 0) {
+                            const pct = Math.min(100, Math.floor((v.currentTime / v.duration) * 100));
+                            setWatchProgress(pct);
+                            if (pct >= 100) {
+                              handleClaimWatchReward(reel.id);
+                            }
+                          }
+                        }}
+                        onEnded={() => {
+                          setWatchProgress(100);
+                          handleClaimWatchReward(reel.id);
+                          setIsPlaying(false);
+                        }}
                       />
                     ) : (
                       <iframe
-                        src={reel.embedUrl}
+                        src={reel.embedUrl.includes('?') 
+                          ? `${reel.embedUrl}&enablejsapi=1&autoplay=${isPlaying ? 1 : 0}` 
+                          : `${reel.embedUrl}?enablejsapi=1&autoplay=${isPlaying ? 1 : 0}`
+                        }
                         title={reel.title || `Reel Video ${index + 1}`}
                         className="w-full h-full border-0 bg-slate-950"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -685,6 +943,34 @@ export default function ReelsFloatingWidget({
                         </button>
                       );
                     })()}
+
+                    {/* Pause / Play Watch Timer button */}
+                    {isActive && !Boolean((currentUserId && reel.watchedBy?.includes(currentUserId)) || watchedIds.includes(reel.id)) && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsPlaying(!isPlaying);
+                        }}
+                        className={`px-3 py-1.5 rounded-xl font-black text-[11px] border flex items-center gap-1.5 transition-all cursor-pointer z-20 ${
+                          isPlaying
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                            : 'bg-emerald-600 text-white border-emerald-400 hover:bg-emerald-500 shadow-md animate-pulse'
+                        }`}
+                      >
+                        {isPlaying ? (
+                          <>
+                            <Pause className="w-3.5 h-3.5 fill-amber-300 text-amber-300" />
+                            <span>⏸️ Pause</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-3.5 h-3.5 fill-white text-white" />
+                            <span>▶️ Start Watch</span>
+                          </>
+                        )}
+                      </button>
+                    )}
 
                     {/* Open original link button */}
                     <a

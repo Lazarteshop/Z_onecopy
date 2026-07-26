@@ -133,6 +133,7 @@ export interface ReelVideo {
   title?: string;
   likes: number;
   likedBy?: string[];
+  watchedBy?: string[];
   addedBy?: string;
   createdAt: string;
 }
