@@ -907,6 +907,7 @@ interface ReelVideo {
   platform: 'tiktok' | 'facebook' | 'youtube' | 'direct';
   title?: string;
   likes: number;
+  likedBy?: string[];
   addedBy?: string;
   createdAt: string;
 }
@@ -2114,14 +2115,64 @@ app.delete('/api/reels/:id', (req, res) => {
 
 app.post('/api/reels/:id/like', (req, res) => {
   const { id } = req.params;
-  const { delta } = req.body;
-  const d = typeof delta === 'number' ? delta : 1;
+  const userId = req.headers.authorization || req.body?.userId;
   const db = loadDB();
-  db.reels = (db.reels || [...INITIAL_REELS]).map(r => 
-    r.id === id ? { ...r, likes: Math.max(0, r.likes + d) } : r
-  );
+
+  if (!db.reels) {
+    db.reels = [...INITIAL_REELS];
+  }
+
+  const reel = db.reels.find(r => r.id === id);
+  if (!reel) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
+  }
+
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan mong mag-login upang mag-like at kumita ng ₱0.05 per like!' });
+  }
+
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(401).json({ error: 'Kailangan mong mag-login upang mag-like at kumita ng ₱0.05 per like!' });
+  }
+
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa system.' });
+  }
+
+  reel.likedBy = reel.likedBy || [];
+  if (reel.likedBy.includes(userId)) {
+    return res.status(400).json({ 
+      error: 'Naliked mo na ang Reel na ito! Hindi na ito pwedeng i-unlike.', 
+      reels: db.reels 
+    });
+  }
+
+  // Record user like (No unliking allowed!)
+  reel.likedBy.push(userId);
+  reel.likes = (reel.likes || 0) + 1;
+
+  // Award ₱0.05 to registered user's balance
+  user.stats.balance = Number(((user.stats.balance || 0) + 0.05).toFixed(2));
+  user.stats.completedTasksCount = (user.stats.completedTasksCount || 0) + 1;
+  user.activityLogs = user.activityLogs || [];
+  user.activityLogs.unshift({
+    id: 'act-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    type: 'reward',
+    title: '₱0.05 Reel Like Reward',
+    amount: 0.05,
+    timestamp: new Date().toISOString(),
+    details: `Nakatanggap ng ₱0.05 reward sa pag-like ng Reel video ("${reel.title || 'Reel Video'}").`
+  });
+
   saveDB(db);
-  res.json({ success: true, reels: db.reels });
+  res.json({ 
+    success: true, 
+    reels: db.reels, 
+    reward: 0.05, 
+    newBalance: user.stats.balance, 
+    message: '🎉 +₱0.05 Reward sa pag-like ng Reel!' 
+  });
 });
 
 // --- CAMPAIGNS ENDPOINTS ---
@@ -3959,11 +4010,11 @@ app.post('/api/zone/posts', (req, res) => {
   res.json({ success: true, post: newPost, message: 'Matagumpay na na-post sa Z-one!' });
 });
 
-// 3. TOGGLE LIKE
+// 3. TOGGLE LIKE (LIKE ONLY - NO UNLIKE & AWARD ₱0.05)
 app.post('/api/zone/posts/:postId/like', (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
-    return res.status(401).json({ error: 'Mag-login upang mag-like.' });
+    return res.status(401).json({ error: 'Mag-login upang mag-like at kumita ng ₱0.05.' });
   }
 
   const { postId } = req.params;
@@ -3979,15 +4030,39 @@ app.post('/api/zone/posts/:postId/like', (req, res) => {
     return res.status(404).json({ error: 'Hindi mahanap ang post.' });
   }
 
-  const likeIndex = post.likes.indexOf(userId);
-  if (likeIndex > -1) {
-    post.likes.splice(likeIndex, 1); // Unlike
-  } else {
-    post.likes.push(userId); // Like
+  post.likes = post.likes || [];
+  const hasLiked = post.likes.includes(userId);
+  if (hasLiked) {
+    return res.status(400).json({ error: 'Naliked mo na ang post na ito! Hindi na ito pwedeng i-unlike.', likes: post.likes });
+  }
+
+  // Record user like (No unliking allowed)
+  post.likes.push(userId);
+
+  // Award ₱0.05 to registered user's balance
+  const user = db.users.find(u => u.id === userId);
+  if (user) {
+    user.stats.balance = Number(((user.stats.balance || 0) + 0.05).toFixed(2));
+    user.stats.completedTasksCount = (user.stats.completedTasksCount || 0) + 1;
+    user.activityLogs = user.activityLogs || [];
+    user.activityLogs.unshift({
+      id: 'act-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+      type: 'reward',
+      title: '₱0.05 Social Post Like Reward',
+      amount: 0.05,
+      timestamp: new Date().toISOString(),
+      details: 'Nakatanggap ng ₱0.05 reward sa pag-like ng post sa Z-one Social Feed.'
+    });
   }
 
   saveDB(db);
-  res.json({ success: true, likes: post.likes });
+  res.json({ 
+    success: true, 
+    likes: post.likes, 
+    reward: 0.05, 
+    newBalance: user ? user.stats.balance : undefined, 
+    message: '🎉 +₱0.05 Reward sa pag-like ng post!' 
+  });
 });
 
 // 4. POST COMMENT

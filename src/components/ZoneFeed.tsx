@@ -1543,13 +1543,20 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     if (!postToUpdate) return;
 
     const hasLiked = postToUpdate.likes?.includes(user.id);
-    const newLikes = hasLiked
-      ? (postToUpdate.likes || []).filter(id => id !== user.id)
-      : [...(postToUpdate.likes || []), user.id];
+    if (hasLiked) {
+      triggerNotification(
+        language === 'tl'
+          ? '⚠️ Naliked mo na ang post na ito! Hindi na ito pwedeng i-unlike.'
+          : '⚠️ You already liked this post! Unliking is not allowed.',
+        'info'
+      );
+      return;
+    }
 
     const originalLikes = postToUpdate.likes || [];
+    const newLikes = [...originalLikes, user.id];
 
-    // Optimistically update likes in local state immediately (0ms delay)
+    // Optimistically update likes in local state immediately
     setPosts(prev => prev.map(p => {
       if (p.id === postId) {
         return { ...p, likes: newLikes };
@@ -1566,26 +1573,33 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       });
       if (res.ok) {
         const data = await res.json();
-        // Update with fresh server state to ensure perfect sync
         setPosts(prev => prev.map(p => {
           if (p.id === postId) {
             return { ...p, likes: data.likes };
           }
           return p;
         }));
+        if (data.reward) {
+          triggerNotification(
+            language === 'tl'
+              ? '🎉 +₱0.05 Reward sa pag-like ng post!'
+              : '🎉 +₱0.05 Reward for liking post!',
+            'success'
+          );
+          window.dispatchEvent(new Event('refresh-user-profile'));
+        }
       } else {
-        // Rollback on server error
+        const errData = await res.json().catch(() => ({}));
         setPosts(prev => prev.map(p => {
           if (p.id === postId) {
             return { ...p, likes: originalLikes };
           }
           return p;
         }));
-        triggerNotification(language === 'tl' ? 'Hindi magawa ang action sa pag-like.' : 'Failed to register like.', 'error');
+        triggerNotification(errData.error || (language === 'tl' ? 'Hindi magawa ang action sa pag-like.' : 'Failed to register like.'), 'info');
       }
     } catch (err) {
       console.error(err);
-      // Rollback on connection error
       setPosts(prev => prev.map(p => {
         if (p.id === postId) {
           return { ...p, likes: originalLikes };

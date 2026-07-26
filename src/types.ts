@@ -132,6 +132,7 @@ export interface ReelVideo {
   platform: 'tiktok' | 'facebook' | 'youtube' | 'direct';
   title?: string;
   likes: number;
+  likedBy?: string[];
   addedBy?: string;
   createdAt: string;
 }
