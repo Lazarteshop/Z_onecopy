@@ -1349,38 +1349,39 @@ export default function App() {
             exit={{ opacity: 0, y: -30, scale: 0.9 }}
             transition={{ type: 'spring', stiffness: 450, damping: 30 }}
             id="system-banner"
-            className={`fixed top-4 sm:top-6 left-1/2 -translate-x-1/2 z-[999999] w-[92%] sm:w-[420px] max-w-[95vw] p-4 rounded-[24px] bg-slate-900 text-white border-2 flex items-center gap-3.5 shadow-[0_20px_60px_rgba(0,0,0,0.5)] backdrop-blur-2xl transition-all ${
+            className={`fixed top-3 sm:top-5 left-1/2 -translate-x-1/2 z-[9999999] w-[94%] sm:w-[420px] max-w-[96vw] p-3.5 sm:p-4 rounded-[22px] sm:rounded-[26px] bg-white border-2 flex items-center gap-3 shadow-[0_20px_50px_rgba(0,0,0,0.3)] transition-all ${
               notification.type === 'success'
-                ? 'border-emerald-500/80 shadow-emerald-950/40'
+                ? 'border-emerald-500'
                 : notification.type === 'error'
-                ? 'border-rose-500/80 shadow-rose-950/40'
-                : 'border-amber-400/80 shadow-amber-950/40'
+                ? 'border-rose-500'
+                : 'border-blue-500'
             }`}
+            style={{ backgroundColor: '#ffffff', color: '#0f172a' }}
           >
-            <div className={`w-11 h-11 rounded-2xl shrink-0 flex items-center justify-center text-xl shadow-inner border ${
+            <div className={`w-11 h-11 rounded-2xl shrink-0 flex items-center justify-center text-xl shadow-xs border ${
               notification.type === 'success'
-                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
                 : notification.type === 'error'
-                ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                ? 'bg-rose-100 text-rose-700 border-rose-300'
+                : 'bg-blue-100 text-blue-700 border-blue-300'
             }`}>
               {notification.type === 'success' ? '💰' : notification.type === 'error' ? '🚨' : 'ℹ️'}
             </div>
             <div className="flex-1 min-w-0 pr-1">
-              <span className="text-[10px] font-black block text-amber-400 uppercase tracking-widest leading-none mb-1">
+              <span className="text-[10px] sm:text-[11px] font-black block text-slate-500 uppercase tracking-widest leading-none mb-1">
                 GCASH REWARDS ALERT
               </span>
-              <p className="text-xs sm:text-sm font-extrabold leading-snug text-white break-words drop-shadow-sm">
+              <p className="text-xs sm:text-sm font-extrabold leading-snug text-slate-900 break-words" style={{ color: '#0f172a' }}>
                 {notification.message}
               </p>
             </div>
             <button
               type="button"
               onClick={() => setNotification(null)}
-              className="p-1.5 text-slate-300 hover:text-white rounded-full bg-slate-800 hover:bg-slate-700 transition shrink-0 cursor-pointer"
+              className="p-2 text-slate-500 hover:text-slate-900 rounded-full bg-slate-100 hover:bg-slate-200 transition shrink-0 cursor-pointer border border-slate-200"
               title="Close"
             >
-              <X className="w-4 h-4" />
+              <X className="w-4 h-4 text-slate-700" />
             </button>
           </motion.div>
         )}
