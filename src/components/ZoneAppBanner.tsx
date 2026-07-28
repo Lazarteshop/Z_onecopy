@@ -91,7 +91,7 @@ Ang **Z-oneApp** ay ang #1 All-in-One Digital Community, Website Viewer, at Rewa
   };
 
   return (
-    <div className="w-full bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 border-2 border-amber-400/80 rounded-3xl p-5 sm:p-6 shadow-[0_20px_50px_rgba(79,70,229,0.3)] text-white relative overflow-hidden transition-all duration-300">
+    <div className="w-full bg-black border-2 border-amber-400 rounded-3xl p-5 sm:p-6 shadow-2xl text-white relative overflow-hidden transition-all duration-300">
       
       {/* Decorative Background Glow Effect */}
       <div className="absolute top-0 right-0 w-72 h-72 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -100,11 +100,11 @@ Ang **Z-oneApp** ay ang #1 All-in-One Digital Community, Website Viewer, at Rewa
       {/* TOP HEADER BADGE & CONTROLS */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4 relative z-10">
         <div className="flex items-center gap-2">
-          <span className="bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-[10px] sm:text-xs uppercase px-3 py-1 rounded-full flex items-center gap-1.5 shadow-md tracking-wider">
-            <Zap className="w-3.5 h-3.5 fill-slate-950" />
+          <span className="bg-amber-400 text-slate-950 font-black text-[10px] sm:text-xs uppercase px-3 py-1 rounded-full flex items-center gap-1.5 shadow-md tracking-wider">
+            <Zap className="w-3.5 h-3.5 fill-slate-950 text-slate-950" />
             <span>OFFICIAL PROMO BANNER</span>
           </span>
-          <span className="text-slate-400 text-[10px] sm:text-xs font-bold hidden xs:inline-block">
+          <span className="text-slate-300 text-[10px] sm:text-xs font-bold hidden xs:inline-block">
             ● Z-oneApp Overview
           </span>
         </div>
@@ -116,7 +116,7 @@ Ang **Z-oneApp** ay ang #1 All-in-One Digital Community, Website Viewer, at Rewa
             className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs px-3.5 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow-sm cursor-pointer hover:scale-105 active:scale-95"
             title="Kopyahin ang buong banner text"
           >
-            {copied ? <Check className="w-3.5 h-3.5 text-emerald-900" /> : <Copy className="w-3.5 h-3.5" />}
+            {copied ? <Check className="w-3.5 h-3.5 text-emerald-950" /> : <Copy className="w-3.5 h-3.5 text-slate-950" />}
             <span>{copied ? 'Copied!' : 'Copy Text'}</span>
           </button>
 
@@ -126,14 +126,14 @@ Ang **Z-oneApp** ay ang #1 All-in-One Digital Community, Website Viewer, at Rewa
             className="bg-blue-600 hover:bg-blue-500 text-white font-black text-xs px-3.5 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow-sm cursor-pointer hover:scale-105 active:scale-95"
             title="I-share ang link"
           >
-            <Share2 className="w-3.5 h-3.5" />
+            <Share2 className="w-3.5 h-3.5 text-white" />
             <span className="hidden sm:inline">Share</span>
           </button>
 
           <button
             type="button"
             onClick={() => setExpanded(!expanded)}
-            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition cursor-pointer"
+            className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 rounded-xl transition cursor-pointer"
             title={expanded ? 'I-collapse' : 'Palakihin'}
           >
             {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -145,11 +145,11 @@ Ang **Z-oneApp** ay ang #1 All-in-One Digital Community, Website Viewer, at Rewa
       <div className="mt-4 space-y-4 relative z-10">
         
         {/* MAIN HEADLINE */}
-        <div className="space-y-1.5">
-          <h2 className="text-xl sm:text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 via-amber-200 to-white tracking-tight leading-tight flex items-center gap-2">
+        <div className="space-y-2">
+          <h2 className="text-xl sm:text-2xl md:text-3xl font-black text-amber-300 tracking-tight leading-tight flex items-center gap-2">
             <span>🚀 Ano ang Z-oneApp?</span>
           </h2>
-          <p className="text-xs sm:text-sm text-slate-300 font-bold leading-relaxed max-w-2xl">
+          <p className="text-xs sm:text-sm text-slate-100 font-bold leading-relaxed max-w-2xl bg-slate-900/90 border border-slate-800 p-3.5 rounded-2xl">
             Ang <span className="text-amber-300 font-black">Z-oneApp</span> ay ang #1 All-in-One Digital Community, Website Viewer, at Micro-Earning Platform sa Pilipinas na nagbibigay ng tunay na pagkakataon upang mag-explore ng mga negosyo at kumita araw-araw sa pamamagitan ng GCash!
           </p>
         </div>
@@ -157,7 +157,7 @@ Ang **Z-oneApp** ay ang #1 All-in-One Digital Community, Website Viewer, at Rewa
         {/* EXPANDABLE FEATURES GRID */}
         {expanded && (
           <div className="pt-2 space-y-4 animate-fadeIn">
-            <h3 className="text-xs font-black text-amber-400 uppercase tracking-widest flex items-center gap-1.5 border-t border-slate-800/80 pt-3">
+            <h3 className="text-xs font-black text-amber-400 uppercase tracking-widest flex items-center gap-1.5 border-t border-slate-800 pt-3">
               <Sparkles className="w-4 h-4 text-amber-300" />
               <span>LAHAT NG KATANGIAN AT FEATURE NG SYSTEM:</span>
             </h3>
@@ -165,79 +165,79 @@ Ang **Z-oneApp** ay ang #1 All-in-One Digital Community, Website Viewer, at Rewa
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               
               {/* Feature 1 */}
-              <div className="bg-slate-900/90 border border-slate-800 p-3.5 rounded-2xl space-y-1.5 hover:border-amber-400/50 transition">
+              <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl space-y-1.5 hover:border-amber-400/50 transition">
                 <div className="flex items-center gap-2 text-amber-300 font-black text-xs">
                   <div className="p-1.5 bg-amber-500/20 rounded-lg text-amber-400 shrink-0">
                     <Globe className="w-4 h-4" />
                   </div>
                   <span>1. Website Viewer (PPV)</span>
                 </div>
-                <p className="text-[11px] text-slate-400 font-semibold leading-relaxed">
+                <p className="text-[11px] text-slate-200 font-semibold leading-relaxed">
                   Bisitahin ang mga verified websites, online shops, at landing pages upang makakuha ng <span className="text-emerald-400 font-bold">₱0.01 - ₱50.00</span> kada automatic visit!
                 </p>
               </div>
 
               {/* Feature 2 */}
-              <div className="bg-slate-900/90 border border-slate-800 p-3.5 rounded-2xl space-y-1.5 hover:border-amber-400/50 transition">
+              <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl space-y-1.5 hover:border-amber-400/50 transition">
                 <div className="flex items-center gap-2 text-rose-300 font-black text-xs">
                   <div className="p-1.5 bg-rose-500/20 rounded-lg text-rose-400 shrink-0">
                     <Tv className="w-4 h-4" />
                   </div>
                   <span>2. Watch Video Reels</span>
                 </div>
-                <p className="text-[11px] text-slate-400 font-semibold leading-relaxed">
+                <p className="text-[11px] text-slate-200 font-semibold leading-relaxed">
                   Manood ng trending reels, TikTok, at short videos habang nakakatanggap ng <span className="text-amber-300 font-bold">Red Pocket (🧧) Rewards</span>.
                 </p>
               </div>
 
               {/* Feature 3 */}
-              <div className="bg-slate-900/90 border border-slate-800 p-3.5 rounded-2xl space-y-1.5 hover:border-amber-400/50 transition">
+              <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl space-y-1.5 hover:border-amber-400/50 transition">
                 <div className="flex items-center gap-2 text-yellow-300 font-black text-xs">
                   <div className="p-1.5 bg-yellow-500/20 rounded-lg text-yellow-400 shrink-0">
                     <Coins className="w-4 h-4" />
                   </div>
                   <span>3. Spin Wheel & Daily Bonus</span>
                 </div>
-                <p className="text-[11px] text-slate-400 font-semibold leading-relaxed">
+                <p className="text-[11px] text-slate-200 font-semibold leading-relaxed">
                   Makakuha ng libreng <span className="text-yellow-300 font-bold">₱1.00 daily bonus</span> at instant cash prizes sa pagpaikot ng Gulong ng Kapalaran!
                 </p>
               </div>
 
               {/* Feature 4 */}
-              <div className="bg-slate-900/90 border border-slate-800 p-3.5 rounded-2xl space-y-1.5 hover:border-amber-400/50 transition">
+              <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl space-y-1.5 hover:border-amber-400/50 transition">
                 <div className="flex items-center gap-2 text-blue-300 font-black text-xs">
                   <div className="p-1.5 bg-blue-500/20 rounded-lg text-blue-400 shrink-0">
                     <Users className="w-4 h-4" />
                   </div>
                   <span>4. Z-one Social Feed</span>
                 </div>
-                <p className="text-[11px] text-slate-400 font-semibold leading-relaxed">
+                <p className="text-[11px] text-slate-200 font-semibold leading-relaxed">
                   Mag-post ng larawan at kwento mula sa gallery. Makipag-interact, mag-like, at mag-comment kasama ang komunidad.
                 </p>
               </div>
 
               {/* Feature 5 */}
-              <div className="bg-slate-900/90 border border-slate-800 p-3.5 rounded-2xl space-y-1.5 hover:border-amber-400/50 transition">
+              <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl space-y-1.5 hover:border-amber-400/50 transition">
                 <div className="flex items-center gap-2 text-indigo-300 font-black text-xs">
                   <div className="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-400 shrink-0">
                     <Megaphone className="w-4 h-4" />
                   </div>
                   <span>5. Merchant Ads & Negosyo</span>
                 </div>
-                <p className="text-[11px] text-slate-400 font-semibold leading-relaxed">
+                <p className="text-[11px] text-slate-200 font-semibold leading-relaxed">
                   Mag-post at mag-promote ng iyong sariling online shop o FB Page para makakuha ng libu-libong totoong visitors.
                 </p>
               </div>
 
               {/* Feature 6 */}
-              <div className="bg-slate-900/90 border border-slate-800 p-3.5 rounded-2xl space-y-1.5 hover:border-amber-400/50 transition">
+              <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-2xl space-y-1.5 hover:border-amber-400/50 transition">
                 <div className="flex items-center gap-2 text-emerald-300 font-black text-xs">
                   <div className="p-1.5 bg-emerald-500/20 rounded-lg text-emerald-400 shrink-0">
                     <Wallet className="w-4 h-4" />
                   </div>
                   <span>6. GCash Cashout System</span>
                 </div>
-                <p className="text-[11px] text-slate-400 font-semibold leading-relaxed">
+                <p className="text-[11px] text-slate-200 font-semibold leading-relaxed">
                   Mabilis at ligtas na payout diretso sa iyong GCash account kapag naabot ang cashout limit!
                 </p>
               </div>
@@ -245,7 +245,7 @@ Ang **Z-oneApp** ay ang #1 All-in-One Digital Community, Website Viewer, at Rewa
             </div>
 
             {/* QUICK ACTIONS FOOTER */}
-            <div className="bg-amber-500/10 border border-amber-500/30 p-3.5 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <div className="bg-slate-900 border border-amber-500/40 p-3.5 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
               <div className="flex items-center gap-2 text-amber-200 font-bold">
                 <Award className="w-4 h-4 text-amber-400 shrink-0" />
                 <span>Gusto mong i-share ang Z-oneApp at kumita ng referral bonus?</span>
@@ -255,7 +255,7 @@ Ang **Z-oneApp** ay ang #1 All-in-One Digital Community, Website Viewer, at Rewa
                 onClick={handleCopy}
                 className="w-full sm:w-auto bg-amber-400 hover:bg-amber-300 text-slate-950 font-black px-4 py-2 rounded-xl transition flex items-center justify-center gap-1.5 shrink-0 shadow-md cursor-pointer"
               >
-                <Copy className="w-3.5 h-3.5" />
+                <Copy className="w-3.5 h-3.5 text-slate-950" />
                 <span>Kopyahin ang Promo Banner Text</span>
               </button>
             </div>
