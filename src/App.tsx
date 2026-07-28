@@ -65,6 +65,7 @@ import AICommercialPlayer from './components/AICommercialPlayer';
 import SpinWheel from './components/SpinWheel';
 import PayoutMarquee from './components/PayoutMarquee';
 import ReelsFloatingWidget, { parseVideoUrl } from './components/ReelsFloatingWidget';
+import ZoneAppBanner from './components/ZoneAppBanner';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -1631,6 +1632,21 @@ export default function App() {
                     )}
                   </button>
                 </div>
+
+                {/* Logout Button inside Profile Modal */}
+                <div className="pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEditProfileModal(false);
+                      handleLogout();
+                    }}
+                    className="w-full bg-rose-50 hover:bg-rose-100 active:bg-rose-200 border border-rose-200/80 text-rose-600 hover:text-rose-700 transition py-3 rounded-2xl font-extrabold text-xs cursor-pointer flex items-center justify-center gap-2 shadow-xs"
+                  >
+                    <LogOut className="w-4 h-4 text-rose-500" />
+                    <span>{language === 'tl' ? '🔴 I-Logout ang Account' : '🔴 Logout Account'}</span>
+                  </button>
+                </div>
               </form>
             </motion.div>
           </div>
@@ -1783,6 +1799,13 @@ export default function App() {
                 Simulan ang pagbisita sa mga verified web homepage upang makakuha ng automated PPV rewards!
               </p>
             </div>
+
+            {/* 🚀 OFFICIAL PROMO BANNER */}
+            <ZoneAppBanner 
+              language={language} 
+              triggerNotification={triggerNotification} 
+              compact={true} 
+            />
  
             {/* MAIN CREDENTIAL CARD */}
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4 relative">
@@ -1950,10 +1973,10 @@ export default function App() {
                 {notificationPermission === 'default' && (
                   <button
                     onClick={requestNotificationPermission}
-                    className="bg-emerald-600 hover:bg-emerald-500 hover:scale-[1.03] active:scale-[0.97] text-white text-[9px] sm:text-[10px] font-black px-2.5 py-1.5 rounded-xl transition flex items-center gap-1 cursor-pointer shrink-0 shadow-sm"
+                    className="bg-emerald-600 hover:bg-emerald-500 hover:scale-[1.02] active:scale-[0.98] text-white text-[8px] sm:text-[9px] font-black px-2 py-1 rounded-lg transition flex items-center gap-0.5 cursor-pointer shrink-0 shadow-xs"
                     title={language === 'tl' ? 'Paganahin ang Notifications sa CP / Device' : 'Enable Device Notifications'}
                   >
-                    <Bell className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
+                    <Bell className="w-3 h-3 text-yellow-300 animate-pulse" />
                     <span>{language === 'tl' ? 'Payagan Notif' : 'Allow Notif'}</span>
                   </button>
                 )}
@@ -2007,16 +2030,6 @@ export default function App() {
                       {user.email}
                     </p>
                   </div>
-                  
-                  {/* LOGOUT */}
-                  <button 
-                    onClick={handleLogout}
-                    title="Log-out safe"
-                    id="user-logout-btn"
-                    className="p-1 sm:p-1.5 hover:bg-slate-700/60 transition rounded-lg sm:rounded-xl text-slate-400 hover:text-red-400 cursor-pointer shrink-0"
-                  >
-                    <LogOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                  </button>
                 </div>
               </div>
 
@@ -2356,6 +2369,13 @@ export default function App() {
                 {/* TAB 1: EARN CONTENT (VISITOR AD BLOCK) */}
                 {activeTab === 'earn' && (
                   <div className="space-y-6 animate-fadeIn">
+
+                    {/* 🚀 OFFICIAL Z-ONEAPP PROMOTIONAL BANNER */}
+                    <ZoneAppBanner 
+                      language={language} 
+                      referralCode={user?.referralCode} 
+                      triggerNotification={triggerNotification} 
+                    />
 
                     {/* Expired User Warning Banner */}
                     {isSubscriptionExpired() && (

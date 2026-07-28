@@ -2070,6 +2070,85 @@ app.post('/api/user/update-profile', (req, res) => {
   res.json({ success: true, user: userSafe, message: 'Matagumpay na na-update ang iyong profile!' });
 });
 
+// --- ADMIN: BAN / UNBAN USER ---
+app.post('/api/admin/users/:userId/ban', async (req, res) => {
+  const adminId = req.headers.authorization;
+  if (!adminId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === adminId);
+  if (!admin || !admin.isAdmin) {
+    return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
+  }
+
+  const { userId } = req.params;
+  const targetUser = db.users.find(u => u.id === userId);
+  if (!targetUser) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  if (targetUser.isAdmin) {
+    return res.status(400).json({ error: 'Hindi pwedeng i-ban ang admin.' });
+  }
+
+  targetUser.isBanned = !targetUser.isBanned;
+  saveDB(db);
+
+  if (isFirestoreActive && firestore) {
+    try {
+      await firestore.collection('users').doc(userId).update({ isBanned: targetUser.isBanned });
+    } catch (e) {
+      console.error('Firestore ban update error:', e);
+    }
+  }
+
+  res.json({ 
+    success: true, 
+    isBanned: targetUser.isBanned, 
+    message: targetUser.isBanned ? `Si ${targetUser.name} ay matagumpay na na-ban!` : `Si ${targetUser.name} ay matagumpay na na-unban!` 
+  });
+});
+
+// --- ADMIN: DELETE USER ---
+app.delete('/api/admin/users/:userId', async (req, res) => {
+  const adminId = req.headers.authorization;
+  if (!adminId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === adminId);
+  if (!admin || !admin.isAdmin) {
+    return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
+  }
+
+  const { userId } = req.params;
+  const userIndex = db.users.findIndex(u => u.id === userId);
+  if (userIndex === -1) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  const targetUser = db.users[userIndex];
+  if (targetUser.isAdmin) {
+    return res.status(400).json({ error: 'Hindi pwedeng i-delete ang admin account.' });
+  }
+
+  db.users.splice(userIndex, 1);
+  saveDB(db);
+
+  if (isFirestoreActive && firestore) {
+    try {
+      await firestore.collection('users').doc(userId).delete();
+    } catch (e) {
+      console.error('Firestore delete user error:', e);
+    }
+  }
+
+  res.json({ success: true, message: `Si ${targetUser.name} ay matagumpay na na-delete sa sistema.` });
+});
+
 // --- REELS & SHORTS API ENDPOINTS ---
 app.get('/api/reels', (req, res) => {
   const db = loadDB();

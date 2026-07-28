@@ -18,7 +18,12 @@ import {
   Megaphone,
   Settings,
   Upload,
-  QrCode
+  QrCode,
+  Ban,
+  Trash2,
+  UserX,
+  ShieldAlert,
+  X
 } from 'lucide-react';
 import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd } from '../types';
 
@@ -267,6 +272,61 @@ export default function AdminPanel({
         );
         fetchMerchantAds();
         fetchAdminData();
+      } else {
+        triggerNotification(`⚠️ ${result.error || 'Hindi maipatupad ang aksyon.'}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      triggerNotification('⚠️ Error communicating with server.', 'error');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleBanUser = async (userId: string, currentBannedState?: boolean) => {
+    if (!confirm(`Sigurado ka bang gusto mong ${currentBannedState ? 'i-UNBAN' : 'i-BAN'} ang user na ito?`)) return;
+    setProcessingId(userId);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/ban`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token
+        }
+      });
+      const result = await res.json();
+      if (res.ok) {
+        triggerNotification(
+          result.isBanned ? '🔴 Matagumpay na na-BAN ang user!' : '🟢 Matagumpay na na-UNBAN ang user!',
+          result.isBanned ? 'error' : 'success'
+        );
+        setSelectedUser(null);
+        await fetchAdminData();
+      } else {
+        triggerNotification(`⚠️ ${result.error || 'Hindi maipatupad ang aksyon.'}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      triggerNotification('⚠️ Error communicating with server.', 'error');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string, userName: string) => {
+    if (!confirm(`⚠️ PERMANENT DELETE WARNING:\n\nSigurado ka bang gusto mong burahin at tanggalin nang tuluyan si ${userName} sa sistema? Hindi na ito mababawi!`)) return;
+    setProcessingId(userId);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': token
+        }
+      });
+      const result = await res.json();
+      if (res.ok) {
+        triggerNotification(`🗑️ Matagumpay na na-DELETE si ${userName}!`, 'info');
+        setSelectedUser(null);
+        await fetchAdminData();
       } else {
         triggerNotification(`⚠️ ${result.error || 'Hindi maipatupad ang aksyon.'}`, 'error');
       }
@@ -792,13 +852,13 @@ export default function AdminPanel({
 
       {/* SECTION 2: USERS REGISTRY */}
       {activeSubTab === 'users' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="space-y-6">
           
           {/* USER DIRECTORY SEARCH & LIST */}
-          <div className="lg:col-span-2 space-y-4">
+          <div className="space-y-4">
             
             {/* SEARCH */}
-            <div className="relative">
+            <div className="relative max-w-md">
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
               <input 
                 type="text" 
@@ -809,30 +869,35 @@ export default function AdminPanel({
               />
             </div>
 
-            {/* USERS CARD CONTAINER */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* USERS CARD CONTAINER GRID */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredUsers.filter(u => !u.isAdmin).map((u) => (
                 <div 
                   key={u.id}
                   onClick={() => setSelectedUser(u.id)}
-                  className={`p-4 rounded-2xl border transition-all cursor-pointer text-xs space-y-3 ${
-                    selectedUser === u.id 
-                      ? 'bg-indigo-50/50 border-indigo-300' 
-                      : 'bg-white border-slate-200 hover:border-slate-350 hover:shadow-xs'
+                  className={`p-4 rounded-2xl border transition-all cursor-pointer text-xs space-y-3 relative overflow-hidden ${
+                    u.isBanned
+                      ? 'bg-rose-50/40 border-rose-200'
+                      : 'bg-white border-slate-200 hover:border-indigo-300 hover:shadow-sm'
                   }`}
                 >
                   <div className="flex justify-between items-start gap-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                       <div className="bg-indigo-50 border border-indigo-100 p-1 rounded-full shrink-0 flex items-center justify-center w-11 h-11">
                         {renderAvatar(u.avatar, "w-9 h-9")}
                       </div>
-                      <div>
-                        <h4 className="font-extrabold text-slate-950 leading-tight flex items-center gap-1.5">
+                      <div className="min-w-0">
+                        <h4 className="font-extrabold text-slate-950 leading-tight truncate flex items-center gap-1.5">
                           <span>{u.name}</span>
                         </h4>
-                        <p className="text-[10px] text-slate-400 font-semibold">{u.email}</p>
+                        <p className="text-[10px] text-slate-400 font-semibold truncate">{u.email}</p>
                       </div>
                     </div>
+                    {u.isBanned && (
+                      <span className="bg-rose-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 flex items-center gap-0.5">
+                        <Ban className="w-2.5 h-2.5" /> BANNED
+                      </span>
+                    )}
                   </div>
 
                   <div className="border-t border-slate-100 pt-2 grid grid-cols-3 gap-1 text-center font-bold">
@@ -859,17 +924,25 @@ export default function AdminPanel({
                     </div>
                   )}
 
-                  <div className="text-[9px] font-bold text-slate-455 flex items-center justify-between pt-0.5 border-t border-slate-50">
+                  <div className="text-[9px] font-bold text-slate-455 flex items-center justify-between pt-1 border-t border-slate-50">
                     <span>Code: <strong className="font-mono text-slate-800">{u.referralCode}</strong></span>
-                    <span className="flex items-center gap-0.5 font-black text-indigo-600">
-                      View Profile Details <ArrowRight className="w-3 h-3" />
-                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedUser(u.id);
+                      }}
+                      className="flex items-center gap-1 font-extrabold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded-lg transition"
+                    >
+                      <span>View Profile Details</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
                   </div>
                 </div>
               ))}
 
               {filteredUsers.filter(u => !u.isAdmin).length === 0 && (
-                <div className="col-span-2 py-8 text-center text-slate-400 text-xs">
+                <div className="col-span-full py-12 text-center text-slate-400 text-xs bg-white rounded-3xl border border-slate-200">
                   ⚠️ Walang tugmang non-admin user para sa iyong search query.
                 </div>
               )}
@@ -877,25 +950,80 @@ export default function AdminPanel({
 
           </div>
 
-          {/* USER SPECIFIC DETAIL DIALOG */}
-          <div className="lg:col-span-1 space-y-4">
-            <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-1.5">
-              <Award className="w-4 h-4 text-yellow-500 animate-bounce" />
-              <span>Active Auditor / User Activities</span>
-            </h3>
+          {/* USER SPECIFIC DETAIL POPUP MODAL */}
+          {selectedUserInfo && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
+              <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto space-y-5 relative">
+                
+                {/* Close Button */}
+                <button
+                  onClick={() => setSelectedUser(null)}
+                  className="absolute top-4 right-4 bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 rounded-full p-2 transition cursor-pointer"
+                  title="Isara"
+                >
+                  <X className="w-5 h-5" />
+                </button>
 
-            {selectedUserInfo ? (
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-5">
-                <div className="text-center space-y-2 border-b border-slate-100 pb-4">
-                  <div className="inline-flex bg-slate-50 p-2 rounded-full shadow-inner justify-center items-center w-16 h-16 border border-slate-100">
-                    {renderAvatar(selectedUserInfo.avatar, "w-12 h-12")}
+                {/* Header Profile Summary */}
+                <div className="text-center space-y-2 border-b border-slate-100 pb-4 pr-8">
+                  <div className="inline-flex bg-slate-50 p-2 rounded-full shadow-inner justify-center items-center w-20 h-20 border border-slate-100 relative">
+                    {renderAvatar(selectedUserInfo.avatar, "w-16 h-16")}
+                    {selectedUserInfo.isBanned && (
+                      <span className="absolute -bottom-1 -right-1 bg-rose-600 text-white p-1 rounded-full border-2 border-white" title="Banned User">
+                        <Ban className="w-3.5 h-3.5" />
+                      </span>
+                    )}
                   </div>
                   <div>
-                    <h4 className="text-base font-black text-slate-950 leading-tight">{selectedUserInfo.name}</h4>
-                    <p className="text-xs text-slate-400 font-semibold">{selectedUserInfo.email}</p>
-                    <span className="inline-block bg-slate-100 text-slate-600 text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full mt-1.5 select-all">
-                      UID: {selectedUserInfo.id}
-                    </span>
+                    <div className="flex items-center justify-center gap-2">
+                      <h4 className="text-lg font-black text-slate-950 leading-tight">{selectedUserInfo.name}</h4>
+                      {selectedUserInfo.isBanned && (
+                        <span className="bg-rose-100 border border-rose-200 text-rose-700 text-[9px] font-black px-2 py-0.5 rounded-full uppercase">
+                          BANNED
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-400 font-semibold mt-0.5">{selectedUserInfo.email}</p>
+                    <div className="flex items-center justify-center gap-2 mt-2">
+                      <span className="bg-slate-100 text-slate-600 text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full select-all">
+                        UID: {selectedUserInfo.id}
+                      </span>
+                      <span className="bg-indigo-50 text-indigo-700 text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full select-all">
+                        Ref Code: {selectedUserInfo.referralCode}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ADMIN ACTION CONTROLS: BAN AND DELETE */}
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Admin Moderation Tools</span>
+                  <div className="flex gap-3">
+                    {/* BAN / UNBAN BUTTON */}
+                    <button
+                      type="button"
+                      disabled={processingId === selectedUserInfo.id}
+                      onClick={() => handleBanUser(selectedUserInfo.id, selectedUserInfo.isBanned)}
+                      className={`flex-1 py-2.5 px-4 rounded-xl font-extrabold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs ${
+                        selectedUserInfo.isBanned
+                          ? 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white'
+                          : 'bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white'
+                      }`}
+                    >
+                      <Ban className="w-4 h-4" />
+                      <span>{selectedUserInfo.isBanned ? '🟢 Unban User' : '🚫 Ban User'}</span>
+                    </button>
+
+                    {/* DELETE USER BUTTON */}
+                    <button
+                      type="button"
+                      disabled={processingId === selectedUserInfo.id}
+                      onClick={() => handleDeleteUser(selectedUserInfo.id, selectedUserInfo.name)}
+                      className="flex-1 py-2.5 px-4 rounded-xl font-extrabold text-xs bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>🗑️ Delete User</span>
+                    </button>
                   </div>
                 </div>
 
@@ -935,12 +1063,12 @@ export default function AdminPanel({
                   <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
                     {selectedUserInfo.withdrawals && selectedUserInfo.withdrawals.length > 0 ? (
                       selectedUserInfo.withdrawals.map((w) => (
-                        <div key={w.id} className="bg-slate-50 border border-slate-150 p-2 rounded-xl text-[10px] font-semibold space-y-1">
+                        <div key={w.id} className="bg-slate-50 border border-slate-150 p-2.5 rounded-xl text-[10px] font-semibold space-y-1">
                           <div className="flex justify-between items-center">
                             <span className="font-mono text-slate-500 font-bold">{w.createdAt}</span>
                             <span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${
                               w.status === 'success' ? 'bg-emerald-100 text-emerald-800' :
-                              w.status === 'failed' || w.status === 'failed' ? 'bg-rose-100 text-rose-800' :
+                              w.status === 'failed' || w.status === 'declined' ? 'bg-rose-100 text-rose-800' :
                               'bg-amber-100 text-amber-800 animate-pulse'
                             }`}>
                               {w.status.toUpperCase()}
@@ -963,14 +1091,14 @@ export default function AdminPanel({
                 </div>
 
                 {/* LOGS OF THE INDIVIDUAL */}
-                <div className="space-y-2">
+                <div className="space-y-2 border-t border-slate-100 pt-3">
                   <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">History Log ({selectedUserInfo.lastActivities.length})</h5>
-                  <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
+                  <div className="space-y-3 max-h-[200px] overflow-y-auto pr-1">
                     {selectedUserInfo.lastActivities.map(log => (
-                      <div key={log.id} className="text-[10px] leading-relaxed border-l border-slate-200 pl-2">
+                      <div key={log.id} className="text-[10px] leading-relaxed border-l-2 border-slate-200 pl-2">
                         <div className="flex justify-between font-bold text-slate-500">
                           <span>{log.title}</span>
-                          <span className="font-mono font-medium text-[8px] text-slate-400">{log.timestamp.split(',')[1] || log.timestamp}</span>
+                          <span className="font-mono font-medium text-[8px] text-slate-400">{log.timestamp.includes(',') ? log.timestamp.split(',')[1] : log.timestamp}</span>
                         </div>
                         <p className="text-slate-400 font-semibold">{log.details}</p>
                         {log.amount > 0 && <span className="font-extrabold text-emerald-600">₱{log.amount.toFixed(2)}</span>}
@@ -981,13 +1109,10 @@ export default function AdminPanel({
                     )}
                   </div>
                 </div>
+
               </div>
-            ) : (
-              <div className="bg-white border border-slate-200 rounded-2xl p-6 text-center text-slate-400 text-xs">
-                💡 Mag-click ng kahit sinong user sa registry para suriin ang kanilang live dashboard, balances, at timestamped log files.
-              </div>
-            )}
-          </div>
+            </div>
+          )}
 
         </div>
       )}
