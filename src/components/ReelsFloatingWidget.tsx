@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { formatEmbedUrl } from '../utils/reels';
 import { 
   Tv, 
   X, 
@@ -977,45 +978,58 @@ export default function ReelsFloatingWidget({
 
                   {/* IF ACTIVE: Render iframe / video. IF INACTIVE: Render placeholder thumbnail preview to stop audio/video background playing */}
                   {isActive ? (
-                    reel.platform === 'direct' && reel.embedUrl.match(/\.(mp4|webm)($|\?)/i) ? (
-                      <video
-                        ref={videoRef}
-                        src={reel.embedUrl}
-                        controls
-                        autoPlay={isPlaying}
-                        playsInline
-                        className="w-full h-full object-contain bg-black"
-                        onPlay={() => setIsPlaying(true)}
-                        onPause={() => setIsPlaying(false)}
-                        onTimeUpdate={(e) => {
-                          const v = e.currentTarget;
-                          if (v.duration && v.duration > 0) {
-                            const pct = Math.min(100, Math.floor((v.currentTime / v.duration) * 100));
-                            setWatchProgress(pct);
-                            if (pct >= 100) {
+                    (() => {
+                      const formatted = formatEmbedUrl(reel.embedUrl || reel.url || '');
+                      const isDirect = formatted.platform === 'direct' && (
+                        formatted.embedUrl.match(/\.(mp4|webm|mov)($|\?)/i) || 
+                        reel.url?.match(/\.(mp4|webm|mov)($|\?)/i)
+                      );
+
+                      if (isDirect) {
+                        return (
+                          <video
+                            ref={videoRef}
+                            src={formatted.embedUrl || reel.url}
+                            controls
+                            autoPlay={isPlaying}
+                            playsInline
+                            className="w-full h-full object-contain bg-black"
+                            onPlay={() => setIsPlaying(true)}
+                            onPause={() => setIsPlaying(false)}
+                            onTimeUpdate={(e) => {
+                              const v = e.currentTarget;
+                              if (v.duration && v.duration > 0) {
+                                const pct = Math.min(100, Math.floor((v.currentTime / v.duration) * 100));
+                                setWatchProgress(pct);
+                                if (pct >= 100) {
+                                  handleClaimWatchReward(reel.id);
+                                }
+                              }
+                            }}
+                            onEnded={() => {
+                              setWatchProgress(100);
                               handleClaimWatchReward(reel.id);
-                            }
-                          }
-                        }}
-                        onEnded={() => {
-                          setWatchProgress(100);
-                          handleClaimWatchReward(reel.id);
-                          setIsPlaying(false);
-                        }}
-                      />
-                    ) : (
-                      <iframe
-                        src={reel.embedUrl.includes('?') 
-                          ? `${reel.embedUrl}&enablejsapi=1&autoplay=${isPlaying ? 1 : 0}` 
-                          : `${reel.embedUrl}?enablejsapi=1&autoplay=${isPlaying ? 1 : 0}`
-                        }
-                        title={reel.title || `Reel Video ${index + 1}`}
-                        className="w-full h-full border-0 bg-slate-950"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                        allowFullScreen
-                        sandbox="allow-scripts allow-same-origin allow-presentation allow-forms"
-                      />
-                    )
+                              setIsPlaying(false);
+                            }}
+                          />
+                        );
+                      }
+
+                      const finalIframeSrc = formatted.embedUrl.includes('?') 
+                        ? `${formatted.embedUrl}&enablejsapi=1&autoplay=${isPlaying ? 1 : 0}` 
+                        : `${formatted.embedUrl}?enablejsapi=1&autoplay=${isPlaying ? 1 : 0}`;
+
+                      return (
+                        <iframe
+                          src={finalIframeSrc}
+                          title={reel.title || `Reel Video ${index + 1}`}
+                          className="w-full h-full border-0 bg-slate-950"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                          allowFullScreen
+                          sandbox="allow-scripts allow-same-origin allow-presentation allow-forms"
+                        />
+                      );
+                    })()
                   ) : (
                     /* Inactive Reel Card Overlay (Stops video/audio playback completely until clicked/scrolled) */
                     <div 

@@ -2220,6 +2220,64 @@ app.delete('/api/admin/users/:userId', async (req, res) => {
 });
 
 // --- REELS & SHORTS API ENDPOINTS ---
+function formatEmbedUrlServer(rawUrl: string) {
+  if (!rawUrl) return { embedUrl: '', platform: 'direct' as const };
+  let url = rawUrl.trim();
+
+  // 1. YouTube Shorts & Watch
+  const ytShortsMatch = url.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]+)/i);
+  if (ytShortsMatch && ytShortsMatch[1]) {
+    return {
+      embedUrl: `https://www.youtube.com/embed/${ytShortsMatch[1]}?autoplay=1&enablejsapi=1`,
+      platform: 'youtube' as const
+    };
+  }
+
+  const ytWatchMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]+)/i);
+  if (ytWatchMatch && ytWatchMatch[1]) {
+    return {
+      embedUrl: `https://www.youtube.com/embed/${ytWatchMatch[1]}?autoplay=1&enablejsapi=1`,
+      platform: 'youtube' as const
+    };
+  }
+
+  // 2. Facebook Reels / Videos
+  if (url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.com')) {
+    if (url.includes('facebook.com/plugins/video.php')) {
+      return { embedUrl: url, platform: 'facebook' as const };
+    }
+    const encoded = encodeURIComponent(url);
+    return {
+      embedUrl: `https://www.facebook.com/plugins/video.php?href=${encoded}&show_text=false&autoplay=true`,
+      platform: 'facebook' as const
+    };
+  }
+
+  // 3. TikTok
+  const tiktokMatch = url.match(/tiktok\.com\/.*\/video\/(\d+)/i) || url.match(/tiktok\.com\/embed\/v2\/(\d+)/i);
+  if (tiktokMatch && tiktokMatch[1]) {
+    return {
+      embedUrl: `https://www.tiktok.com/player/v1/${tiktokMatch[1]}?autoplay=1`,
+      platform: 'tiktok' as const
+    };
+  }
+  if (url.includes('tiktok.com')) {
+    return { embedUrl: url, platform: 'tiktok' as const };
+  }
+
+  // 4. Instagram
+  const igMatch = url.match(/instagram\.com\/(?:reel|p)\/([a-zA-Z0-9_-]+)/i);
+  if (igMatch && igMatch[1]) {
+    return {
+      embedUrl: `https://www.instagram.com/p/${igMatch[1]}/embed`,
+      platform: 'instagram' as const
+    };
+  }
+
+  // 5. Direct
+  return { embedUrl: url, platform: 'direct' as const };
+}
+
 app.get('/api/reels', (req, res) => {
   const db = loadDB();
   if (!db.reels || db.reels.length === 0) {
@@ -2257,6 +2315,10 @@ app.post('/api/reels', (req, res) => {
   const user = authUserId ? db.users.find(u => u.id === authUserId) : null;
   const isAdmin = user?.isAdmin === true;
 
+  const { embedUrl: autoEmbedUrl, platform: autoPlatform } = formatEmbedUrlServer(url.trim());
+  const finalEmbedUrl = embedUrl || autoEmbedUrl;
+  const finalPlatform = platform || autoPlatform;
+
   if (!isAdmin) {
     // User upload: Check token balance (0.50 tokens per reel upload required)
     const currentTokens = user ? (user.reelsTokens || 0) : 0;
@@ -2271,9 +2333,9 @@ app.post('/api/reels', (req, res) => {
     const newReel: ReelVideo = {
       id: 'reel-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
       url: url.trim(),
-      embedUrl: embedUrl || url.trim(),
-      platform: platform || 'tiktok',
-      title: title?.trim() || (platform === 'tiktok' ? '🎵 TikTok Reel Video' : platform === 'facebook' ? '📘 FB Reel Video' : '🎬 Reel Video'),
+      embedUrl: finalEmbedUrl,
+      platform: finalPlatform,
+      title: title?.trim() || (finalPlatform === 'tiktok' ? '🎵 TikTok Reel Video' : finalPlatform === 'facebook' ? '📘 FB Reel Video' : finalPlatform === 'youtube' ? '▶️ YouTube Short' : '🎬 Reel Video'),
       likes: 0,
       addedBy: user ? user.name : (addedBy || 'User'),
       addedByUserId: user ? user.id : undefined,
@@ -2296,8 +2358,8 @@ app.post('/api/reels', (req, res) => {
   const newReel: ReelVideo = {
     id: 'reel-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
     url: url.trim(),
-    embedUrl: embedUrl || url.trim(),
-    platform: platform || 'tiktok',
+    embedUrl: finalEmbedUrl,
+    platform: finalPlatform,
     title: title?.trim() || '🎬 Official Reel Video',
     likes: 0,
     addedBy: 'Admin',

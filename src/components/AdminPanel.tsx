@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { formatEmbedUrl } from '../utils/reels';
 import { 
   Shield, 
   Users, 
@@ -1576,18 +1577,41 @@ export default function AdminPanel({
                       {/* PLAY PREVIEW IN EMBED */}
                       <div className="space-y-2">
                         {playingReelId === reel.id ? (
-                          <div className="relative rounded-xl overflow-hidden bg-black aspect-[9/16] max-h-[280px]">
-                            <iframe
-                              src={reel.embedUrl}
-                              className="w-full h-full border-0"
-                              allow="autoplay; encrypted-media"
-                              allowFullScreen
-                            />
+                          <div className="relative rounded-xl overflow-hidden bg-black aspect-[9/16] max-h-[320px] flex items-center justify-center border border-slate-800">
+                            {(() => {
+                              const formatted = formatEmbedUrl(reel.embedUrl || reel.url || '');
+                              const isDirect = formatted.platform === 'direct' && (
+                                formatted.embedUrl.match(/\.(mp4|webm|mov)($|\?)/i) || 
+                                reel.url?.match(/\.(mp4|webm|mov)($|\?)/i)
+                              );
+
+                              if (isDirect) {
+                                return (
+                                  <video
+                                    src={formatted.embedUrl || reel.url}
+                                    controls
+                                    autoPlay
+                                    playsInline
+                                    className="w-full h-full object-contain bg-black"
+                                  />
+                                );
+                              }
+
+                              return (
+                                <iframe
+                                  src={formatted.embedUrl || reel.embedUrl || reel.url}
+                                  title={reel.title || 'Reel Preview'}
+                                  className="w-full h-full border-0 bg-black"
+                                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                  allowFullScreen
+                                />
+                              );
+                            })()}
                             <button
                               onClick={() => setPlayingReelId(null)}
-                              className="absolute top-2 right-2 bg-slate-900/80 text-white text-[10px] font-black px-2.5 py-1 rounded-lg border border-slate-700"
+                              className="absolute top-2 right-2 bg-slate-900/90 text-white text-[10px] font-black px-2.5 py-1 rounded-lg border border-slate-700 shadow-md cursor-pointer z-10"
                             >
-                              Isara Preview
+                              ✕ Isara Preview
                             </button>
                           </div>
                         ) : (
@@ -1596,11 +1620,11 @@ export default function AdminPanel({
                               onClick={() => setPlayingReelId(reel.id)}
                               className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] px-3 py-1.5 rounded-xl flex items-center gap-1 transition cursor-pointer"
                             >
-                              <Play className="w-3.5 h-3.5" />
+                              <Play className="w-3.5 h-3.5 fill-white" />
                               <span>i-Preview Video</span>
                             </button>
                             <a
-                              href={reel.originalUrl}
+                              href={reel.url || reel.originalUrl || reel.embedUrl}
                               target="_blank"
                               rel="noreferrer"
                               className="text-slate-500 hover:text-indigo-600 font-bold text-[11px] flex items-center gap-1"
