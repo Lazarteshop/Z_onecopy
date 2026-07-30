@@ -2313,7 +2313,7 @@ app.post('/api/reels', (req, res) => {
 
 // TOKEN SUBSCRIPTION REQUEST (20 Reels = ₱10 pesos / 10 Tokens)
 app.post('/api/reels/token-subscription', (req, res) => {
-  const { userId, userName, gcashNumber, gcashRefNo } = req.body;
+  const { userId, userName, userEmail, gcashNumber, gcashRefNo } = req.body;
   if (!gcashRefNo || !gcashRefNo.trim()) {
     return res.status(400).json({ error: 'Kailangan ibigay ang GCash Reference Number.' });
   }
@@ -2322,12 +2322,21 @@ app.post('/api/reels/token-subscription', (req, res) => {
   db.reelSubscriptions = db.reelSubscriptions || [];
 
   const authUserId = req.headers.authorization || userId;
-  const user = authUserId ? db.users.find(u => u.id === authUserId) : null;
+  let user = authUserId ? db.users.find(u => u.id === authUserId || (u.email && u.email.toLowerCase() === authUserId.toLowerCase())) : null;
+
+  if (!user && userEmail) {
+    user = db.users.find(u => u.email.toLowerCase().trim() === userEmail.toLowerCase().trim());
+  }
+
+  if (!user && userName) {
+    user = db.users.find(u => u.name.toLowerCase().trim() === userName.toLowerCase().trim());
+  }
 
   const newSub: ReelTokenSubscription = {
     id: 'reel-sub-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-    userId: user ? user.id : userId,
+    userId: user ? user.id : (userId || 'guest'),
     userName: user ? user.name : (userName || 'Guest User'),
+    userEmail: user ? user.email : (userEmail || undefined),
     gcashNumber: gcashNumber || 'GCash',
     gcashRefNo: gcashRefNo.trim(),
     packageName: '20 Reels & Shorts Package',
@@ -2388,7 +2397,7 @@ app.post('/api/admin/reels/:id/approve', (req, res) => {
         type: 'reward',
         title: '🎬 Approved Reel Video (-0.50 Tokens)',
         amount: 0,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
         details: `In-approve ng Admin ang iyong Reel ("${reel.title || 'Reel Video'}"). Nabawasan ng 0.50 tokens ang iyong balance.`
       });
     }
@@ -2425,7 +2434,7 @@ app.post('/api/admin/reels/:id/disapprove', (req, res) => {
         type: 'bonus',
         title: '❌ Disapproved Reel Video (0 Tokens Deducted)',
         amount: 0,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
         details: `Hindi na-approve ng Admin ang iyong Reel ("${reel.title || 'Reel Video'}"). Dahilan: ${reel.disapproveReason}. Walang nabawas na tokens sa iyong account.`
       });
     }
@@ -2452,23 +2461,42 @@ app.post('/api/admin/reels/subscriptions/:id/approve', (req, res) => {
   sub.status = 'approved';
   sub.approvedAt = new Date().toISOString();
 
-  // Find user and credit 10 tokens (20 reels @ 0.50 tokens/reel)
-  const targetUser = db.users.find(u => u.id === sub.userId || u.name.toLowerCase() === sub.userName.toLowerCase());
+  // Robust target user lookup
+  const subUserIdLower = sub.userId ? sub.userId.toLowerCase().trim() : '';
+  const subUserNameLower = sub.userName ? sub.userName.toLowerCase().trim() : '';
+  const subUserEmailLower = sub.userEmail ? sub.userEmail.toLowerCase().trim() : '';
+
+  let targetUser = db.users.find(u => 
+    (subUserIdLower && subUserIdLower !== 'guest' && u.id.toLowerCase().trim() === subUserIdLower) ||
+    (subUserEmailLower && u.email && u.email.toLowerCase().trim() === subUserEmailLower) ||
+    (subUserNameLower && subUserNameLower !== 'user' && subUserNameLower !== 'guest user' && u.name.toLowerCase().trim() === subUserNameLower)
+  );
+
+  // Fallback: if only 1 regular user matches name
+  if (!targetUser && subUserNameLower && subUserNameLower !== 'user' && subUserNameLower !== 'guest user') {
+    targetUser = db.users.find(u => u.name.toLowerCase().includes(subUserNameLower) || subUserNameLower.includes(u.name.toLowerCase()));
+  }
+
   if (targetUser) {
-    targetUser.reelsTokens = Number(((targetUser.reelsTokens || 0) + (sub.tokensGranted || 10)).toFixed(2));
+    const tokensToAdd = sub.tokensGranted || 10;
+    targetUser.reelsTokens = Number(((targetUser.reelsTokens || 0) + tokensToAdd).toFixed(2));
     targetUser.activityLogs = targetUser.activityLogs || [];
     targetUser.activityLogs.unshift({
       id: 'act-' + Date.now(),
       type: 'bonus',
       title: '🎟️ Approved Reel Tokens (+10 Tokens / 20 Reels)',
       amount: 0,
-      timestamp: new Date().toISOString(),
-      details: `In-approve ng Admin ang iyong ₱10 GCash payment (Ref: ${sub.gcashRefNo}). Naka-receive ka ng 10.00 Tokens (pwedeng mag-upload ng 20 Reels & Shorts)!`
+      timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+      details: `In-approve ng Admin ang iyong ₱10 GCash payment (Ref: ${sub.gcashRefNo}). Naka-receive ka ng ${tokensToAdd}.00 Tokens (pwedeng mag-upload ng 20 Reels & Shorts)!`
     });
   }
 
   saveDB(db);
-  res.json({ success: true, subscription: sub, message: 'In-approve ang Reel Token Subscription! Na-credit ang 10 tokens (20 reels).' });
+  res.json({ 
+    success: true, 
+    subscription: sub, 
+    message: `In-approve ang Reel Token Subscription! Na-credit ang 10 tokens sa user account (${targetUser ? targetUser.name : sub.userName}).` 
+  });
 });
 
 // ADMIN: DECLINE REEL TOKEN SUBSCRIPTION

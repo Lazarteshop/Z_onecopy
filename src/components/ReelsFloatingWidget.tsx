@@ -30,6 +30,7 @@ interface ReelsFloatingWidgetProps {
   isAdmin?: boolean;
   currentUserName?: string;
   currentUserId?: string;
+  currentUserEmail?: string;
   isLoggedIn?: boolean;
   language?: 'tl' | 'en';
   userTokens?: number;
@@ -112,6 +113,7 @@ export default function ReelsFloatingWidget({
   isAdmin = false,
   currentUserName,
   currentUserId,
+  currentUserEmail,
   isLoggedIn = false,
   language = 'tl',
   userTokens = 0,
@@ -215,6 +217,7 @@ export default function ReelsFloatingWidget({
         body: JSON.stringify({
           userId: currentUserId,
           userName: currentUserName || 'User',
+          userEmail: currentUserEmail || '',
           gcashNumber: subGcashNum.trim() || 'GCash',
           gcashRefNo: subGcashRef.trim()
         })

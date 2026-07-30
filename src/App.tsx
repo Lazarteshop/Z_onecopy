@@ -225,12 +225,20 @@ export default function App() {
 
   const fetchReels = async () => {
     try {
-      const res = await fetch('/api/reels');
+      const res = await fetch('/api/reels', {
+        headers: {
+          ...(token ? { 'Authorization': token } : {})
+        }
+      });
       if (res.ok) {
         const data = await res.json();
         if (data.reels && Array.isArray(data.reels)) {
           setReels(data.reels);
           localStorage.setItem('gcash_reels_data', JSON.stringify(data.reels));
+        }
+        if (data.userReelsTokens !== undefined || data.reelsTokens !== undefined) {
+          const freshTokens = data.userReelsTokens ?? data.reelsTokens;
+          setUser(prev => prev ? { ...prev, reelsTokens: freshTokens } : null);
         }
       }
     } catch (e) {
@@ -659,8 +667,8 @@ export default function App() {
   }, [user]);
 
   // Fetch or sync user profile
-  const fetchUserProfile = async (authToken: string) => {
-    setLoadingProfile(true);
+  const fetchUserProfile = async (authToken: string, silent = false) => {
+    if (!silent) setLoadingProfile(true);
     try {
       const res = await fetch('/api/user/profile', {
         headers: {
@@ -734,7 +742,7 @@ export default function App() {
                 setActivityLogs(restoreData.user.activityLogs);
                 setReferredFriends(restoreData.user.referredFriends);
                 triggerNotification('🔄 Ang iyong session at naipong balance ay ligtas na na-sync muli!', 'success');
-                setLoadingProfile(false);
+                if (!silent) setLoadingProfile(false);
                 return;
               }
             }
@@ -748,9 +756,9 @@ export default function App() {
       }
     } catch (e) {
       console.error(e);
-      triggerNotification('⚠️ Connection error sa pag-load ng inyong Profile.', 'error');
+      if (!silent) triggerNotification('⚠️ Connection error sa pag-load ng inyong Profile.', 'error');
     } finally {
-      setLoadingProfile(false);
+      if (!silent) setLoadingProfile(false);
     }
   };
 
@@ -767,10 +775,19 @@ export default function App() {
   useEffect(() => {
     if (!token) return;
     const interval = setInterval(() => {
-      fetchUserProfile(token);
-    }, 10000); // Poll every 10 seconds to align with admin approvals/declines instantly
-    return () => clearInterval(interval);
-  }, [token, activeTab]);
+      fetchUserProfile(token, true);
+    }, 5000); // Poll silently every 5 seconds to reflect token approvals immediately
+
+    const handleRefresh = () => {
+      fetchUserProfile(token, true);
+    };
+    window.addEventListener('refresh-user-profile', handleRefresh);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('refresh-user-profile', handleRefresh);
+    };
+  }, [token]);
 
   // --- SUBSCRIPTIONS STATE & CALCULATIONS ---
   const [submittingSubscription, setSubmittingSubscription] = useState(false);
@@ -2980,6 +2997,7 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
         isAdmin={user?.isAdmin || false}
         currentUserName={user?.name}
         currentUserId={user?.id}
+        currentUserEmail={user?.email}
         isLoggedIn={!!user}
         language={language}
         userTokens={user?.reelsTokens || 0}

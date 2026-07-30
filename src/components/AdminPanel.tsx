@@ -160,6 +160,7 @@ export default function AdminPanel({
         triggerNotification(`🟢 ${result.message}`, 'success');
         fetchAdminReels();
         fetchAdminData();
+        window.dispatchEvent(new Event('refresh-user-profile'));
       } else {
         triggerNotification(`⚠️ ${result.error || 'Hindi ma-approve ang Token Subscription.'}`, 'error');
       }
