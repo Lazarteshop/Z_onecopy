@@ -75,7 +75,7 @@ export default function AdminPanel({
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'settings'>('overview');
-  const [reelsData, setReelsData] = useState<{ reels: any[]; reelSubscriptions: any[] }>({ reels: [], reelSubscriptions: [] });
+  const [reelsData, setReelsData] = useState<{ reels: any[]; reelSubscriptions: any[]; reelRedemptions: any[] }>({ reels: [], reelSubscriptions: [], reelRedemptions: [] });
   const [playingReelId, setPlayingReelId] = useState<string | null>(null);
   const [disapproveReasons, setDisapproveReasons] = useState<{ [id: string]: string }>({});
 
@@ -88,7 +88,8 @@ export default function AdminPanel({
         const result = await res.json();
         setReelsData({
           reels: result.reels || [],
-          reelSubscriptions: result.reelSubscriptions || []
+          reelSubscriptions: result.reelSubscriptions || [],
+          reelRedemptions: result.reelRedemptions || []
         });
       }
     } catch (e) {
@@ -1757,6 +1758,57 @@ export default function AdminPanel({
                           </td>
                           <td className="p-2.5 text-[10px] text-slate-400 font-mono">
                             {new Date(r.createdAt).toLocaleDateString('fil-PH')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* USER REELS PROFIT REDEMPTIONS (PAYOUTS) */}
+            <div className="space-y-3 pt-4 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-2">
+                  <span>💰 User Reels Profit Redemptions History ({reelsData.reelRedemptions?.length || 0})</span>
+                </h4>
+                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-1 rounded-full font-mono">
+                  Total Redeemed Payouts: ₱{(reelsData.reelRedemptions || []).reduce((sum: number, r: any) => sum + (r.amount || 0), 0).toFixed(2)}
+                </span>
+              </div>
+
+              {!reelsData.reelRedemptions || reelsData.reelRedemptions.length === 0 ? (
+                <div className="text-center py-6 bg-slate-50 border border-slate-200 rounded-2xl text-slate-400 text-xs font-bold">
+                  ✨ Walang pang naitalang reel profit redemptions mula sa mga users.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs font-semibold text-slate-700 border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-400 uppercase text-[9px]">
+                        <th className="p-2.5">User</th>
+                        <th className="p-2.5">Email</th>
+                        <th className="p-2.5">Amount Redeemed</th>
+                        <th className="p-2.5">Status</th>
+                        <th className="p-2.5">Date & Time</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {reelsData.reelRedemptions.map((red: any) => (
+                        <tr key={red.id} className="hover:bg-slate-50">
+                          <td className="p-2.5 font-bold text-slate-900">{red.userName || 'User'}</td>
+                          <td className="p-2.5 text-[11px] text-slate-500 font-mono">{red.userEmail || 'N/A'}</td>
+                          <td className="p-2.5 font-black text-emerald-600 font-mono text-xs">
+                            ₱{Number(red.amount).toFixed(2)}
+                          </td>
+                          <td className="p-2.5">
+                            <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black px-2 py-0.5 rounded-full uppercase">
+                              {red.status || 'completed'} (Credited to Balance)
+                            </span>
+                          </td>
+                          <td className="p-2.5 text-[10px] text-slate-400 font-mono">
+                            {new Date(red.createdAt).toLocaleString('fil-PH')}
                           </td>
                         </tr>
                       ))}

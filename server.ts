@@ -806,6 +806,8 @@ interface UserSession {
   isAdmin: boolean;
   isBanned?: boolean; // banned from Z-one or app
   reelsTokens?: number; // Reels upload tokens (0.50 tokens = 1 reel)
+  balance?: number; // top-level balance fallback
+  lifetimeEarnings?: number; // top-level lifetime earnings fallback
   zonedUsers?: string[]; // userIds followed/zoned
   createdAt?: string;
   subscription?: Subscription;
@@ -921,6 +923,7 @@ interface ReelTokenSubscription {
   id: string;
   userId?: string;
   userName: string;
+  userEmail?: string;
   gcashNumber: string;
   gcashRefNo: string;
   packageName: string;
@@ -970,6 +973,7 @@ interface DBStructure {
   merchantAds?: MerchantAd[];
   reels?: ReelVideo[];
   reelSubscriptions?: ReelTokenSubscription[];
+  reelRedemptions?: any[];
 }
 
 // --- HELPER TO INITIALIZE AND GET DATABASE ---
@@ -2418,7 +2422,7 @@ app.post('/api/reels/token-subscription', (req, res) => {
   });
 });
 
-// ADMIN: GET ALL REELS & REEL SUBSCRIPTIONS
+// ADMIN: GET ALL REELS & REEL SUBSCRIPTIONS & REDEMPTIONS
 app.get('/api/admin/reels', (req, res) => {
   const adminId = req.headers.authorization;
   if (!adminId) return res.status(401).json({ error: 'Unauthenticated.' });
@@ -2429,7 +2433,108 @@ app.get('/api/admin/reels', (req, res) => {
 
   res.json({
     reels: db.reels || [],
-    reelSubscriptions: db.reelSubscriptions || []
+    reelSubscriptions: db.reelSubscriptions || [],
+    reelRedemptions: db.reelRedemptions || []
+  });
+});
+
+// USER: GET MY UPLOADED REELS & REDEMPTIONS ACTIVITY
+app.get('/api/reels/my-activity', (req, res) => {
+  const authUserId = req.headers.authorization || (req.query.userId as string);
+  if (!authUserId) return res.status(401).json({ error: 'Kailangan mag-login.' });
+
+  const db = loadDB();
+  db.reels = db.reels || [];
+  db.reelRedemptions = db.reelRedemptions || [];
+
+  const user = db.users.find(u => u.id === authUserId || (u.email && u.email.toLowerCase() === authUserId.toLowerCase()));
+
+  if (!user) return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+
+  // Filter reels uploaded by this user
+  const userReels = db.reels.filter(r => 
+    r.addedByUserId === user.id || 
+    (r.addedBy && r.addedBy.toLowerCase().trim() === user.name.toLowerCase().trim())
+  );
+
+  // Filter redemptions by this user
+  const userRedemptions = db.reelRedemptions.filter(r => r.userId === user.id);
+  const totalRedeemed = userRedemptions.reduce((acc, curr) => acc + (curr.amount || 0), 0);
+
+  res.json({
+    success: true,
+    myReels: userReels,
+    myRedemptions: userRedemptions,
+    totalRedeemed,
+    currentBalance: user.balance || 0
+  });
+});
+
+// USER: REDEEM REEL PROFIT TO MAIN BALANCE (Minimum ₱300)
+app.post('/api/reels/redeem-profit', (req, res) => {
+  const authUserId = req.headers.authorization || req.body.userId;
+  if (!authUserId) return res.status(401).json({ error: 'Kailangan mag-login.' });
+
+  const { amount } = req.body;
+  const requestedAmount = Number(amount);
+
+  if (isNaN(requestedAmount) || requestedAmount < 300) {
+    return res.status(400).json({ error: 'Kailangan ng minimum ₱300.00 profit bago makapag-redeem.' });
+  }
+
+  const db = loadDB();
+  db.reelRedemptions = db.reelRedemptions || [];
+
+  const user = db.users.find(u => u.id === authUserId || (u.email && u.email.toLowerCase() === authUserId.toLowerCase()));
+  if (!user) return res.status(404).json({ error: 'Hindi mahanap ang user account.' });
+
+  // Add requested amount directly to user's main wallet balance (KASALUKUYANG BALANCE)
+  user.balance = Number(((user.balance || 0) + requestedAmount).toFixed(2));
+  user.lifetimeEarnings = Number(((user.lifetimeEarnings || 0) + requestedAmount).toFixed(2));
+
+  // Record Redemption
+  const newRedemption = {
+    id: 'reel-red-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    userId: user.id,
+    userName: user.name,
+    userEmail: user.email,
+    amount: requestedAmount,
+    status: 'completed' as const,
+    createdAt: new Date().toISOString()
+  };
+
+  db.reelRedemptions.unshift(newRedemption);
+
+  // Log to User Activity
+  user.activityLogs = user.activityLogs || [];
+  user.activityLogs.unshift({
+    id: 'act-' + Date.now(),
+    type: 'reward',
+    title: `💰 Reel Profit Redeemed (+₱${requestedAmount.toFixed(2)})`,
+    amount: requestedAmount,
+    timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+    details: `Matagumpay mong na-redeem ang ₱${requestedAmount.toFixed(2)} profit mula sa iyong Reels at naidagdag sa Kasalukuyang Balance!`
+  });
+
+  saveDB(db);
+
+  if (isFirestoreActive && firestore) {
+    try {
+      firestore.collection('users').doc(user.id).set({
+        balance: user.balance,
+        lifetimeEarnings: user.lifetimeEarnings,
+        activityLogs: user.activityLogs
+      }, { merge: true });
+    } catch (e) {
+      console.error('Firestore update balance error:', e);
+    }
+  }
+
+  res.json({
+    success: true,
+    newBalance: user.balance,
+    redemption: newRedemption,
+    message: `🎉 Matagumpay na na-redeem ang ₱${requestedAmount.toFixed(2)}! Naidagdag na ito sa iyong Kasalukuyang Balance (₱${user.balance.toFixed(2)}).`
   });
 });
 

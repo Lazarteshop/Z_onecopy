@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { formatEmbedUrl } from '../utils/reels';
+import { formatEmbedUrl, calculateReelRevenue, AUDIENCE_CPM_RATES, AudienceCountry } from '../utils/reels';
 import { 
   Tv, 
   X, 
@@ -22,9 +22,21 @@ import {
   TrendingUp,
   CreditCard,
   Ticket,
-  AlertCircle
+  AlertCircle,
+  Activity,
+  DollarSign,
+  Eye,
+  Globe,
+  Award,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  ArrowUpRight,
+  Wallet,
+  RefreshCw,
+  Info
 } from 'lucide-react';
-import { ReelVideo } from '../types';
+import { ReelVideo, ReelRedemption } from '../types';
 
 interface ReelsFloatingWidgetProps {
   reels: ReelVideo[];
@@ -129,10 +141,18 @@ export default function ReelsFloatingWidget({
 
   // User upload & token modal state
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [activeUploadTab, setActiveUploadTab] = useState<'upload' | 'buy_tokens'>('upload');
+  const [activeUploadTab, setActiveUploadTab] = useState<'upload' | 'buy_tokens' | 'activity'>('upload');
   const [uploadUrl, setUploadUrl] = useState('');
   const [uploadTitle, setUploadTitle] = useState('');
   const [isUploadingUserReel, setIsUploadingUserReel] = useState(false);
+
+  // User Reels Activity & Profit Redemption State
+  const [myReelsList, setMyReelsList] = useState<ReelVideo[]>([]);
+  const [myRedemptionsList, setMyRedemptionsList] = useState<ReelRedemption[]>([]);
+  const [totalRedeemedAmount, setTotalRedeemedAmount] = useState<number>(0);
+  const [isLoadingActivity, setIsLoadingActivity] = useState<boolean>(false);
+  const [isRedeemingProfit, setIsRedeemingProfit] = useState<boolean>(false);
+  const [reelCountries, setReelCountries] = useState<Record<string, AudienceCountry>>({});
 
   // Token subscription states
   const [subGcashNum, setSubGcashNum] = useState('');
@@ -146,6 +166,72 @@ export default function ReelsFloatingWidget({
   useEffect(() => {
     setLocalTokens(userTokens);
   }, [userTokens]);
+
+  const fetchUserReelsActivity = async () => {
+    if (!currentUserId) return;
+    setIsLoadingActivity(true);
+    try {
+      const res = await fetch(`/api/reels/my-activity?userId=${currentUserId}`, {
+        headers: { 'Authorization': currentUserId }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setMyReelsList(data.myReels || []);
+        setMyRedemptionsList(data.myRedemptions || []);
+        setTotalRedeemedAmount(data.totalRedeemed || 0);
+      }
+    } catch (err) {
+      console.error('Failed to fetch user reels activity:', err);
+    } finally {
+      setIsLoadingActivity(false);
+    }
+  };
+
+  useEffect(() => {
+    if (showUploadModal && (activeUploadTab === 'activity' || currentUserId)) {
+      fetchUserReelsActivity();
+    }
+  }, [showUploadModal, activeUploadTab, currentUserId]);
+
+  const handleRedeemProfit = async (amountToRedeem: number) => {
+    if (!currentUserId) {
+      if (triggerNotification) triggerNotification('Kailangan mag-login muna bago makapag-redeem.', 'error');
+      return;
+    }
+    if (amountToRedeem < 300) {
+      if (triggerNotification) triggerNotification('Kailangan ng minimum ₱300.00 profit bago makapag-redeem.', 'error');
+      return;
+    }
+
+    setIsRedeemingProfit(true);
+    try {
+      const res = await fetch('/api/reels/redeem-profit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': currentUserId
+        },
+        body: JSON.stringify({
+          userId: currentUserId,
+          amount: amountToRedeem
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (triggerNotification) triggerNotification(`🎉 ${data.message}`, 'success');
+        fetchUserReelsActivity();
+        if (onRefreshReels) onRefreshReels();
+      } else {
+        if (triggerNotification) triggerNotification(`❌ ${data.error || 'Bigo sa pag-redeem ng profit.'}`, 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      if (triggerNotification) triggerNotification('❌ Error sa pakikipag-ugnayan sa server.', 'error');
+    } finally {
+      setIsRedeemingProfit(false);
+    }
+  };
 
   const handleCopyGcashNumber = () => {
     navigator.clipboard.writeText('09914089646');
@@ -1317,31 +1403,47 @@ export default function ReelsFloatingWidget({
             </div>
 
             {/* TAB SELECTOR */}
-            <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800 text-xs font-black">
+            <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800 text-xs font-black gap-1">
               <button
                 type="button"
                 onClick={() => setActiveUploadTab('upload')}
-                className={`flex-1 py-2 px-3 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                className={`flex-1 py-2 px-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1 ${
                   activeUploadTab === 'upload'
                     ? 'bg-rose-600 text-white shadow-md'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Upload className="w-3.5 h-3.5" />
-                <span>Mag-Upload (0.50 Tokens)</span>
+                <Upload className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Upload</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setActiveUploadTab('buy_tokens')}
-                className={`flex-1 py-2 px-3 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                className={`flex-1 py-2 px-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1 ${
                   activeUploadTab === 'buy_tokens'
                     ? 'bg-amber-600 text-white shadow-md'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Coins className="w-3.5 h-3.5 text-amber-300" />
-                <span>Bumili ng Tokens (₱10 = 20 Reels)</span>
+                <Coins className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                <span className="truncate">Buy Tokens</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveUploadTab('activity');
+                  fetchUserReelsActivity();
+                }}
+                className={`flex-1 py-2 px-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1 ${
+                  activeUploadTab === 'activity'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Activity className="w-3.5 h-3.5 text-indigo-300 shrink-0" />
+                <span className="truncate">Activity & Profit</span>
               </button>
             </div>
 
@@ -1517,6 +1619,232 @@ export default function ReelsFloatingWidget({
                   </button>
                 </div>
               </form>
+            )}
+
+            {/* TAB 3: ACTIVITY AREA & REELS PROFIT */}
+            {activeUploadTab === 'activity' && (
+              <div className="space-y-4 pt-1">
+                {/* SUMMARY STATS & REDEEM SECTION */}
+                {(() => {
+                  const approvedReels = myReelsList.filter(r => r.status === 'approved' || !r.status);
+                  const totalViews = approvedReels.reduce((acc, r) => acc + (r.watchedBy?.length || r.views || 0), 0);
+                  
+                  // Calculate total gross revenue across all approved reels
+                  let totalGrossRevenue = 0;
+                  approvedReels.forEach(r => {
+                    const country = reelCountries[r.id] || r.audienceCountry || 'Philippines';
+                    const views = r.watchedBy?.length || r.views || 0;
+                    const breakdown = calculateReelRevenue(views, r.likes || 0, country);
+                    totalGrossRevenue += breakdown.revenue;
+                  });
+
+                  const redeemableAmount = Math.max(0, Number((totalGrossRevenue - totalRedeemedAmount).toFixed(2)));
+                  const progressPct = Math.min(100, Math.max(0, (redeemableAmount / 300) * 100));
+
+                  return (
+                    <div className="space-y-3">
+                      {/* STATS CARDS */}
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 space-y-1">
+                          <span className="text-[10px] text-slate-400 font-extrabold uppercase flex items-center gap-1">
+                            <Eye className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>Total Views</span>
+                          </span>
+                          <span className="text-base font-black text-white block font-mono">
+                            {totalViews.toLocaleString()}
+                          </span>
+                        </div>
+
+                        <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 space-y-1">
+                          <span className="text-[10px] text-slate-400 font-extrabold uppercase flex items-center gap-1">
+                            <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Gross Profit</span>
+                          </span>
+                          <span className="text-base font-black text-emerald-400 block font-mono">
+                            ₱{totalGrossRevenue.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* REDEMPTION ACTION CARD */}
+                      <div className="bg-indigo-950/50 border border-indigo-500/30 p-3.5 rounded-2xl space-y-2.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-black text-indigo-200 flex items-center gap-1.5">
+                            <Wallet className="w-4 h-4 text-indigo-400" />
+                            <span>Available Redeemable Profit:</span>
+                          </span>
+                          <span className="font-black text-emerald-300 font-mono text-sm">
+                            ₱{redeemableAmount.toFixed(2)}
+                          </span>
+                        </div>
+
+                        {/* PROGRESS BAR TO ₱300 */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] text-slate-400 font-bold">
+                            <span>Goal Minimum: ₱300.00</span>
+                            <span className="text-indigo-300 font-mono">{progressPct.toFixed(0)}%</span>
+                          </div>
+                          <div className="w-full bg-slate-900 rounded-full h-2 border border-slate-800 overflow-hidden">
+                            <div 
+                              className="bg-gradient-to-r from-indigo-500 to-emerald-400 h-full transition-all duration-500"
+                              style={{ width: `${progressPct}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* REDEEM BUTTON */}
+                        <button
+                          type="button"
+                          disabled={redeemableAmount < 300 || isRedeemingProfit}
+                          onClick={() => handleRedeemProfit(redeemableAmount)}
+                          className={`w-full py-2.5 rounded-xl font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md ${
+                            redeemableAmount >= 300
+                              ? 'bg-emerald-600 hover:bg-emerald-500 text-white animate-pulse shadow-emerald-950/50'
+                              : 'bg-slate-900 text-slate-500 border border-slate-800 cursor-not-allowed'
+                          }`}
+                        >
+                          {isRedeemingProfit ? (
+                            <span>Isina-sagawa ang Redemption...</span>
+                          ) : redeemableAmount >= 300 ? (
+                            <>
+                              <DollarSign className="w-4 h-4 text-emerald-300" />
+                              <span>🎉 I-Redeem Ang ₱{redeemableAmount.toFixed(2)} Profit sa Balance!</span>
+                            </>
+                          ) : (
+                            <>
+                              <AlertCircle className="w-3.5 h-3.5 text-slate-500" />
+                              <span>Minimum ₱300.00 Profit Bago Makapag-Redeem</span>
+                            </>
+                          )}
+                        </button>
+                        <p className="text-[10px] text-slate-400 text-center font-semibold">
+                          Mapupunta agad sa iyong Kasalukuyang Balance ang mga na-redeem na profit.
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* MY UPLOADED REELS LIST */}
+                <div className="space-y-2.5 pt-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>📹 Aking In-upload na Reels ({myReelsList.length})</span>
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={fetchUserReelsActivity}
+                      className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isLoadingActivity ? 'animate-spin' : ''}`} />
+                      <span>Refresh</span>
+                    </button>
+                  </div>
+
+                  {myReelsList.length === 0 ? (
+                    <div className="text-center py-6 bg-slate-950 border border-slate-800 rounded-2xl text-slate-500 text-xs font-bold">
+                      Wala ka pang naipagsumite na Reels. Mag-upload na ngayon para magsimulang kumita!
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5 max-h-[280px] overflow-y-auto pr-1">
+                      {myReelsList.map((reel) => {
+                        const views = reel.watchedBy?.length || reel.views || 0;
+                        const likes = reel.likes || 0;
+                        const country = reelCountries[reel.id] || reel.audienceCountry || 'Philippines';
+                        const breakdown = calculateReelRevenue(views, likes, country);
+
+                        return (
+                          <div key={reel.id} className="bg-slate-950 border border-slate-800 p-3 rounded-2xl space-y-2 text-xs">
+                            {/* HEADER */}
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <span className="font-extrabold text-white block truncate max-w-[180px]">
+                                  {reel.title || 'Untitled Reel'}
+                                </span>
+                                <span className="text-[10px] text-slate-500 font-mono">
+                                  {new Date(reel.createdAt).toLocaleDateString('fil-PH')}
+                                </span>
+                              </div>
+
+                              {/* STATUS BADGE */}
+                              {reel.status === 'approved' ? (
+                                <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0">
+                                  <CheckCircle2 className="w-3 h-3" /> Approved
+                                </span>
+                              ) : reel.status === 'disapproved' ? (
+                                <span className="bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0">
+                                  <XCircle className="w-3 h-3" /> Disapproved
+                                </span>
+                              ) : (
+                                <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0">
+                                  <Clock className="w-3 h-3 animate-pulse" /> Pending Review
+                                </span>
+                              )}
+                            </div>
+
+                            {/* DISAPPROVED MESSAGE */}
+                            {reel.status === 'disapproved' && (
+                              <div className="bg-rose-950/40 border border-rose-500/30 p-2 rounded-xl text-[10px] text-rose-300 font-semibold space-y-0.5">
+                                <div>❌ <strong>Disapproval Reason:</strong> {reel.disapproveReason || 'Community guidelines violation.'}</div>
+                                <div className="text-slate-400 text-[9px]"> Note: Walang nabawas na tokens sa iyong account.</div>
+                              </div>
+                            )}
+
+                            {/* APPROVED REEL STATS & CPM BREAKDOWN */}
+                            {reel.status === 'approved' && (
+                              <div className="space-y-2 pt-1 border-t border-slate-900">
+                                {/* AUDIENCE SELECTOR */}
+                                <div className="flex items-center justify-between text-[10px]">
+                                  <span className="text-slate-400 font-bold flex items-center gap-1">
+                                    <Globe className="w-3 h-3 text-indigo-400" /> Audience Region:
+                                  </span>
+                                  <select
+                                    value={country}
+                                    onChange={(e) => setReelCountries({ ...reelCountries, [reel.id]: e.target.value as AudienceCountry })}
+                                    className="bg-slate-900 border border-slate-700 text-white rounded-lg px-2 py-0.5 text-[10px] outline-none"
+                                  >
+                                    {Object.keys(AUDIENCE_CPM_RATES).map((c) => (
+                                      <option key={c} value={c}>
+                                        {AUDIENCE_CPM_RATES[c as AudienceCountry].label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                {/* CPM CALCULATION FORMULA DISPLAY */}
+                                <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800/80 space-y-1 text-[10px]">
+                                  <div className="flex justify-between text-slate-300 font-bold">
+                                    <span>Views / Impressions:</span>
+                                    <span className="text-white font-mono">{views.toLocaleString()}</span>
+                                  </div>
+                                  <div className="flex justify-between text-slate-400">
+                                    <span>Base CPM + Bonuses:</span>
+                                    <span className="font-mono text-slate-300">
+                                      ₱{breakdown.baseCPM} + ₱{breakdown.engagementBonus} + ₱{breakdown.watchTimeBonus} + ₱{breakdown.demandAdjustment}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between text-indigo-300 font-bold pt-0.5 border-t border-slate-800">
+                                    <span>Final CPM Rate:</span>
+                                    <span className="font-mono text-indigo-300">₱{breakdown.finalCPM.toFixed(2)} / 1k views</span>
+                                  </div>
+                                </div>
+
+                                {/* TOTAL PROFIT FOR THIS REEL */}
+                                <div className="flex items-center justify-between bg-emerald-950/40 border border-emerald-500/20 px-2.5 py-1.5 rounded-xl text-[11px]">
+                                  <span className="font-bold text-slate-300">Reel Profit:</span>
+                                  <span className="font-black text-emerald-400 font-mono text-xs">
+                                    ₱{breakdown.revenue.toFixed(2)}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
 
           </div>

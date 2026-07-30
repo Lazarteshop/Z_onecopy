@@ -134,10 +134,22 @@ export interface ReelVideo {
   likes: number;
   likedBy?: string[];
   watchedBy?: string[];
+  views?: number;
+  audienceCountry?: 'Philippines' | 'India' | 'Indonesia' | 'US' | 'Canada' | 'UK';
   addedBy?: string;
   addedByUserId?: string;
   status?: 'approved' | 'pending' | 'disapproved';
   disapproveReason?: string;
+  createdAt: string;
+}
+
+export interface ReelRedemption {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail?: string;
+  amount: number;
+  status: 'completed';
   createdAt: string;
 }
 
