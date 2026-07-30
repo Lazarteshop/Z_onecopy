@@ -1973,10 +1973,10 @@ export default function App() {
                 {notificationPermission === 'default' && (
                   <button
                     onClick={requestNotificationPermission}
-                    className="bg-emerald-600 hover:bg-emerald-500 hover:scale-[1.02] active:scale-[0.98] text-white text-[8px] sm:text-[9px] font-black px-2 py-1 rounded-lg transition flex items-center gap-0.5 cursor-pointer shrink-0 shadow-xs"
+                    className="bg-emerald-600/90 hover:bg-emerald-600 hover:scale-[1.02] active:scale-[0.98] text-white text-[8px] font-black px-1.5 py-0.5 rounded-md transition flex items-center gap-0.5 cursor-pointer shrink-0 shadow-2xs select-none"
                     title={language === 'tl' ? 'Paganahin ang Notifications sa CP / Device' : 'Enable Device Notifications'}
                   >
-                    <Bell className="w-3 h-3 text-yellow-300 animate-pulse" />
+                    <Bell className="w-2.5 h-2.5 text-yellow-300 animate-pulse shrink-0" />
                     <span>{language === 'tl' ? 'Payagan Notif' : 'Allow Notif'}</span>
                   </button>
                 )}
@@ -2982,11 +2982,13 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
         currentUserId={user?.id}
         isLoggedIn={!!user}
         language={language}
+        userTokens={user?.reelsTokens || 0}
         onAddReel={handleAddReel}
         onDeleteReel={handleDeleteReel}
         onLikeReel={handleLikeReel}
         onWatchRewardReel={handleWatchRewardReel}
         triggerNotification={triggerNotification}
+        onRefreshReels={fetchReels}
       />
 
     </div>

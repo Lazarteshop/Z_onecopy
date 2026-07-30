@@ -12,7 +12,16 @@ import {
   Shield, 
   Play, 
   Pause,
-  Video
+  Video,
+  Upload,
+  Copy,
+  Check,
+  Coins,
+  Megaphone,
+  TrendingUp,
+  CreditCard,
+  Ticket,
+  AlertCircle
 } from 'lucide-react';
 import { ReelVideo } from '../types';
 
@@ -23,11 +32,13 @@ interface ReelsFloatingWidgetProps {
   currentUserId?: string;
   isLoggedIn?: boolean;
   language?: 'tl' | 'en';
+  userTokens?: number;
   onAddReel: (url: string, title?: string) => void;
   onDeleteReel: (id: string) => void;
   onLikeReel: (id: string, delta?: number) => void;
   onWatchRewardReel?: (id: string) => void;
   triggerNotification?: (message: string, type?: 'success' | 'info' | 'error') => void;
+  onRefreshReels?: () => void;
 }
 
 export function parseVideoUrl(inputUrl: string): { embedUrl: string; platform: 'tiktok' | 'facebook' | 'youtube' | 'direct' } {
@@ -99,16 +110,132 @@ export function parseVideoUrl(inputUrl: string): { embedUrl: string; platform: '
 export default function ReelsFloatingWidget({
   reels,
   isAdmin = false,
+  currentUserName,
   currentUserId,
   isLoggedIn = false,
   language = 'tl',
+  userTokens = 0,
   onAddReel,
   onDeleteReel,
   onLikeReel,
   onWatchRewardReel,
-  triggerNotification
+  triggerNotification,
+  onRefreshReels
 }: ReelsFloatingWidgetProps) {
   const [isOpen, setIsOpen] = useState(true);
+
+  // User upload & token modal state
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [activeUploadTab, setActiveUploadTab] = useState<'upload' | 'buy_tokens'>('upload');
+  const [uploadUrl, setUploadUrl] = useState('');
+  const [uploadTitle, setUploadTitle] = useState('');
+  const [isUploadingUserReel, setIsUploadingUserReel] = useState(false);
+
+  // Token subscription states
+  const [subGcashNum, setSubGcashNum] = useState('');
+  const [subGcashRef, setSubGcashRef] = useState('');
+  const [isSubmittingTokenSub, setIsSubmittingTokenSub] = useState(false);
+  const [copiedGcash, setCopiedGcash] = useState(false);
+
+  // Local token balance state (synced with userTokens prop)
+  const [localTokens, setLocalTokens] = useState<number>(userTokens);
+
+  useEffect(() => {
+    setLocalTokens(userTokens);
+  }, [userTokens]);
+
+  const handleCopyGcashNumber = () => {
+    navigator.clipboard.writeText('09914089646');
+    setCopiedGcash(true);
+    if (triggerNotification) triggerNotification('📋 Kina-copy ang GCash number (09914089646)!', 'success');
+    setTimeout(() => setCopiedGcash(false), 2000);
+  };
+
+  const handleUserSubmitReel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!uploadUrl || !uploadUrl.trim()) {
+      if (triggerNotification) triggerNotification('Mangyaring maglagay ng Video URL ng Reel.', 'error');
+      return;
+    }
+
+    setIsUploadingUserReel(true);
+    try {
+      const res = await fetch('/api/reels', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': currentUserId || ''
+        },
+        body: JSON.stringify({
+          url: uploadUrl.trim(),
+          title: uploadTitle.trim(),
+          userId: currentUserId,
+          addedBy: currentUserName || 'User'
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (triggerNotification) triggerNotification(`🎉 ${data.message}`, 'success');
+        setUploadUrl('');
+        setUploadTitle('');
+        setShowUploadModal(false);
+        if (onRefreshReels) onRefreshReels();
+      } else {
+        if (data.needTokens) {
+          if (triggerNotification) triggerNotification(`⚠️ ${data.error}`, 'error');
+          setActiveUploadTab('buy_tokens');
+        } else {
+          if (triggerNotification) triggerNotification(`❌ ${data.error || 'Bigo sa pag-submit ng Reel.'}`, 'error');
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      if (triggerNotification) triggerNotification('❌ Error sa pakikipag-ugnayan sa server.', 'error');
+    } finally {
+      setIsUploadingUserReel(false);
+    }
+  };
+
+  const handleUserSubmitTokenSub = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!subGcashRef || !subGcashRef.trim()) {
+      if (triggerNotification) triggerNotification('Kailangan ibigay ang GCash Reference Number.', 'error');
+      return;
+    }
+
+    setIsSubmittingTokenSub(true);
+    try {
+      const res = await fetch('/api/reels/token-subscription', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': currentUserId || ''
+        },
+        body: JSON.stringify({
+          userId: currentUserId,
+          userName: currentUserName || 'User',
+          gcashNumber: subGcashNum.trim() || 'GCash',
+          gcashRefNo: subGcashRef.trim()
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (triggerNotification) triggerNotification(`🎉 ${data.message}`, 'success');
+        setSubGcashNum('');
+        setSubGcashRef('');
+        setShowUploadModal(false);
+      } else {
+        if (triggerNotification) triggerNotification(`❌ ${data.error || 'Bigo sa pag-submit ng subscription.'}`, 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      if (triggerNotification) triggerNotification('❌ Error sa pakikipag-ugnayan sa server.', 'error');
+    } finally {
+      setIsSubmittingTokenSub(false);
+    }
+  };
 
   // Listen for open event from header button
   useEffect(() => {
@@ -622,6 +749,17 @@ export default function ReelsFloatingWidget({
             </button>
           )}
 
+          {/* User Upload Reel Icon Button (Registered & Non-registered users) */}
+          <button
+            type="button"
+            onClick={() => setShowUploadModal(true)}
+            className="bg-gradient-to-r from-rose-600 via-pink-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white px-2 py-1 rounded-xl text-[10px] font-black flex items-center gap-1 transition cursor-pointer shadow-md shadow-rose-950/50 border border-rose-400/40 active:scale-95 shrink-0"
+            title={language === 'tl' ? 'Mag-upload ng Reels/Shorts (0.50 Tokens)' : 'Upload Reel'}
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span className="font-extrabold">Upload</span>
+          </button>
+
           {/* Admin Add Reel button */}
           {isAdmin && (
             <button
@@ -1100,6 +1238,269 @@ export default function ReelsFloatingWidget({
             <span>Ibaba (Next)</span>
             <ChevronDown className="w-4 h-4" />
           </button>
+        </div>
+      )}
+
+      {/* 📤 USER REEL UPLOAD & TOKEN SUBSCRIPTION MODAL */}
+      {showUploadModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-5 shadow-2xl text-slate-100 space-y-4">
+            
+            {/* Modal Header */}
+            <div className="flex items-start justify-between gap-2 border-b border-slate-800 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-gradient-to-tr from-rose-500 to-amber-500 rounded-2xl text-white shadow-md">
+                    <Video className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-base text-white tracking-tight">
+                      Upload Reels & Shorts
+                    </h3>
+                    <p className="text-[11px] text-slate-400 font-semibold">
+                      Mag-promote ng iyong Facebook Reels, TikTok, o YouTube Shorts!
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowUploadModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white bg-slate-800 rounded-xl transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* TOKEN BALANCE & BENEFIT BANNER */}
+            <div className="bg-gradient-to-r from-indigo-950/90 via-slate-900 to-rose-950/80 border border-indigo-500/30 rounded-2xl p-3.5 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-black text-slate-300 flex items-center gap-1.5">
+                  <Ticket className="w-4 h-4 text-amber-400" />
+                  <span>Kasalukuyang Balance:</span>
+                </span>
+                <span className="font-black text-amber-300 bg-amber-500/20 px-2.5 py-1 rounded-full border border-amber-500/30 text-xs">
+                  🎟️ {localTokens.toFixed(2)} Tokens ({Math.floor(localTokens / 0.5)} Reels)
+                </span>
+              </div>
+
+              {/* HIGHLIGHTED ADVANTAGES / BENEFITS */}
+              <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800 text-[11px] space-y-1.5 text-slate-300">
+                <div className="font-black text-rose-400 flex items-center gap-1.5 text-xs">
+                  <TrendingUp className="w-4 h-4 text-rose-400" />
+                  <span>Benepisyo ng Pag-upload ng Reels sa Z-oneApp:</span>
+                </div>
+                <ul className="space-y-1 list-disc list-inside text-[10px] font-semibold text-slate-300">
+                  <li><strong className="text-amber-300">Para sa Content Creators:</strong> Dadami ang tunay na views, subscribers, at engagements sa iyong Facebook, TikTok, o YouTube!</li>
+                  <li><strong className="text-emerald-300">Para sa Affiliates & Business Owners:</strong> Maraming makakakita ng iyong pinopromote at dadami ang iyong magiging customer at benta!</li>
+                  <li><strong className="text-indigo-300">Mura & Abot-kaya:</strong> 20 Reels & Shorts sa halagang <strong className="text-white">₱10.00 Pesos</strong> lamang (0.50 tokens/reel).</li>
+                  <li><strong className="text-teal-300">Garantiya:</strong> Ang <strong className="text-rose-300">disapproved reels ay HINDI mababawasan</strong> sa tokens mo! Admin approved reels lamang ang mababawasan ng 0.50 tokens.</li>
+                </ul>
+              </div>
+            </div>
+
+            {/* TAB SELECTOR */}
+            <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800 text-xs font-black">
+              <button
+                type="button"
+                onClick={() => setActiveUploadTab('upload')}
+                className={`flex-1 py-2 px-3 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                  activeUploadTab === 'upload'
+                    ? 'bg-rose-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Mag-Upload (0.50 Tokens)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveUploadTab('buy_tokens')}
+                className={`flex-1 py-2 px-3 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                  activeUploadTab === 'buy_tokens'
+                    ? 'bg-amber-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Coins className="w-3.5 h-3.5 text-amber-300" />
+                <span>Bumili ng Tokens (₱10 = 20 Reels)</span>
+              </button>
+            </div>
+
+            {/* TAB 1: MAG-UPLOAD NG REEL */}
+            {activeUploadTab === 'upload' && (
+              <form onSubmit={handleUserSubmitReel} className="space-y-3 pt-1">
+                {localTokens < 0.50 && (
+                  <div className="bg-rose-950/60 border border-rose-500/40 p-3 rounded-2xl text-xs space-y-2">
+                    <div className="flex items-center gap-2 text-rose-300 font-black">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>Kailangan ng Tokens Para Makapag-upload!</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 font-semibold leading-relaxed">
+                      Kailangan ng <strong className="text-amber-300">0.50 Tokens</strong> bawat Reel. Ang iyong kasalukuyang balance ay <strong className="text-white">{localTokens.toFixed(2)} Tokens</strong>.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setActiveUploadTab('buy_tokens')}
+                      className="w-full bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-black py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md"
+                    >
+                      <Coins className="w-4 h-4" />
+                      <span>Bumili ng 20 Reels Package (₱10.00 GCash)</span>
+                    </button>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-black text-slate-300 mb-1">
+                    Video URL (TikTok / FB Reels / YouTube Shorts) <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="url"
+                    required
+                    value={uploadUrl}
+                    onChange={(e) => setUploadUrl(e.target.value)}
+                    placeholder="https://www.tiktok.com/@user/video/1234567..."
+                    className="w-full bg-slate-950 border border-slate-700 text-white rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-rose-500"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1 font-semibold">
+                    Suportado ang TikTok, Facebook Reels, YouTube Shorts, o direct MP4 link.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-300 mb-1">
+                    Pamagat o Pormal na Paglalarawan
+                  </label>
+                  <input
+                    type="text"
+                    value={uploadTitle}
+                    onChange={(e) => setUploadTitle(e.target.value)}
+                    placeholder="Hal. Bagong Earning Hack sa GCash! / Business Promo"
+                    className="w-full bg-slate-950 border border-slate-700 text-white rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-rose-500"
+                  />
+                </div>
+
+                <div className="pt-2 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowUploadModal(false)}
+                    className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold text-xs cursor-pointer"
+                  >
+                    Kanselahin
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isUploadingUserReel || localTokens < 0.50}
+                    className={`flex-1 py-2.5 rounded-xl font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md ${
+                      localTokens < 0.50
+                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                        : 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white shadow-rose-950/50'
+                    }`}
+                  >
+                    {isUploadingUserReel ? (
+                      <span>Isinusumite...</span>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4" />
+                        <span>Isumite Para Sa Admin Approval</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* TAB 2: BUMILI NG TOKENS */}
+            {activeUploadTab === 'buy_tokens' && (
+              <form onSubmit={handleUserSubmitTokenSub} className="space-y-3.5 pt-1">
+                
+                {/* GCASH PAYMENT DETAILS BOX */}
+                <div className="bg-emerald-950/60 border border-emerald-500/40 p-3.5 rounded-2xl space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-emerald-300 flex items-center gap-1.5">
+                      <CreditCard className="w-4 h-4 text-emerald-400" />
+                      <span>GCash Mobile Payment:</span>
+                    </span>
+                    <span className="font-black text-white bg-emerald-600/30 px-2 py-0.5 rounded-lg border border-emerald-500/30 text-[11px]">
+                      ₱10.00 = 20 Reels & Shorts
+                    </span>
+                  </div>
+
+                  <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] text-slate-400 font-bold block">GCash Account Number:</span>
+                      <strong className="text-base text-emerald-300 font-mono tracking-wider">09914089646</strong>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCopyGcashNumber}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-1 transition cursor-pointer"
+                    >
+                      {copiedGcash ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedGcash ? 'Kina-copy!' : 'Copy'}</span>
+                    </button>
+                  </div>
+
+                  <p className="text-[10px] text-slate-300 font-semibold leading-relaxed">
+                    👉 Mag-send ng <strong>₱10.00 Pesos</strong> sa GCash number na <strong>09914089646</strong>. Pagkatapos mag-send, ilagay ang GCash Reference Number sa ibaba para ma-verify at ma-credit ng Admin ang iyong 10 Tokens (20 Reels).
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-300 mb-1">
+                    GCash Sender Number
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Hal. 09171234567"
+                    value={subGcashNum}
+                    onChange={(e) => setSubGcashNum(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 text-white rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-slate-300 mb-1">
+                    GCash Reference Number (13 Digits) <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Hal. 1002345678901"
+                    value={subGcashRef}
+                    onChange={(e) => setSubGcashRef(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 text-white font-mono tracking-wider text-amber-300 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div className="pt-2 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowUploadModal(false)}
+                    className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold text-xs cursor-pointer"
+                  >
+                    Kanselahin
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingTokenSub}
+                    className="flex-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-black py-2.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-amber-950/50"
+                  >
+                    {isSubmittingTokenSub ? (
+                      <span>Isinusumite...</span>
+                    ) : (
+                      <>
+                        <Coins className="w-4 h-4" />
+                        <span>Isumite Payment Reference</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
+
+          </div>
         </div>
       )}
 

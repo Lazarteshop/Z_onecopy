@@ -135,7 +135,24 @@ export interface ReelVideo {
   likedBy?: string[];
   watchedBy?: string[];
   addedBy?: string;
+  addedByUserId?: string;
+  status?: 'approved' | 'pending' | 'disapproved';
+  disapproveReason?: string;
   createdAt: string;
+}
+
+export interface ReelTokenSubscription {
+  id: string;
+  userId?: string;
+  userName: string;
+  gcashNumber: string;
+  gcashRefNo: string;
+  packageName: string;
+  price: number;
+  tokensGranted: number;
+  status: 'pending' | 'approved' | 'declined';
+  createdAt: string;
+  approvedAt?: string;
 }
 
 

@@ -91,7 +91,10 @@ Ang **Z-oneApp** ay ang #1 All-in-One Digital Community, Website Viewer, at Rewa
   };
 
   return (
-    <div className="w-full bg-black border-2 border-amber-400 rounded-3xl p-5 sm:p-6 shadow-2xl text-white relative overflow-hidden transition-all duration-300">
+    <div 
+      className="w-full bg-black border-2 border-amber-400 rounded-3xl p-5 sm:p-6 shadow-2xl text-white relative overflow-hidden transition-all duration-300"
+      style={{ backgroundColor: '#000000', color: '#ffffff' }}
+    >
       
       {/* Decorative Background Glow Effect */}
       <div className="absolute top-0 right-0 w-72 h-72 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -100,7 +103,7 @@ Ang **Z-oneApp** ay ang #1 All-in-One Digital Community, Website Viewer, at Rewa
       {/* TOP HEADER BADGE & CONTROLS */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4 relative z-10">
         <div className="flex items-center gap-2">
-          <span className="bg-amber-400 text-slate-950 font-black text-[10px] sm:text-xs uppercase px-3 py-1 rounded-full flex items-center gap-1.5 shadow-md tracking-wider">
+          <span className="bg-amber-400 text-slate-950 font-black text-[10px] sm:text-xs uppercase px-3 py-1 rounded-full flex items-center gap-1.5 shadow-md tracking-wider" style={{ backgroundColor: '#fbbf24', color: '#020617' }}>
             <Zap className="w-3.5 h-3.5 fill-slate-950 text-slate-950" />
             <span>OFFICIAL PROMO BANNER</span>
           </span>
@@ -114,6 +117,7 @@ Ang **Z-oneApp** ay ang #1 All-in-One Digital Community, Website Viewer, at Rewa
             type="button"
             onClick={handleCopy}
             className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs px-3.5 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow-sm cursor-pointer hover:scale-105 active:scale-95"
+            style={{ backgroundColor: '#fbbf24', color: '#020617' }}
             title="Kopyahin ang buong banner text"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-950" /> : <Copy className="w-3.5 h-3.5 text-slate-950" />}
@@ -146,11 +150,11 @@ Ang **Z-oneApp** ay ang #1 All-in-One Digital Community, Website Viewer, at Rewa
         
         {/* MAIN HEADLINE */}
         <div className="space-y-2">
-          <h2 className="text-xl sm:text-2xl md:text-3xl font-black text-amber-300 tracking-tight leading-tight flex items-center gap-2">
+          <h2 className="text-xl sm:text-2xl md:text-3xl font-black text-amber-300 tracking-tight leading-tight flex items-center gap-2" style={{ color: '#fcd34d' }}>
             <span>🚀 Ano ang Z-oneApp?</span>
           </h2>
-          <p className="text-xs sm:text-sm text-slate-100 font-bold leading-relaxed max-w-2xl bg-slate-900/90 border border-slate-800 p-3.5 rounded-2xl">
-            Ang <span className="text-amber-300 font-black">Z-oneApp</span> ay ang #1 All-in-One Digital Community, Website Viewer, at Micro-Earning Platform sa Pilipinas na nagbibigay ng tunay na pagkakataon upang mag-explore ng mga negosyo at kumita araw-araw sa pamamagitan ng GCash!
+          <p className="text-xs sm:text-sm text-slate-100 font-bold leading-relaxed max-w-2xl bg-slate-900/90 border border-slate-800 p-3.5 rounded-2xl" style={{ backgroundColor: '#0f172a', color: '#f8fafc' }}>
+            Ang <span className="text-amber-300 font-black" style={{ color: '#fcd34d' }}>Z-oneApp</span> ay ang #1 All-in-One Digital Community, Website Viewer, at Micro-Earning Platform sa Pilipinas na nagbibigay ng tunay na pagkakataon upang mag-explore ng mga negosyo at kumita araw-araw sa pamamagitan ng GCash!
           </p>
         </div>
 

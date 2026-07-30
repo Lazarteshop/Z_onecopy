@@ -23,7 +23,13 @@ import {
   Trash2,
   UserX,
   ShieldAlert,
-  X
+  X,
+  Video,
+  Play,
+  Coins,
+  Ticket,
+  ExternalLink,
+  Eye
 } from 'lucide-react';
 import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd } from '../types';
 
@@ -66,7 +72,125 @@ export default function AdminPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'subscriptions' | 'users' | 'merchant_ads' | 'settings'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'settings'>('overview');
+  const [reelsData, setReelsData] = useState<{ reels: any[]; reelSubscriptions: any[] }>({ reels: [], reelSubscriptions: [] });
+  const [playingReelId, setPlayingReelId] = useState<string | null>(null);
+  const [disapproveReasons, setDisapproveReasons] = useState<{ [id: string]: string }>({});
+
+  const fetchAdminReels = async () => {
+    try {
+      const res = await fetch('/api/admin/reels', {
+        headers: { 'Authorization': token }
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setReelsData({
+          reels: result.reels || [],
+          reelSubscriptions: result.reelSubscriptions || []
+        });
+      }
+    } catch (e) {
+      console.error('Error fetching admin reels:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchAdminReels();
+  }, [token]);
+
+  const handleApproveReel = async (reelId: string) => {
+    setProcessingId(reelId);
+    try {
+      const res = await fetch(`/api/admin/reels/${reelId}/approve`, {
+        method: 'POST',
+        headers: { 'Authorization': token }
+      });
+      const result = await res.json();
+      if (res.ok) {
+        triggerNotification(`🟢 ${result.message}`, 'success');
+        fetchAdminReels();
+      } else {
+        triggerNotification(`⚠️ ${result.error || 'Hindi ma-approve ang Reel.'}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      triggerNotification('⚠️ Error communicating with server.', 'error');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleDisapproveReel = async (reelId: string) => {
+    const reason = disapproveReasons[reelId] || 'Community guidelines violation';
+    setProcessingId(reelId);
+    try {
+      const res = await fetch(`/api/admin/reels/${reelId}/disapprove`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ reason })
+      });
+      const result = await res.json();
+      if (res.ok) {
+        triggerNotification(`🔴 ${result.message}`, 'info');
+        fetchAdminReels();
+      } else {
+        triggerNotification(`⚠️ ${result.error || 'Hindi ma-disapprove ang Reel.'}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      triggerNotification('⚠️ Error communicating with server.', 'error');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleApproveReelSub = async (subId: string) => {
+    setProcessingId(subId);
+    try {
+      const res = await fetch(`/api/admin/reels/subscriptions/${subId}/approve`, {
+        method: 'POST',
+        headers: { 'Authorization': token }
+      });
+      const result = await res.json();
+      if (res.ok) {
+        triggerNotification(`🟢 ${result.message}`, 'success');
+        fetchAdminReels();
+        fetchAdminData();
+      } else {
+        triggerNotification(`⚠️ ${result.error || 'Hindi ma-approve ang Token Subscription.'}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      triggerNotification('⚠️ Error communicating with server.', 'error');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleDeclineReelSub = async (subId: string) => {
+    setProcessingId(subId);
+    try {
+      const res = await fetch(`/api/admin/reels/subscriptions/${subId}/decline`, {
+        method: 'POST',
+        headers: { 'Authorization': token }
+      });
+      const result = await res.json();
+      if (res.ok) {
+        triggerNotification(`🔴 ${result.message}`, 'info');
+        fetchAdminReels();
+      } else {
+        triggerNotification(`⚠️ ${result.error || 'Hindi ma-decline ang Token Subscription.'}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      triggerNotification('⚠️ Error communicating with server.', 'error');
+    } finally {
+      setProcessingId(null);
+    }
+  };
 
   // QR Code upload states
   const [qrUploading, setQrUploading] = useState(false);
@@ -550,6 +674,22 @@ export default function AdminPanel({
           {merchantAds.filter(a => a.status === 'pending').length > 0 && (
             <span className="bg-rose-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold animate-pulse">
               {merchantAds.filter(a => a.status === 'pending').length}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('reels'); fetchAdminReels(); }}
+          className={`px-4 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 ${
+            activeSubTab === 'reels'
+              ? 'border-indigo-600 text-indigo-600 bg-white/70'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Video className="w-3.5 h-3.5 text-rose-500" />
+          <span>Reels & Tokens</span>
+          {(reelsData.reels.filter((r: any) => r.status === 'pending').length > 0 || reelsData.reelSubscriptions.filter((s: any) => s.status === 'pending').length > 0) && (
+            <span className="bg-rose-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold animate-pulse">
+              {reelsData.reels.filter((r: any) => r.status === 'pending').length + reelsData.reelSubscriptions.filter((s: any) => s.status === 'pending').length}
             </span>
           )}
         </button>
@@ -1273,6 +1413,236 @@ export default function AdminPanel({
                           </td>
                           <td className="p-3 text-[10px] text-slate-400 font-mono">
                             {new Date(ad.createdAt).toLocaleString('fil-PH', { hour12: true })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* SECTION: REELS & TOKENS MODERATION */}
+      {activeSubTab === 'reels' && (
+        <div className="space-y-6">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 space-y-6">
+            
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="font-black text-slate-950 text-base flex items-center gap-2">
+                  <Video className="w-5 h-5 text-rose-600" />
+                  <span>Reels Moderation & Token Subscriptions</span>
+                </h3>
+                <p className="text-xs text-slate-500 font-bold">
+                  Approve o i-disapprove ang Reels uploads ng users. (Approved reels lang ang mababawasan ng 0.50 tokens!)
+                </p>
+              </div>
+              <button
+                onClick={fetchAdminReels}
+                className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-xs px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>I-refresh Data</span>
+              </button>
+            </div>
+
+            {/* QUEUE 1: PENDING USER REELS FOR APPROVAL */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-2">
+                  <span>📹 Pending Reels Upload Queue</span>
+                  <span className="bg-rose-500 text-white text-[10px] px-2 py-0.5 rounded-full font-black">
+                    {reelsData.reels.filter((r: any) => r.status === 'pending').length}
+                  </span>
+                </h4>
+              </div>
+
+              {reelsData.reels.filter((r: any) => r.status === 'pending').length === 0 ? (
+                <div className="text-center py-8 bg-slate-50 border border-slate-200 rounded-2xl text-slate-400 text-xs font-bold">
+                  ✨ Walang nakapila na pending Reels para sa approval.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {reelsData.reels.filter((r: any) => r.status === 'pending').map((reel: any) => (
+                    <div key={reel.id} className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-extrabold text-slate-900 truncate max-w-[200px]">
+                          {reel.title || 'Untitled Reel'}
+                        </span>
+                        <span className="bg-rose-100 text-rose-800 text-[9px] font-black px-2 py-0.5 rounded-md uppercase">
+                          {reel.platform || 'video'}
+                        </span>
+                      </div>
+
+                      <div className="text-[11px] text-slate-500 font-semibold space-y-1">
+                        <div>👤 Submitted by: <strong className="text-slate-800">{reel.addedBy || 'User'}</strong></div>
+                        <div className="text-[10px] text-slate-400 font-mono">📅 Date: {new Date(reel.createdAt).toLocaleString('fil-PH')}</div>
+                      </div>
+
+                      {/* PLAY PREVIEW IN EMBED */}
+                      <div className="space-y-2">
+                        {playingReelId === reel.id ? (
+                          <div className="relative rounded-xl overflow-hidden bg-black aspect-[9/16] max-h-[280px]">
+                            <iframe
+                              src={reel.embedUrl}
+                              className="w-full h-full border-0"
+                              allow="autoplay; encrypted-media"
+                              allowFullScreen
+                            />
+                            <button
+                              onClick={() => setPlayingReelId(null)}
+                              className="absolute top-2 right-2 bg-slate-900/80 text-white text-[10px] font-black px-2.5 py-1 rounded-lg border border-slate-700"
+                            >
+                              Isara Preview
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setPlayingReelId(reel.id)}
+                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] px-3 py-1.5 rounded-xl flex items-center gap-1 transition cursor-pointer"
+                            >
+                              <Play className="w-3.5 h-3.5" />
+                              <span>i-Preview Video</span>
+                            </button>
+                            <a
+                              href={reel.originalUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-slate-500 hover:text-indigo-600 font-bold text-[11px] flex items-center gap-1"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                              <span>Buksan sa New Tab</span>
+                            </a>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* DISAPPROVE REASON INPUT & ACTIONS */}
+                      <div className="space-y-2 pt-2 border-t border-slate-200">
+                        <input
+                          type="text"
+                          placeholder="Dahilan kung disapproving (hal. Inappropriate content)"
+                          value={disapproveReasons[reel.id] || ''}
+                          onChange={(e) => setDisapproveReasons({ ...disapproveReasons, [reel.id]: e.target.value })}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-800 outline-none focus:border-rose-500"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            disabled={processingId === reel.id}
+                            onClick={() => handleDisapproveReel(reel.id)}
+                            className="flex-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-black text-xs py-2 rounded-xl transition cursor-pointer"
+                          >
+                            Disapprove (0 Tokens Deducted)
+                          </button>
+                          <button
+                            disabled={processingId === reel.id}
+                            onClick={() => handleApproveReel(reel.id)}
+                            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs py-2 rounded-xl transition cursor-pointer shadow-md"
+                          >
+                            Approve (-0.50 Tokens)
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* QUEUE 2: TOKEN SUBSCRIPTION REQUESTS (₱10 = 20 REELS) */}
+            <div className="space-y-3 pt-4 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-2">
+                  <span>🎟️ Token Subscription GCash Payment Requests</span>
+                  <span className="bg-amber-500 text-white text-[10px] px-2 py-0.5 rounded-full font-black">
+                    {reelsData.reelSubscriptions.filter((s: any) => s.status === 'pending').length}
+                  </span>
+                </h4>
+              </div>
+
+              {reelsData.reelSubscriptions.filter((s: any) => s.status === 'pending').length === 0 ? (
+                <div className="text-center py-6 bg-slate-50 border border-slate-200 rounded-2xl text-slate-400 text-xs font-bold">
+                  ✨ Walang nakapila na pending token payment request.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {reelsData.reelSubscriptions.filter((s: any) => s.status === 'pending').map((sub: any) => (
+                    <div key={sub.id} className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-3">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-black text-slate-900">
+                          {sub.userName || 'User'}
+                        </span>
+                        <span className="bg-emerald-600 text-white font-black text-[10px] px-2.5 py-0.5 rounded-full">
+                          ₱{sub.amount}.00 (10 Tokens / 20 Reels)
+                        </span>
+                      </div>
+
+                      <div className="text-[11px] text-slate-600 font-semibold space-y-1 bg-white p-2.5 rounded-xl border border-amber-100">
+                        <div>📱 GCash Mobile Number: <strong className="text-slate-900">{sub.gcashNumber}</strong></div>
+                        <div>🔑 GCash Ref No: <strong className="text-emerald-700 font-mono tracking-wider">{sub.gcashRefNo}</strong></div>
+                        <div className="text-[10px] text-slate-400 font-mono mt-1">📅 Date: {new Date(sub.createdAt).toLocaleString('fil-PH')}</div>
+                      </div>
+
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          disabled={processingId === sub.id}
+                          onClick={() => handleDeclineReelSub(sub.id)}
+                          className="flex-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-black text-xs py-2 rounded-xl transition cursor-pointer"
+                        >
+                          Decline Request
+                        </button>
+                        <button
+                          disabled={processingId === sub.id}
+                          onClick={() => handleApproveReelSub(sub.id)}
+                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs py-2 rounded-xl transition cursor-pointer shadow-md"
+                        >
+                          Approve (+10 Tokens)
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* VERIFIED REELS HISTORY */}
+            <div className="space-y-3 pt-4 border-t border-slate-100">
+              <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">
+                📋 Verified Approved / Disapproved Reels History ({reelsData.reels.filter((r: any) => r.status !== 'pending').length})
+              </h4>
+              
+              {reelsData.reels.filter((r: any) => r.status !== 'pending').length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs font-semibold text-slate-700 border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-400 uppercase text-[9px]">
+                        <th className="p-2.5">Title</th>
+                        <th className="p-2.5">Platform</th>
+                        <th className="p-2.5">User</th>
+                        <th className="p-2.5">Status</th>
+                        <th className="p-2.5">Date</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {reelsData.reels.filter((r: any) => r.status !== 'pending').map((r: any) => (
+                        <tr key={r.id} className="hover:bg-slate-50">
+                          <td className="p-2.5 font-bold text-slate-900">{r.title || 'Reel'}</td>
+                          <td className="p-2.5 text-[10px] font-mono uppercase">{r.platform}</td>
+                          <td className="p-2.5 text-[11px]">{r.addedBy || 'User'}</td>
+                          <td className="p-2.5">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                              r.status === 'approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                            }`}>
+                              {r.status}
+                            </span>
+                          </td>
+                          <td className="p-2.5 text-[10px] text-slate-400 font-mono">
+                            {new Date(r.createdAt).toLocaleDateString('fil-PH')}
                           </td>
                         </tr>
                       ))}

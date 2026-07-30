@@ -805,6 +805,7 @@ interface UserSession {
   invitedBy?: string; // referralCode of referrer
   isAdmin: boolean;
   isBanned?: boolean; // banned from Z-one or app
+  reelsTokens?: number; // Reels upload tokens (0.50 tokens = 1 reel)
   zonedUsers?: string[]; // userIds followed/zoned
   createdAt?: string;
   subscription?: Subscription;
@@ -910,7 +911,24 @@ interface ReelVideo {
   likedBy?: string[];
   watchedBy?: string[];
   addedBy?: string;
+  addedByUserId?: string;
+  status?: 'approved' | 'pending' | 'disapproved';
+  disapproveReason?: string;
   createdAt: string;
+}
+
+interface ReelTokenSubscription {
+  id: string;
+  userId?: string;
+  userName: string;
+  gcashNumber: string;
+  gcashRefNo: string;
+  packageName: string;
+  price: number;
+  tokensGranted: number;
+  status: 'pending' | 'approved' | 'declined';
+  createdAt: string;
+  approvedAt?: string;
 }
 
 const INITIAL_REELS: ReelVideo[] = [
@@ -951,6 +969,7 @@ interface DBStructure {
   activeCalls?: ActiveCall[];
   merchantAds?: MerchantAd[];
   reels?: ReelVideo[];
+  reelSubscriptions?: ReelTokenSubscription[];
 }
 
 // --- HELPER TO INITIALIZE AND GET DATABASE ---
@@ -2156,34 +2175,291 @@ app.get('/api/reels', (req, res) => {
     db.reels = [...INITIAL_REELS];
     saveDB(db);
   }
-  res.json({ reels: db.reels });
+
+  const authUserId = req.headers.authorization || (req.query.userId as string);
+  const user = authUserId ? db.users.find(u => u.id === authUserId) : null;
+  const isAdmin = user?.isAdmin || req.query.admin === 'true';
+
+  let filtered = db.reels;
+  if (!isAdmin) {
+    // Regular users only see approved reels (or legacy reels without status)
+    filtered = db.reels.filter(r => !r.status || r.status === 'approved');
+  }
+
+  res.json({ 
+    reels: filtered,
+    reelsTokens: user ? (user.reelsTokens || 0) : 0,
+    userReelsTokens: user ? (user.reelsTokens || 0) : 0
+  });
 });
 
 app.post('/api/reels', (req, res) => {
-  const { url, embedUrl, platform, title, addedBy } = req.body;
-  if (!url) {
-    return res.status(400).json({ error: 'URL is required' });
+  const { url, embedUrl, platform, title, addedBy, userId } = req.body;
+  if (!url || !url.trim()) {
+    return res.status(400).json({ error: 'Kailangan ibigay ang Video URL.' });
   }
 
   const db = loadDB();
   db.reels = db.reels || [...INITIAL_REELS];
 
+  const authUserId = req.headers.authorization || userId;
+  const user = authUserId ? db.users.find(u => u.id === authUserId) : null;
+  const isAdmin = user?.isAdmin === true;
+
+  if (!isAdmin) {
+    // User upload: Check token balance (0.50 tokens per reel upload required)
+    const currentTokens = user ? (user.reelsTokens || 0) : 0;
+    if (currentTokens < 0.50) {
+      return res.status(400).json({ 
+        error: `Kailangan mo ng 0.50 Tokens bawat Reel. Ang iyong kasalukuyang balance ay ${currentTokens.toFixed(2)} Tokens. Mag-subscribe ng '20 Reels & Shorts' package sa halagang ₱10.00 pesos sa GCash 09914089646.`,
+        needTokens: true,
+        currentTokens
+      });
+    }
+
+    const newReel: ReelVideo = {
+      id: 'reel-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+      url: url.trim(),
+      embedUrl: embedUrl || url.trim(),
+      platform: platform || 'tiktok',
+      title: title?.trim() || (platform === 'tiktok' ? '🎵 TikTok Reel Video' : platform === 'facebook' ? '📘 FB Reel Video' : '🎬 Reel Video'),
+      likes: 0,
+      addedBy: user ? user.name : (addedBy || 'User'),
+      addedByUserId: user ? user.id : undefined,
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    };
+
+    db.reels.unshift(newReel);
+    saveDB(db);
+
+    return res.json({ 
+      success: true, 
+      reel: newReel, 
+      reels: db.reels.filter(r => !r.status || r.status === 'approved'),
+      message: 'Matagumpay na naisumite ang iyong Reel! Isasailalim ito sa Review ng Admin. Ang 0.50 tokens ay mababawas LAMANG kapag ito ay MA-APPROVE ng Admin.' 
+    });
+  }
+
+  // Admin upload (Auto-approved, no tokens needed)
   const newReel: ReelVideo = {
     id: 'reel-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-    url,
-    embedUrl: embedUrl || url,
+    url: url.trim(),
+    embedUrl: embedUrl || url.trim(),
     platform: platform || 'tiktok',
-    title: title || (platform === 'tiktok' ? '🎵 TikTok Reel Video' : platform === 'facebook' ? '📘 FB Reel Video' : '🎬 Reel Video'),
+    title: title?.trim() || '🎬 Official Reel Video',
     likes: 0,
-    addedBy: addedBy || 'Admin',
+    addedBy: 'Admin',
+    status: 'approved',
     createdAt: new Date().toISOString()
   };
 
   db.reels.unshift(newReel);
   saveDB(db);
 
-  res.json({ success: true, reel: newReel, reels: db.reels });
+  res.json({ success: true, reel: newReel, reels: db.reels, message: 'Matagumpay na naidagdag ang Reel (Admin Approved)!' });
 });
+
+// TOKEN SUBSCRIPTION REQUEST (20 Reels = ₱10 pesos / 10 Tokens)
+app.post('/api/reels/token-subscription', (req, res) => {
+  const { userId, userName, gcashNumber, gcashRefNo } = req.body;
+  if (!gcashRefNo || !gcashRefNo.trim()) {
+    return res.status(400).json({ error: 'Kailangan ibigay ang GCash Reference Number.' });
+  }
+
+  const db = loadDB();
+  db.reelSubscriptions = db.reelSubscriptions || [];
+
+  const authUserId = req.headers.authorization || userId;
+  const user = authUserId ? db.users.find(u => u.id === authUserId) : null;
+
+  const newSub: ReelTokenSubscription = {
+    id: 'reel-sub-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    userId: user ? user.id : userId,
+    userName: user ? user.name : (userName || 'Guest User'),
+    gcashNumber: gcashNumber || 'GCash',
+    gcashRefNo: gcashRefNo.trim(),
+    packageName: '20 Reels & Shorts Package',
+    price: 10,
+    tokensGranted: 10, // 10 tokens = 20 reels @ 0.50 tokens/reel
+    status: 'pending',
+    createdAt: new Date().toISOString()
+  };
+
+  db.reelSubscriptions.unshift(newSub);
+  saveDB(db);
+
+  res.json({
+    success: true,
+    subscription: newSub,
+    message: `Matagumpay na naisumite ang iyong ₱10 = 20 Reels Token Subscription! Ibe-verify ng Admin ang GCash Reference No. (${gcashRefNo}) upang ma-credit ang iyong 10 Tokens.`
+  });
+});
+
+// ADMIN: GET ALL REELS & REEL SUBSCRIPTIONS
+app.get('/api/admin/reels', (req, res) => {
+  const adminId = req.headers.authorization;
+  if (!adminId) return res.status(401).json({ error: 'Unauthenticated.' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === adminId);
+  if (!admin || !admin.isAdmin) return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
+
+  res.json({
+    reels: db.reels || [],
+    reelSubscriptions: db.reelSubscriptions || []
+  });
+});
+
+// ADMIN: APPROVE REEL (Deducts 0.50 tokens from user)
+app.post('/api/admin/reels/:id/approve', (req, res) => {
+  const adminId = req.headers.authorization;
+  if (!adminId) return res.status(401).json({ error: 'Unauthenticated.' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === adminId);
+  if (!admin || !admin.isAdmin) return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
+
+  const { id } = req.params;
+  const reel = (db.reels || []).find(r => r.id === id);
+  if (!reel) return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
+
+  reel.status = 'approved';
+
+  // Deduct 0.50 tokens from the user who submitted this reel
+  if (reel.addedByUserId) {
+    const user = db.users.find(u => u.id === reel.addedByUserId);
+    if (user) {
+      user.reelsTokens = Math.max(0, Number(((user.reelsTokens || 0) - 0.5).toFixed(2)));
+      user.activityLogs = user.activityLogs || [];
+      user.activityLogs.unshift({
+        id: 'act-' + Date.now(),
+        type: 'reward',
+        title: '🎬 Approved Reel Video (-0.50 Tokens)',
+        amount: 0,
+        timestamp: new Date().toISOString(),
+        details: `In-approve ng Admin ang iyong Reel ("${reel.title || 'Reel Video'}"). Nabawasan ng 0.50 tokens ang iyong balance.`
+      });
+    }
+  }
+
+  saveDB(db);
+  res.json({ success: true, reel, reels: db.reels, message: 'Matagumpay na na-approve ang Reel at nabawasan ng 0.50 tokens ang user!' });
+});
+
+// ADMIN: DISAPPROVE REEL (0 tokens deducted!)
+app.post('/api/admin/reels/:id/disapprove', (req, res) => {
+  const adminId = req.headers.authorization;
+  if (!adminId) return res.status(401).json({ error: 'Unauthenticated.' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === adminId);
+  if (!admin || !admin.isAdmin) return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
+
+  const { id } = req.params;
+  const { reason } = req.body;
+  const reel = (db.reels || []).find(r => r.id === id);
+  if (!reel) return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
+
+  reel.status = 'disapproved';
+  reel.disapproveReason = reason || 'Community guidelines violation';
+
+  // NO TOKENS ARE DEDUCTED FROM USER WHEN REEL IS DISAPPROVED!
+  if (reel.addedByUserId) {
+    const user = db.users.find(u => u.id === reel.addedByUserId);
+    if (user) {
+      user.activityLogs = user.activityLogs || [];
+      user.activityLogs.unshift({
+        id: 'act-' + Date.now(),
+        type: 'bonus',
+        title: '❌ Disapproved Reel Video (0 Tokens Deducted)',
+        amount: 0,
+        timestamp: new Date().toISOString(),
+        details: `Hindi na-approve ng Admin ang iyong Reel ("${reel.title || 'Reel Video'}"). Dahilan: ${reel.disapproveReason}. Walang nabawas na tokens sa iyong account.`
+      });
+    }
+  }
+
+  saveDB(db);
+  res.json({ success: true, reel, reels: db.reels, message: 'Disapproved ang Reel. Walang nabawas na tokens sa user!' });
+});
+
+// ADMIN: APPROVE REEL TOKEN SUBSCRIPTION (Credits +10 tokens = 20 Reels)
+app.post('/api/admin/reels/subscriptions/:id/approve', (req, res) => {
+  const adminId = req.headers.authorization;
+  if (!adminId) return res.status(401).json({ error: 'Unauthenticated.' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === adminId);
+  if (!admin || !admin.isAdmin) return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
+
+  const { id } = req.params;
+  db.reelSubscriptions = db.reelSubscriptions || [];
+  const sub = db.reelSubscriptions.find(s => s.id === id);
+  if (!sub) return res.status(404).json({ error: 'Hindi mahanap ang subscription request.' });
+
+  sub.status = 'approved';
+  sub.approvedAt = new Date().toISOString();
+
+  // Find user and credit 10 tokens (20 reels @ 0.50 tokens/reel)
+  const targetUser = db.users.find(u => u.id === sub.userId || u.name.toLowerCase() === sub.userName.toLowerCase());
+  if (targetUser) {
+    targetUser.reelsTokens = Number(((targetUser.reelsTokens || 0) + (sub.tokensGranted || 10)).toFixed(2));
+    targetUser.activityLogs = targetUser.activityLogs || [];
+    targetUser.activityLogs.unshift({
+      id: 'act-' + Date.now(),
+      type: 'bonus',
+      title: '🎟️ Approved Reel Tokens (+10 Tokens / 20 Reels)',
+      amount: 0,
+      timestamp: new Date().toISOString(),
+      details: `In-approve ng Admin ang iyong ₱10 GCash payment (Ref: ${sub.gcashRefNo}). Naka-receive ka ng 10.00 Tokens (pwedeng mag-upload ng 20 Reels & Shorts)!`
+    });
+  }
+
+  saveDB(db);
+  res.json({ success: true, subscription: sub, message: 'In-approve ang Reel Token Subscription! Na-credit ang 10 tokens (20 reels).' });
+});
+
+// ADMIN: DECLINE REEL TOKEN SUBSCRIPTION
+app.post('/api/admin/reels/subscriptions/:id/decline', (req, res) => {
+  const adminId = req.headers.authorization;
+  if (!adminId) return res.status(401).json({ error: 'Unauthenticated.' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === adminId);
+  if (!admin || !admin.isAdmin) return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
+
+  const { id } = req.params;
+  db.reelSubscriptions = db.reelSubscriptions || [];
+  const sub = db.reelSubscriptions.find(s => s.id === id);
+  if (!sub) return res.status(404).json({ error: 'Hindi mahanap ang subscription request.' });
+
+  sub.status = 'declined';
+  saveDB(db);
+
+  res.json({ success: true, subscription: sub, message: 'Nadecline ang Reel Token Subscription request.' });
+});
+
+// ADMIN: DIRECTLY ADJUST USER REEL TOKENS
+app.post('/api/admin/users/:userId/tokens', (req, res) => {
+  const adminId = req.headers.authorization;
+  if (!adminId) return res.status(401).json({ error: 'Unauthenticated.' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === adminId);
+  if (!admin || !admin.isAdmin) return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
+
+  const { userId } = req.params;
+  const { tokens } = req.body;
+  const user = db.users.find(u => u.id === userId);
+  if (!user) return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+
+  user.reelsTokens = Math.max(0, Number((Number(tokens) || 0).toFixed(2)));
+  saveDB(db);
+
+  res.json({ success: true, reelsTokens: user.reelsTokens, message: `Na-update ang Reel Tokens ni ${user.name} sa ${user.reelsTokens} Tokens!` });
+});
+
 
 app.delete('/api/reels/:id', (req, res) => {
   const { id } = req.params;
