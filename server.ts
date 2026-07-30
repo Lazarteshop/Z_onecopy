@@ -1215,7 +1215,8 @@ const lastSyncedCache = {
   posts: new Map<string, string>(),
   directMessages: new Map<string, string>(),
   merchantAds: new Map<string, string>(),
-  reels: new Map<string, string>()
+  reels: new Map<string, string>(),
+  reelSubscriptions: new Map<string, string>()
 };
 
 function initLastSyncedCache(data: DBStructure) {
@@ -1247,6 +1248,11 @@ function initLastSyncedCache(data: DBStructure) {
   if (lastSyncedCache.reels.size === 0 && data.reels && data.reels.length > 0) {
     for (const r of data.reels) {
       lastSyncedCache.reels.set(r.id, JSON.stringify(r));
+    }
+  }
+  if (lastSyncedCache.reelSubscriptions.size === 0 && data.reelSubscriptions && data.reelSubscriptions.length > 0) {
+    for (const rs of data.reelSubscriptions) {
+      lastSyncedCache.reelSubscriptions.set(rs.id, JSON.stringify(rs));
     }
   }
 }
@@ -1397,7 +1403,40 @@ async function uploadToFirestore(data: DBStructure) {
       }
     }
 
+    const reelSubPromises: Promise<any>[] = [];
+    if (data.reelSubscriptions) {
+      for (const rs of data.reelSubscriptions) {
+        const rsStr = JSON.stringify(rs);
+        if (lastSyncedCache.reelSubscriptions.get(rs.id) !== rsStr) {
+          reelSubPromises.push((async () => {
+            try {
+              const rsDocRef = firestore!.collection('reel_subscriptions').doc(rs.id);
+              const { id, ...rsWithoutId } = rs;
+              await rsDocRef.set(rsWithoutId);
+              lastSyncedCache.reelSubscriptions.set(rs.id, rsStr);
+            } catch (rsErr) {
+              console.error(`Error saving Reel Subscription ${rs.id} to Firestore:`, rsErr);
+            }
+          })());
+        }
+      }
+    }
+
     const deletionPromises: Promise<any>[] = [];
+    
+    const currentReelSubIds = new Set(data.reelSubscriptions ? data.reelSubscriptions.map(rs => rs.id) : []);
+    for (const cachedId of lastSyncedCache.reelSubscriptions.keys()) {
+      if (!currentReelSubIds.has(cachedId)) {
+        deletionPromises.push((async () => {
+          try {
+            await firestore!.collection('reel_subscriptions').doc(cachedId).delete();
+            lastSyncedCache.reelSubscriptions.delete(cachedId);
+          } catch (delErr) {
+            console.error(`Error deleting Reel Subscription ${cachedId} from Firestore:`, delErr);
+          }
+        })());
+      }
+    }
     
     const currentReelIds = new Set(data.reels ? data.reels.map(r => r.id) : []);
     for (const cachedId of lastSyncedCache.reels.keys()) {
@@ -1469,7 +1508,7 @@ async function uploadToFirestore(data: DBStructure) {
       }
     }
 
-    const allPromises = [...userPromises, ...campPromises, ...postPromises, ...dmPromises, ...maPromises, ...reelPromises, ...deletionPromises];
+    const allPromises = [...userPromises, ...campPromises, ...postPromises, ...dmPromises, ...maPromises, ...reelPromises, ...reelSubPromises, ...deletionPromises];
     if (allPromises.length > 0) {
       await Promise.all(allPromises);
       console.log(`☁️ GCash Click-Earn: Firestore cloud backup completed. Synced ${allPromises.length} updates/deletes.`);
@@ -1550,6 +1589,17 @@ async function syncFromFirestore() {
       console.log('No reels collection yet in Firestore');
     }
 
+    const reelSubsColRef = firestore.collection('reel_subscriptions');
+    let dbReelSubs: any[] = [];
+    try {
+      const reelSubsSnapshot = await reelSubsColRef.get();
+      reelSubsSnapshot.forEach((docSnap) => {
+        dbReelSubs.push({ id: docSnap.id, ...docSnap.data() });
+      });
+    } catch (e) {
+      console.log('No reel_subscriptions collection yet in Firestore');
+    }
+
     if (dbUsers.length > 0) {
       console.log(`📱 Found ${dbUsers.length} users in Firestore. Overwriting local cache...`);
       const loadedDB: DBStructure = { 
@@ -1558,7 +1608,8 @@ async function syncFromFirestore() {
         posts: dbPosts.length > 0 ? dbPosts : undefined,
         directMessages: dbDMs.length > 0 ? dbDMs : undefined,
         merchantAds: dbMerchantAds.length > 0 ? dbMerchantAds : undefined,
-        reels: dbReels.length > 0 ? dbReels : INITIAL_REELS
+        reels: dbReels.length > 0 ? dbReels : INITIAL_REELS,
+        reelSubscriptions: dbReelSubs
       };
       
       // Update/synchronize admin details if needed
@@ -3637,7 +3688,8 @@ app.get('/api/admin/dashboard', (req, res) => {
 
   res.json({
     users: allUsersStats,
-    withdrawals: pendingAndAllWithdrawals
+    withdrawals: pendingAndAllWithdrawals,
+    reelSubscriptions: db.reelSubscriptions || []
   });
 });
 

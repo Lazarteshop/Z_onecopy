@@ -55,6 +55,7 @@ interface AdminDashboardData {
     userAvatar: string;
     request: WithdrawalRequest;
   }[];
+  reelSubscriptions?: any[];
 }
 
 interface AdminPanelProps {
@@ -292,6 +293,9 @@ export default function AdminPanel({
       if (res.ok) {
         const result = await res.json();
         setData(result);
+        if (result.reelSubscriptions) {
+          setReelsData(prev => ({ ...prev, reelSubscriptions: result.reelSubscriptions }));
+        }
       } else {
         const errorData = await res.json();
         triggerNotification(`⚠️ ${errorData.error || 'Hindi ma-load ang Admin Dashboard.'}`, 'error');
@@ -308,6 +312,7 @@ export default function AdminPanel({
     if (token) {
       fetchAdminData();
       fetchMerchantAds();
+      fetchAdminReels();
     }
   }, [token, activeSubTab]);
 
@@ -626,10 +631,10 @@ export default function AdminPanel({
       </div>
 
       {/* NAVIGATION TABS FOR SUB SECTIONS */}
-      <div className="flex border-b border-slate-200 gap-1 text-xs">
+      <div className="flex border-b border-slate-200 gap-1.5 text-xs overflow-x-auto whitespace-nowrap pb-1 scrollbar-thin scrollbar-thumb-indigo-200 touch-pan-x">
         <button
           onClick={() => setActiveSubTab('overview')}
-          className={`px-4 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer ${
+          className={`px-3.5 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer shrink-0 whitespace-nowrap ${
             activeSubTab === 'overview'
               ? 'border-indigo-600 text-indigo-600 bg-white/70'
               : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -639,22 +644,22 @@ export default function AdminPanel({
         </button>
         <button
           onClick={() => { setActiveSubTab('subscriptions'); }}
-          className={`px-4 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 ${
+          className={`px-3.5 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
             activeSubTab === 'subscriptions'
               ? 'border-indigo-600 text-indigo-600 bg-white/70'
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <span>Subscription Requests</span>
-          {users.filter(u => u.subscription?.status === 'pending').length > 0 && (
+          {(users.filter(u => u.subscription?.status === 'pending').length + (reelsData.reelSubscriptions || []).filter((s: any) => s.status === 'pending').length) > 0 && (
             <span className="bg-amber-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold animate-pulse">
-              {users.filter(u => u.subscription?.status === 'pending').length}
+              {users.filter(u => u.subscription?.status === 'pending').length + (reelsData.reelSubscriptions || []).filter((s: any) => s.status === 'pending').length}
             </span>
           )}
         </button>
         <button
           onClick={() => { setActiveSubTab('users'); setSelectedUser(null); }}
-          className={`px-4 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer ${
+          className={`px-3.5 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer shrink-0 whitespace-nowrap ${
             activeSubTab === 'users'
               ? 'border-indigo-600 text-indigo-600 bg-white/70'
               : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -664,7 +669,7 @@ export default function AdminPanel({
         </button>
         <button
           onClick={() => { setActiveSubTab('merchant_ads'); }}
-          className={`px-4 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 ${
+          className={`px-3.5 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
             activeSubTab === 'merchant_ads'
               ? 'border-indigo-600 text-indigo-600 bg-white/70'
               : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -679,7 +684,7 @@ export default function AdminPanel({
         </button>
         <button
           onClick={() => { setActiveSubTab('reels'); fetchAdminReels(); }}
-          className={`px-4 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 ${
+          className={`px-3.5 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
             activeSubTab === 'reels'
               ? 'border-indigo-600 text-indigo-600 bg-white/70'
               : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -695,7 +700,7 @@ export default function AdminPanel({
         </button>
         <button
           onClick={() => { setActiveSubTab('settings'); }}
-          className={`px-4 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 ${
+          className={`px-3.5 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
             activeSubTab === 'settings'
               ? 'border-indigo-600 text-indigo-600 bg-white/70'
               : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -881,77 +886,161 @@ export default function AdminPanel({
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             
             {/* PENDING REQUESTS COLUMN */}
-            <div className="lg:col-span-2 space-y-4">
-              <h4 className="text-xs uppercase font-extrabold text-slate-550 tracking-wider flex items-center gap-1.5">
-                <Clock className="w-4 h-4 text-amber-500" />
-                <span>Pending Requests ({users.filter(u => u.subscription?.status === 'pending').length})</span>
-              </h4>
+            <div className="lg:col-span-2 space-y-6">
 
-              {users.filter(u => u.subscription?.status === 'pending').length === 0 ? (
-                <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-slate-400 text-xs font-bold leading-relaxed">
-                  🎉 Walang nakabinbing Subscription Request sa ngayon. Lahat ng hiling ay naproseso na!
+              {/* SECTION A: TOKEN SUBSCRIPTION GCASH PAYMENT REQUESTS */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs uppercase font-extrabold text-rose-600 tracking-wider flex items-center gap-1.5">
+                    <Ticket className="w-4 h-4 text-rose-500" />
+                    <span>Token Subscription GCash Payments ({(reelsData.reelSubscriptions || []).filter((s: any) => s.status === 'pending').length} Pending)</span>
+                  </h4>
+                  <span className="text-[10px] bg-rose-50 border border-rose-200 text-rose-700 font-bold px-2 py-0.5 rounded-full">
+                    ₱10 = 10 Tokens (20 Reels)
+                  </span>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {users.filter(u => u.subscription?.status === 'pending').map((u) => (
-                    <div 
-                      key={u.id}
-                      className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col md:flex-row justify-between gap-4 items-center"
-                    >
-                      <div className="space-y-3 flex-1 w-full">
-                        <div className="flex items-center gap-2.5">
-                          <div className="bg-orange-50 border border-orange-100 p-1 rounded-full shrink-0 flex items-center justify-center w-10 h-10">
-                            {renderAvatar(u.avatar, "w-8 h-8")}
-                          </div>
-                          <div>
-                            <h4 className="font-black text-slate-900 text-xs leading-none">{u.name}</h4>
-                            <p className="text-[10px] text-slate-450 font-bold mt-1.5 font-mono">{u.email}</p>
-                          </div>
-                          
-                          <span className="ml-auto bg-amber-50 border border-amber-200 text-amber-700 font-extrabold px-2.5 py-1 rounded-xl text-xs shrink-0 text-right">
-                            {u.subscription?.requestedPlanName} <span className="block text-[10px] font-black text-amber-600">₱{u.subscription?.requestedAmount}</span>
-                          </span>
-                        </div>
 
-                        <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-150 text-[10px] space-y-1 text-slate-600 font-bold">
-                          <div className="flex justify-between">
-                            <span>Petsa ng Hiling:</span>
-                            <span className="text-slate-900 font-mono">
-                              {u.subscription?.requestedAt ? new Date(u.subscription.requestedAt).toLocaleString('fil-PH') : 'N/A'}
+                {(reelsData.reelSubscriptions || []).filter((s: any) => s.status === 'pending').length === 0 ? (
+                  <div className="bg-white border border-slate-200 rounded-2xl p-4 text-center text-slate-400 text-xs font-bold">
+                    ✨ Walang nakabinbing Token Subscription GCash payment request sa ngayon.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {(reelsData.reelSubscriptions || []).filter((s: any) => s.status === 'pending').map((s: any) => (
+                      <div 
+                        key={s.id}
+                        className="bg-white border-2 border-rose-100 rounded-2xl p-4 shadow-xs flex flex-col md:flex-row justify-between gap-4 items-center"
+                      >
+                        <div className="space-y-3 flex-1 w-full">
+                          <div className="flex items-center gap-2.5">
+                            <div className="bg-rose-50 border border-rose-100 p-2 rounded-full shrink-0 flex items-center justify-center w-10 h-10">
+                              <Coins className="w-5 h-5 text-rose-600" />
+                            </div>
+                            <div>
+                              <h4 className="font-black text-slate-900 text-xs leading-none">{s.userName}</h4>
+                              <p className="text-[10px] text-slate-400 font-bold mt-1 font-mono">ID: {s.userId}</p>
+                            </div>
+                            
+                            <span className="ml-auto bg-emerald-50 border border-emerald-200 text-emerald-800 font-black px-2.5 py-1 rounded-xl text-xs shrink-0 text-right">
+                              {s.packageName || '10 Tokens (20 Reels)'} <span className="block text-[10px] font-black text-emerald-600">₱{s.amount || 10}</span>
                             </span>
                           </div>
-                          <div className="flex justify-between">
-                            <span>Trial Activation:</span>
-                            <span className="text-slate-900 font-mono">
-                              {u.createdAt ? new Date(u.createdAt).toLocaleDateString('fil-PH') : 'N/A'}
-                            </span>
+
+                          <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-150 text-[10px] space-y-1.5 text-slate-700 font-bold">
+                            <div className="flex justify-between items-center">
+                              <span className="text-slate-500">GCash Mobile No:</span>
+                              <span className="text-slate-900 font-mono font-black text-xs bg-white px-2 py-0.5 rounded border border-slate-200">{s.gcashNumber}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-slate-500">GCash Ref No:</span>
+                              <span className="text-indigo-600 font-mono font-black text-xs bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">{s.gcashRefNo}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-[9px] text-slate-400 pt-1 border-t border-slate-200/60">
+                              <span>Petsa ng Bayad:</span>
+                              <span className="font-mono">{s.createdAt ? new Date(s.createdAt).toLocaleString('fil-PH') : 'N/A'}</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      {/* ACTIONS */}
-                      <div className="flex md:flex-col justify-end gap-2 shrink-0 w-full md:w-[150px]">
-                        <button
-                          onClick={() => handleSubscriptionAction(u.id, 'approve')}
-                          disabled={processingId !== null}
-                          className="flex-1 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-extrabold text-[11px] py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shadow-emerald-50"
-                        >
-                          <CheckCircle className="w-3.5 h-3.5" />
-                          <span>I-Approve</span>
-                        </button>
-                        <button
-                          onClick={() => handleSubscriptionAction(u.id, 'decline')}
-                          disabled={processingId !== null}
-                          className="flex-1 bg-rose-50 border border-rose-200 hover:bg-rose-100 disabled:opacity-50 text-rose-600 font-extrabold text-[11px] py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <XCircle className="w-3.5 h-3.5" />
-                          <span>I-Decline</span>
-                        </button>
+                        {/* ACTIONS FOR REEL TOKEN SUB */}
+                        <div className="flex md:flex-col justify-end gap-2 shrink-0 w-full md:w-[150px]">
+                          <button
+                            onClick={() => handleApproveReelSub(s.id)}
+                            disabled={processingId !== null}
+                            className="flex-1 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-extrabold text-[11px] py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shadow-emerald-50"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            <span>I-Approve (+10 Tokens)</span>
+                          </button>
+                          <button
+                            onClick={() => handleDeclineReelSub(s.id)}
+                            disabled={processingId !== null}
+                            className="flex-1 bg-rose-50 border border-rose-200 hover:bg-rose-100 disabled:opacity-50 text-rose-600 font-extrabold text-[11px] py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            <span>I-Decline</span>
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* SECTION B: APP VIP SUBSCRIPTIONS */}
+              <div className="space-y-4 pt-2 border-t border-slate-200/80">
+                <h4 className="text-xs uppercase font-extrabold text-slate-550 tracking-wider flex items-center gap-1.5">
+                  <Clock className="w-4 h-4 text-amber-500" />
+                  <span>VIP App Access Subscriptions ({users.filter(u => u.subscription?.status === 'pending').length} Pending)</span>
+                </h4>
+
+                {users.filter(u => u.subscription?.status === 'pending').length === 0 ? (
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 text-center text-slate-400 text-xs font-bold leading-relaxed">
+                    🎉 Walang nakabinbing VIP App Subscription Request.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {users.filter(u => u.subscription?.status === 'pending').map((u) => (
+                      <div 
+                        key={u.id}
+                        className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col md:flex-row justify-between gap-4 items-center"
+                      >
+                        <div className="space-y-3 flex-1 w-full">
+                          <div className="flex items-center gap-2.5">
+                            <div className="bg-orange-50 border border-orange-100 p-1 rounded-full shrink-0 flex items-center justify-center w-10 h-10">
+                              {renderAvatar(u.avatar, "w-8 h-8")}
+                            </div>
+                            <div>
+                              <h4 className="font-black text-slate-900 text-xs leading-none">{u.name}</h4>
+                              <p className="text-[10px] text-slate-450 font-bold mt-1.5 font-mono">{u.email}</p>
+                            </div>
+                            
+                            <span className="ml-auto bg-amber-50 border border-amber-200 text-amber-700 font-extrabold px-2.5 py-1 rounded-xl text-xs shrink-0 text-right">
+                              {u.subscription?.requestedPlanName} <span className="block text-[10px] font-black text-amber-600">₱{u.subscription?.requestedAmount}</span>
+                            </span>
+                          </div>
+
+                          <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-150 text-[10px] space-y-1 text-slate-600 font-bold">
+                            <div className="flex justify-between">
+                              <span>Petsa ng Hiling:</span>
+                              <span className="text-slate-900 font-mono">
+                                {u.subscription?.requestedAt ? new Date(u.subscription.requestedAt).toLocaleString('fil-PH') : 'N/A'}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Trial Activation:</span>
+                              <span className="text-slate-900 font-mono">
+                                {u.createdAt ? new Date(u.createdAt).toLocaleDateString('fil-PH') : 'N/A'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* ACTIONS */}
+                        <div className="flex md:flex-col justify-end gap-2 shrink-0 w-full md:w-[150px]">
+                          <button
+                            onClick={() => handleSubscriptionAction(u.id, 'approve')}
+                            disabled={processingId !== null}
+                            className="flex-1 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-extrabold text-[11px] py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shadow-emerald-50"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            <span>I-Approve</span>
+                          </button>
+                          <button
+                            onClick={() => handleSubscriptionAction(u.id, 'decline')}
+                            disabled={processingId !== null}
+                            className="flex-1 bg-rose-50 border border-rose-200 hover:bg-rose-100 disabled:opacity-50 text-rose-600 font-extrabold text-[11px] py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            <span>I-Decline</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
             </div>
 
             {/* LIST OF CURRENT ACCESSIBLE USERS */}

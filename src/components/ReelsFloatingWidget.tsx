@@ -1395,15 +1395,16 @@ export default function ReelsFloatingWidget({
                     className={`flex-1 py-2.5 rounded-xl font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md ${
                       localTokens < 0.50
                         ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                        : 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white shadow-rose-950/50'
+                        : 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-950/50'
                     }`}
+                    style={localTokens >= 0.50 ? { backgroundColor: '#e11d48', color: '#ffffff' } : {}}
                   >
                     {isUploadingUserReel ? (
-                      <span>Isinusumite...</span>
+                      <span style={{ color: '#ffffff' }}>Isinusumite...</span>
                     ) : (
                       <>
-                        <Upload className="w-4 h-4" />
-                        <span>Isumite Para Sa Admin Approval</span>
+                        <Upload className="w-4 h-4 text-white" style={{ color: '#ffffff' }} />
+                        <span style={{ color: '#ffffff' }}>Isumite Para Sa Admin Approval</span>
                       </>
                     )}
                   </button>
@@ -1485,14 +1486,15 @@ export default function ReelsFloatingWidget({
                   <button
                     type="submit"
                     disabled={isSubmittingTokenSub}
-                    className="flex-1 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-black py-2.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-amber-950/50"
+                    className="flex-1 bg-amber-500 hover:bg-amber-400 text-black font-black py-2.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/30 border border-amber-300"
+                    style={{ backgroundColor: '#f59e0b', color: '#000000' }}
                   >
                     {isSubmittingTokenSub ? (
-                      <span>Isinusumite...</span>
+                      <span style={{ color: '#000000' }}>Isinusumite...</span>
                     ) : (
                       <>
-                        <Coins className="w-4 h-4" />
-                        <span>Isumite Payment Reference</span>
+                        <Coins className="w-4 h-4 text-black" style={{ color: '#000000' }} />
+                        <span style={{ color: '#000000' }}>Isumite Payment Reference</span>
                       </>
                     )}
                   </button>
