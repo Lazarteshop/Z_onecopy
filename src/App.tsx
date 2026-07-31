@@ -1052,9 +1052,9 @@ export default function App() {
   // 2. Open Website homepage for earning
   const handleOpenCampaign = (campaign: WebsiteCampaign) => {
     if (isSubscriptionExpired()) {
-      const isAllowed = campaign.reward >= 1.00 && campaign.reward <= 1.99;
+      const isAllowed = campaign.reward >= 0.05 && campaign.reward <= 1.99;
       if (!isAllowed) {
-        triggerNotification(`⚠️ Dahil expired na ang iyong access, maaari mo lamang buksan ang mga website na may reward na ₱1.00 up to ₱1.99. Mangyaring mag-renew ng subscription para sa buong access!`, 'error');
+        triggerNotification(`⚠️ Dahil expired na ang iyong access, maaari mo lamang buksan ang mga website na may reward na ₱0.05 up to ₱1.99. Mangyaring mag-renew ng subscription para sa buong access!`, 'error');
         return;
       }
     }
@@ -2404,7 +2404,7 @@ export default function App() {
                           <div>
                             <h3 className="font-extrabold text-amber-950 text-xs sm:text-sm">⚠️ Limitadong Earning Access (Expired Account)</h3>
                             <p className="text-[11px] sm:text-xs text-amber-850 font-extrabold leading-relaxed mt-0.5">
-                              Dahil expired na ang iyong access, binibigyan ka pa rin ng Z-oneApp ng libreng daily access para kumita! Ngunit maaari mo lamang buksan ang mga website campaign na may reward na <span className="text-amber-950 font-black underline">₱1.00 up to ₱1.99 lamang</span>.
+                              Dahil expired na ang iyong access, binibigyan ka pa rin ng Z-oneApp ng libreng daily access para kumita! Ngunit maaari mo lamang buksan ang mga website campaign na may reward na <span className="text-amber-950 font-black underline">₱0.05 up to ₱1.99 lamang</span>.
                             </p>
                           </div>
                         </div>
@@ -2565,7 +2565,7 @@ export default function App() {
                     <div id="website-campaigns-grid" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {filteredCampaigns.map((camp) => {
                         const isExpiredUser = isSubscriptionExpired();
-                        const isAllowedForExpired = camp.reward >= 1.00 && camp.reward <= 1.99;
+                        const isAllowedForExpired = camp.reward >= 0.05 && camp.reward <= 1.99;
                         const isLockedForUser = isExpiredUser && !isAllowedForExpired;
 
                         return (
