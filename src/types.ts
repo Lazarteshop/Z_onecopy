@@ -167,4 +167,20 @@ export interface ReelTokenSubscription {
   approvedAt?: string;
 }
 
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  avatar: string;
+  isAdmin: boolean;
+  stats: UserStats;
+  withdrawalsCount: number;
+  withdrawals?: WithdrawalRequest[];
+  referralCode: string;
+  referredFriendsCount: number;
+  lastActivities: ActivityLog[];
+  createdAt?: string | null;
+  subscription?: Subscription | null;
+}
+
 

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import html2canvas from 'html2canvas';
 import { formatEmbedUrl } from '../utils/reels';
+import { SuccessStoryModal } from './SuccessStoryModal';
 import { 
   Shield, 
   Users, 
@@ -30,7 +32,9 @@ import {
   Coins,
   Ticket,
   ExternalLink,
-  Eye
+  Eye,
+  Download,
+  Trophy
 } from 'lucide-react';
 import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd } from '../types';
 
@@ -78,6 +82,7 @@ export default function AdminPanel({
   const [reelsData, setReelsData] = useState<{ reels: any[]; reelSubscriptions: any[]; reelRedemptions: any[] }>({ reels: [], reelSubscriptions: [], reelRedemptions: [] });
   const [playingReelId, setPlayingReelId] = useState<string | null>(null);
   const [disapproveReasons, setDisapproveReasons] = useState<{ [id: string]: string }>({});
+  const [showSuccessStoryModal, setShowSuccessStoryModal] = useState<boolean>(false);
 
   const fetchAdminReels = async () => {
     try {
@@ -570,15 +575,85 @@ export default function AdminPanel({
           </p>
         </div>
 
-        <button 
-          onClick={fetchAdminData}
-          id="refresh-admin-btn"
-          className="bg-white border border-slate-200 hover:bg-slate-100 active:bg-slate-200 text-slate-700 font-extrabold text-xs px-3 py-2 rounded-xl flex items-center gap-1.5 transition cursor-pointer shrink-0"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-indigo-600' : ''}`} />
-          <span>I-refresh Server</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setShowSuccessStoryModal(true)}
+            className="bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 transition cursor-pointer border border-amber-300 shrink-0"
+          >
+            <Trophy className="w-4 h-4 text-slate-950 shrink-0" />
+            <span className="whitespace-nowrap">🏆 Success Story Window</span>
+          </button>
+
+          <button 
+            onClick={fetchAdminData}
+            id="refresh-admin-btn"
+            className="bg-white border border-slate-200 hover:bg-slate-100 active:bg-slate-200 text-slate-700 font-extrabold text-xs px-3 py-2 rounded-xl flex items-center gap-1.5 transition cursor-pointer shrink-0"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-indigo-600' : ''}`} />
+            <span className="hidden sm:inline">I-refresh Server</span>
+          </button>
+        </div>
       </div>
+
+      {/* PROMINENT SUCCESS STORY BANNER CARD */}
+      {data && (() => {
+        const nonAdminList = data.users.filter(u => !u.isAdmin);
+        const topUser = [...nonAdminList].sort((a, b) => (b.stats?.balance || 0) - (a.stats?.balance || 0))[0];
+        return (
+          <div className="bg-gradient-to-r from-slate-950 via-blue-950 to-slate-900 border-2 border-amber-500/50 rounded-2xl p-4 sm:p-5 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4 text-white relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+            
+            <div className="flex items-center gap-3 sm:gap-4 relative z-10 w-full md:w-auto">
+              <div className="relative shrink-0">
+                {topUser?.avatar ? (
+                  <img
+                    src={topUser.avatar}
+                    alt={topUser.name}
+                    className="w-12 h-12 sm:w-14 sm:h-14 rounded-full border-2 border-amber-400 object-cover shadow-lg"
+                  />
+                ) : (
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 font-black flex items-center justify-center text-xl shadow-lg">
+                    🏆
+                  </div>
+                )}
+                <div className="absolute -bottom-1 -right-1 bg-amber-400 text-slate-950 text-[9px] font-black px-1.5 py-0.5 rounded-full border border-slate-950">
+                  #1
+                </div>
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="inline-flex items-center gap-1 text-[10px] font-black uppercase text-amber-400 tracking-wider">
+                  <Trophy className="w-3 h-3 shrink-0" />
+                  <span>Live Database Top Earner</span>
+                </div>
+                <h3 className="text-sm sm:text-lg font-black text-white truncate">
+                  {topUser ? (topUser.name || topUser.email) : 'Walang Data'}
+                </h3>
+                <p className="text-xs text-amber-300 font-extrabold">
+                  Wallet Balance: ₱{(topUser?.stats?.balance || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowSuccessStoryModal(true)}
+              className="relative z-10 w-full md:w-auto px-5 py-2.5 sm:py-3 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-amber-500/30 active:scale-95 transition cursor-pointer flex items-center justify-center gap-2 border border-amber-200 shrink-0 whitespace-nowrap"
+            >
+              <Trophy className="w-4 h-4 text-slate-950" />
+              <span>Buksan ang Success Story Popup</span>
+            </button>
+          </div>
+        );
+      })()}
+
+      {/* LIVE DATABASE SUCCESS STORY POPUP MODAL (ADMIN ONLY) */}
+      {data && (
+        <SuccessStoryModal
+          isOpen={showSuccessStoryModal}
+          onClose={() => setShowSuccessStoryModal(false)}
+          users={data.users}
+        />
+      )}
 
       {/* METRICS GRID */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
