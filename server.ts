@@ -3574,6 +3574,86 @@ app.post('/api/user/claim-referral-bonus', (req, res) => {
   res.json({ user: userSafe });
 });
 
+// GET REFERRAL WITHDRAWALS (For referrer to generate Congratulations Banner)
+app.get('/api/user/referral-withdrawals', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found.' });
+  }
+
+  const referralWithdrawals: any[] = [];
+  
+  if (Array.isArray(user.referredFriends)) {
+    user.referredFriends.forEach(friend => {
+      const actualFriend = db.users.find(u => u.id === friend.id);
+      if (actualFriend && Array.isArray(actualFriend.withdrawals)) {
+        actualFriend.withdrawals.forEach(w => {
+          if (w.status === 'success') {
+            referralWithdrawals.push({
+              id: w.id,
+              friendId: actualFriend.id,
+              friendName: actualFriend.name || friend.name,
+              friendAvatar: actualFriend.avatar || friend.avatar || '👤',
+              amount: w.amount,
+              withdrawalDate: w.createdAt,
+              referenceNo: w.referenceNo || 'REF' + Math.floor(1000000000 + Math.random() * 9000000000)
+            });
+          }
+        });
+      }
+    });
+  }
+
+  res.json({ referralWithdrawals, referrerName: user.name });
+});
+
+// SIMULATE FRIEND WITHDRAWAL (For testing Success Withdrawal Banner)
+app.post('/api/admin/simulate-friend-withdrawal', (req, res) => {
+  const { friendId, amount } = req.body;
+  const db = loadDB();
+
+  const friendUser = db.users.find(u => u.id === friendId);
+  if (!friendUser) {
+    return res.status(404).json({ error: 'Friend user not found.' });
+  }
+
+  if (!friendUser.withdrawals) {
+    friendUser.withdrawals = [];
+  }
+
+  const simAmount = Number(amount) || 500;
+  const newWithdrawal = {
+    id: 'with-sim-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    accountName: friendUser.name,
+    gcashNumber: '0917' + Math.floor(1000000 + Math.random() * 9000000),
+    amount: simAmount,
+    status: 'success' as const,
+    createdAt: new Date().toLocaleDateString('fil-PH', { month: 'short', day: 'numeric', year: 'numeric' }),
+    referenceNo: 'REF' + Math.floor(1000000000 + Math.random() * 9000000000)
+  };
+
+  friendUser.withdrawals.unshift(newWithdrawal);
+
+  friendUser.activityLogs = friendUser.activityLogs || [];
+  friendUser.activityLogs.unshift({
+    id: 'act-sim-' + Date.now(),
+    type: 'withdraw',
+    title: 'GCash Cashout Approved!',
+    amount: simAmount,
+    timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+    details: `Simulated cashout of ₱${simAmount.toFixed(2)} approved!`
+  });
+
+  saveDB(db);
+  res.json({ success: true, withdrawal: newWithdrawal, message: `Simulated successful withdrawal for ${friendUser.name}!` });
+});
+
 // GET RECENT REAL PAYOUTS FOR MARQUEE
 app.get('/api/payouts/recent', (req, res) => {
   try {

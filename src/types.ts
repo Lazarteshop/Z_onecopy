@@ -46,6 +46,14 @@ export interface UserStats {
   dailyCheckInDate: string | null;
 }
 
+export interface ReferralWithdrawalInfo {
+  id: string;
+  amount: number;
+  status: 'pending' | 'processing' | 'success' | 'failed';
+  createdAt: string;
+  referenceNo?: string;
+}
+
 export interface ReferralFriend {
   id: string;
   name: string;
@@ -53,6 +61,7 @@ export interface ReferralFriend {
   currentEarnings: number;
   bonusClaimed: boolean;
   joinedAt: string;
+  successfulWithdrawals?: ReferralWithdrawalInfo[];
 }
 
 export interface Subscription {
