@@ -83,29 +83,56 @@ export const RedemptionBannerModal: React.FC<RedemptionBannerModalProps> = ({
 
       if (finalUrl) {
         setGeneratedImgUrl(finalUrl);
-        triggerDownload(finalUrl, fileName);
+        await triggerPwaDownloadOrShare(finalUrl, fileName);
       } else {
         throw new Error('Canvas render failed');
       }
     } catch (err: any) {
       console.error('Failed to generate redemption banner image:', err);
-      setDownloadError('Hindi maidownload ang litrato. I-long press o mag-screenshot na lamang.');
+      setDownloadError('Hindi maidownload nang kusa. Paki-long press ang larawan sa ibaba para i-save sa Photos.');
     } finally {
       setDownloading(false);
     }
   };
 
-  const triggerDownload = (dataUrl: string, filename: string) => {
+  const triggerPwaDownloadOrShare = async (dataUrl: string, filename: string) => {
     try {
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+      const file = new File([blob], filename, { type: 'image/png' });
+
+      // 1. Try Web Share API (Best for PWA / iOS / Android Mobile Photos app)
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: 'GCash Redemption Banner',
+            text: `Tignan ang GCash Redemption Receipt ni ${displayName}!`,
+          });
+          return;
+        } catch (shareErr: any) {
+          if (shareErr.name === 'AbortError') return; // User cancelled share dialog
+        }
+      }
+
+      // 2. Blob URL Download trigger
+      const blobUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.href = dataUrl;
+      link.href = blobUrl;
       link.download = filename;
-      link.target = '_blank';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
     } catch (e) {
-      console.error('Trigger download link error:', e);
+      console.error('PWA Blob download fallback error:', e);
+      // 3. Last fallback: Direct link click
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
   };
 

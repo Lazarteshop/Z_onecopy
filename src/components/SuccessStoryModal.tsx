@@ -66,7 +66,7 @@ export const SuccessStoryModal: React.FC<SuccessStoryModalProps> = ({
         displayName
       );
       if (generatedUrl) {
-        triggerDownload(generatedUrl, fileName);
+        await triggerPwaDownloadOrShare(generatedUrl, fileName);
       } else {
         throw new Error('Canvas render failed');
       }
@@ -388,18 +388,44 @@ export const SuccessStoryModal: React.FC<SuccessStoryModalProps> = ({
     });
   };
 
-  const triggerDownload = (url: string, fileName: string) => {
+  const triggerPwaDownloadOrShare = async (dataUrl: string, filename: string) => {
     try {
-      setGeneratedImgUrl(url);
+      setGeneratedImgUrl(dataUrl);
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+      const file = new File([blob], filename, { type: 'image/png' });
+
+      // 1. Try Web Share API (Best for PWA / iOS / Android Mobile Photos app)
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: 'Success Story Banner',
+            text: `Tignan ang Success Story ni ${displayName}!`,
+          });
+          return;
+        } catch (shareErr: any) {
+          if (shareErr.name === 'AbortError') return;
+        }
+      }
+
+      // 2. Blob URL Download trigger
+      const blobUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.download = fileName;
-      link.href = url;
-      link.target = '_blank';
+      link.href = blobUrl;
+      link.download = filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
     } catch (e) {
-      console.error('Trigger download link error:', e);
+      console.error('PWA Blob download fallback error:', e);
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = dataUrl;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     } finally {
       setDownloading(false);
     }
