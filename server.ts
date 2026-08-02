@@ -1043,6 +1043,37 @@ function loadDB(): DBStructure {
       if (!loaded.reels || loaded.reels.length === 0) {
         loaded.reels = INITIAL_REELS;
       }
+
+      // Automatically purge simulated/fake withdrawals (with-db-, with-sim-, Ago 2, 2026)
+      if (loaded.users && Array.isArray(loaded.users)) {
+        loaded.users.forEach(u => {
+          if (Array.isArray(u.withdrawals)) {
+            u.withdrawals = u.withdrawals.filter(w => {
+              if (w.id === 'with-1785655833689') return true; // Preserve Jonard Belleza real withdrawal
+              const isFake = w.id.startsWith('with-db-') || w.id.startsWith('with-sim-') || String(w.createdAt || '').includes('Ago 2, 2026');
+              return !isFake;
+            });
+          }
+        });
+
+        // Ensure Jonard Belleza has his real withdrawal
+        const jonardB = loaded.users.find(u => u.name && u.name.toLowerCase().includes('jonard belleza'));
+        if (jonardB) {
+          if (!Array.isArray(jonardB.withdrawals)) jonardB.withdrawals = [];
+          if (!jonardB.withdrawals.some(w => w.id === 'with-1785655833689')) {
+            jonardB.withdrawals.push({
+              id: 'with-1785655833689',
+              accountName: 'JONARD BELLEZA',
+              gcashNumber: '09932143141',
+              amount: 126,
+              status: 'success',
+              createdAt: '8/2/2026, 7:30:33 AM',
+              referenceNo: 'REF1136831562'
+            });
+          }
+        }
+      }
+
       cachedDB = loaded;
       return loaded;
     } catch (e) {
@@ -1605,7 +1636,53 @@ async function syncFromFirestore() {
     }
 
     if (dbUsers.length > 0) {
-      console.log(`📱 Found ${dbUsers.length} users in Firestore. Overwriting local cache...`);
+      console.log(`📱 Found ${dbUsers.length} users in Firestore. Cleaning fake records & updating local cache...`);
+
+      // Filter out all fake/simulated withdrawals from Firestore user records
+      for (const u of dbUsers) {
+        if (Array.isArray(u.withdrawals)) {
+          const originalLength = u.withdrawals.length;
+          u.withdrawals = u.withdrawals.filter((w: any) => {
+            if (w.id === 'with-1785655833689') return true; // Keep Jonard Belleza real withdrawal
+            const isFake = w.id.startsWith('with-db-') || w.id.startsWith('with-sim-') || String(w.createdAt || '').includes('Ago 2, 2026');
+            return !isFake;
+          });
+
+          // Sync cleaned withdrawals array back to Firestore if changed
+          if (u.withdrawals.length !== originalLength && firestore) {
+            try {
+              await firestore.collection('users').doc(u.id).update({ withdrawals: u.withdrawals });
+              console.log(`🧹 Cleaned ${originalLength - u.withdrawals.length} fake withdrawals from Firestore user ${u.name || u.id}`);
+            } catch (err) {
+              console.error(`Error updating cleaned user ${u.id} in Firestore:`, err);
+            }
+          }
+        }
+      }
+
+      // Ensure Jonard Belleza has his legitimate real withdrawal restored if missing
+      const jonardB = dbUsers.find((u: any) => u.name && u.name.toLowerCase().includes('jonard belleza'));
+      if (jonardB) {
+        if (!Array.isArray(jonardB.withdrawals)) jonardB.withdrawals = [];
+        if (!jonardB.withdrawals.some((w: any) => w.id === 'with-1785655833689')) {
+          const realW = {
+            id: 'with-1785655833689',
+            accountName: 'JONARD BELLEZA',
+            gcashNumber: '09932143141',
+            amount: 126,
+            status: 'success',
+            createdAt: '8/2/2026, 7:30:33 AM',
+            referenceNo: 'REF1136831562'
+          };
+          jonardB.withdrawals.push(realW);
+          if (firestore) {
+            try {
+              await firestore.collection('users').doc(jonardB.id).update({ withdrawals: jonardB.withdrawals });
+            } catch (e) {}
+          }
+        }
+      }
+
       const loadedDB: DBStructure = { 
         users: dbUsers,
         campaigns: dbCampaigns.length > 0 ? dbCampaigns : INITIAL_CAMPAIGNS,
@@ -2071,31 +2148,25 @@ app.get('/api/user/profile', (req, res) => {
     }
   }
 
-  // Update referred friends' progress live in referrer's profile screen
-  // By matching referredFriends with their actual current earnings on our DB!
+  // Update referred friends' progress and real successful withdrawals live in referrer's profile screen
+  // By matching referredFriends with their actual current earnings and withdrawals on our DB!
   let isFriendListModified = false;
   const synchronizedReferredFriends = user.referredFriends.map(friend => {
-    const actualFriendUser = db.users.find(u => u.id === friend.id);
-    if (actualFriendUser && actualFriendUser.stats.lifetimeEarnings !== friend.currentEarnings) {
-      isFriendListModified = true;
-      return {
-        ...friend,
-        currentEarnings: actualFriendUser.stats.lifetimeEarnings
-      };
-    }
-    return friend;
+    const actualFriendUser = db.users.find(u => u.id === friend.id || u.name === friend.name);
+    const realSuccessWithdrawals = actualFriendUser && Array.isArray(actualFriendUser.withdrawals)
+      ? actualFriendUser.withdrawals.filter((w: any) => w.status === 'success')
+      : [];
+    
+    return {
+      ...friend,
+      avatar: actualFriendUser ? actualFriendUser.avatar : friend.avatar,
+      currentEarnings: actualFriendUser ? actualFriendUser.stats.lifetimeEarnings : friend.currentEarnings,
+      withdrawals: realSuccessWithdrawals
+    };
   });
 
-  if (isFriendListModified) {
-    user.referredFriends = synchronizedReferredFriends;
-    dbChanged = true;
-  }
-
-  if (dbChanged) {
-    saveDB(db);
-  }
-
   const { password: _, ...userSafe } = user as any;
+  userSafe.referredFriends = synchronizedReferredFriends;
   res.json({ user: userSafe });
 });
 
@@ -3572,238 +3643,6 @@ app.post('/api/user/claim-referral-bonus', (req, res) => {
   saveDB(db);
   const { password: _, ...userSafe } = user as any;
   res.json({ user: userSafe });
-});
-
-// GET REFERRAL WITHDRAWALS (Directly from database for referrer to generate Congratulations Banner)
-app.get('/api/user/referral-withdrawals', (req, res) => {
-  const userId = req.headers.authorization;
-  if (!userId) {
-    return res.status(401).json({ error: 'Unauthenticated.' });
-  }
-
-  const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
-  if (!user) {
-    return res.status(404).json({ error: 'User not found.' });
-  }
-
-  const referralWithdrawals: any[] = [];
-  const addedIds = new Set<string>();
-  let hasDbChanges = false;
-
-  const userRefCode = user.referralCode;
-
-  // 1. Query all users in database whose invitedBy matches this user's referralCode, id, or email
-  db.users.forEach(u => {
-    const isReferredByMe = (u.invitedBy && (u.invitedBy === userRefCode || u.invitedBy === user.id || u.invitedBy === user.email)) ||
-                           (Array.isArray(user.referredFriends) && user.referredFriends.some(rf => rf.id === u.id));
-
-    if (isReferredByMe) {
-      if (Array.isArray(u.withdrawals)) {
-        u.withdrawals.forEach(w => {
-          if (w.status === 'success' && !addedIds.has(w.id)) {
-            addedIds.add(w.id);
-            referralWithdrawals.push({
-              id: w.id,
-              friendId: u.id,
-              friendName: u.name,
-              friendAvatar: u.avatar || '👤',
-              amount: w.amount,
-              withdrawalDate: w.createdAt,
-              referenceNo: w.referenceNo || ('REF' + Math.floor(1000000000 + Math.random() * 9000000000))
-            });
-          }
-        });
-      }
-    }
-  });
-
-  // 2. Also check user.referredFriends array from user document in database
-  if (Array.isArray(user.referredFriends) && user.referredFriends.length > 0) {
-    user.referredFriends.forEach(rf => {
-      let actualFriend = db.users.find(u => u.id === rf.id);
-      
-      // If actualFriend is not in db.users yet, create and persist their user record in database
-      if (!actualFriend) {
-        actualFriend = {
-          id: rf.id,
-          email: `${rf.id}@example.ph`,
-          name: rf.name,
-          avatar: rf.avatar || '👤',
-          referralCode: 'REF-' + rf.id.toUpperCase(),
-          invitedBy: user.referralCode,
-          isAdmin: false,
-          stats: { balance: 150, lifetimeEarnings: rf.currentEarnings || 150, completedTasksCount: 5, dailyCheckInDate: null },
-          withdrawals: [],
-          activityLogs: [],
-          referredFriends: []
-        };
-        db.users.push(actualFriend);
-        hasDbChanges = true;
-      }
-
-      if (!actualFriend.withdrawals) {
-        actualFriend.withdrawals = [];
-      }
-
-      // Check for existing successful withdrawals
-      actualFriend.withdrawals.forEach(w => {
-        if (w.status === 'success' && !addedIds.has(w.id)) {
-          addedIds.add(w.id);
-          referralWithdrawals.push({
-            id: w.id,
-            friendId: actualFriend!.id,
-            friendName: actualFriend!.name || rf.name,
-            friendAvatar: actualFriend!.avatar || rf.avatar || '👤',
-            amount: w.amount,
-            withdrawalDate: w.createdAt,
-            referenceNo: w.referenceNo || ('REF' + Math.floor(1000000000 + Math.random() * 9000000000))
-          });
-        }
-      });
-
-      // If friend has earnings >= 100 or is in referred list but has no successful withdrawal recorded in db yet, seed a real db withdrawal for them!
-      if (actualFriend.withdrawals.filter(w => w.status === 'success').length === 0) {
-        const autoWithdrawal = {
-          id: 'with-db-' + actualFriend.id + '-' + Date.now(),
-          accountName: actualFriend.name,
-          gcashNumber: '0917' + Math.floor(1000000 + Math.random() * 9000000),
-          amount: 250.00,
-          status: 'success' as const,
-          createdAt: new Date().toLocaleDateString('fil-PH', { month: 'short', day: 'numeric', year: 'numeric' }),
-          referenceNo: 'REF' + Math.floor(1000000000 + Math.random() * 9000000000)
-        };
-        actualFriend.withdrawals.unshift(autoWithdrawal);
-        hasDbChanges = true;
-
-        if (!addedIds.has(autoWithdrawal.id)) {
-          addedIds.add(autoWithdrawal.id);
-          referralWithdrawals.push({
-            id: autoWithdrawal.id,
-            friendId: actualFriend.id,
-            friendName: actualFriend.name,
-            friendAvatar: actualFriend.avatar || '👤',
-            amount: autoWithdrawal.amount,
-            withdrawalDate: autoWithdrawal.createdAt,
-            referenceNo: autoWithdrawal.referenceNo
-          });
-        }
-      }
-    });
-  }
-
-  // 3. Fallback: If still empty (e.g. no referred friends yet), search all successful withdrawals across ALL users in database
-  if (referralWithdrawals.length === 0) {
-    db.users.forEach(u => {
-      if (Array.isArray(u.withdrawals)) {
-        u.withdrawals.forEach(w => {
-          if (w.status === 'success' && !addedIds.has(w.id)) {
-            addedIds.add(w.id);
-            referralWithdrawals.push({
-              id: w.id,
-              friendId: u.id,
-              friendName: u.name,
-              friendAvatar: u.avatar || '👤',
-              amount: w.amount,
-              withdrawalDate: w.createdAt,
-              referenceNo: w.referenceNo || ('REF' + Math.floor(1000000000 + Math.random() * 9000000000))
-            });
-          }
-        });
-      }
-    });
-  }
-
-  if (hasDbChanges) {
-    saveDB(db);
-    if (isFirestoreActive && firestore) {
-      try {
-        db.users.forEach(u => {
-          firestore.collection('users').doc(u.id).set(u, { merge: true }).catch((e: any) => console.error(e));
-        });
-      } catch (e) {
-        console.error('Firestore sync error:', e);
-      }
-    }
-  }
-
-  res.json({ referralWithdrawals, referrerName: user.name });
-});
-
-// SIMULATE FRIEND WITHDRAWAL (For testing Success Withdrawal Banner - saves directly to database)
-app.post('/api/admin/simulate-friend-withdrawal', (req, res) => {
-  const { friendId, amount } = req.body;
-  const db = loadDB();
-
-  let friendUser = db.users.find(u => u.id === friendId);
-  if (!friendUser) {
-    // Check inside referredFriends of all users in db
-    db.users.forEach(u => {
-      const match = u.referredFriends?.find(f => f.id === friendId);
-      if (match) {
-        friendUser = {
-          id: match.id,
-          email: `${match.id}@example.ph`,
-          name: match.name,
-          avatar: match.avatar || '👤',
-          referralCode: 'REF-' + match.id.toUpperCase(),
-          invitedBy: u.referralCode,
-          isAdmin: false,
-          stats: { balance: 250, lifetimeEarnings: match.currentEarnings || 250, completedTasksCount: 10, dailyCheckInDate: null },
-          withdrawals: [],
-          activityLogs: [],
-          referredFriends: []
-        };
-        db.users.push(friendUser);
-      }
-    });
-  }
-
-  if (!friendUser) {
-    return res.status(404).json({ error: 'Friend user not found in database.' });
-  }
-
-  if (!friendUser.withdrawals) {
-    friendUser.withdrawals = [];
-  }
-
-  const simAmount = Number(amount) || 500;
-  const newWithdrawal = {
-    id: 'with-sim-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-    accountName: friendUser.name,
-    gcashNumber: '0917' + Math.floor(1000000 + Math.random() * 9000000),
-    amount: simAmount,
-    status: 'success' as const,
-    createdAt: new Date().toLocaleDateString('fil-PH', { month: 'short', day: 'numeric', year: 'numeric' }),
-    referenceNo: 'REF' + Math.floor(1000000000 + Math.random() * 9000000000)
-  };
-
-  friendUser.withdrawals.unshift(newWithdrawal);
-
-  friendUser.activityLogs = friendUser.activityLogs || [];
-  friendUser.activityLogs.unshift({
-    id: 'act-sim-' + Date.now(),
-    type: 'withdraw',
-    title: 'GCash Cashout Approved!',
-    amount: simAmount,
-    timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
-    details: `Simulated cashout of ₱${simAmount.toFixed(2)} approved!`
-  });
-
-  saveDB(db);
-
-  if (isFirestoreActive && firestore) {
-    try {
-      firestore.collection('users').doc(friendUser.id).set({
-        withdrawals: friendUser.withdrawals,
-        activityLogs: friendUser.activityLogs
-      }, { merge: true });
-    } catch (e) {
-      console.error('Firestore simulate friend withdrawal error:', e);
-    }
-  }
-
-  res.json({ success: true, withdrawal: newWithdrawal, message: `Matagumpay na nai-save sa database ang successful withdrawal para kay ${friendUser.name}!` });
 });
 
 // GET RECENT REAL PAYOUTS FOR MARQUEE

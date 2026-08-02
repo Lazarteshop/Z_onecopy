@@ -14,9 +14,12 @@ import {
   History,
   FileSpreadsheet,
   Coins,
-  DollarSign
+  DollarSign,
+  Download,
+  Trophy
 } from 'lucide-react';
 import { WithdrawalRequest, UserStats } from '../types';
+import { RedemptionBannerModal, RedemptionRecordItem } from './RedemptionBannerModal';
 
 interface GCashCashoutProps {
   stats: UserStats;
@@ -33,6 +36,8 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeBanner, setActiveBanner] = useState<RedemptionRecordItem | null>(null);
+  const [showBannerModal, setShowBannerModal] = useState(false);
 
   // Simple format validation helpers
   const validateGcashNumber = (num: string) => {
@@ -380,10 +385,28 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
                     <p className="text-xs font-black text-slate-900">-₱{req.amount.toFixed(2)}</p>
                     <div className="mt-1 flex items-center justify-end">
                       {req.status === 'success' ? (
-                        <span className="bg-emerald-100 text-emerald-800 text-[9px] font-bold rounded px-1.5 py-0.5 flex items-center gap-0.5">
-                          <Check className="w-2.5 h-2.5" />
-                          <span>{isTl ? "Success" : "Success"}</span>
-                        </span>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="bg-emerald-100 text-emerald-800 text-[9px] font-bold rounded px-1.5 py-0.5 flex items-center gap-0.5">
+                            <Check className="w-2.5 h-2.5" />
+                            <span>{isTl ? "Success" : "Success"}</span>
+                          </span>
+                          <button
+                            onClick={() => {
+                              setActiveBanner({
+                                userName: req.accountName || 'User',
+                                gcashNumber: req.gcashNumber,
+                                amount: req.amount,
+                                createdAt: req.createdAt,
+                                referenceNo: req.referenceNo
+                              });
+                              setShowBannerModal(true);
+                            }}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-black px-2 py-0.5 rounded transition shadow-xs flex items-center gap-0.5 cursor-pointer"
+                          >
+                            <Download className="w-2.5 h-2.5" />
+                            <span>Download Banner</span>
+                          </button>
+                        </div>
                       ) : req.status === 'processing' || req.status === 'pending' ? (
                         <span className="bg-amber-100 text-amber-800 text-[9px] font-bold rounded px-1.5 py-0.5 flex items-center gap-1 animate-pulse">
                           <Clock className="w-2.5 h-2.5" />
@@ -405,6 +428,12 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
         </div>
 
       </div>
+
+      <RedemptionBannerModal
+        isOpen={showBannerModal}
+        onClose={() => setShowBannerModal(false)}
+        redemption={activeBanner}
+      />
 
     </div>
   );

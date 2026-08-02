@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import html2canvas from 'html2canvas';
 import { formatEmbedUrl } from '../utils/reels';
 import { SuccessStoryModal } from './SuccessStoryModal';
+import { RedemptionBannerModal, RedemptionRecordItem } from './RedemptionBannerModal';
 import { 
   Shield, 
   Users, 
@@ -83,6 +84,8 @@ export default function AdminPanel({
   const [playingReelId, setPlayingReelId] = useState<string | null>(null);
   const [disapproveReasons, setDisapproveReasons] = useState<{ [id: string]: string }>({});
   const [showSuccessStoryModal, setShowSuccessStoryModal] = useState<boolean>(false);
+  const [showRedemptionModal, setShowRedemptionModal] = useState<boolean>(false);
+  const [activeRedemptionRecord, setActiveRedemptionRecord] = useState<RedemptionRecordItem | null>(null);
 
   const fetchAdminReels = async () => {
     try {
@@ -577,6 +580,34 @@ export default function AdminPanel({
 
         <div className="flex items-center gap-2 shrink-0">
           <button
+            onClick={() => {
+              // Pick first real successful withdrawal if available
+              const firstSuccess = data?.withdrawals?.find(w => w.request.status === 'success');
+              if (firstSuccess) {
+                setActiveRedemptionRecord({
+                  userName: firstSuccess.userName,
+                  userAvatar: firstSuccess.userAvatar,
+                  amount: firstSuccess.request.amount,
+                  createdAt: firstSuccess.request.createdAt,
+                  referenceNo: firstSuccess.request.referenceNo
+                });
+              } else {
+                setActiveRedemptionRecord({
+                  userName: 'Jonard Belleza',
+                  amount: 126.00,
+                  createdAt: '8/2/2026, 7:30:33 AM',
+                  referenceNo: 'REF1136831562'
+                });
+              }
+              setShowRedemptionModal(true);
+            }}
+            className="bg-gradient-to-r from-emerald-600 via-teal-500 to-emerald-600 hover:from-emerald-500 hover:to-teal-400 text-white font-black text-xs px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl flex items-center gap-1.5 shadow-md shadow-emerald-500/20 active:scale-95 transition cursor-pointer border border-emerald-400 shrink-0"
+          >
+            <Download className="w-4 h-4 text-white shrink-0" />
+            <span className="whitespace-nowrap">🎟️ Redemption Banners</span>
+          </button>
+
+          <button
             onClick={() => setShowSuccessStoryModal(true)}
             className="bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 transition cursor-pointer border border-amber-300 shrink-0"
           >
@@ -654,6 +685,13 @@ export default function AdminPanel({
           users={data.users}
         />
       )}
+
+      {/* REDEMPTION BANNER MODAL FOR REAL WITHDRAWALS */}
+      <RedemptionBannerModal
+        isOpen={showRedemptionModal}
+        onClose={() => setShowRedemptionModal(false)}
+        redemption={activeRedemptionRecord}
+      />
 
       {/* METRICS GRID */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -886,13 +924,31 @@ export default function AdminPanel({
                       </div>
                     </div>
 
-                    <div className="text-right">
+                    <div className="text-right flex flex-col items-end gap-1">
                       <span className="font-black text-slate-900 block">₱{item.request.amount.toFixed(2)}</span>
                       <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${
                         item.request.status === 'success' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-500'
                       }`}>
                         {item.request.status === 'success' ? 'SENT SUCCESSFULLY' : 'DECLINED / REFUNDED'}
                       </span>
+                      {item.request.status === 'success' && (
+                        <button
+                          onClick={() => {
+                            setActiveRedemptionRecord({
+                              userName: item.userName,
+                              userAvatar: item.userAvatar,
+                              amount: item.request.amount,
+                              createdAt: item.request.createdAt,
+                              referenceNo: item.request.referenceNo
+                            });
+                            setShowRedemptionModal(true);
+                          }}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-black px-2 py-0.5 rounded transition shadow-xs flex items-center gap-0.5 cursor-pointer mt-0.5"
+                        >
+                          <Download className="w-2.5 h-2.5" />
+                          <span>Download Banner</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}

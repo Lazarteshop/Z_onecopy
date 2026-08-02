@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   Users, 
   Gift, 
@@ -7,13 +7,13 @@ import {
   UserPlus, 
   Sparkles,
   RefreshCw,
-  Award,
+  Trophy,
   Download,
-  Trophy
+  CheckCircle2
 } from 'lucide-react';
 import { ReferralFriend } from '../types';
 import { soundEffects } from '../utils/audio';
-import { ReferralWithdrawalModal, ReferralWithdrawalItem } from './ReferralWithdrawalModal';
+import { RedemptionBannerModal, RedemptionRecordItem } from './RedemptionBannerModal';
 
 interface ReferralPanelProps {
   referralCode: string;
@@ -35,33 +35,8 @@ export default function ReferralPanel({
   const isTl = language === 'tl';
   const [copied, setCopied] = useState(false);
   const [simulating, setSimulating] = useState<string | null>(null);
-  
-  // Modal for Success Withdrawal Banner
-  const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
-  const [withdrawalItems, setWithdrawalItems] = useState<ReferralWithdrawalItem[]>([]);
-  const [referrerName, setReferrerName] = useState<string>('');
-
-  const fetchReferralWithdrawals = async () => {
-    if (!token) return;
-    try {
-      const res = await fetch('/api/user/referral-withdrawals', {
-        headers: { 'Authorization': token }
-      });
-      if (res.ok) {
-        const result = await res.json();
-        setWithdrawalItems(result.referralWithdrawals || []);
-        if (result.referrerName) setReferrerName(result.referrerName);
-      }
-    } catch (e) {
-      console.error('Error fetching referral withdrawals:', e);
-    }
-  };
-
-  useEffect(() => {
-    if (token) {
-      fetchReferralWithdrawals();
-    }
-  }, [token, referredFriends]);
+  const [activeBannerRecord, setActiveBannerRecord] = useState<RedemptionRecordItem | null>(null);
+  const [showBannerModal, setShowBannerModal] = useState(false);
 
   // Generate unique referral link
   const getReferralLink = () => {
@@ -128,32 +103,6 @@ export default function ReferralPanel({
         await onRefreshProfile(); // reload profile immediately
       } else {
         triggerNotification(isTl ? '⚠️ Failed to add simulated earnings.' : '⚠️ Failed to add simulated earnings.', 'error');
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setSimulating(null);
-    }
-  };
-
-  // Simulate friend successful withdrawal for generating Success Withdrawal Banner
-  const simulateFriendWithdrawal = async (friendId: string) => {
-    setSimulating(`with-${friendId}`);
-    try {
-      const res = await fetch('/api/admin/simulate-friend-withdrawal', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ friendId, amount: 500 })
-      });
-      if (res.ok) {
-        triggerNotification(isTl ? '🎉 Simula: Nakapag-withdraw si friend ng ₱500.00! Pwede mo nang i-download ang Success Withdrawal Banner.' : '🎉 Friend withdrawal simulated! You can now download the Success Withdrawal Banner.', 'success');
-        await onRefreshProfile();
-        await fetchReferralWithdrawals();
-        setShowWithdrawalModal(true);
-      } else {
-        triggerNotification('⚠️ Failed to simulate withdrawal.', 'error');
       }
     } catch (e) {
       console.error(e);
@@ -236,34 +185,15 @@ export default function ReferralPanel({
         </div>
       </div>
 
-      {/* SUCCESS WITHDRAWAL BANNER GENERATOR PROMPT BUTTON */}
-      <div className="pt-1">
-        <button
-          onClick={async () => {
-            await fetchReferralWithdrawals();
-            setShowWithdrawalModal(true);
-          }}
-          className="w-full bg-gradient-to-r from-amber-500 via-amber-600 to-emerald-600 hover:from-amber-600 hover:to-emerald-700 text-slate-950 font-black p-2.5 rounded-xl shadow-md flex items-center justify-center gap-2 text-xs transition transform active:scale-98 cursor-pointer"
-        >
-          <Award className="w-4 h-4 text-slate-950 shrink-0" />
-          <span>🏆 Success Withdrawal Banner ({withdrawalItems.length})</span>
-        </button>
-      </div>
-
       {/* REFERRAL FRIENDS LIST */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="text-[10px] font-black text-slate-500 uppercase tracking-wide block">
             {isTl ? `Mga Na-invite Mo (${referredFriends.length})` : `Your Referrals (${referredFriends.length})`}
           </label>
-          <button
-            onClick={simulateInviteFriend}
-            disabled={simulating !== null}
-            className="text-[9px] text-indigo-600 font-bold hover:underline cursor-pointer bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 flex items-center gap-1"
-          >
-            <UserPlus className="w-2.5 h-2.5" />
-            <span>+ Simulate Invite</span>
-          </button>
+          <span className="text-[9px] text-indigo-600 font-bold hover:underline cursor-pointer">
+            {isTl ? "Milestone: ₱100.00" : "Milestone: ₱100.00"}
+          </span>
         </div>
 
         {referredFriends.length === 0 ? (
@@ -271,13 +201,11 @@ export default function ReferralPanel({
             {isTl ? "⚠️ Wala pang na-invite na kaibigan. Ibahagi ang link sa itaas!" : "⚠️ No friends referred yet. Share the link above!"}
           </div>
         ) : (
-          <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+          <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
             {referredFriends.map((friend) => {
               const isEligible = friend.currentEarnings >= 100;
               const hasClaimed = friend.bonusClaimed;
               const progressPct = Math.min(100, Math.floor((friend.currentEarnings / 100) * 100));
-              const friendWithdrawals = friend.successfulWithdrawals || [];
-              const hasWithdrawal = friendWithdrawals.length > 0;
 
               return (
                 <div key={friend.id} className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/70 text-xs space-y-2">
@@ -341,37 +269,55 @@ export default function ReferralPanel({
                     </div>
                   </div>
 
-                  {/* WITHDRAWAL BANNER ACTIONS & SIMULATION */}
-                  <div className="pt-1 border-t border-slate-200/60 flex items-center justify-between gap-1">
-                    <button
-                      onClick={() => simulateFriendWithdrawal(friend.id)}
-                      disabled={simulating !== null}
-                      className="text-[8px] font-black text-slate-600 hover:text-emerald-600 bg-slate-200/80 hover:bg-emerald-100 px-1.5 py-0.5 rounded transition cursor-pointer"
-                    >
-                      + Simulate Cashout
-                    </button>
+                  {/* SUCCESSFUL REDEMPTION BANNER FOR INVITEE */}
+                  {friend.withdrawals && friend.withdrawals.length > 0 && (
+                    <div className="mt-2 bg-gradient-to-r from-emerald-500 to-teal-600 rounded-xl p-2.5 text-white shadow-sm space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black tracking-wide uppercase flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-200" />
+                          <span>Successful Redemption</span>
+                        </span>
+                        <span className="bg-white/20 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded">
+                          ₱{friend.withdrawals[0].amount.toFixed(2)}
+                        </span>
+                      </div>
 
-                    <button
-                      onClick={async () => {
-                        if (!hasWithdrawal) {
-                          await simulateFriendWithdrawal(friend.id);
-                        } else {
-                          await fetchReferralWithdrawals();
-                          setShowWithdrawalModal(true);
-                        }
-                      }}
-                      className="text-[8px] font-black text-amber-700 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded transition cursor-pointer flex items-center gap-1 border border-amber-300/80"
-                    >
-                      <Download className="w-2.5 h-2.5 text-amber-600" />
-                      <span>{hasWithdrawal ? "Download Success Banner" : "Create Success Banner"}</span>
-                    </button>
-                  </div>
+                      <p className="text-[10px] text-emerald-100 font-medium leading-tight">
+                        🎉 Si {friend.name} ay may matagumpay na totoong withdrawal noong {friend.withdrawals[0].createdAt}!
+                      </p>
+
+                      <button
+                        onClick={() => {
+                          setActiveBannerRecord({
+                            userName: friend.name,
+                            userAvatar: friend.avatar,
+                            amount: friend.withdrawals![0].amount,
+                            createdAt: friend.withdrawals![0].createdAt,
+                            referenceNo: friend.withdrawals![0].referenceNo,
+                            inviterName: 'Nag-invite'
+                          });
+                          setShowBannerModal(true);
+                        }}
+                        className="w-full py-1.5 bg-white text-emerald-800 hover:bg-emerald-50 font-black text-[10px] rounded-lg transition shadow-xs flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <Download className="w-3 h-3 text-emerald-600" />
+                        <span>I-download ang Redemption Banner (PNG)</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
         )}
       </div>
+
+      {/* REDEMPTION BANNER MODAL */}
+      <RedemptionBannerModal
+        isOpen={showBannerModal}
+        onClose={() => setShowBannerModal(false)}
+        redemption={activeBannerRecord}
+      />
 
       {/* AUTOMATED REAL-TIME INFO HELPER */}
       {token && (
@@ -383,14 +329,6 @@ export default function ReferralPanel({
           </p>
         </div>
       )}
-
-      {/* SUCCESS WITHDRAWAL BANNER MODAL */}
-      <ReferralWithdrawalModal
-        isOpen={showWithdrawalModal}
-        onClose={() => setShowWithdrawalModal(false)}
-        referrerName={referrerName}
-        items={withdrawalItems}
-      />
 
     </div>
   );
