@@ -806,6 +806,40 @@ export default function App() {
     }
   }, [token]);
 
+  // Purge Demo session from RAM immediately when leaving System Clone / Demo mode or closing page
+  useEffect(() => {
+    if (!isDemoMode) return;
+
+    const handleDemoUnload = () => {
+      if (user || token) {
+        const payload = JSON.stringify({ userId: user?.id || token, email: user?.email });
+        if (navigator.sendBeacon) {
+          const blob = new Blob([payload], { type: 'application/json' });
+          navigator.sendBeacon('/api/auth/demo-session-clear', blob);
+        } else {
+          fetch('/api/auth/demo-session-clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            keepalive: true
+          }).catch(() => {});
+        }
+      }
+      try {
+        localStorage.removeItem('gcash_user_backup_profile');
+        localStorage.removeItem('is_demo_mode');
+      } catch (e) {}
+    };
+
+    window.addEventListener('beforeunload', handleDemoUnload);
+    window.addEventListener('pagehide', handleDemoUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleDemoUnload);
+      window.removeEventListener('pagehide', handleDemoUnload);
+    };
+  }, [isDemoMode, user, token]);
+
   // Periodic active polling check to sync admin or other devices' actions
   useEffect(() => {
     if (!token) return;
@@ -1370,6 +1404,23 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    if (isDemoMode || user?.isDemo) {
+      if (user || token) {
+        fetch('/api/auth/demo-session-clear', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': token || ''
+          },
+          body: JSON.stringify({ userId: user?.id || token, email: user?.email })
+        }).catch(() => {});
+      }
+      try {
+        localStorage.removeItem('gcash_user_backup_profile');
+        localStorage.removeItem('is_demo_mode');
+      } catch (e) {}
+    }
+
     localStorage.removeItem('gcash_click_earn_token');
     setToken(null);
     setUser(null);

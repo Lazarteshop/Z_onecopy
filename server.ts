@@ -1836,6 +1836,29 @@ function findUserInSystem(userId: string, db: DBStructure): UserSession | undefi
   return db.users.find(u => u.id === userId);
 }
 
+// ENDPOINT TO AUTOMATICALLY PURGE DEMO USER DATA FROM RAM MEMORY WHEN USER LEAVES DEMO MODE/PAGE
+app.post('/api/auth/demo-session-clear', (req, res) => {
+  const userId = req.headers.authorization || req.body?.userId || req.body?.id;
+  const userEmail = req.body?.email ? String(req.body.email).toLowerCase().trim() : null;
+
+  if (userEmail) {
+    for (let i = demoUsers.length - 1; i >= 0; i--) {
+      if (demoUsers[i].email.toLowerCase() === userEmail) {
+        demoUsers.splice(i, 1);
+      }
+    }
+  }
+  if (userId) {
+    for (let i = demoUsers.length - 1; i >= 0; i--) {
+      if (demoUsers[i].id === userId) {
+        demoUsers.splice(i, 1);
+      }
+    }
+  }
+
+  res.json({ success: true, message: 'Demo user data automatically purged from RAM.' });
+});
+
 // REGISTER
 app.post('/api/auth/register', (req, res) => {
   const { email, password, name, avatar, referralCode, isDemo } = req.body;
