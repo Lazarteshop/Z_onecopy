@@ -1822,16 +1822,7 @@ export default function App() {
 
       {/* 🌐 FLOATING DEMO TESTING WATERMARK BANNER (WHEN CLONE / DEMO MODE IS ACTIVE) */}
       {isDemoMode && (
-        <DemoTestingFloatingBanner
-          onExitDemo={() => {
-            setIsDemoMode(false);
-            const url = new URL(window.location.href);
-            url.searchParams.delete('mode');
-            url.searchParams.delete('demo');
-            url.searchParams.delete('testing');
-            window.history.replaceState({}, '', url.pathname + url.search);
-          }}
-        />
+        <DemoTestingFloatingBanner />
       )}
 
       {/* 🚀 HIGH CONVERTING PROMO AD BANNER MODAL FOR UNSUBSCRIBED USERS */}
