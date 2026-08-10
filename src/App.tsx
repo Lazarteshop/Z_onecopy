@@ -51,6 +51,8 @@ import {
   Bell,
   QrCode,
   Download,
+  Flame,
+  Rocket,
   X
 } from 'lucide-react';
 import { INITIAL_CAMPAIGNS } from './data/campaigns';
@@ -66,6 +68,7 @@ import SpinWheel from './components/SpinWheel';
 import PayoutMarquee from './components/PayoutMarquee';
 import ReelsFloatingWidget, { parseVideoUrl } from './components/ReelsFloatingWidget';
 import ZoneAppBanner from './components/ZoneAppBanner';
+import { PromoAdBannerModal } from './components/PromoAdBannerModal';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -176,6 +179,7 @@ export default function App() {
   const [customTimer, setCustomTimer] = useState('15');
   const [customDescription, setCustomDescription] = useState('');
   const [campaignFilter, setCampaignFilter] = useState<'all' | 'high' | 'available'>('all');
+  const [showPromoAdModal, setShowPromoAdModal] = useState<boolean>(true);
 
   // Animation states
   const [floatingCoinReward, setFloatingCoinReward] = useState<number | null>(null);
@@ -1793,6 +1797,28 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* 🚀 HIGH CONVERTING PROMO AD BANNER MODAL FOR UNSUBSCRIBED USERS */}
+      <PromoAdBannerModal
+        isOpen={showPromoAdModal && Boolean(user) && !user?.isAdmin && isSubscriptionExpired()}
+        onClose={() => setShowPromoAdModal(false)}
+        onSelectPlan={(planId) => {
+          handleSubscriptionRequest(planId);
+        }}
+        onNavigateToPlans={() => {
+          setActiveTab('earn');
+          setTimeout(() => {
+            const section = document.getElementById('subscription-plans-section') || document.getElementById('website-campaigns-grid');
+            if (section) {
+              section.scrollIntoView({ behavior: 'smooth' });
+            } else {
+              window.scrollTo({ top: 400, behavior: 'smooth' });
+            }
+          }, 100);
+        }}
+        submittingSubscription={submittingSubscription}
+        userBalance={stats.balance || 0}
+      />
+
       {/* 🚀 SCREEN GATEWAY 1: NOT AUTHENTICATED SCREEN */}
       {!token || !user ? (
         <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 py-12 relative overflow-hidden">
@@ -2158,6 +2184,25 @@ export default function App() {
             </div>
           </div>
 
+          {/* 📢 HIGH HYPE PROMO AD TOP BAR FOR NON-SUBSCRIBED USERS */}
+          {isSubscriptionExpired() && !user?.isAdmin && (
+            <div 
+              onClick={() => setShowPromoAdModal(true)}
+              className="bg-gradient-to-r from-amber-500 via-orange-600 to-rose-600 text-white px-4 py-2.5 shadow-md cursor-pointer hover:opacity-95 transition flex items-center justify-between gap-3 text-xs font-black border-b border-amber-300/40"
+            >
+              <div className="max-w-7xl mx-auto w-full flex flex-col sm:flex-row items-center justify-between gap-2 text-center sm:text-left">
+                <div className="flex items-center gap-2">
+                  <Flame className="w-4 h-4 text-yellow-300 animate-bounce shrink-0" />
+                  <span>🔥 UNLOCK UNLIMITED GCASH EARNINGS: Kumita ng ₱500 - ₱1,500/day direct sa GCash!</span>
+                </div>
+                <div className="inline-flex items-center gap-1.5 bg-yellow-300 hover:bg-yellow-200 text-slate-950 font-black text-[11px] px-3 py-1 rounded-full shadow-sm shrink-0 transition">
+                  <Rocket className="w-3.5 h-3.5 text-slate-950" />
+                  <span>MAG-SUBSCRIBE NA 🚀</span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* 🖥️ MAIN BODY WORKSPACE */}
           <div id="main-content-layout" className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 md:py-8">
             {isSubscriptionExpired() && activeTab !== 'earn' ? (
@@ -2303,7 +2348,7 @@ export default function App() {
                   </div>
                 ) : (
                   /* SELECTING A SUBSCRIPTION PLAN */
-                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-lg space-y-6">
+                  <div id="subscription-plans-section" className="bg-white border border-slate-200 rounded-3xl p-6 shadow-lg space-y-6">
                     <div className="text-center space-y-1">
                       <span className="bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] uppercase font-black px-2.5 py-0.5 rounded-full select-none">
                         Mabilisang Pagpipilian (Subscription Plans)
