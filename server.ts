@@ -804,6 +804,7 @@ interface UserSession {
   referralCode: string;
   invitedBy?: string; // referralCode of referrer
   isAdmin: boolean;
+  isDemo?: boolean; // System clone / demo mode flag (RAM only, NOT saved to DB/Firestore)
   isBanned?: boolean; // banned from Z-one or app
   reelsTokens?: number; // Reels upload tokens (0.50 tokens = 1 reel)
   balance?: number; // top-level balance fallback
@@ -1822,9 +1823,23 @@ function hasActiveAccess(user: UserSession): boolean {
 //               AUTHENTICATION
 // ============================================
 
+// IN-MEMORY STORAGE FOR SYSTEM CLONE & UNIQUE DEMO TESTING LINK USERS
+// Demo users registered via System Clone & Unique Demo Testing Link are kept strictly in RAM only!
+// They are NEVER saved to db.users, db.json, or Firestore!
+const demoUsers: UserSession[] = [];
+
+// Helper to look up a user in demoUsers (RAM) first, then db.users (Production DB)
+function findUserInSystem(userId: string, db: DBStructure): UserSession | undefined {
+  if (!userId) return undefined;
+  const demoUser = demoUsers.find(u => u.id === userId);
+  if (demoUser) return demoUser;
+  return db.users.find(u => u.id === userId);
+}
+
 // REGISTER
 app.post('/api/auth/register', (req, res) => {
-  const { email, password, name, avatar, referralCode } = req.body;
+  const { email, password, name, avatar, referralCode, isDemo } = req.body;
+  const isDemoModeReq = Boolean(isDemo || req.headers['x-demo-mode'] === 'true');
 
   if (!email || !password || !name) {
     return res.status(400).json({ error: 'Kailangan ibigay ang email, password, at pangalan.' });
@@ -1833,8 +1848,9 @@ app.post('/api/auth/register', (req, res) => {
   const db = loadDB();
   const lowerEmail = email.toLowerCase().trim();
 
-  const userExists = db.users.find(u => u.email.toLowerCase() === lowerEmail);
-  if (userExists) {
+  const userExistsReal = db.users.find(u => u.email.toLowerCase() === lowerEmail);
+  const userExistsDemo = demoUsers.find(u => u.email.toLowerCase() === lowerEmail);
+  if (userExistsReal || userExistsDemo) {
     return res.status(400).json({ error: 'Ang email na ito ay may rehistradong account na.' });
   }
 
@@ -1845,7 +1861,7 @@ app.post('/api/auth/register', (req, res) => {
     myCode += chars.charAt(Math.floor(Math.random() * chars.length));
   }
 
-  const userId = 'user-api-' + Date.now();
+  const userId = isDemoModeReq ? ('demo-user-' + Date.now()) : ('user-api-' + Date.now());
   const defaultAvatar = avatar || '👤';
 
   // Create new user session structure
@@ -1857,6 +1873,7 @@ app.post('/api/auth/register', (req, res) => {
     avatar: defaultAvatar,
     referralCode: myCode,
     isAdmin: false,
+    isDemo: isDemoModeReq,
     createdAt: new Date().toISOString(),
     subscription: {
       status: 'none',
@@ -1877,7 +1894,7 @@ app.post('/api/auth/register', (req, res) => {
       {
         id: 'log-welcome-' + Date.now(),
         type: 'bonus',
-        title: 'Salamat sa pagre-register! Libreng Pang-umpisang Pera',
+        title: isDemoModeReq ? 'Salamat sa pag-testing sa System Clone! Libreng Pang-umpisang Pera' : 'Salamat sa pagre-register! Libreng Pang-umpisang Pera',
         amount: 25.00,
         timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
         details: 'Nakatanggap ka ng libreng ₱25.00 bilang Welcome Gift.'
@@ -1886,36 +1903,39 @@ app.post('/api/auth/register', (req, res) => {
     referredFriends: []
   };
 
-  // If registering with a referral code
-  if (referralCode) {
-    const codeClean = referralCode.trim().toUpperCase();
-    const referrer = db.users.find(u => u.referralCode === codeClean);
-    if (referrer) {
-      newUser.invitedBy = codeClean;
-      // Add this new user to the referrer's referred list!
-      referrer.referredFriends.push({
-        id: userId,
-        name: newUser.name,
-        avatar: newUser.avatar,
-        currentEarnings: 25.00, // Starts with their initial balance
-        bonusClaimed: false,
-        joinedAt: new Date().toLocaleDateString('fil-PH', { month: 'short', day: 'numeric', year: 'numeric' })
-      });
-      
-      // Also notify referrer with a customized activity log
-      referrer.activityLogs.unshift({
-        id: 'log-ref-join-' + Date.now(),
-        type: 'bonus',
-        title: `Sumali gamit ang Link mo si ${newUser.name}`,
-        amount: 0,
-        timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
-        details: `${newUser.name} ay gumawa ng account gamit ang iyong link. Makakakuha ka ng ₱5.00 kapag naka-ipon siya ng kanyang unang ₱100.00!`
-      });
+  if (isDemoModeReq) {
+    // 🌐 SYSTEM CLONE / TESTING DEMO MODE REGISTRATION:
+    // STORE EXCLUSIVELY IN RAM (demoUsers). DO NOT WRITE TO db.users OR FIRESTORE!
+    demoUsers.push(newUser);
+  } else {
+    // 🔒 LEGITIMATE OFFICIAL SYSTEM REGISTRATION:
+    // SAVE TO PERSISTENT DATABASE AND FIRESTORE!
+    if (referralCode) {
+      const codeClean = referralCode.trim().toUpperCase();
+      const referrer = db.users.find(u => u.referralCode === codeClean);
+      if (referrer) {
+        newUser.invitedBy = codeClean;
+        referrer.referredFriends.push({
+          id: userId,
+          name: newUser.name,
+          avatar: newUser.avatar,
+          currentEarnings: 25.00,
+          bonusClaimed: false,
+          joinedAt: new Date().toLocaleDateString('fil-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+        });
+        referrer.activityLogs.unshift({
+          id: 'log-ref-join-' + Date.now(),
+          type: 'bonus',
+          title: `Sumali gamit ang Link mo si ${newUser.name}`,
+          amount: 0,
+          timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+          details: `${newUser.name} ay gumawa ng account gamit ang iyong link. Makakakuha ka ng ₱5.00 kapag naka-ipon siya ng kanyang unang ₱100.00!`
+        });
+      }
     }
+    db.users.push(newUser);
+    saveDB(db);
   }
-
-  db.users.push(newUser);
-  saveDB(db);
 
   const { password: _, ...userSafe } = newUser as any;
   res.json({ user: userSafe, token: generateToken(userId) });
@@ -1932,7 +1952,10 @@ app.post('/api/auth/login', (req, res) => {
   const db = loadDB();
   const lowerEmail = email.toLowerCase().trim();
 
-  const user = db.users.find(u => u.email.toLowerCase() === lowerEmail);
+  let user = demoUsers.find(u => u.email.toLowerCase() === lowerEmail);
+  if (!user) {
+    user = db.users.find(u => u.email.toLowerCase() === lowerEmail);
+  }
 
   if (!user || user.password !== password) {
     return res.status(401).json({ error: 'Maling email o password. Pakisubukang muli.' });
@@ -1948,7 +1971,8 @@ app.post('/api/auth/login', (req, res) => {
 
 // AUTO-RESTORE SESSION ENDPOINT
 app.post('/api/auth/auto-restore', (req, res) => {
-  const { email, password, name, avatar, stats, withdrawals, activityLogs, referredFriends } = req.body;
+  const { email, password, name, avatar, stats, withdrawals, activityLogs, referredFriends, isDemo } = req.body;
+  const isDemoModeReq = Boolean(isDemo || req.headers['x-demo-mode'] === 'true');
 
   if (!email || !password || !name) {
     return res.status(400).json({ error: 'Kailangan ibigay ang email, password, at pangalan.' });
@@ -1957,10 +1981,9 @@ app.post('/api/auth/auto-restore', (req, res) => {
   const db = loadDB();
   const lowerEmail = email.toLowerCase().trim();
 
-  let user = db.users.find(u => u.email.toLowerCase() === lowerEmail);
+  let user = demoUsers.find(u => u.email.toLowerCase() === lowerEmail) || db.users.find(u => u.email.toLowerCase() === lowerEmail);
 
   if (!user) {
-    // Re-create and restore the exact profile state from localStorage credentials
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let myCode = 'REF-';
     for (let i = 0; i < 6; i++) {
@@ -1968,13 +1991,14 @@ app.post('/api/auth/auto-restore', (req, res) => {
     }
 
     user = {
-      id: 'user-restore-' + Date.now(),
+      id: isDemoModeReq ? ('demo-restore-' + Date.now()) : ('user-restore-' + Date.now()),
       email: email.trim(),
       password: password,
       name: name.trim(),
       avatar: avatar || '👤',
       referralCode: myCode,
       isAdmin: false,
+      isDemo: isDemoModeReq,
       createdAt: new Date().toISOString(),
       subscription: {
         status: 'none',
@@ -1995,10 +2019,13 @@ app.post('/api/auth/auto-restore', (req, res) => {
       referredFriends: referredFriends || []
     };
 
-    db.users.push(user);
-    saveDB(db);
+    if (isDemoModeReq) {
+      demoUsers.push(user);
+    } else {
+      db.users.push(user);
+      saveDB(db);
+    }
   } else {
-    // If user already exists inside current session memory, verify passwords
     if (user.password !== password) {
       return res.status(401).json({ error: 'Suriing mabuti ang email at password.' });
     }
@@ -2010,7 +2037,8 @@ app.post('/api/auth/auto-restore', (req, res) => {
 
 // GOOGLE SIGN IN OR SIGN UP SIMULATION
 app.post('/api/auth/google', (req, res) => {
-  const { email, name, avatar, referralCode } = req.body;
+  const { email, name, avatar, referralCode, isDemo } = req.body;
+  const isDemoModeReq = Boolean(isDemo || req.headers['x-demo-mode'] === 'true');
 
   if (!email || !name) {
     return res.status(400).json({ error: 'Kailangan ibigay ang Google account details.' });
@@ -2019,7 +2047,7 @@ app.post('/api/auth/google', (req, res) => {
   const db = loadDB();
   const lowerEmail = email.toLowerCase().trim();
 
-  let user = db.users.find(u => u.email.toLowerCase() === lowerEmail);
+  let user = demoUsers.find(u => u.email.toLowerCase() === lowerEmail) || db.users.find(u => u.email.toLowerCase() === lowerEmail);
 
   // If user doesn't exist, create it on-the-fly (Sign Up)
   if (!user) {
@@ -2029,17 +2057,17 @@ app.post('/api/auth/google', (req, res) => {
       myCode += chars.charAt(Math.floor(Math.random() * chars.length));
     }
 
-    const userId = 'user-google-' + Date.now();
+    const userId = isDemoModeReq ? ('demo-google-' + Date.now()) : ('user-google-' + Date.now());
     const defaultAvatar = avatar || '🌐';
 
     user = {
       id: userId,
       email: email.trim(),
-      // No standard password since they used Google Sign-In
       name: name.trim(),
       avatar: defaultAvatar,
       referralCode: myCode,
       isAdmin: false,
+      isDemo: isDemoModeReq,
       createdAt: new Date().toISOString(),
       subscription: {
         status: 'none',
@@ -2069,33 +2097,35 @@ app.post('/api/auth/google', (req, res) => {
       referredFriends: []
     };
 
-    // Referrer tracking
-    if (referralCode) {
-      const codeClean = referralCode.trim().toUpperCase();
-      const referrer = db.users.find(u => u.referralCode === codeClean);
-      if (referrer) {
-        user.invitedBy = codeClean;
-        referrer.referredFriends.push({
-          id: userId,
-          name: user.name,
-          avatar: user.avatar,
-          currentEarnings: 25.00,
-          bonusClaimed: false,
-          joinedAt: new Date().toLocaleDateString('fil-PH', { month: 'short', day: 'numeric', year: 'numeric' })
-        });
-        referrer.activityLogs.unshift({
-          id: 'log-ref-join-' + Date.now(),
-          type: 'bonus',
-          title: `Sumali gamit ang Link mo si ${user.name} (Google)`,
-          amount: 0,
-          timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
-          details: `${user.name} ay gumawa ng account gamit ang Google Sign-In at iyong referral link. Makakakuha ka ng ₱5.00 kapag naka-ipon siya ng kanyang unang ₱100.00!`
-        });
+    if (isDemoModeReq) {
+      demoUsers.push(user);
+    } else {
+      if (referralCode) {
+        const codeClean = referralCode.trim().toUpperCase();
+        const referrer = db.users.find(u => u.referralCode === codeClean);
+        if (referrer) {
+          user.invitedBy = codeClean;
+          referrer.referredFriends.push({
+            id: userId,
+            name: user.name,
+            avatar: user.avatar,
+            currentEarnings: 25.00,
+            bonusClaimed: false,
+            joinedAt: new Date().toLocaleDateString('fil-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+          });
+          referrer.activityLogs.unshift({
+            id: 'log-ref-join-' + Date.now(),
+            type: 'bonus',
+            title: `Sumali gamit ang Link mo si ${user.name} (Google)`,
+            amount: 0,
+            timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+            details: `${user.name} ay gumawa ng account gamit ang Google Sign-In at iyong referral link.`
+          });
+        }
       }
+      db.users.push(user);
+      saveDB(db);
     }
-
-    db.users.push(user);
-    saveDB(db);
   }
 
   const { password: _, ...userSafe } = user as any;
@@ -2110,7 +2140,7 @@ app.get('/api/user/profile', (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = findUserInSystem(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang gumagamit.' });
   }

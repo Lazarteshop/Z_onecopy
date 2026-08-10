@@ -186,13 +186,18 @@ export default function App() {
   const [isDemoMode, setIsDemoMode] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     const params = new URLSearchParams(window.location.search);
-    return (
+    const isQueryDemo = (
       params.get('mode') === 'demo' ||
       params.get('demo') === 'true' ||
       params.get('demo') === '1' ||
       params.get('testing') === 'true' ||
       window.location.pathname.includes('/demo')
     );
+    if (isQueryDemo) {
+      try { localStorage.setItem('is_demo_mode', 'true'); } catch (e) {}
+      return true;
+    }
+    return localStorage.getItem('is_demo_mode') === 'true';
   });
 
   // Animation states
@@ -699,7 +704,8 @@ export default function App() {
     try {
       const res = await fetch('/api/user/profile', {
         headers: {
-          'Authorization': authToken
+          'Authorization': authToken,
+          'x-demo-mode': isDemoMode ? 'true' : 'false'
         }
       });
       if (res.ok) {
@@ -746,7 +752,8 @@ export default function App() {
               const restoreRes = await fetch('/api/auth/auto-restore', {
                 method: 'POST',
                 headers: {
-                  'Content-Type': 'application/json'
+                  'Content-Type': 'application/json',
+                  'x-demo-mode': isDemoMode ? 'true' : 'false'
                 },
                 body: JSON.stringify({
                   email: backupProfile.email,
@@ -756,7 +763,8 @@ export default function App() {
                   stats: backupProfile.stats,
                   withdrawals: backupProfile.withdrawals,
                   activityLogs: backupProfile.activityLogs,
-                  referredFriends: backupProfile.referredFriends
+                  referredFriends: backupProfile.referredFriends,
+                  isDemo: isDemoMode
                 })
               });
               if (restoreRes.ok) {
@@ -1294,14 +1302,15 @@ export default function App() {
 
     const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
     const payload = authMode === 'login' 
-      ? { email: emailInput.trim(), password: passwordInput }
-      : { name: nameInput.trim(), email: emailInput.trim(), password: passwordInput, referralCode: referralInput.trim() };
+      ? { email: emailInput.trim(), password: passwordInput, isDemo: isDemoMode }
+      : { name: nameInput.trim(), email: emailInput.trim(), password: passwordInput, referralCode: referralInput.trim(), isDemo: isDemoMode };
 
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'x-demo-mode': isDemoMode ? 'true' : 'false'
         },
         body: JSON.stringify(payload)
       });
@@ -1331,12 +1340,14 @@ export default function App() {
       const res = await fetch('/api/auth/google', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'x-demo-mode': isDemoMode ? 'true' : 'false'
         },
         body: JSON.stringify({
           name: selectedName,
           email: selectedEmail,
-          avatar: avatar
+          avatar: avatar,
+          isDemo: isDemoMode
         })
       });
       const result = await res.json();
