@@ -69,6 +69,7 @@ import PayoutMarquee from './components/PayoutMarquee';
 import ReelsFloatingWidget, { parseVideoUrl } from './components/ReelsFloatingWidget';
 import ZoneAppBanner from './components/ZoneAppBanner';
 import { PromoAdBannerModal } from './components/PromoAdBannerModal';
+import { DemoTestingFloatingBanner } from './components/DemoTestingFloatingBanner';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -180,6 +181,19 @@ export default function App() {
   const [customDescription, setCustomDescription] = useState('');
   const [campaignFilter, setCampaignFilter] = useState<'all' | 'high' | 'available'>('all');
   const [showPromoAdModal, setShowPromoAdModal] = useState<boolean>(true);
+
+  // 🌐 CLONE / TESTING DEMO MODE DETECTOR
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    return (
+      params.get('mode') === 'demo' ||
+      params.get('demo') === 'true' ||
+      params.get('demo') === '1' ||
+      params.get('testing') === 'true' ||
+      window.location.pathname.includes('/demo')
+    );
+  });
 
   // Animation states
   const [floatingCoinReward, setFloatingCoinReward] = useState<number | null>(null);
@@ -628,6 +642,15 @@ export default function App() {
 
   // Monetag script integration for the login/register screen only
   useEffect(() => {
+    // 🚫 DEMO MODE CHECK: IF TESTING CLONE MODE IS ACTIVE, DO NOT LOAD MONETAG ADS
+    if (isDemoMode) {
+      const el = document.getElementById('monetag-login-ads-script');
+      if (el) {
+        el.remove();
+      }
+      return;
+    }
+
     // If the user is definitely not logged in (no token, no user, and not loading), load the Monetag ads script
     if (!token && !user && !loadingProfile) {
       if (!document.getElementById('monetag-login-ads-script')) {
@@ -655,7 +678,7 @@ export default function App() {
         el.remove();
       }
     };
-  }, [token, user, loadingProfile]);
+  }, [token, user, loadingProfile, isDemoMode]);
 
   // Hide Install App button when user is logged in
   useEffect(() => {
@@ -1797,23 +1820,46 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* 🌐 FLOATING DEMO TESTING WATERMARK BANNER (WHEN CLONE / DEMO MODE IS ACTIVE) */}
+      {isDemoMode && (
+        <DemoTestingFloatingBanner
+          onExitDemo={() => {
+            setIsDemoMode(false);
+            const url = new URL(window.location.href);
+            url.searchParams.delete('mode');
+            url.searchParams.delete('demo');
+            url.searchParams.delete('testing');
+            window.history.replaceState({}, '', url.pathname + url.search);
+          }}
+        />
+      )}
+
       {/* 🚀 HIGH CONVERTING PROMO AD BANNER MODAL FOR UNSUBSCRIBED USERS */}
       <PromoAdBannerModal
         isOpen={showPromoAdModal && Boolean(user) && !user?.isAdmin && isSubscriptionExpired()}
         onClose={() => setShowPromoAdModal(false)}
         onSelectPlan={(planId) => {
+          setActiveTab('cashout');
           handleSubscriptionRequest(planId);
-        }}
-        onNavigateToPlans={() => {
-          setActiveTab('earn');
           setTimeout(() => {
-            const section = document.getElementById('subscription-plans-section') || document.getElementById('website-campaigns-grid');
+            const section = document.getElementById('renew-access-plan-section') || document.getElementById('subscription-plans-section');
             if (section) {
               section.scrollIntoView({ behavior: 'smooth' });
             } else {
-              window.scrollTo({ top: 400, behavior: 'smooth' });
+              window.scrollTo({ top: 300, behavior: 'smooth' });
             }
-          }, 100);
+          }, 150);
+        }}
+        onNavigateToPlans={() => {
+          setActiveTab('cashout');
+          setTimeout(() => {
+            const section = document.getElementById('renew-access-plan-section') || document.getElementById('subscription-plans-section');
+            if (section) {
+              section.scrollIntoView({ behavior: 'smooth' });
+            } else {
+              window.scrollTo({ top: 300, behavior: 'smooth' });
+            }
+          }, 150);
         }}
         submittingSubscription={submittingSubscription}
         userBalance={stats.balance || 0}
@@ -2187,7 +2233,9 @@ export default function App() {
           {/* 📢 HIGH HYPE PROMO AD TOP BAR FOR NON-SUBSCRIBED USERS */}
           {isSubscriptionExpired() && !user?.isAdmin && (
             <div 
-              onClick={() => setShowPromoAdModal(true)}
+              onClick={() => {
+                setShowPromoAdModal(true);
+              }}
               className="bg-gradient-to-r from-amber-500 via-orange-600 to-rose-600 text-white px-4 py-2.5 shadow-md cursor-pointer hover:opacity-95 transition flex items-center justify-between gap-3 text-xs font-black border-b border-amber-300/40"
             >
               <div className="max-w-7xl mx-auto w-full flex flex-col sm:flex-row items-center justify-between gap-2 text-center sm:text-left">
@@ -2197,7 +2245,7 @@ export default function App() {
                 </div>
                 <div className="inline-flex items-center gap-1.5 bg-yellow-300 hover:bg-yellow-200 text-slate-950 font-black text-[11px] px-3 py-1 rounded-full shadow-sm shrink-0 transition">
                   <Rocket className="w-3.5 h-3.5 text-slate-950" />
-                  <span>MAG-SUBSCRIBE NA 🚀</span>
+                  <span>I-RENEW ANG ACCESS PLAN 🚀</span>
                 </div>
               </div>
             </div>
@@ -2206,7 +2254,7 @@ export default function App() {
           {/* 🖥️ MAIN BODY WORKSPACE */}
           <div id="main-content-layout" className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 md:py-8">
             {isSubscriptionExpired() && activeTab !== 'earn' ? (
-              <div className="max-w-2xl mx-auto space-y-6 animate-fadeIn py-6">
+              <div id="renew-access-plan-section" className="max-w-2xl mx-auto space-y-6 animate-fadeIn py-6">
                 
                 {/* SYSTEM ALERT */}
                 <div className="bg-rose-50 border border-rose-200 rounded-3xl p-6 shadow-md text-center space-y-4">

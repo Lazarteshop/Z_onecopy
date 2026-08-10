@@ -35,7 +35,10 @@ import {
   ExternalLink,
   Eye,
   Download,
-  Trophy
+  Trophy,
+  Globe,
+  Copy,
+  CheckCircle2
 } from 'lucide-react';
 import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd } from '../types';
 
@@ -829,7 +832,76 @@ export default function AdminPanel({
 
       {/* SECTION 1: OVERVIEW & QUEUE */}
       {activeSubTab === 'overview' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="space-y-6">
+
+          {/* 🌐 SYSTEM CLONE & UNIQUE DEMO TESTING URL CARD (ADMIN EXCLUSIVE) */}
+          <div className="bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-900 border-2 border-amber-400 rounded-3xl p-5 shadow-xl text-white space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-500/20 rounded-2xl border border-amber-400/40 text-amber-300">
+                  <Globe className="w-5 h-5 text-amber-400 animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="font-black text-white text-sm uppercase tracking-wider flex items-center gap-2">
+                    <span>🌐 System Testing Clone URL</span>
+                    <span className="bg-amber-400 text-slate-950 font-black text-[9px] px-2 py-0.5 rounded-full uppercase">Admin Exclusive</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-300 font-semibold">
+                    I-share ang unique link na ito sa mga gustong mag-testing ng system nang WALANG Monetag Ads.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* URL INPUT & COPY CONTROLS */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-amber-300 tracking-wider">
+                Unique Demo / Testing Clone URL:
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={`${window.location.origin}/?mode=demo`}
+                  className="flex-1 bg-slate-950/90 border border-amber-400/50 rounded-xl px-3 py-2 text-xs font-mono text-yellow-300 select-all focus:outline-hidden"
+                />
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/?mode=demo`);
+                    triggerNotification('📋 Na-copy na ang Unique Demo Testing URL!', 'success');
+                  }}
+                  className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs px-3.5 py-2 rounded-xl transition cursor-pointer shrink-0 flex items-center gap-1.5 shadow-md active:scale-95"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Kopyahin Link</span>
+                </button>
+                <a
+                  href={`${window.location.origin}/?mode=demo`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs px-3.5 py-2 rounded-xl transition cursor-pointer shrink-0 flex items-center gap-1.5 shadow-md active:scale-95"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Subukan (Demo)</span>
+                </a>
+              </div>
+            </div>
+
+            {/* FEATURES SUMMARY */}
+            <div className="bg-slate-950/70 rounded-2xl p-3 border border-slate-800 text-[11px] text-slate-300 space-y-1">
+              <div className="font-extrabold text-amber-300 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Mga Katangian ng Testing Clone Link na ito:</span>
+              </div>
+              <ul className="list-disc list-inside text-[10px] space-y-0.5 text-slate-400 pl-1">
+                <li><strong className="text-emerald-300">Walang Monetag Ads:</strong> Automatic na binabara at pinipigilan ang Monetag ad scripts.</li>
+                <li><strong className="text-yellow-300">Floating Demo Banner:</strong> Naka-sticky overlay ang babala at impormasyon para sa mga nagte-testing.</li>
+                <li><strong className="text-indigo-300">ECHOZONEPH Direction:</strong> Malinaw na itinuturo ang totoong platform sa Google Chrome.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
           {/* QUEUE OF CASH OUT REQUESTS */}
           <div className="lg:col-span-2 space-y-4">
@@ -1001,6 +1073,7 @@ export default function AdminPanel({
             </div>
           </div>
 
+        </div>
         </div>
       )}
 
