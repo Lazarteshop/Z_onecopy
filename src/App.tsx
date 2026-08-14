@@ -70,6 +70,8 @@ import ReelsFloatingWidget, { parseVideoUrl } from './components/ReelsFloatingWi
 import ZoneAppBanner from './components/ZoneAppBanner';
 import { PromoAdBannerModal } from './components/PromoAdBannerModal';
 import { DemoTestingFloatingBanner } from './components/DemoTestingFloatingBanner';
+import { WithdrawalPolicyModal } from './components/WithdrawalPolicyModal';
+import { WithdrawalPolicyBanner } from './components/WithdrawalPolicyBanner';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -181,6 +183,8 @@ export default function App() {
   const [customDescription, setCustomDescription] = useState('');
   const [campaignFilter, setCampaignFilter] = useState<'all' | 'high' | 'available'>('all');
   const [showPromoAdModal, setShowPromoAdModal] = useState<boolean>(true);
+  // Always true on initial app load / open so the popup banner shows every time
+  const [showWithdrawalPolicyModal, setShowWithdrawalPolicyModal] = useState<boolean>(true);
 
   // 🌐 CLONE / TESTING DEMO MODE DETECTOR
   const [isDemoMode, setIsDemoMode] = useState<boolean>(() => {
@@ -1918,6 +1922,14 @@ export default function App() {
         userBalance={stats.balance || 0}
       />
 
+      {/* 📢 OFFICIAL Z-ONEAPP WITHDRAWAL POLICY UPDATE POP-UP MODAL (Lumalabas tuwing mag-oopen ang user) */}
+      <WithdrawalPolicyModal
+        isOpen={showWithdrawalPolicyModal && Boolean(user)}
+        onClose={() => {
+          setShowWithdrawalPolicyModal(false);
+        }}
+      />
+
       {/* 🚀 SCREEN GATEWAY 1: NOT AUTHENTICATED SCREEN */}
       {!token || !user ? (
         <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 py-12 relative overflow-hidden">
@@ -2138,6 +2150,18 @@ export default function App() {
                   <Tv className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-300 animate-pulse shrink-0" />
                   <span className="text-[9px] sm:text-[10px] uppercase font-black tracking-wider whitespace-nowrap">
                     🎬 WATCH REELS
+                  </span>
+                </button>
+
+                {/* 📢 WITHDRAWAL POLICY ANNOUNCEMENT BUTTON */}
+                <button
+                  onClick={() => setShowWithdrawalPolicyModal(true)}
+                  className="bg-blue-600 hover:bg-blue-500 text-white font-black px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg sm:rounded-xl shadow-md border border-white/20 flex items-center gap-1 sm:gap-1.5 transition hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none"
+                  title="Tingnan ang Withdrawal Policy Update (5th & 20th)"
+                >
+                  <Megaphone className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-yellow-300 animate-bounce shrink-0" />
+                  <span className="text-[9px] sm:text-[10px] uppercase font-black tracking-wider whitespace-nowrap">
+                    📢 PAYOUT DATES
                   </span>
                 </button>
 
@@ -2532,6 +2556,11 @@ export default function App() {
                 {/* TAB 1: EARN CONTENT (VISITOR AD BLOCK) */}
                 {activeTab === 'earn' && (
                   <div className="space-y-6 animate-fadeIn">
+
+                    {/* 📢 OFFICIAL Z-ONEAPP WITHDRAWAL POLICY UPDATE BANNER */}
+                    <WithdrawalPolicyBanner 
+                      onOpenModal={() => setShowWithdrawalPolicyModal(true)} 
+                    />
 
                     {/* 🚀 OFFICIAL Z-ONEAPP PROMOTIONAL BANNER */}
                     <ZoneAppBanner 

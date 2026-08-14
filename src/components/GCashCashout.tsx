@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { WithdrawalRequest, UserStats } from '../types';
 import { RedemptionBannerModal, RedemptionRecordItem } from './RedemptionBannerModal';
+import { WithdrawalPolicyBanner } from './WithdrawalPolicyBanner';
+import { WithdrawalPolicyModal } from './WithdrawalPolicyModal';
 
 interface GCashCashoutProps {
   stats: UserStats;
@@ -38,6 +40,7 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeBanner, setActiveBanner] = useState<RedemptionRecordItem | null>(null);
   const [showBannerModal, setShowBannerModal] = useState(false);
+  const [showPolicyModal, setShowPolicyModal] = useState(false);
 
   // Simple format validation helpers
   const validateGcashNumber = (num: string) => {
@@ -119,7 +122,11 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
   };
 
   return (
-    <div id="gcash-cashout-container" className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <div className="space-y-6">
+      {/* 📢 OFFICIAL WITHDRAWAL POLICY ANNOUNCEMENT BANNER */}
+      <WithdrawalPolicyBanner onOpenModal={() => setShowPolicyModal(true)} />
+
+      <div id="gcash-cashout-container" className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       
       {/* LEFT FORM COLUMN */}
       <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 shadow-sm p-6 relative overflow-hidden">
@@ -429,10 +436,17 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
 
       </div>
 
+      </div>
+
       <RedemptionBannerModal
         isOpen={showBannerModal}
         onClose={() => setShowBannerModal(false)}
         redemption={activeBanner}
+      />
+
+      <WithdrawalPolicyModal
+        isOpen={showPolicyModal}
+        onClose={() => setShowPolicyModal(false)}
       />
 
     </div>
