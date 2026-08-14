@@ -3,6 +3,7 @@ import html2canvas from 'html2canvas';
 import { formatEmbedUrl } from '../utils/reels';
 import { SuccessStoryModal } from './SuccessStoryModal';
 import { RedemptionBannerModal, RedemptionRecordItem } from './RedemptionBannerModal';
+import { AddCampaignModal } from './AddCampaignModal';
 import { 
   Shield, 
   Users, 
@@ -38,9 +39,11 @@ import {
   Trophy,
   Globe,
   Copy,
-  CheckCircle2
+  CheckCircle2,
+  PlusCircle,
+  Plus
 } from 'lucide-react';
-import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd } from '../types';
+import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd, WebsiteCampaign } from '../types';
 
 interface AdminDashboardData {
   users: {
@@ -82,13 +85,54 @@ export default function AdminPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'settings'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'campaigns' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'settings'>('overview');
+  const [adminCampaigns, setAdminCampaigns] = useState<WebsiteCampaign[]>([]);
+  const [showAddCampaignModal, setShowAddCampaignModal] = useState<boolean>(false);
+  const [campaignSearch, setCampaignSearch] = useState<string>('');
   const [reelsData, setReelsData] = useState<{ reels: any[]; reelSubscriptions: any[]; reelRedemptions: any[] }>({ reels: [], reelSubscriptions: [], reelRedemptions: [] });
   const [playingReelId, setPlayingReelId] = useState<string | null>(null);
   const [disapproveReasons, setDisapproveReasons] = useState<{ [id: string]: string }>({});
   const [showSuccessStoryModal, setShowSuccessStoryModal] = useState<boolean>(false);
   const [showRedemptionModal, setShowRedemptionModal] = useState<boolean>(false);
   const [activeRedemptionRecord, setActiveRedemptionRecord] = useState<RedemptionRecordItem | null>(null);
+
+  const fetchAdminCampaigns = async () => {
+    try {
+      const res = await fetch('/api/admin/campaigns', {
+        headers: { 'Authorization': token }
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setAdminCampaigns(result.campaigns || []);
+      }
+    } catch (e) {
+      console.error('Error fetching admin campaigns:', e);
+    }
+  };
+
+  const handleDeleteAdminCampaign = async (campaignId: string, campaignTitle: string) => {
+    if (!window.confirm(`Sigurado ka bang nais mong tanggalin ang campaign na "${campaignTitle}"?`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/campaigns/${campaignId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': token }
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setAdminCampaigns(result.campaigns || []);
+        triggerNotification(`🗑️ Tagumpay na tinanggal ang campaign: "${campaignTitle}"`, 'success');
+        window.dispatchEvent(new Event('refresh-user-profile'));
+      } else {
+        const err = await res.json();
+        triggerNotification(`⚠️ Bigo sa pagtanggal: ${err.error || 'Server error'}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      triggerNotification('⚠️ Error connecting to server.', 'error');
+    }
+  };
 
   const fetchAdminReels = async () => {
     try {
@@ -327,6 +371,7 @@ export default function AdminPanel({
       fetchAdminData();
       fetchMerchantAds();
       fetchAdminReels();
+      fetchAdminCampaigns();
     }
   }, [token, activeSubTab]);
 
@@ -696,6 +741,18 @@ export default function AdminPanel({
         redemption={activeRedemptionRecord}
       />
 
+      {/* 📢 ADMIN EXCLUSIVE: ADD WEBSITE CAMPAIGN POP-UP MODAL */}
+      <AddCampaignModal
+        isOpen={showAddCampaignModal}
+        onClose={() => setShowAddCampaignModal(false)}
+        token={token}
+        onCampaignCreated={(newCamps) => {
+          setAdminCampaigns(newCamps);
+          triggerNotification('🎉 Tagumpay na naidagdag ang bagong website campaign!', 'success');
+        }}
+        triggerNotification={triggerNotification}
+      />
+
       {/* METRICS GRID */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         
@@ -785,6 +842,22 @@ export default function AdminPanel({
           }`}
         >
           Users Registry
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('campaigns'); fetchAdminCampaigns(); }}
+          className={`px-3.5 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            activeSubTab === 'campaigns'
+              ? 'border-indigo-600 text-indigo-600 bg-white/70'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Globe className="w-3.5 h-3.5 text-blue-600" />
+          <span>Web Campaigns</span>
+          {adminCampaigns.length > 0 && (
+            <span className="bg-blue-600 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">
+              {adminCampaigns.length}
+            </span>
+          )}
         </button>
         <button
           onClick={() => { setActiveSubTab('merchant_ads'); }}
@@ -898,6 +971,47 @@ export default function AdminPanel({
                 <li><strong className="text-yellow-300">Floating Demo Banner:</strong> Naka-sticky overlay ang babala at impormasyon para sa mga nagte-testing.</li>
                 <li><strong className="text-indigo-300">ECHOZONEPH Direction:</strong> Malinaw na itinuturo ang totoong platform sa Google Chrome.</li>
               </ul>
+            </div>
+          </div>
+
+          {/* 📢 WEB CAMPAIGNS QUICK ADMIN LAUNCHER CARD */}
+          <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 border-2 border-indigo-400/40 rounded-3xl p-5 shadow-xl text-white space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-500/20 rounded-2xl border border-indigo-400/40 text-indigo-300">
+                  <Globe className="w-5 h-5 text-indigo-300" />
+                </div>
+                <div>
+                  <h3 className="font-black text-white text-sm uppercase tracking-wider flex items-center gap-2">
+                    <span>Website Earning Campaigns</span>
+                    <span className="bg-indigo-500/40 text-indigo-200 border border-indigo-400/40 font-bold text-[9px] px-2 py-0.5 rounded-full">
+                      {adminCampaigns.length} Active Campaigns
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-300 font-semibold">
+                    Pamahalaan ang mga website partner links na binibisita ng mga miyembro para sa automated rewards.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setActiveSubTab('campaigns'); fetchAdminCampaigns(); }}
+                  className="bg-white/10 hover:bg-white/20 text-white font-bold text-xs px-3.5 py-2.5 rounded-xl transition cursor-pointer shrink-0"
+                >
+                  Tingnan Lahat ({adminCampaigns.length})
+                </button>
+                <button
+                  type="button"
+                  id="admin-overview-add-campaign-btn"
+                  onClick={() => setShowAddCampaignModal(true)}
+                  className="bg-indigo-500 hover:bg-indigo-400 active:bg-indigo-600 text-white font-black text-xs px-4 py-2.5 rounded-xl transition cursor-pointer shrink-0 flex items-center gap-1.5 shadow-md shadow-indigo-500/30"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>+ Mag-add ng Campaign (Pop-up)</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1074,6 +1188,215 @@ export default function AdminPanel({
           </div>
 
         </div>
+        </div>
+      )}
+
+      {/* SECTION: WEBSITE CAMPAIGNS REGISTRY & CONTROLS */}
+      {activeSubTab === 'campaigns' && (
+        <div className="space-y-6">
+          
+          {/* HEADER BANNER */}
+          <div className="bg-gradient-to-r from-blue-950 via-indigo-950 to-slate-900 border-2 border-indigo-500/40 p-6 rounded-3xl shadow-xl text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="inline-flex items-center gap-2 bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full">
+                <Globe className="w-3.5 h-3.5" />
+                <span>Live Earning Database</span>
+              </div>
+              <h2 className="text-xl font-black text-white">
+                Website Partner Campaigns
+              </h2>
+              <p className="text-xs text-indigo-200/80 max-w-xl">
+                Lahat ng website ads na ito ay lumalabas sa dashboard ng mga rehistradong miyembro. Bawat pagbisita na tatagal sa itinakdang timer ay awtomatikong bibigyan ng kaukulang GCash reward.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              id="admin-campaigns-add-btn"
+              onClick={() => setShowAddCampaignModal(true)}
+              className="bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-black text-xs px-5 py-3 rounded-2xl transition shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 cursor-pointer shrink-0"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>+ Mag-add ng Bagong Campaign (Pop-up)</span>
+            </button>
+          </div>
+
+          {/* METRIC PILLS & SEARCH BAR */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs space-y-1">
+              <div className="flex items-center justify-between text-slate-400 text-xs font-bold">
+                <span>Kabuuang Campaigns</span>
+                <Globe className="w-4 h-4 text-indigo-500" />
+              </div>
+              <div className="text-2xl font-black text-slate-900">
+                {adminCampaigns.length} <span className="text-xs font-bold text-slate-400">partner links</span>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs space-y-1">
+              <div className="flex items-center justify-between text-slate-400 text-xs font-bold">
+                <span>Average Reward Bawat Visit</span>
+                <Coins className="w-4 h-4 text-amber-500" />
+              </div>
+              <div className="text-2xl font-black text-amber-600">
+                ₱{adminCampaigns.length > 0 
+                  ? (adminCampaigns.reduce((sum, c) => sum + (c.reward || 0), 0) / adminCampaigns.length).toFixed(2)
+                  : '0.00'}
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs space-y-1">
+              <div className="flex items-center justify-between text-slate-400 text-xs font-bold">
+                <span>Average Timer Duration</span>
+                <Clock className="w-4 h-4 text-sky-500" />
+              </div>
+              <div className="text-2xl font-black text-sky-600">
+                {adminCampaigns.length > 0 
+                  ? Math.round(adminCampaigns.reduce((sum, c) => sum + (c.timer || 0), 0) / adminCampaigns.length)
+                  : 0}s <span className="text-xs font-bold text-slate-400">segundo</span>
+              </div>
+            </div>
+          </div>
+
+          {/* SEARCH INPUT */}
+          <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Maghanap ayon sa Title, URL, o Category..."
+                value={campaignSearch}
+                onChange={(e) => setCampaignSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2.5 bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-xl text-xs font-medium outline-hidden transition"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={fetchAdminCampaigns}
+              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer shrink-0"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>I-refresh List</span>
+            </button>
+          </div>
+
+          {/* CAMPAIGNS GRID */}
+          <div className="space-y-4">
+            {(() => {
+              const filtered = adminCampaigns.filter(c => {
+                if (!campaignSearch.trim()) return true;
+                const query = campaignSearch.toLowerCase();
+                return (
+                  c.title.toLowerCase().includes(query) ||
+                  c.url.toLowerCase().includes(query) ||
+                  (c.category && c.category.toLowerCase().includes(query)) ||
+                  (c.description && c.description.toLowerCase().includes(query))
+                );
+              });
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center space-y-4">
+                    <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
+                      <Globe className="w-8 h-8" />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-base font-black text-slate-800">
+                        {campaignSearch ? 'Walang natagpuang campaign para sa search query.' : 'Wala pang naka-post na Website Campaign.'}
+                      </h3>
+                      <p className="text-xs text-slate-500 max-w-md mx-auto font-medium">
+                        I-click ang button sa ibaba upang buksan ang Pop-up Window at magdagdag ng unang campaign para sa mga miyembro.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddCampaignModal(true)}
+                      className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-xl transition cursor-pointer shadow-md inline-flex items-center gap-2"
+                    >
+                      <PlusCircle className="w-4 h-4" />
+                      <span>Mag-add ng Bagong Campaign Ngayon</span>
+                    </button>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filtered.map((camp) => (
+                    <div
+                      key={camp.id}
+                      className="bg-white border border-slate-200/90 rounded-3xl p-5 shadow-xs hover:shadow-md transition duration-200 flex flex-col justify-between space-y-4 relative group"
+                    >
+                      <div className="space-y-3">
+                        
+                        {/* TOP BADGES */}
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="bg-indigo-50 text-indigo-700 font-black text-[10px] px-2.5 py-1 rounded-full border border-indigo-100 uppercase tracking-wider">
+                            {camp.category || 'E-Services'}
+                          </span>
+                          
+                          <div className="flex items-center gap-1.5">
+                            <span className="bg-amber-100 text-amber-800 font-black text-xs px-2 py-0.5 rounded-lg border border-amber-200 flex items-center gap-1">
+                              <Coins className="w-3 h-3 text-amber-600" />
+                              <span>₱{camp.reward.toFixed(2)}</span>
+                            </span>
+                            <span className="bg-sky-100 text-sky-800 font-bold text-xs px-2 py-0.5 rounded-lg border border-sky-200 flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-sky-600" />
+                              <span>{camp.timer}s</span>
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* TITLE & URL */}
+                        <div className="space-y-1">
+                          <h3 className="font-extrabold text-slate-900 text-sm leading-snug">
+                            {camp.title}
+                          </h3>
+                          <a
+                            href={camp.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-blue-600 hover:text-blue-800 font-semibold truncate flex items-center gap-1 group-hover:underline"
+                            title={camp.url}
+                          >
+                            <span className="truncate">{camp.url}</span>
+                            <ExternalLink className="w-3 h-3 shrink-0" />
+                          </a>
+                        </div>
+
+                        {/* DESCRIPTION */}
+                        {camp.description && (
+                          <p className="text-[11px] text-slate-500 font-medium leading-relaxed line-clamp-2">
+                            {camp.description}
+                          </p>
+                        )}
+
+                      </div>
+
+                      {/* BOTTOM FOOTER / ACTION */}
+                      <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
+                        <span className="font-mono text-[10px] text-slate-400 truncate max-w-[140px]">
+                          ID: {camp.id}
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAdminCampaign(camp.id, camp.title)}
+                          className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 font-black text-xs transition cursor-pointer flex items-center gap-1 border border-rose-200"
+                          title="Tanggalin ang campaign na ito"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Tanggalin</span>
+                        </button>
+                      </div>
+
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+
         </div>
       )}
 

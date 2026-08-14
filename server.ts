@@ -3057,6 +3057,25 @@ app.get('/api/campaigns', (req, res) => {
   res.json({ campaigns: campaignsWithStatus });
 });
 
+app.get('/api/admin/campaigns', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user || !user.isAdmin) {
+    return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
+  }
+
+  if (!db.campaigns) {
+    db.campaigns = INITIAL_CAMPAIGNS;
+  }
+
+  res.json({ campaigns: db.campaigns });
+});
+
 app.post('/api/admin/campaigns', (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {

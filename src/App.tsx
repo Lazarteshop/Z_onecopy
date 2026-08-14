@@ -72,6 +72,7 @@ import { PromoAdBannerModal } from './components/PromoAdBannerModal';
 import { DemoTestingFloatingBanner } from './components/DemoTestingFloatingBanner';
 import { WithdrawalPolicyModal } from './components/WithdrawalPolicyModal';
 import { WithdrawalPolicyBanner } from './components/WithdrawalPolicyBanner';
+import { AddCampaignModal } from './components/AddCampaignModal';
 import { soundEffects } from './utils/audio';
 
 interface UserSession {
@@ -176,6 +177,7 @@ export default function App() {
   const [activeCommercialCamp, setActiveCommercialCamp] = useState<WebsiteCampaign | null>(null);
 
   // Add custom campaigns state
+  const [showAddCampaignModal, setShowAddCampaignModal] = useState<boolean>(false);
   const [customTitle, setCustomTitle] = useState('');
   const [customUrl, setCustomUrl] = useState('');
   const [customReward, setCustomReward] = useState('0.75');
@@ -742,8 +744,8 @@ export default function App() {
           setCampaigns(mapped);
         }
 
-        // Auto transition into admin panel tab if they are logged in as admin to save steps
-        if (data.user.isAdmin && activeTab === 'earn') {
+        // Auto transition into admin panel tab only on initial login if they are logged in as admin to save steps
+        if (!silent && data.user.isAdmin && activeTab === 'earn') {
           setActiveTab('admin');
         }
       } else {
@@ -1930,6 +1932,17 @@ export default function App() {
         }}
       />
 
+      {/* 🚀 ADMIN EXCLUSIVE: ADD WEBSITE CAMPAIGN POP-UP MODAL */}
+      <AddCampaignModal
+        isOpen={showAddCampaignModal && Boolean(user && user.isAdmin)}
+        onClose={() => setShowAddCampaignModal(false)}
+        token={token}
+        onCampaignCreated={(newCampaigns) => {
+          setCampaigns(newCampaigns);
+        }}
+        triggerNotification={triggerNotification}
+      />
+
       {/* 🚀 SCREEN GATEWAY 1: NOT AUTHENTICATED SCREEN */}
       {!token || !user ? (
         <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 py-12 relative overflow-hidden">
@@ -2607,101 +2620,37 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* INTERACTIVE FORM: CREATE CUSTOM WEBSITE AD CAMPAIGN WITH EARNING RULES */}
+                    {/* ADMIN EXCLUSIVE QUICK POPUP LAUNCHER BANNER */}
                     {user && user.isAdmin && (
-                      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
-                        
-                        <div className="border-b border-slate-100 pb-3">
-                          <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
-                            <PlusCircle className="w-5 h-5 text-indigo-600" />
-                            <span>Mag-add ng Bagong Campaign (Admin Only)</span>
-                          </h3>
-                          <p className="text-[11px] text-slate-550 mt-0.5">Ipasok ang link, reward, at tagal ng pagbisita upang gawing available sa mga users.</p>
+                      <div className="bg-gradient-to-r from-indigo-900 via-indigo-950 to-slate-900 border-2 border-indigo-400/40 rounded-3xl p-5 shadow-lg text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-3.5">
+                          <div className="p-3 bg-indigo-500/20 rounded-2xl border border-indigo-400/40 text-indigo-300">
+                            <PlusCircle className="w-6 h-6 text-indigo-400" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-black uppercase tracking-wider bg-indigo-500/30 text-indigo-200 px-2 py-0.5 rounded-md border border-indigo-400/30">
+                                Admin Control
+                              </span>
+                              <h3 className="font-extrabold text-white text-sm">
+                                Mag-add ng Bagong Website Campaign
+                              </h3>
+                            </div>
+                            <p className="text-xs text-indigo-200/80 mt-0.5">
+                              I-click ang button upang buksan ang pop-up window para sa pag-add ng bagong partner link nang hindi nawawala ang iyong tina-type.
+                            </p>
+                          </div>
                         </div>
 
-                        <form onSubmit={handleCreateCustomCampaign} className="grid grid-cols-1 md:grid-cols-6 gap-4 text-xs font-semibold">
-                          
-                          {/* Title input */}
-                          <div className="space-y-1 md:col-span-2">
-                            <label className="text-slate-500 font-bold block">Pangalan ng Website / Title *</label>
-                            <input 
-                              type="text" 
-                              required
-                              placeholder="Hal. My Personal Blog" 
-                              value={customTitle}
-                              onChange={(e) => setCustomTitle(e.target.value)}
-                              className="w-full bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-hidden font-semibold transition"
-                            />
-                          </div>
-
-                          {/* URL input */}
-                          <div className="space-y-1 md:col-span-2">
-                            <label className="text-slate-550 font-bold block">Website Homepage URL *</label>
-                            <input 
-                              type="text" 
-                              required
-                              placeholder="Hal. myhomepage.com o blog.org" 
-                              value={customUrl}
-                              onChange={(e) => setCustomUrl(e.target.value)}
-                              className="w-full bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-hidden font-semibold transition"
-                            />
-                          </div>
-
-                          {/* Reward amount */}
-                          <div className="space-y-1 md:col-span-1">
-                            <label className="text-slate-550 font-bold block">Reward (₱) *</label>
-                            <input 
-                              type="number" 
-                              step="0.01"
-                              min="0.01"
-                              required
-                              placeholder="Hal. 2.50" 
-                              value={customReward}
-                              onChange={(e) => setCustomReward(e.target.value)}
-                              className="w-full bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-hidden font-semibold transition"
-                            />
-                          </div>
-
-                          {/* Timer */}
-                          <div className="space-y-1 md:col-span-1">
-                            <label className="text-slate-550 font-bold block">Timer (segundo) *</label>
-                            <input 
-                              type="number" 
-                              min="5"
-                              required
-                              placeholder="Hal. 15" 
-                              value={customTimer}
-                              onChange={(e) => setCustomTimer(e.target.value)}
-                              className="w-full bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-hidden font-semibold transition"
-                            />
-                          </div>
-
-                          {/* Description input */}
-                          <div className="space-y-1 md:col-span-6">
-                            <label className="text-slate-550 font-bold block">Paglalarawan / Description of Website</label>
-                            <textarea 
-                              placeholder="Hal. Isang mahusay na blog tungkol sa tech at balita sa bansa." 
-                              value={customDescription}
-                              onChange={(e) => setCustomDescription(e.target.value)}
-                              rows={2}
-                              className="w-full bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-hidden font-semibold transition resize-none"
-                            />
-                          </div>
-
-                          {/* Action Submit full row */}
-                          <div className="md:col-span-6 flex justify-end">
-                            <button
-                              type="submit"
-                              id="create-custom-campaign-btn"
-                              className="bg-slate-900 hover:bg-slate-800 text-white font-extrabold px-6 py-2.5 rounded-xl cursor-pointer transition flex items-center justify-center gap-1.5"
-                            >
-                              <Plus className="w-4 h-4 text-emerald-400" />
-                              <span>Mag-add Campaign</span>
-                            </button>
-                          </div>
-
-                        </form>
-
+                        <button
+                          type="button"
+                          id="open-add-campaign-modal-btn"
+                          onClick={() => setShowAddCampaignModal(true)}
+                          className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-extrabold text-xs transition shadow-md shadow-indigo-600/30 flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+                        >
+                          <PlusCircle className="w-4 h-4" />
+                          <span>+ Buksan Pop-up Form</span>
+                        </button>
                       </div>
                     )}
 
