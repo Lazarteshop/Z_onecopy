@@ -4734,19 +4734,17 @@ async function syncRssToDatabase() {
   }
 }
 
-// 1. GET ALL POSTS
-app.get('/api/zone/posts', async (req, res) => {
-  // Sync RSS feed before loading posts if expired, so we get them instantly on load!
+// 1. GET ALL POSTS (Fast zero-lag response like Facebook)
+app.get('/api/zone/posts', (req, res) => {
+  // Sync RSS feed asynchronously in the background so client request is never blocked
   const now = Date.now();
-  if (now - lastRssSyncTime > 5 * 60 * 1000) {
+  if (now - lastRssSyncTime > 10 * 60 * 1000) {
     lastRssSyncTime = now;
-    console.log('🔄 Performing real-time Manila Bulletin RSS sync...');
-    await syncRssToDatabase().catch(err => console.error('Real-time RSS sync failed:', err));
+    syncRssToDatabase().catch(err => console.error('Background RSS sync failed:', err));
   }
 
   const db = loadDB();
   const posts = db.posts || [];
-  const userId = req.headers.authorization;
 
   // Sort posts: always newest first
   const sortedPosts = [...posts].sort((a, b) => {
@@ -4754,6 +4752,35 @@ app.get('/api/zone/posts', async (req, res) => {
   });
 
   res.json({ posts: sortedPosts });
+});
+
+// UNIFIED HIGH-PERFORMANCE SYNC ROUTE (Combines Messages, Active Calls, & Online Heartbeats in 1 single call)
+app.get('/api/zone/sync', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const db = loadDB();
+  const messages = (db.directMessages || []).filter(m => m.senderId === userId || m.receiverId === userId);
+  
+  const now = Date.now();
+  const activeCalls = (db.activeCalls || []).filter(c => 
+    (c.callerId === userId || c.receiverId === userId) && 
+    c.status !== 'ended' && 
+    c.status !== 'declined' &&
+    (now - new Date(c.createdAt).getTime() < 60000)
+  );
+
+  const onlineIds = Object.keys(activeUsersMap).filter(id => now - activeUsersMap[id] < 60000);
+  if (!onlineIds.includes('admin-rosco')) onlineIds.push('admin-rosco');
+  if (!onlineIds.includes('user-juan')) onlineIds.push('user-juan');
+
+  res.json({
+    messages,
+    calls: activeCalls,
+    onlineUserIds: onlineIds
+  });
 });
 
 // 2. CREATE A NEW POST

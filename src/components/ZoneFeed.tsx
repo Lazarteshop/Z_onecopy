@@ -178,6 +178,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   });
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [postFilter, setPostFilter] = useState<'all' | 'news' | 'community'>('all');
+  const [visiblePostLimit, setVisiblePostLimit] = useState<number>(12);
 
   // --- PRIVATE DIRECT MESSAGE (DM) STATES ---
   const [activeDmUser, setActiveDmUser] = useState<{ id: string; name: string; avatar: string } | null>(null);
@@ -502,30 +503,25 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     }
   };
 
-  // Poll for incoming Direct Messages and Call invitations in real-time
+  // Poll for incoming Direct Messages and Call invitations in real-time (Unified fast call)
   useEffect(() => {
     if (!token) return;
     let active = true;
 
     const pollDmsAndCalls = async () => {
-      try {
-        // 1. Fetch direct messages
-        const dmRes = await fetch('/api/zone/messages', {
-          headers: { 'Authorization': token }
-        });
-        if (dmRes.ok && active) {
-          const dmData = await dmRes.json();
-          setDmMessages(dmData.messages || []);
-        }
+      // Don't waste CPU or network when tab is hidden or user minimized browser
+      if (document.hidden) return;
 
-        // 2. Fetch call status
-        const callRes = await fetch('/api/zone/calls', {
+      try {
+        const syncRes = await fetch('/api/zone/sync', {
           headers: { 'Authorization': token }
         });
-        if (callRes.ok && active) {
-          const callData = await callRes.json();
-          const activeCalls = callData.calls || [];
-          
+        if (syncRes.ok && active) {
+          const syncData = await syncRes.json();
+          setDmMessages(syncData.messages || []);
+          setOnlineUserIds(syncData.onlineUserIds || []);
+
+          const activeCalls = syncData.calls || [];
           if (activeCalls.length > 0) {
             const currentCall = activeCalls[0];
             
@@ -570,23 +566,14 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
             }
           }
         }
-
-        // 3. Fetch online users list
-        const onlineRes = await fetch('/api/zone/online', {
-          headers: { 'Authorization': token }
-        });
-        if (onlineRes.ok && active) {
-          const onlineData = await onlineRes.json();
-          setOnlineUserIds(onlineData.onlineUserIds || []);
-        }
       } catch (err) {
-        console.error('Error polling messages/calls:', err);
+        console.error('Error in unified zone sync:', err);
       }
     };
 
-    // Run immediately and then poll every 1.5 seconds if in active call for fast handshakes, otherwise 3s
+    // Run immediately and poll every 6s when idle (1.5s when in active call)
     pollDmsAndCalls();
-    const intervalId = setInterval(pollDmsAndCalls, activeCallSession ? 1500 : 3000);
+    const intervalId = setInterval(pollDmsAndCalls, activeCallSession ? 1500 : 6000);
 
     return () => {
       active = false;
@@ -1469,6 +1456,11 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     return visiblePosts;
   }, [visiblePosts, postFilter]);
 
+  // Progressive posts slicing for ultra-fast 60 FPS performance (like Facebook News Feed)
+  const displayedPosts = React.useMemo(() => {
+    return filteredPosts.slice(0, visiblePostLimit);
+  }, [filteredPosts, visiblePostLimit]);
+
   useEffect(() => {
     // Zero Waiting: Always fetch silently in the background so the user never sees any loading blocks
     fetchPosts(true);
@@ -1476,9 +1468,11 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       fetchModUsers();
     }
 
-    // Auto-refresh the feed every 15 seconds silently like Facebook (Optimized to prevent network congestion on weak signals)
+    // Auto-refresh the feed every 15 seconds silently like Facebook (only when window is active)
     const interval = setInterval(() => {
-      fetchPosts(true);
+      if (!document.hidden) {
+        fetchPosts(true);
+      }
     }, 15000);
 
     return () => clearInterval(interval);
@@ -2511,7 +2505,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 </div>
               ) : (
                 <div className="space-y-4">
-              {filteredPosts.map((post) => {
+              {displayedPosts.map((post) => {
                 const hasLiked = post.likes.includes(user.id);
                 const isMyOwnPost = post.userId === user.id;
                 const userZoned = isUserZoned(post.userId);
@@ -2521,10 +2515,9 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 const progress = (post as any).progress;
 
                 return (
-                  <motion.div
+                  <div
                     key={post.id}
-                    layoutId={post.id}
-                    className={`bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden transition-all duration-300 ${
+                    className={`bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden transition-all duration-200 ${
                       isPending ? 'opacity-70 saturate-75 bg-slate-50/50' : ''
                     } ${isFailed ? 'border-rose-200 bg-rose-50/10' : ''}`}
                   >
@@ -3159,9 +3152,26 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                       </>
                     )}
 
-                  </motion.div>
+                  </div>
                 );
               })}
+
+              {/* PROGRESSIVE INFINITE LOAD MORE BUTTON (Like Facebook Feed) */}
+              {filteredPosts.length > visiblePostLimit && (
+                <div className="pt-2 pb-6 flex flex-col items-center justify-center">
+                  <button
+                    onClick={() => setVisiblePostLimit(prev => prev + 12)}
+                    className="bg-white hover:bg-blue-50/50 border border-slate-200 hover:border-blue-200 text-blue-600 font-extrabold text-xs px-6 py-3 rounded-2xl shadow-xs hover:shadow-md transition cursor-pointer flex items-center gap-2"
+                  >
+                    <RefreshCw className="w-4 h-4 text-blue-600 animate-spin-hover" />
+                    <span>
+                      {language === 'tl'
+                        ? `Mag-load ng higit pang mga post (${filteredPosts.length - visiblePostLimit} natitira)`
+                        : `Load more posts (${filteredPosts.length - visiblePostLimit} remaining)`}
+                    </span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
             </div>

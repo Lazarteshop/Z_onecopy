@@ -850,8 +850,11 @@ export default function App() {
   useEffect(() => {
     if (!token) return;
     const interval = setInterval(() => {
-      fetchUserProfile(token, true);
-    }, 5000); // Poll silently every 5 seconds to reflect token approvals immediately
+      // Only poll when the browser tab is actually visible and active
+      if (!document.hidden) {
+        fetchUserProfile(token, true);
+      }
+    }, 15000); // Polling every 15 seconds (aligned with Facebook real-time sync)
 
     const handleRefresh = () => {
       fetchUserProfile(token, true);
@@ -872,9 +875,12 @@ export default function App() {
   const [showPlansInWarning, setShowPlansInWarning] = useState(false);
 
   useEffect(() => {
+    // Update reference time every 15 seconds instead of 1 second to eliminate CPU lag
     const timer = setInterval(() => {
-      setNow(new Date());
-    }, 1000);
+      if (!document.hidden) {
+        setNow(new Date());
+      }
+    }, 15000);
     return () => clearInterval(timer);
   }, []);
 
