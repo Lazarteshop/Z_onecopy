@@ -54,11 +54,14 @@ interface ZoneFeedProps {
 }
 
 const PRESET_PHOTOS = [
-  { url: 'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=600&auto=format&fit=crop&q=60', label: '💻 Work & Earning' },
-  { url: 'https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?w=600&auto=format&fit=crop&q=60', label: '💰 GCash Cash & Coins' },
-  { url: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=600&auto=format&fit=crop&q=60', label: '🎮 Gaming Vibes' },
-  { url: 'https://images.unsplash.com/photo-1511512578047-dfb367046420?w=600&auto=format&fit=crop&q=60', label: '🔥 Success & Growth' },
-  { url: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=600&auto=format&fit=crop&q=60', label: '🎉 Celebration Feed' },
+  { url: 'https://picsum.photos/seed/zone-community/1080/1080', label: '🎲 Random 1 (Picsum)' },
+  { url: 'https://picsum.photos/seed/zone-work/1080/1080', label: '💻 Tech & Work' },
+  { url: 'https://picsum.photos/seed/zone-crypto/1080/1080', label: '💰 Earning & Success' },
+  { url: 'https://picsum.photos/seed/zone-nature/1080/1080', label: '🌄 Nature & Scenery' },
+  { url: 'https://picsum.photos/seed/zone-city/1080/1080', label: '🏙️ City & Lifestyle' },
+  { url: 'https://picsum.photos/seed/zone-art/1080/1080', label: '🎨 Abstract & Art' },
+  { url: 'https://picsum.photos/seed/zone-travel/1080/1080', label: '✈️ Travel & Explore' },
+  { url: 'https://picsum.photos/seed/zone-celebrate/1080/1080', label: '🎉 Celebration' },
 ];
 
 const PRESET_VIDEOS = [
@@ -2415,8 +2418,30 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                       exit={{ opacity: 0, height: 0 }}
                       className="border border-slate-150 p-3 rounded-2xl bg-slate-50 space-y-3"
                     >
-                      <div className="space-y-1.5">
-                        <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">📷 preset photos</span>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">📷 preset photos (picsum 1080x1080)</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const randomUrl = `https://picsum.photos/1080/1080?random=${Date.now()}`;
+                              setSelectedPhotos([randomUrl]);
+                              setSelectedPhoto(randomUrl);
+                              setSelectedVideo(null);
+                              setCustomMediaUrl('');
+                              triggerNotification(
+                                language === 'tl'
+                                  ? '🎲 Nakakuha ng bagong random 1080x1080 photo mula sa Picsum!'
+                                  : '🎲 Generated a fresh random 1080x1080 photo from Picsum!',
+                                'success'
+                              );
+                            }}
+                            className="text-[9.5px] text-blue-600 hover:text-blue-700 font-extrabold flex items-center gap-1 cursor-pointer bg-blue-50/80 hover:bg-blue-100 px-2 py-0.5 rounded-lg transition"
+                          >
+                            <Sparkles className="w-2.5 h-2.5 text-blue-600" />
+                            <span>{language === 'tl' ? '🎲 Random Roll' : '🎲 Random Roll'}</span>
+                          </button>
+                        </div>
                         <div className="grid grid-cols-2 gap-1.5">
                           {PRESET_PHOTOS.map((ph, idx) => (
                             <button
