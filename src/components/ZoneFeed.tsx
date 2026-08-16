@@ -9,6 +9,7 @@ import {
   Share2, 
   PlusCircle, 
   Camera, 
+  ImageIcon,
   Tv, 
   Users, 
   Sparkles, 
@@ -65,7 +66,96 @@ const PRESET_VIDEOS = [
   { url: 'https://assets.mixkit.co/videos/preview/mixkit-hand-holding-smartphone-with-charts-on-screen-34442-large.mp4', label: '📊 Earnings Dashboard' }
 ];
 
-// Media Hub features cleaned up
+// Media Hub features cleaned up with ultra-fast Mobile PWA File Compressor
+
+const compressImageFromFile = (file: File, maxWidth: number = 1000, maxHeight: number = 1000, quality: number = 0.7): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    // If not an image, fallback to standard FileReader
+    if (!file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('Failed to read file.'));
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    let objectUrl = '';
+    try {
+      objectUrl = URL.createObjectURL(file);
+    } catch {
+      // Fallback if URL.createObjectURL is blocked
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('Failed to read file.'));
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    const img = new Image();
+    const timeout = setTimeout(() => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(file);
+    }, 5000);
+
+    img.onload = () => {
+      clearTimeout(timeout);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      try {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error('Failed to read file.'));
+          reader.readAsDataURL(file);
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(compressedDataUrl);
+      } catch (err) {
+        console.error('Canvas compression error, falling back:', err);
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Failed to read file.'));
+        reader.readAsDataURL(file);
+      }
+    };
+
+    img.onerror = () => {
+      clearTimeout(timeout);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('Failed to read file.'));
+      reader.readAsDataURL(file);
+    };
+
+    img.src = objectUrl;
+  });
+};
 
 const compressImage = (dataUrl: string, maxWidth: number = 800, maxHeight: number = 800, quality: number = 0.6): Promise<string> => {
   return new Promise((resolve) => {
@@ -1090,15 +1180,15 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     let hasVideo = false;
     let videoDataUrl = '';
 
-    const readFile = (file: File): Promise<string> => {
+    const readVideoFile = (file: File): Promise<string> => {
       return new Promise((resolve, reject) => {
-        if (file.size > 25 * 1024 * 1024) {
-          reject(new Error(language === 'tl' ? 'Ang file ay masyadong malaki (Max 25MB).' : 'File size exceeds 25MB.'));
+        if (file.size > 50 * 1024 * 1024) {
+          reject(new Error(language === 'tl' ? 'Ang video ay masyadong malaki (Max 50MB).' : 'Video size exceeds 50MB.'));
           return;
         }
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = () => reject(new Error('Failed to read file.'));
+        reader.onerror = () => reject(new Error('Failed to read video file.'));
         reader.readAsDataURL(file);
       });
     };
@@ -1106,32 +1196,33 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        if (file.type.startsWith('image/')) {
+        if (file.type.startsWith('image/') || file.type === '' || file.name.match(/\.(jpg|jpeg|png|webp|gif|heic|heif)$/i)) {
           triggerNotification(
             language === 'tl' 
-              ? '⚡ Kusa naming pinapaliit at ino-optimize ang larawan para sa mabilisang upload...' 
-              : '⚡ Automatically optimizing and compressing image for super-fast upload...',
+              ? '⚡ Kusa naming pinapaliit at ino-optimize ang larawan mula sa gallery...' 
+              : '⚡ Automatically optimizing and compressing gallery image...',
             'info'
           );
-          const originalDataUrl = await readFile(file);
-          // Compress the image down using canvas to under ~80KB
-          const compressedDataUrl = await compressImage(originalDataUrl, 800, 800, 0.6);
-          photosList.push(compressedDataUrl);
-        } else if (file.type.startsWith('video/')) {
+          // Compress the image directly from File object to stay lightweight and avoid PWA memory spikes
+          const compressedDataUrl = await compressImageFromFile(file, 1000, 1000, 0.7);
+          if (compressedDataUrl) {
+            photosList.push(compressedDataUrl);
+          }
+        } else if (file.type.startsWith('video/') || file.name.match(/\.(mp4|mov|webm|3gp|m4v)$/i)) {
           triggerNotification(
             language === 'tl'
-              ? '🎥 Inihahanda ang video para sa background upload. Maaari ka pa ring mag-browse habang nag-a-upload!'
-              : '🎥 Preparing video for background upload. You can still browse while uploading!',
+              ? '🎥 Inihahanda ang video mula sa gallery para sa background upload...'
+              : '🎥 Preparing gallery video for background upload...',
             'info'
           );
-          const dataUrl = await readFile(file);
+          const dataUrl = await readVideoFile(file);
           videoDataUrl = dataUrl;
           hasVideo = true;
         } else {
           triggerNotification(
             language === 'tl' 
-              ? 'Format ng file ay hindi suportado. Larawan o video lamang.' 
-              : 'Unsupported file format. Images and videos only.',
+              ? 'Format ng file ay hindi suportado. Pumili ng larawan o video mula sa gallery.' 
+              : 'Unsupported file format. Please select an image or video from gallery.',
             'error'
           );
         }
@@ -1142,16 +1233,18 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         setSelectedPhotos([]);
         setSelectedPhoto(null);
         setCustomMediaUrl('');
-      } else {
+      } else if (photosList.length > 0) {
         setSelectedPhotos(photosList);
         setSelectedVideo(null);
         setSelectedPhoto(photosList[0] || null);
         setCustomMediaUrl('');
       }
     } catch (err: any) {
-      triggerNotification(err.message || 'Error uploading files', 'error');
+      triggerNotification(err.message || 'Error uploading gallery files', 'error');
     } finally {
       setIsUploadingLocalFile(false);
+      // Reset input value so re-selecting the same file works reliably
+      e.target.value = '';
     }
   };
 
@@ -1242,12 +1335,22 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     }
   });
 
-  // Sync outbox to localStorage
+  // Sync outbox to localStorage with safety against QuotaExceededError in mobile PWA
   useEffect(() => {
     try {
-      localStorage.setItem(`zone_outbox_${user.id}`, JSON.stringify(outbox));
+      const lightweightOutbox = outbox.map(item => ({
+        ...item,
+        // Trim massive data strings for localStorage to preserve 5MB quota limit
+        mediaUrl: item.mediaUrl && item.mediaUrl.startsWith('data:') && item.mediaUrl.length > 50000 
+          ? undefined 
+          : item.mediaUrl,
+        mediaUrls: item.mediaUrls 
+          ? item.mediaUrls.map((u: string) => (u.startsWith('data:') && u.length > 50000 ? undefined : u)).filter(Boolean)
+          : undefined
+      }));
+      localStorage.setItem(`zone_outbox_${user.id}`, JSON.stringify(lightweightOutbox));
     } catch (e) {
-      console.error('Failed to save outbox to localStorage', e);
+      console.warn('LocalStorage quota limit handled gracefully:', e);
     }
   }, [outbox, user.id]);
 
@@ -2220,42 +2323,88 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 </div>
               )}
 
-              {/* MEDIA EXPANSION CONTROLS */}
-              <div className="space-y-3">
-                {/* File input for local phone gallery upload */}
+              {/* MEDIA EXPANSION CONTROLS (OPTIMIZED FOR MOBILE PWA & PHONE GALLERY) */}
+              <div className="space-y-2.5">
+                {/* Dedicated Photo Gallery Input (Native PWA Label Trigger) */}
+                <input
+                  type="file"
+                  accept="image/*,image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif"
+                  onChange={handleLocalFileChange}
+                  multiple={true}
+                  className="sr-only"
+                  id="pwa-photo-gallery-upload"
+                  disabled={isUploadingLocalFile}
+                />
+                
+                {/* Dedicated Video Gallery Input (Native PWA Label Trigger) */}
+                <input
+                  type="file"
+                  accept="video/*,video/mp4,video/quicktime,video/webm,video/3gpp,video/m4v"
+                  onChange={handleLocalFileChange}
+                  multiple={false}
+                  className="sr-only"
+                  id="pwa-video-gallery-upload"
+                  disabled={isUploadingLocalFile}
+                />
+
+                {/* All Media Input */}
                 <input
                   type="file"
                   accept="image/*,video/*"
                   onChange={handleLocalFileChange}
                   multiple={true}
-                  className="hidden"
+                  className="sr-only"
                   id="local-media-upload"
                   disabled={isUploadingLocalFile}
                 />
-                <button
-                  type="button"
-                  onClick={() => document.getElementById('local-media-upload')?.click()}
-                  className="w-full border border-dashed border-indigo-300 hover:border-indigo-500 hover:bg-indigo-50/20 p-2.5 rounded-2xl text-[11px] text-indigo-750 font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5"
-                >
-                  {isUploadingLocalFile ? (
-                    <span className="h-4 w-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></span>
-                  ) : (
-                    <Upload className="w-4 h-4 text-indigo-600" />
-                  )}
-                  <span>
-                    {isUploadingLocalFile 
-                      ? (language === 'tl' ? 'Binabasa ang file...' : 'Reading file...') 
-                      : (language === 'tl' ? 'Kumuha sa Phone Gallery (Multi-Upload)' : 'Choose from Phone Gallery (Multi-Upload)')}
-                  </span>
-                </button>
+
+                <div className="grid grid-cols-2 gap-2">
+                  {/* Photo Gallery Label Button */}
+                  <label
+                    htmlFor="pwa-photo-gallery-upload"
+                    className={`border border-indigo-200 hover:border-indigo-500 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-750 p-2.5 rounded-2xl text-[11px] font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5 shadow-2xs select-none active:scale-95 ${
+                      isUploadingLocalFile ? 'opacity-50 pointer-events-none' : ''
+                    }`}
+                  >
+                    {isUploadingLocalFile ? (
+                      <span className="h-4 w-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></span>
+                    ) : (
+                      <ImageIcon className="w-4 h-4 text-indigo-600 shrink-0" />
+                    )}
+                    <span className="truncate">
+                      {isUploadingLocalFile 
+                        ? (language === 'tl' ? 'Ina-upload...' : 'Uploading...') 
+                        : (language === 'tl' ? '📷 Larawan (Gallery)' : '📷 Photo (Gallery)')}
+                    </span>
+                  </label>
+
+                  {/* Video Gallery Label Button */}
+                  <label
+                    htmlFor="pwa-video-gallery-upload"
+                    className={`border border-purple-200 hover:border-purple-500 bg-purple-50/50 hover:bg-purple-50 text-purple-750 p-2.5 rounded-2xl text-[11px] font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5 shadow-2xs select-none active:scale-95 ${
+                      isUploadingLocalFile ? 'opacity-50 pointer-events-none' : ''
+                    }`}
+                  >
+                    {isUploadingLocalFile ? (
+                      <span className="h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin"></span>
+                    ) : (
+                      <Video className="w-4 h-4 text-purple-600 shrink-0" />
+                    )}
+                    <span className="truncate">
+                      {isUploadingLocalFile 
+                        ? (language === 'tl' ? 'Ina-upload...' : 'Uploading...') 
+                        : (language === 'tl' ? '🎥 Video (Gallery)' : '🎥 Video (Gallery)')}
+                    </span>
+                  </label>
+                </div>
 
                 <button
                   type="button"
                   onClick={() => setShowMediaSelect(!showMediaSelect)}
-                  className="w-full border border-dashed border-slate-300 hover:border-blue-500 hover:bg-blue-50/20 p-2.5 rounded-2xl text-[11px] text-slate-650 font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5"
+                  className="w-full border border-slate-200 hover:border-slate-300 bg-slate-50/80 hover:bg-slate-100 p-2 rounded-xl text-[10.5px] text-slate-600 font-bold cursor-pointer transition flex items-center justify-center gap-1.5 select-none"
                 >
-                  <Camera className="w-4 h-4 text-emerald-500" />
-                  <span>{language === 'tl' ? 'Pumili sa Presets (Larawan o Video)' : 'Select from Presets (Photo or Video)'}</span>
+                  <Camera className="w-3.5 h-3.5 text-slate-500" />
+                  <span>{language === 'tl' ? 'Pumili sa Royalty-Free Presets' : 'Select Royalty-Free Presets'}</span>
                 </button>
 
                 <AnimatePresence>
