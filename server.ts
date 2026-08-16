@@ -4653,6 +4653,80 @@ app.get('/uploads/:filename', async (req, res) => {
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // --- MANILA BULLETIN BALITA RSS FEED INTEGRATION ---
+const mbImageCache = new Map<string, string>();
+
+async function fetchExactManilaBulletinImage(articleUrl: string): Promise<string | null> {
+  if (!articleUrl) return null;
+  if (mbImageCache.has(articleUrl)) {
+    return mbImageCache.get(articleUrl) || null;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4500);
+
+    const res = await fetch('https://r.jina.ai/' + articleUrl, {
+      signal: controller.signal,
+      headers: {
+        'Accept': 'text/plain, text/markdown, */*'
+      }
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const text = await res.text();
+
+      // 1. Direct CloudFront WebP / Image upload from Manila Bulletin (featured article image)
+      const cfMatches = text.match(/https:\/\/d1t2sru3bhidc1\.cloudfront\.net\/balita\/uploads\/images\/[^\s\)"'<>]+/g);
+      if (cfMatches && cfMatches.length > 0) {
+        const cleanUrl = cfMatches[0].trim();
+        mbImageCache.set(articleUrl, cleanUrl);
+        return cleanUrl;
+      }
+
+      // 2. Direct Manila Bulletin domain image
+      const mbMatch = text.match(/!\[.*?\]\((https:\/\/[^\)]*(?:balita\.mb\.com\.ph|mb\.com\.ph)[^\)]+\.(?:jpg|jpeg|png|webp|avif))\)/i);
+      if (mbMatch && mbMatch[1]) {
+        const cleanUrl = mbMatch[1].trim();
+        mbImageCache.set(articleUrl, cleanUrl);
+        return cleanUrl;
+      }
+
+      // 3. Any standard media article photo excluding logos/icons
+      const anyMatch = text.match(/!\[.*?\]\((https:\/\/[^\)]+\.(?:jpg|jpeg|png|webp|avif))\)/i);
+      if (anyMatch && anyMatch[1] && !anyMatch[1].includes('logo') && !anyMatch[1].includes('arrow') && !anyMatch[1].includes('icon') && !anyMatch[1].includes('favicon')) {
+        const cleanUrl = anyMatch[1].trim();
+        mbImageCache.set(articleUrl, cleanUrl);
+        return cleanUrl;
+      }
+    }
+  } catch (err: any) {
+    // Non-blocking timeout or fetch failure
+  }
+
+  return null;
+}
+
+function getBalitaNewsImageUrl(title: string, summary: string, rawItem: any): string | null {
+  // 1. Check if rawItem has image, banner_image, enclosure or media:content directly in RSS
+  if (rawItem?.image && typeof rawItem.image === 'string' && rawItem.image.startsWith('http')) {
+    return rawItem.image;
+  }
+  if (rawItem?.banner_image && typeof rawItem.banner_image === 'string' && rawItem.banner_image.startsWith('http')) {
+    return rawItem.banner_image;
+  }
+  if (rawItem?.attachments && Array.isArray(rawItem.attachments) && rawItem.attachments[0]?.url) {
+    return rawItem.attachments[0].url;
+  }
+  if (rawItem?.content_html) {
+    const imgMatch = rawItem.content_html.match(/<img[^>]+src=["']([^"']+)["']/i);
+    if (imgMatch && imgMatch[1] && imgMatch[1].startsWith('http')) {
+      return imgMatch[1];
+    }
+  }
+  return null;
+}
+
 async function fetchBalitaRSS(): Promise<any[]> {
   try {
     const controller = new AbortController();
@@ -4674,29 +4748,44 @@ async function fetchBalitaRSS(): Promise<any[]> {
     const items = data.items || [];
     const formattedPosts: any[] = [];
 
-    for (const item of items) {
-      const title = (item.title || '').trim();
-      const link = item.url || item.guid || '';
-      const summary = (item.summary || item.content_html || '').trim();
-      const datePublished = item.date_published || new Date().toISOString();
+    // Process items in parallel batches to extract genuine Manila Bulletin images
+    const processedItems = await Promise.all(
+      items.slice(0, 30).map(async (item: any) => {
+        const title = (item.title || '').trim();
+        const link = item.url || item.guid || '';
+        const summary = (item.summary || item.content_html || '').trim();
+        const datePublished = item.date_published || new Date().toISOString();
 
-      if (!title) continue;
+        if (!title) return null;
 
-      const uniqueInput = link || title;
-      const cleanId = 'post-rss-' + Buffer.from(uniqueInput).toString('base64').replace(/[^a-zA-Z0-9]/g, '');
+        const uniqueInput = link || title;
+        const cleanId = 'post-rss-' + Buffer.from(uniqueInput).toString('base64').replace(/[^a-zA-Z0-9]/g, '');
+        
+        // Extract genuine photo from RSS fields or from actual article
+        let mediaUrl = getBalitaNewsImageUrl(title, summary, item);
+        if (!mediaUrl && link) {
+          mediaUrl = await fetchExactManilaBulletinImage(link);
+        }
 
-      formattedPosts.push({
-        id: cleanId,
-        userId: 'balita-rss-author',
-        userName: 'Balita (Manila Bulletin)',
-        userAvatar: '📰',
-        text: `📰 **${title}**\n\n${summary}\n\n🔗 Basahin ang buong balita rito:\n${link}`,
-        likes: [],
-        comments: [],
-        createdAt: datePublished,
-        isRss: true,
-        rssLink: link
-      });
+        return {
+          id: cleanId,
+          userId: 'balita-rss-author',
+          userName: 'Balita (Manila Bulletin)',
+          userAvatar: '📰',
+          text: `📰 **${title}**\n\n${summary}\n\n🔗 Basahin ang buong balita rito:\n${link}`,
+          mediaUrl: mediaUrl || undefined,
+          mediaType: mediaUrl ? 'image' : undefined,
+          likes: [],
+          comments: [],
+          createdAt: datePublished,
+          isRss: true,
+          rssLink: link
+        };
+      })
+    );
+
+    for (const post of processedItems) {
+      if (post) formattedPosts.push(post);
     }
 
     return formattedPosts;
@@ -4710,24 +4799,48 @@ let lastRssSyncTime = 0;
 
 async function syncRssToDatabase() {
   try {
-    const rssArticles = await fetchBalitaRSS();
-    if (rssArticles.length === 0) return;
-
     const db = loadDB();
     if (!db.posts) db.posts = [];
 
-    let hasNew = false;
-    for (const article of rssArticles) {
-      const exists = db.posts.some(p => p.id === article.id);
-      if (!exists) {
-        db.posts.push(article);
-        hasNew = true;
+    let hasUpdates = false;
+
+    // Fetch fresh articles with exact Manila Bulletin photos
+    const rssArticles = await fetchBalitaRSS();
+    if (rssArticles.length > 0) {
+      for (const article of rssArticles) {
+        const existsIndex = db.posts.findIndex(p => p.id === article.id);
+        if (existsIndex === -1) {
+          db.posts.push(article);
+          hasUpdates = true;
+        } else {
+          // If the post exists and has a new exact mediaUrl from Manila Bulletin
+          if (article.mediaUrl && db.posts[existsIndex].mediaUrl !== article.mediaUrl) {
+            db.posts[existsIndex].mediaUrl = article.mediaUrl;
+            db.posts[existsIndex].mediaType = 'image';
+            hasUpdates = true;
+          }
+        }
       }
     }
 
-    if (hasNew) {
+    // Clean up any placeholder or non-authentic picsum photos from past RSS records
+    for (const post of db.posts) {
+      if ((post.isRss || post.userId === 'balita-rss-author') && post.mediaUrl && post.mediaUrl.includes('picsum.photos')) {
+        // Attempt to fetch exact Manila Bulletin image if available, else clear
+        const link = post.rssLink || (post.text.match(/https:\/\/balita\.mb\.com\.ph\/[^\s\n]+/i) ? post.text.match(/https:\/\/balita\.mb\.com\.ph\/[^\s\n]+/i)[0] : null);
+        if (link && mbImageCache.has(link)) {
+          post.mediaUrl = mbImageCache.get(link);
+        } else {
+          post.mediaUrl = undefined;
+          post.mediaType = undefined;
+        }
+        hasUpdates = true;
+      }
+    }
+
+    if (hasUpdates) {
       saveDB(db);
-      console.log(`✅ Synced new Balita RSS articles to DB!`);
+      console.log(`✅ Synced Balita RSS articles and updated genuine MB pictures in DB!`);
     }
   } catch (err) {
     console.error('Error syncing RSS to DB:', err);
