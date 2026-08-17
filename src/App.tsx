@@ -1576,24 +1576,24 @@ export default function App() {
       {/* 👤 EDIT PROFILE PIC & NAME MODAL */}
       <AnimatePresence>
         {showEditProfileModal && user && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-2.5 sm:p-4 overflow-y-auto overscroll-y-contain">
             <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              initial={{ opacity: 0, scale: 0.9, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden flex flex-col"
+              className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full max-h-[92vh] sm:max-h-[88vh] overflow-hidden flex flex-col my-auto"
             >
               {/* Header */}
-              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-5 text-white flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="bg-white/20 p-2 rounded-xl">
-                    <User className="w-5 h-5 text-white" />
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 sm:p-5 text-white flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                  <div className="bg-white/20 p-1.5 sm:p-2 rounded-xl shrink-0">
+                    <User className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
                   </div>
-                  <div>
-                    <h3 className="font-black text-sm tracking-wide uppercase">
+                  <div className="min-w-0">
+                    <h3 className="font-black text-xs sm:text-sm tracking-wide uppercase truncate">
                       {language === 'tl' ? '⚙️ I-edit ang Profile' : '⚙️ Edit Profile'}
                     </h3>
-                    <p className="text-[10px] text-white/90 font-semibold">
+                    <p className="text-[9px] sm:text-[10px] text-white/90 font-semibold truncate">
                       {language === 'tl' ? 'Baguhin ang iyong pangalan at profile pic' : 'Customize your name and profile pic'}
                     </p>
                   </div>
@@ -1601,31 +1601,33 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setShowEditProfileModal(false)}
-                  className="text-white hover:text-blue-100 transition text-xs font-bold cursor-pointer"
+                  className="text-white hover:text-blue-100 p-1 transition text-xs sm:text-sm font-black cursor-pointer shrink-0 ml-2"
                 >
                   ✕
                 </button>
               </div>
 
-              {/* Form Content */}
-              <form onSubmit={handleUpdateProfile} className="p-6 space-y-5">
+              {/* Form Content (Scrollable & Optimized for all mobile viewport heights) */}
+              <form onSubmit={handleUpdateProfile} className="p-4 sm:p-6 space-y-3.5 sm:space-y-5 overflow-y-auto overscroll-contain">
                 {/* Profile Pic Preview & Current Status */}
-                <div className="flex flex-col items-center justify-center space-y-2 py-2">
+                <div className="flex flex-col items-center justify-center space-y-1.5 sm:space-y-2 py-1 bg-slate-50 border border-slate-100 rounded-2xl p-3 sm:p-4">
                   <div className="relative">
-                    <div className="w-20 h-20 rounded-full bg-slate-100 flex items-center justify-center shadow-lg border-2 border-indigo-250 overflow-hidden">
+                    <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-white flex items-center justify-center shadow-md border-2 sm:border-3 border-indigo-300 overflow-hidden ring-4 ring-indigo-50">
                       {newAvatar && (newAvatar.startsWith('http') || newAvatar.startsWith('data:')) ? (
                         <img src={newAvatar} alt="New Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
-                        <span className="text-5xl leading-none">{newAvatar || '👤'}</span>
+                        <span className="text-3xl sm:text-5xl leading-none">{newAvatar || '👤'}</span>
                       )}
                     </div>
                   </div>
-                  <span className="text-[10px] text-slate-450 font-black uppercase tracking-wider">Live Profile Picture Preview</span>
+                  <span className="text-[9px] sm:text-[10px] text-slate-500 font-black uppercase tracking-wider text-center">
+                    📸 Live Profile Picture Preview
+                  </span>
                 </div>
 
                 {/* Name field */}
-                <div className="space-y-1.5">
-                  <label className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
+                <div className="space-y-1 sm:space-y-1.5">
+                  <label className="text-[10px] sm:text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
                     {language === 'tl' ? 'Pangalan (Full Name)' : 'Name (Full Name)'}
                   </label>
                   <input
@@ -1635,22 +1637,22 @@ export default function App() {
                     required
                     maxLength={35}
                     placeholder="E.g., Juan Dela Cruz"
-                    className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none rounded-2xl px-4 py-3 text-xs font-bold text-slate-800 transition"
+                    className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none rounded-xl sm:rounded-2xl px-3.5 py-2.5 sm:px-4 sm:py-3 text-xs font-bold text-slate-800 transition"
                   />
                 </div>
 
                 {/* Avatar Presets Selection */}
-                <div className="space-y-2">
-                  <label className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
+                <div className="space-y-1.5 sm:space-y-2">
+                  <label className="text-[10px] sm:text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
                     {language === 'tl' ? 'Pumili sa aming Presets (Choose Preset Emoji)' : 'Choose Preset Emoji'}
                   </label>
-                  <div className="grid grid-cols-6 gap-2 bg-slate-50 border border-slate-150 p-3 rounded-2xl max-h-[110px] overflow-y-auto">
+                  <div className="grid grid-cols-6 gap-1.5 sm:gap-2 bg-slate-50 border border-slate-150 p-2 sm:p-3 rounded-xl sm:rounded-2xl max-h-[95px] sm:max-h-[110px] overflow-y-auto">
                     {['👤', '👨‍💻', '👩‍💻', '🦁', '🦉', '🐱', '🐶', '🦊', '🦄', '🐼', '🤖', '👑', '💼', '🚀', '⭐', '🌈', '🔥', '💖', '🍀', '🍕', '😎', '🎮', '💡', '🎵'].map(preset => (
                       <button
                         key={preset}
                         type="button"
                         onClick={() => setNewAvatar(preset)}
-                        className={`text-2xl p-1 rounded-xl hover:bg-slate-200 transition cursor-pointer select-none text-center ${
+                        className={`text-xl sm:text-2xl p-1 rounded-lg sm:rounded-xl hover:bg-slate-200 transition cursor-pointer select-none text-center ${
                           newAvatar === preset ? 'bg-indigo-100 border-2 border-indigo-400 scale-110' : 'border border-transparent'
                         }`}
                       >
@@ -1661,8 +1663,8 @@ export default function App() {
                 </div>
 
                 {/* Custom Avatar Upload from Gallery */}
-                <div className="space-y-1.5 border-t border-slate-100 pt-3">
-                  <label className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
+                <div className="space-y-1 sm:space-y-1.5 border-t border-slate-100 pt-2.5 sm:pt-3">
+                  <label className="text-[10px] sm:text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
                     {language === 'tl' ? 'O Kumuha sa Phone Gallery (Upload)' : 'Or Upload From Phone Gallery'}
                   </label>
                   <input
@@ -1698,16 +1700,16 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => document.getElementById('profile-pic-upload')?.click()}
-                    className="w-full border border-dashed border-indigo-300 hover:border-indigo-500 hover:bg-indigo-50/20 p-2.5 rounded-2xl text-[11px] text-indigo-750 font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5"
+                    className="w-full border border-dashed border-indigo-300 hover:border-indigo-500 hover:bg-indigo-50/20 p-2 sm:p-2.5 rounded-xl sm:rounded-2xl text-[10px] sm:text-[11px] text-indigo-750 font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5"
                   >
-                    <Upload className="w-4 h-4 text-indigo-600" />
+                    <Upload className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600" />
                     <span>{language === 'tl' ? 'Mag-upload ng Larawan mula sa Gallery' : 'Upload Image from Gallery'}</span>
                   </button>
                 </div>
 
                 {/* Custom Avatar URL or Custom Emoji */}
-                <div className="space-y-1.5">
-                  <label className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
+                <div className="space-y-1 sm:space-y-1.5">
+                  <label className="text-[10px] sm:text-[11px] text-slate-500 font-extrabold uppercase tracking-wide block">
                     {language === 'tl' ? 'O Maglagay ng Sariling Image URL' : 'Or Paste Custom Image URL'}
                   </label>
                   <input
@@ -1722,26 +1724,26 @@ export default function App() {
                       }
                     }}
                     placeholder="I-paste ang link (https://...) para sa tunay na profile pic"
-                    className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none rounded-2xl px-4 py-3 text-xs font-semibold text-slate-700 transition font-mono"
+                    className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none rounded-xl sm:rounded-2xl px-3.5 py-2.5 sm:px-4 sm:py-3 text-xs font-semibold text-slate-700 transition font-mono"
                   />
-                  <p className="text-[10px] text-slate-455 leading-normal font-semibold">
+                  <p className="text-[9px] sm:text-[10px] text-slate-455 leading-normal font-semibold">
                     💡 Maari kang mag-paste ng link ng larawan mula sa internet (tulad ng Facebook, Imgur, o Unsplash) upang ito ang maging larawan ng iyong profile.
                   </p>
                 </div>
 
                 {/* Footer buttons */}
-                <div className="flex gap-3 pt-2">
+                <div className="flex gap-2 sm:gap-3 pt-1.5 sm:pt-2">
                   <button
                     type="button"
                     onClick={() => setShowEditProfileModal(false)}
-                    className="flex-1 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 transition py-3 rounded-2xl text-slate-700 font-black text-xs cursor-pointer text-center"
+                    className="flex-1 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 transition py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-slate-700 font-black text-xs cursor-pointer text-center"
                   >
                     {language === 'tl' ? 'I-cancel' : 'Cancel'}
                   </button>
                   <button
                     type="submit"
                     disabled={isUpdatingProfile}
-                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 active:bg-indigo-800 transition py-3 rounded-2xl text-white font-black text-xs cursor-pointer flex items-center justify-center gap-2 shadow-md"
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 active:bg-indigo-800 transition py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-white font-black text-xs cursor-pointer flex items-center justify-center gap-2 shadow-md"
                   >
                     {isUpdatingProfile ? (
                       <span className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
@@ -1752,16 +1754,16 @@ export default function App() {
                 </div>
 
                 {/* Logout Button inside Profile Modal */}
-                <div className="pt-3 border-t border-slate-100">
+                <div className="pt-2 sm:pt-3 border-t border-slate-100">
                   <button
                     type="button"
                     onClick={() => {
                       setShowEditProfileModal(false);
                       handleLogout();
                     }}
-                    className="w-full bg-rose-50 hover:bg-rose-100 active:bg-rose-200 border border-rose-200/80 text-rose-600 hover:text-rose-700 transition py-3 rounded-2xl font-extrabold text-xs cursor-pointer flex items-center justify-center gap-2 shadow-xs"
+                    className="w-full bg-rose-50 hover:bg-rose-100 active:bg-rose-200 border border-rose-200/80 text-rose-600 hover:text-rose-700 transition py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-extrabold text-xs cursor-pointer flex items-center justify-center gap-2 shadow-xs"
                   >
-                    <LogOut className="w-4 h-4 text-rose-500" />
+                    <LogOut className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-500" />
                     <span>{language === 'tl' ? '🔴 I-Logout ang Account' : '🔴 Logout Account'}</span>
                   </button>
                 </div>
@@ -2138,83 +2140,85 @@ export default function App() {
                 </div>
               </div>
 
-              {/* USER PROFILE CARD AND METRICS */}
-              <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto justify-between sm:justify-end">
+              {/* USER PROFILE CARD AND METRICS (HORIZONTALLY SCROLLABLE ON MOBILE) */}
+              <div className="w-full sm:w-auto overflow-x-auto no-scrollbar py-0.5 overscroll-x-contain touch-pan-x">
+                <div className="flex items-center gap-2 sm:gap-3 justify-start sm:justify-end min-w-max">
 
+                  {/* 🔔 Allow Device Notifications Prompt if state is default */}
+                  {notificationPermission === 'default' && (
+                    <button
+                      onClick={requestNotificationPermission}
+                      className="bg-emerald-600/90 hover:bg-emerald-600 hover:scale-[1.02] active:scale-[0.98] text-white text-[8px] font-black px-2 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer shrink-0 shadow-2xs select-none"
+                      title={language === 'tl' ? 'Paganahin ang Notifications sa CP / Device' : 'Enable Device Notifications'}
+                    >
+                      <Bell className="w-3 h-3 text-yellow-300 animate-pulse shrink-0" />
+                      <span>{language === 'tl' ? 'Payagan Notif' : 'Allow Notif'}</span>
+                    </button>
+                  )}
 
-                {/* 🔔 Allow Device Notifications Prompt if state is default */}
-                {notificationPermission === 'default' && (
+                  {/* 🎬 WATCH REELS HEADER BUTTON (Smaller & Compact, next to Allow Notif) */}
                   <button
-                    onClick={requestNotificationPermission}
-                    className="bg-emerald-600/90 hover:bg-emerald-600 hover:scale-[1.02] active:scale-[0.98] text-white text-[8px] font-black px-1.5 py-0.5 rounded-md transition flex items-center gap-0.5 cursor-pointer shrink-0 shadow-2xs select-none"
-                    title={language === 'tl' ? 'Paganahin ang Notifications sa CP / Device' : 'Enable Device Notifications'}
+                    onClick={() => {
+                      window.dispatchEvent(new Event('open-reels-widget'));
+                      const openBtn = document.getElementById('reels-widget-open-btn');
+                      if (openBtn) {
+                        openBtn.click();
+                      }
+                    }}
+                    className="bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black px-2.5 sm:px-3 py-1.5 rounded-lg sm:rounded-xl shadow-md shadow-rose-600/25 border border-white/20 flex items-center gap-1.5 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none"
+                    title={language === 'tl' ? 'Panoorin ang Reels' : 'Watch Reels'}
                   >
-                    <Bell className="w-2.5 h-2.5 text-yellow-300 animate-pulse shrink-0" />
-                    <span>{language === 'tl' ? 'Payagan Notif' : 'Allow Notif'}</span>
-                  </button>
-                )}
-
-                {/* 🎬 WATCH REELS HEADER BUTTON (Smaller & Compact, next to Allow Notif) */}
-                <button
-                  onClick={() => {
-                    window.dispatchEvent(new Event('open-reels-widget'));
-                    const openBtn = document.getElementById('reels-widget-open-btn');
-                    if (openBtn) {
-                      openBtn.click();
-                    }
-                  }}
-                  className="bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg sm:rounded-xl shadow-md shadow-rose-600/25 border border-white/20 flex items-center gap-1 sm:gap-1.5 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none"
-                  title={language === 'tl' ? 'Panoorin ang Reels' : 'Watch Reels'}
-                >
-                  <Tv className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-300 animate-pulse shrink-0" />
-                  <span className="text-[9px] sm:text-[10px] uppercase font-black tracking-wider whitespace-nowrap">
-                    🎬 WATCH REELS
-                  </span>
-                </button>
-
-                {/* 📢 WITHDRAWAL POLICY ANNOUNCEMENT BUTTON */}
-                <button
-                  onClick={() => setShowWithdrawalPolicyModal(true)}
-                  className="bg-blue-600 hover:bg-blue-500 text-white font-black px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg sm:rounded-xl shadow-md border border-white/20 flex items-center gap-1 sm:gap-1.5 transition hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none"
-                  title="Tingnan ang Withdrawal Policy Update (5th & 20th)"
-                >
-                  <Megaphone className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-yellow-300 animate-bounce shrink-0" />
-                  <span className="text-[9px] sm:text-[10px] uppercase font-black tracking-wider whitespace-nowrap">
-                    📢 PAYOUT DATES
-                  </span>
-                </button>
-
-                <div className="bg-slate-850 border border-slate-800 p-1.5 sm:p-2.5 rounded-xl sm:rounded-2xl flex items-center gap-2 sm:gap-2.5 shadow-sm min-w-0">
-                  {/* Clickable Avatar to edit profile picture */}
-                  <button
-                    onClick={openEditProfileModal}
-                    title={language === 'tl' ? 'I-edit ang iyong Profile at Larawan' : 'Edit your Profile and Picture'}
-                    className="relative group cursor-pointer focus:outline-none shrink-0"
-                  >
-                    <div className="text-xl sm:text-2xl leading-none select-none flex items-center justify-center">
-                      {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:')) ? (
-                        <img src={user.avatar} alt="Profile" className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover border border-slate-700 shadow-inner group-hover:opacity-85 transition" referrerPolicy="no-referrer" />
-                      ) : (
-                        <span className="text-xl sm:text-2xl bg-slate-900 p-1 sm:p-1.5 rounded-full shadow-inner group-hover:scale-105 transition block">{user.avatar || '👤'}</span>
-                      )}
-                    </div>
-                    <span className="absolute -bottom-1 -right-1 bg-blue-600 text-[8px] text-white font-black p-0.5 rounded-full border border-slate-900 group-hover:bg-blue-500 transition scale-90">
-                      ✎
+                    <Tv className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-300 animate-pulse shrink-0" />
+                    <span className="text-[9px] sm:text-[10px] uppercase font-black tracking-wider whitespace-nowrap">
+                      🎬 WATCH REELS
                     </span>
                   </button>
 
-                  <div className="min-w-0 pr-1">
+                  {/* 📢 WITHDRAWAL POLICY ANNOUNCEMENT BUTTON */}
+                  <button
+                    onClick={() => setShowWithdrawalPolicyModal(true)}
+                    className="bg-blue-600 hover:bg-blue-500 text-white font-black px-2.5 sm:px-3 py-1.5 rounded-lg sm:rounded-xl shadow-md border border-white/20 flex items-center gap-1.5 transition hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none"
+                    title="Tingnan ang Withdrawal Policy Update (5th & 20th)"
+                  >
+                    <Megaphone className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-yellow-300 animate-bounce shrink-0" />
+                    <span className="text-[9px] sm:text-[10px] uppercase font-black tracking-wider whitespace-nowrap">
+                      📢 PAYOUT DATES
+                    </span>
+                  </button>
+
+                  <div className="bg-slate-850 border border-slate-800 p-1.5 sm:p-2 rounded-xl sm:rounded-2xl flex items-center gap-2 sm:gap-2.5 shadow-sm shrink-0">
+                    {/* Clickable Avatar to edit profile picture */}
                     <button
                       onClick={openEditProfileModal}
                       title={language === 'tl' ? 'I-edit ang iyong Profile at Larawan' : 'Edit your Profile and Picture'}
-                      className="text-left font-black text-[10px] sm:text-xs leading-none text-white truncate max-w-[80px] xs:max-w-[120px] sm:max-w-[130px] hover:text-blue-400 cursor-pointer transition block"
+                      className="relative group cursor-pointer focus:outline-none shrink-0"
                     >
-                      Mabuhay, {user.name}!
+                      <div className="text-xl sm:text-2xl leading-none select-none flex items-center justify-center">
+                        {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:')) ? (
+                          <img src={user.avatar} alt="Profile" className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover border border-slate-700 shadow-inner group-hover:opacity-85 transition" referrerPolicy="no-referrer" />
+                        ) : (
+                          <span className="text-lg sm:text-xl bg-slate-900 p-1 rounded-full shadow-inner group-hover:scale-105 transition block">{user.avatar || '👤'}</span>
+                        )}
+                      </div>
+                      <span className="absolute -bottom-1 -right-1 bg-blue-600 text-[8px] text-white font-black p-0.5 rounded-full border border-slate-900 group-hover:bg-blue-500 transition scale-90">
+                        ✎
+                      </span>
                     </button>
-                    <p className="text-[8px] sm:text-[9px] text-slate-400 mt-0.5 sm:mt-1 font-semibold truncate max-w-[80px] xs:max-w-[120px] sm:max-w-[130px]" title={user.email}>
-                      {user.email}
-                    </p>
+
+                    <div className="min-w-0 pr-1">
+                      <button
+                        onClick={openEditProfileModal}
+                        title={language === 'tl' ? 'I-edit ang iyong Profile at Larawan' : 'Edit your Profile and Picture'}
+                        className="text-left font-black text-[10px] sm:text-xs leading-none text-white truncate max-w-[90px] sm:max-w-[130px] hover:text-blue-400 cursor-pointer transition block"
+                      >
+                        Mabuhay, {user.name}!
+                      </button>
+                      <p className="text-[8px] sm:text-[9px] text-slate-400 mt-0.5 font-semibold truncate max-w-[90px] sm:max-w-[130px]" title={user.email}>
+                        {user.email}
+                      </p>
+                    </div>
                   </div>
+
                 </div>
               </div>
 

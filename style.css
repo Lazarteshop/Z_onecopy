@@ -198,9 +198,21 @@ body {
 }
 
 /* Enable momentum scrolling globally on all scroll containers */
-.overflow-y-auto, .overflow-y-scroll, [class*="overflow-y-"] {
+.overflow-y-auto, .overflow-y-scroll, [class*="overflow-y-"],
+.overflow-x-auto, .overflow-x-scroll, [class*="overflow-x-"] {
   -webkit-overflow-scrolling: touch !important;
   scroll-behavior: smooth !important;
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+.no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
 }
 
 /* Reset container behaviors to allow natural viewport fixed positioning */
