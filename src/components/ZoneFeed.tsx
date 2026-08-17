@@ -1174,32 +1174,6 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
 
-  // Dedicated file input refs for bulletproof mobile PWA and WebView click triggering
-  const photoFileInputRef = React.useRef<HTMLInputElement | null>(null);
-  const videoFileInputRef = React.useRef<HTMLInputElement | null>(null);
-
-  const handleOpenPhotoGallery = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (photoFileInputRef.current) {
-      photoFileInputRef.current.click();
-    } else {
-      const el = document.getElementById('pwa-photo-gallery-upload') as HTMLInputElement;
-      if (el) el.click();
-    }
-  };
-
-  const handleOpenVideoGallery = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (videoFileInputRef.current) {
-      videoFileInputRef.current.click();
-    } else {
-      const el = document.getElementById('pwa-video-gallery-upload') as HTMLInputElement;
-      if (el) el.click();
-    }
-  };
-
   const handleLocalFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -2354,72 +2328,64 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
               {/* MEDIA EXPANSION CONTROLS (OPTIMIZED FOR MOBILE PWA & PHONE GALLERY) */}
               <div className="space-y-2.5">
-                {/* Dedicated Photo Gallery Input (Native PWA Trigger) */}
-                <input
-                  ref={photoFileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleLocalFileChange}
-                  multiple={true}
-                  className="hidden"
-                  id="pwa-photo-gallery-upload"
-                  disabled={isUploadingLocalFile}
-                />
-                
-                {/* Dedicated Video Gallery Input (Native PWA Trigger) */}
-                <input
-                  ref={videoFileInputRef}
-                  type="file"
-                  accept="video/*"
-                  onChange={handleLocalFileChange}
-                  multiple={false}
-                  className="hidden"
-                  id="pwa-video-gallery-upload"
-                  disabled={isUploadingLocalFile}
-                />
-
                 <div className="grid grid-cols-2 gap-2">
-                  {/* Photo Gallery Action Button */}
-                  <button
-                    type="button"
-                    onClick={handleOpenPhotoGallery}
-                    disabled={isUploadingLocalFile}
-                    className={`border border-indigo-200 hover:border-indigo-500 bg-indigo-50/70 hover:bg-indigo-100/70 text-indigo-800 p-2.5 rounded-2xl text-[11px] font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5 shadow-2xs select-none active:scale-95 ${
-                      isUploadingLocalFile ? 'opacity-50 pointer-events-none' : ''
-                    }`}
-                  >
-                    {isUploadingLocalFile ? (
-                      <span className="h-4 w-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></span>
-                    ) : (
-                      <ImageIcon className="w-4 h-4 text-indigo-600 shrink-0" />
-                    )}
-                    <span className="truncate">
-                      {isUploadingLocalFile 
-                        ? (language === 'tl' ? 'Ina-upload...' : 'Uploading...') 
-                        : (language === 'tl' ? '📷 Larawan (Gallery)' : '📷 Photo (Gallery)')}
-                    </span>
-                  </button>
+                  {/* Photo Gallery Direct Touch Area (100% Guaranteed Native PWA/Android/iOS Picker) */}
+                  <div className="relative overflow-hidden rounded-2xl">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleLocalFileChange}
+                      multiple={true}
+                      disabled={isUploadingLocalFile}
+                      aria-label="Upload Photo"
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
+                    />
+                    <div
+                      className={`border border-indigo-200 hover:border-indigo-500 bg-indigo-50/70 hover:bg-indigo-100/70 text-indigo-800 p-2.5 rounded-2xl text-[11px] font-extrabold transition flex items-center justify-center gap-1.5 shadow-2xs select-none ${
+                        isUploadingLocalFile ? 'opacity-50 pointer-events-none' : ''
+                      }`}
+                    >
+                      {isUploadingLocalFile ? (
+                        <span className="h-4 w-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></span>
+                      ) : (
+                        <ImageIcon className="w-4 h-4 text-indigo-600 shrink-0" />
+                      )}
+                      <span className="truncate">
+                        {isUploadingLocalFile 
+                          ? (language === 'tl' ? 'Ina-upload...' : 'Uploading...') 
+                          : (language === 'tl' ? '📷 Larawan (Gallery)' : '📷 Photo (Gallery)')}
+                      </span>
+                    </div>
+                  </div>
 
-                  {/* Video Gallery Action Button */}
-                  <button
-                    type="button"
-                    onClick={handleOpenVideoGallery}
-                    disabled={isUploadingLocalFile}
-                    className={`border border-purple-200 hover:border-purple-500 bg-purple-50/70 hover:bg-purple-100/70 text-purple-800 p-2.5 rounded-2xl text-[11px] font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5 shadow-2xs select-none active:scale-95 ${
-                      isUploadingLocalFile ? 'opacity-50 pointer-events-none' : ''
-                    }`}
-                  >
-                    {isUploadingLocalFile ? (
-                      <span className="h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin"></span>
-                    ) : (
-                      <Video className="w-4 h-4 text-purple-600 shrink-0" />
-                    )}
-                    <span className="truncate">
-                      {isUploadingLocalFile 
-                        ? (language === 'tl' ? 'Ina-upload...' : 'Uploading...') 
-                        : (language === 'tl' ? '🎥 Video (Gallery)' : '🎥 Video (Gallery)')}
-                    </span>
-                  </button>
+                  {/* Video Gallery Direct Touch Area (100% Guaranteed Native PWA/Android/iOS Picker) */}
+                  <div className="relative overflow-hidden rounded-2xl">
+                    <input
+                      type="file"
+                      accept="video/*"
+                      onChange={handleLocalFileChange}
+                      multiple={false}
+                      disabled={isUploadingLocalFile}
+                      aria-label="Upload Video"
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
+                    />
+                    <div
+                      className={`border border-purple-200 hover:border-purple-500 bg-purple-50/70 hover:bg-purple-100/70 text-purple-800 p-2.5 rounded-2xl text-[11px] font-extrabold transition flex items-center justify-center gap-1.5 shadow-2xs select-none ${
+                        isUploadingLocalFile ? 'opacity-50 pointer-events-none' : ''
+                      }`}
+                    >
+                      {isUploadingLocalFile ? (
+                        <span className="h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin"></span>
+                      ) : (
+                        <Video className="w-4 h-4 text-purple-600 shrink-0" />
+                      )}
+                      <span className="truncate">
+                        {isUploadingLocalFile 
+                          ? (language === 'tl' ? 'Ina-upload...' : 'Uploading...') 
+                          : (language === 'tl' ? '🎥 Video (Gallery)' : '🎥 Video (Gallery)')}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 <button
