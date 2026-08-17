@@ -1174,6 +1174,32 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
 
+  // Dedicated file input refs for bulletproof mobile PWA and WebView click triggering
+  const photoFileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const videoFileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const handleOpenPhotoGallery = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (photoFileInputRef.current) {
+      photoFileInputRef.current.click();
+    } else {
+      const el = document.getElementById('pwa-photo-gallery-upload') as HTMLInputElement;
+      if (el) el.click();
+    }
+  };
+
+  const handleOpenVideoGallery = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (videoFileInputRef.current) {
+      videoFileInputRef.current.click();
+    } else {
+      const el = document.getElementById('pwa-video-gallery-upload') as HTMLInputElement;
+      if (el) el.click();
+    }
+  };
+
   const handleLocalFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -2328,44 +2354,37 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
               {/* MEDIA EXPANSION CONTROLS (OPTIMIZED FOR MOBILE PWA & PHONE GALLERY) */}
               <div className="space-y-2.5">
-                {/* Dedicated Photo Gallery Input (Native PWA Label Trigger) */}
+                {/* Dedicated Photo Gallery Input (Native PWA Trigger) */}
                 <input
+                  ref={photoFileInputRef}
                   type="file"
-                  accept="image/*,image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif"
+                  accept="image/*"
                   onChange={handleLocalFileChange}
                   multiple={true}
-                  className="sr-only"
+                  className="hidden"
                   id="pwa-photo-gallery-upload"
                   disabled={isUploadingLocalFile}
                 />
                 
-                {/* Dedicated Video Gallery Input (Native PWA Label Trigger) */}
+                {/* Dedicated Video Gallery Input (Native PWA Trigger) */}
                 <input
+                  ref={videoFileInputRef}
                   type="file"
-                  accept="video/*,video/mp4,video/quicktime,video/webm,video/3gpp,video/m4v"
+                  accept="video/*"
                   onChange={handleLocalFileChange}
                   multiple={false}
-                  className="sr-only"
+                  className="hidden"
                   id="pwa-video-gallery-upload"
                   disabled={isUploadingLocalFile}
                 />
 
-                {/* All Media Input */}
-                <input
-                  type="file"
-                  accept="image/*,video/*"
-                  onChange={handleLocalFileChange}
-                  multiple={true}
-                  className="sr-only"
-                  id="local-media-upload"
-                  disabled={isUploadingLocalFile}
-                />
-
                 <div className="grid grid-cols-2 gap-2">
-                  {/* Photo Gallery Label Button */}
-                  <label
-                    htmlFor="pwa-photo-gallery-upload"
-                    className={`border border-indigo-200 hover:border-indigo-500 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-750 p-2.5 rounded-2xl text-[11px] font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5 shadow-2xs select-none active:scale-95 ${
+                  {/* Photo Gallery Action Button */}
+                  <button
+                    type="button"
+                    onClick={handleOpenPhotoGallery}
+                    disabled={isUploadingLocalFile}
+                    className={`border border-indigo-200 hover:border-indigo-500 bg-indigo-50/70 hover:bg-indigo-100/70 text-indigo-800 p-2.5 rounded-2xl text-[11px] font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5 shadow-2xs select-none active:scale-95 ${
                       isUploadingLocalFile ? 'opacity-50 pointer-events-none' : ''
                     }`}
                   >
@@ -2379,12 +2398,14 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                         ? (language === 'tl' ? 'Ina-upload...' : 'Uploading...') 
                         : (language === 'tl' ? '📷 Larawan (Gallery)' : '📷 Photo (Gallery)')}
                     </span>
-                  </label>
+                  </button>
 
-                  {/* Video Gallery Label Button */}
-                  <label
-                    htmlFor="pwa-video-gallery-upload"
-                    className={`border border-purple-200 hover:border-purple-500 bg-purple-50/50 hover:bg-purple-50 text-purple-750 p-2.5 rounded-2xl text-[11px] font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5 shadow-2xs select-none active:scale-95 ${
+                  {/* Video Gallery Action Button */}
+                  <button
+                    type="button"
+                    onClick={handleOpenVideoGallery}
+                    disabled={isUploadingLocalFile}
+                    className={`border border-purple-200 hover:border-purple-500 bg-purple-50/70 hover:bg-purple-100/70 text-purple-800 p-2.5 rounded-2xl text-[11px] font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5 shadow-2xs select-none active:scale-95 ${
                       isUploadingLocalFile ? 'opacity-50 pointer-events-none' : ''
                     }`}
                   >
@@ -2398,7 +2419,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                         ? (language === 'tl' ? 'Ina-upload...' : 'Uploading...') 
                         : (language === 'tl' ? '🎥 Video (Gallery)' : '🎥 Video (Gallery)')}
                     </span>
-                  </label>
+                  </button>
                 </div>
 
                 <button
