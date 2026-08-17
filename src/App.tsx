@@ -2349,7 +2349,7 @@ export default function App() {
 
           {/* 🖥️ MAIN BODY WORKSPACE */}
           <div id="main-content-layout" className={`flex-1 w-full mx-auto ${activeTab === 'zone' ? 'max-w-7xl px-2 sm:px-4 md:px-6 py-4 md:py-6' : 'max-w-7xl px-4 py-6 md:py-8'}`}>
-            {isSubscriptionExpired() && activeTab !== 'earn' && activeTab !== 'zone' ? (
+            {isSubscriptionExpired() && activeTab !== 'earn' && activeTab !== 'zone' && activeTab !== 'negosyo' && activeTab !== 'guide' && activeTab !== 'admin' ? (
               <div id="renew-access-plan-section" className="max-w-2xl mx-auto space-y-6 animate-fadeIn py-6">
                 
                 {/* SYSTEM ALERT */}
