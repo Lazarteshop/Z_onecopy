@@ -4023,13 +4023,18 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
               className="bg-white rounded-3xl max-sm:rounded-none max-w-md w-full shadow-2xl border border-slate-100 max-sm:border-none overflow-hidden flex flex-col h-[560px] max-sm:h-full text-slate-800"
             >
               {/* Header */}
-              <div className="p-3.5 sm:p-4 shrink-0 flex items-center justify-between bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 text-white shadow-sm">
+              <div 
+                className="chat-header-gradient p-3.5 sm:p-4 shrink-0 flex items-center justify-between shadow-sm"
+                style={{ backgroundColor: '#3730a3' }}
+              >
                 <div className="flex items-center gap-2.5">
-                  <span className="leading-none select-none block ring-2 ring-white/40 rounded-full">
+                  <span className="leading-none select-none block ring-2 ring-white/60 rounded-full">
                     {renderFeedAvatar(activeDmUser.avatar, activeDmUser.name, "w-9 h-9", "text-sm", activeDmUser.id)}
                   </span>
                   <div className="text-left">
-                    <h3 className="font-extrabold text-white text-xs leading-none">{activeDmUser.name}</h3>
+                    <h3 className="font-extrabold text-white text-xs leading-none" style={{ color: '#ffffff' }}>
+                      {activeDmUser.name}
+                    </h3>
                     {(onlineUserIds.includes(activeDmUser.id) || activeDmUser.id === user.id) ? (
                       <span className="text-[9.5px] text-emerald-300 font-extrabold flex items-center gap-1 mt-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -4049,24 +4054,27 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   <button 
                     type="button"
                     onClick={() => handleStartCall('voice')}
-                    className="w-8 h-8 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95"
+                    className="w-8 h-8 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95 shrink-0"
                     title={language === 'tl' ? 'Voice Call' : 'Voice Call'}
+                    style={{ backgroundColor: '#ffffff', color: '#4338ca' }}
                   >
                     <Phone className="w-4 h-4 text-indigo-700" />
                   </button>
                   <button 
                     type="button"
                     onClick={() => handleStartCall('video')}
-                    className="w-8 h-8 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95"
+                    className="w-8 h-8 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95 shrink-0"
                     title={language === 'tl' ? 'Video Call' : 'Video Call'}
+                    style={{ backgroundColor: '#ffffff', color: '#4338ca' }}
                   >
                     <Video className="w-4 h-4 text-indigo-700" />
                   </button>
                   <button 
                     type="button"
                     onClick={() => setActiveDmUser(null)}
-                    className="w-8 h-8 rounded-xl bg-white hover:bg-red-50 text-slate-700 hover:text-red-600 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95"
+                    className="w-8 h-8 rounded-xl bg-white hover:bg-red-50 text-slate-700 hover:text-red-600 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95 shrink-0"
                     title={language === 'tl' ? 'Isara' : 'Close'}
+                    style={{ backgroundColor: '#ffffff', color: '#334155' }}
                   >
                     <X className="w-4 h-4 text-slate-700" />
                   </button>
@@ -4076,7 +4084,8 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
               {/* Message scroll container with attractive messenger wallpaper background */}
               <div 
                 id="dm-chat-scroll" 
-                className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 bg-gradient-to-b from-indigo-50/60 via-slate-100 to-indigo-50/40"
+                className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 bg-slate-100"
+                style={{ backgroundColor: '#f1f5f9' }}
               >
                 {dmMessages.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-2">
@@ -4094,11 +4103,14 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
                       return (
                         <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} group relative`}>
-                          <div className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-xs font-semibold leading-relaxed ${
-                            isMe 
-                              ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-br-xs shadow-sm shadow-blue-500/20 text-left' 
-                              : 'bg-white text-slate-900 border border-slate-200/90 rounded-bl-xs shadow-2xs text-left'
-                          }`}>
+                          <div 
+                            className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-xs font-semibold leading-relaxed ${
+                              isMe 
+                                ? 'chat-bubble-outgoing text-white rounded-br-xs shadow-sm text-left' 
+                                : 'chat-bubble-incoming bg-white text-slate-900 border border-slate-300 rounded-bl-xs shadow-2xs text-left'
+                            }`}
+                            style={isMe ? { backgroundColor: '#2563eb', color: '#ffffff' } : { backgroundColor: '#ffffff', color: '#0f172a' }}
+                          >
                             {editingMessageId === msg.id ? (
                               <div className="space-y-1.5 min-w-[150px]">
                                 <input
@@ -4130,7 +4142,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                               </div>
                             ) : (
                               <>
-                                <p>{msg.text}</p>
+                                <p className="break-words font-medium" style={isMe ? { color: '#ffffff' } : { color: '#0f172a' }}>{msg.text}</p>
                                 <div className="flex items-center justify-between gap-3 mt-1">
                                   {isMe && canEditOrDelete ? (
                                     <div className="flex items-center gap-2 select-none opacity-80 max-sm:opacity-100 md:opacity-0 md:group-hover:opacity-100 transition duration-150">
@@ -4159,7 +4171,10 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                       </button>
                                     </div>
                                   ) : <span />}
-                                  <span className={`text-[8px] block font-mono ${isMe ? 'text-blue-100' : 'text-slate-400'}`}>
+                                  <span 
+                                    className="text-[8px] block font-mono font-bold"
+                                    style={isMe ? { color: '#e0e7ff' } : { color: '#64748b' }}
+                                  >
                                     {new Date(msg.createdAt).toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' })}
                                   </span>
                                 </div>
@@ -4175,7 +4190,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
               {/* Message Input form - Fixed & Protected from Keyboard Overlap */}
               <form 
                 onSubmit={handleSendDm} 
-                className="p-2.5 sm:p-3 border-t border-indigo-100 bg-white flex items-center gap-2 shadow-lg shrink-0"
+                className="p-2.5 sm:p-3 border-t border-slate-200 bg-white flex items-center gap-2 shadow-lg shrink-0"
               >
                 <input
                   type="text"
@@ -4192,14 +4207,15 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                     }, 300);
                   }}
                   placeholder={language === 'tl' ? 'Sumulat ng mensahe...' : 'Write a message...'}
-                  className="flex-1 bg-slate-100 hover:bg-slate-150 focus:bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-2xl px-4 py-2.5 text-xs font-semibold focus:outline-hidden transition text-slate-800 placeholder-slate-400"
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 focus:bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-2xl px-4 py-2.5 text-xs font-semibold focus:outline-hidden transition text-slate-800 placeholder-slate-400"
                 />
                 <button
                   type="submit"
                   disabled={!newDmText.trim()}
-                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-40 text-white p-2.5 rounded-2xl cursor-pointer transition flex items-center justify-center shadow-md shadow-blue-500/20 shrink-0 active:scale-95"
+                  className="chat-send-btn disabled:opacity-40 text-white p-2.5 rounded-2xl cursor-pointer transition flex items-center justify-center shadow-md shrink-0 active:scale-95"
+                  style={{ backgroundColor: '#2563eb', color: '#ffffff' }}
                 >
-                  <Send className="w-4 h-4" />
+                  <Send className="w-4 h-4 text-white" />
                 </button>
               </form>
             </motion.div>
@@ -4224,14 +4240,17 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
               className="bg-white rounded-3xl max-sm:rounded-none max-w-lg w-full shadow-2xl border border-slate-100 max-sm:border-none overflow-hidden flex flex-col h-[580px] max-sm:h-full text-slate-800"
             >
               {/* GC Header */}
-              <div className="p-3.5 sm:p-4 shrink-0 flex items-center justify-between bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-700 text-white shadow-sm">
+              <div 
+                className="chat-header-gradient p-3.5 sm:p-4 shrink-0 flex items-center justify-between shadow-sm"
+                style={{ backgroundColor: '#3730a3' }}
+              >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-xl shrink-0 ring-2 ring-white/30 select-none">
+                  <div className="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-xl shrink-0 ring-2 ring-white/40 select-none">
                     {activeGroupChat.avatar || '👥'}
                   </div>
                   <div className="text-left min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <h3 className="font-black text-white text-xs sm:text-sm truncate leading-tight">
+                      <h3 className="font-black text-white text-xs sm:text-sm truncate leading-tight" style={{ color: '#ffffff' }}>
                         {activeGroupChat.name}
                       </h3>
                       {activeGroupChat.id === 'gc-community-main' && (
@@ -4258,6 +4277,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                     }}
                     className="px-2.5 py-1.5 bg-white hover:bg-indigo-50 text-indigo-700 rounded-xl cursor-pointer transition focus:outline-hidden flex items-center gap-1.5 text-xs font-black shadow-sm active:scale-95"
                     title={language === 'tl' ? 'Mga Miyembro at Impormasyon' : 'Group info and members'}
+                    style={{ backgroundColor: '#ffffff', color: '#4338ca' }}
                   >
                     <Users className="w-4 h-4 text-indigo-600" />
                     <span>{language === 'tl' ? 'Miyembro' : 'Members'}</span>
@@ -4267,6 +4287,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                     onClick={() => setActiveGroupChat(null)}
                     className="w-8 h-8 rounded-xl bg-white hover:bg-red-50 text-slate-700 hover:text-red-600 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95"
                     title={language === 'tl' ? 'Isara' : 'Close'}
+                    style={{ backgroundColor: '#ffffff', color: '#334155' }}
                   >
                     <X className="w-4 h-4 text-slate-700" />
                   </button>
@@ -4276,7 +4297,8 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
               {/* Group Chat Message Scroll Area */}
               <div 
                 id="gc-chat-scroll" 
-                className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 bg-gradient-to-b from-indigo-50/60 via-slate-100 to-indigo-50/40"
+                className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 bg-slate-100"
+                style={{ backgroundColor: '#f1f5f9' }}
               >
                 {/* Pinned GC Description banner */}
                 {activeGroupChat.description && (
@@ -4334,11 +4356,14 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                             </span>
                           )}
 
-                          <div className={`rounded-2xl px-3.5 py-2 text-xs font-semibold leading-relaxed ${
-                            isMe 
-                              ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-br-xs shadow-sm shadow-blue-500/20 text-left' 
-                              : 'bg-white text-slate-900 border border-slate-200/90 rounded-bl-xs shadow-2xs text-left'
-                          }`}>
+                          <div 
+                            className={`rounded-2xl px-3.5 py-2 text-xs font-semibold leading-relaxed ${
+                              isMe 
+                                ? 'chat-bubble-outgoing text-white rounded-br-xs shadow-sm text-left' 
+                                : 'chat-bubble-incoming bg-white text-slate-900 border border-slate-300 rounded-bl-xs shadow-2xs text-left'
+                            }`}
+                            style={isMe ? { backgroundColor: '#2563eb', color: '#ffffff' } : { backgroundColor: '#ffffff', color: '#0f172a' }}
+                          >
                             {editingGroupMessageId === msg.id ? (
                               <div className="space-y-1.5 min-w-[150px]">
                                 <input
@@ -4370,7 +4395,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                               </div>
                             ) : (
                               <>
-                                <p className="break-words">{msg.text}</p>
+                                <p className="break-words font-medium" style={isMe ? { color: '#ffffff' } : { color: '#0f172a' }}>{msg.text}</p>
                                 <div className="flex items-center justify-between gap-3 mt-1">
                                   {isMe && canEditOrDelete ? (
                                     <div className="flex items-center gap-2 select-none opacity-80 max-sm:opacity-100 md:opacity-0 md:group-hover:opacity-100 transition duration-150">
@@ -4399,7 +4424,10 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                       </button>
                                     </div>
                                   ) : <span />}
-                                  <span className={`text-[8px] block font-mono ${isMe ? 'text-blue-100' : 'text-slate-400'}`}>
+                                  <span 
+                                    className="text-[8px] block font-mono font-bold"
+                                    style={isMe ? { color: '#e0e7ff' } : { color: '#64748b' }}
+                                  >
                                     {new Date(msg.createdAt).toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' })}
                                   </span>
                                 </div>
@@ -4416,7 +4444,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
               {/* GC Input Form */}
               <form 
                 onSubmit={handleSendGroupMessage} 
-                className="p-2.5 sm:p-3 border-t border-indigo-100 bg-white flex items-center gap-2 shadow-lg shrink-0"
+                className="p-2.5 sm:p-3 border-t border-slate-200 bg-white flex items-center gap-2 shadow-lg shrink-0"
               >
                 <input
                   type="text"
@@ -4433,14 +4461,15 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                     }, 300);
                   }}
                   placeholder={language === 'tl' ? `Mensahe sa ${activeGroupChat.name}...` : `Message in ${activeGroupChat.name}...`}
-                  className="flex-1 bg-slate-100 hover:bg-slate-150 focus:bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-2xl px-4 py-2.5 text-xs font-semibold focus:outline-hidden transition text-slate-800 placeholder-slate-400"
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 focus:bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-2xl px-4 py-2.5 text-xs font-semibold focus:outline-hidden transition text-slate-800 placeholder-slate-400"
                 />
                 <button
                   type="submit"
                   disabled={!newGroupMessageText.trim()}
-                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-40 text-white p-2.5 rounded-2xl cursor-pointer transition flex items-center justify-center shadow-md shadow-blue-500/20 shrink-0 active:scale-95"
+                  className="chat-send-btn disabled:opacity-40 text-white p-2.5 rounded-2xl cursor-pointer transition flex items-center justify-center shadow-md shrink-0 active:scale-95"
+                  style={{ backgroundColor: '#2563eb', color: '#ffffff' }}
                 >
-                  <Send className="w-4 h-4" />
+                  <Send className="w-4 h-4 text-white" />
                 </button>
               </form>
             </motion.div>
@@ -5250,13 +5279,16 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 className="w-screen max-w-md bg-white shadow-2xl flex flex-col h-full border-l border-slate-100 text-slate-800"
               >
                 {/* Drawer Header */}
-                <div className="p-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-700 text-white flex items-center justify-between shadow-sm">
+                <div 
+                  className="chat-header-gradient p-4 text-white flex items-center justify-between shadow-sm"
+                  style={{ backgroundColor: '#3730a3' }}
+                >
                   <div className="flex items-center gap-2.5">
-                    <span className="p-2 bg-white/15 text-white rounded-xl ring-1 ring-white/20">
-                      <MessageSquare className="w-5 h-5" />
+                    <span className="p-2 bg-white/20 text-white rounded-xl ring-1 ring-white/40">
+                      <MessageSquare className="w-5 h-5 text-white" />
                     </span>
                     <div className="text-left">
-                      <h3 className="font-black text-white text-sm leading-tight">
+                      <h3 className="font-black text-white text-sm leading-tight" style={{ color: '#ffffff' }}>
                         {language === 'tl' ? 'Z-one Inbox (Mga Mensahe)' : 'Z-one Messages Inbox'}
                       </h3>
                       <p className="text-[10px] text-indigo-100 font-bold font-mono">
@@ -5270,10 +5302,11 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   <button
                     type="button"
                     onClick={() => setShowInboxPanel(false)}
-                    className="w-8 h-8 rounded-xl bg-white/20 hover:bg-white text-white hover:text-slate-900 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95"
+                    className="w-8 h-8 rounded-xl bg-white hover:bg-red-50 text-slate-700 hover:text-red-600 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95"
                     title={language === 'tl' ? 'Isara' : 'Close'}
+                    style={{ backgroundColor: '#ffffff', color: '#334155' }}
                   >
-                    <X className="w-5 h-5" />
+                    <X className="w-5 h-5 text-slate-700" />
                   </button>
                 </div>
 

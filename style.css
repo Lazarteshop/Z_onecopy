@@ -103,73 +103,65 @@ body {
   color: #f1f5f9;
 }
 
-/* Hardcoded Old-School CSS Fallbacks to guarantee colors & layout are preserved on WebViews */
-.bg-slate-950, [class*="bg-slate-950"] {
-  background-color: #020617 !important;
-}
+/* Hardcoded Safe CSS Fallbacks to guarantee colors & layout are preserved on WebViews and PWAs */
+.bg-slate-950 { background-color: #020617 !important; }
+.bg-slate-900 { background-color: #0f172a !important; }
+.bg-slate-800 { background-color: #1e293b !important; }
+.bg-slate-100 { background-color: #f1f5f9 !important; }
+.bg-white { background-color: #ffffff !important; }
+.bg-blue-600 { background-color: #2563eb !important; }
+.bg-blue-700 { background-color: #1d4ed8 !important; }
+.bg-indigo-600 { background-color: #4f46e5 !important; }
+.bg-indigo-700 { background-color: #4338ca !important; }
+.bg-indigo-800 { background-color: #3730a3 !important; }
 
-.bg-slate-900, [class*="bg-slate-900"] {
-  background-color: #0f172a !important;
-}
+.text-white { color: #ffffff !important; }
+.text-slate-950 { color: #020617 !important; }
+.text-slate-900 { color: #0f172a !important; }
+.text-slate-800 { color: #1e293b !important; }
+.text-slate-700 { color: #334155 !important; }
+.text-slate-600 { color: #475569 !important; }
+.text-slate-400 { color: #94a3b8 !important; }
+.text-slate-300 { color: #cbd5e1 !important; }
+.text-slate-200 { color: #e2e8f0 !important; }
+.text-slate-100 { color: #f1f5f9 !important; }
+.text-blue-400 { color: #60a5fa !important; }
+.text-blue-500 { color: #3b82f6 !important; }
+.text-blue-600 { color: #2563eb !important; }
+.text-yellow-300 { color: #fde047 !important; }
+.text-emerald-400 { color: #34d399 !important; }
 
-.bg-slate-800, [class*="bg-slate-800"] {
-  background-color: #1e293b !important;
-}
-
-.bg-slate-100, [class*="bg-slate-100"] {
-  background-color: #f1f5f9 !important;
-}
-
-.bg-white, [class*="bg-white"] {
-  background-color: #ffffff !important;
-}
-
-.text-white, [class*="text-white"] {
+/* Dedicated High-Contrast Chat & Modal Styles for 100% PWA & WebView Compatibility */
+.chat-header-gradient {
+  background-color: #3730a3 !important;
+  background: #3730a3 linear-gradient(135deg, #1d4ed8 0%, #4338ca 50%, #312e81 100%) !important;
   color: #ffffff !important;
 }
 
-.text-slate-900, [class*="text-slate-900"] {
+.chat-bubble-outgoing {
+  background-color: #2563eb !important;
+  background: #2563eb linear-gradient(135deg, #2563eb 0%, #4338ca 100%) !important;
+  color: #ffffff !important;
+}
+
+.chat-bubble-incoming {
+  background-color: #ffffff !important;
   color: #0f172a !important;
+  border: 1px solid #cbd5e1 !important;
 }
 
-.text-slate-800, [class*="text-slate-800"] {
-  color: #1e293b !important;
+.chat-send-btn {
+  background-color: #2563eb !important;
+  background: #2563eb linear-gradient(135deg, #2563eb 0%, #4338ca 100%) !important;
+  color: #ffffff !important;
 }
 
-.text-slate-400, [class*="text-slate-400"] {
-  color: #94a3b8 !important;
-}
-
-.text-slate-300, [class*="text-slate-300"] {
-  color: #cbd5e1 !important;
-}
-
-.text-slate-200, [class*="text-slate-200"] {
-  color: #e2e8f0 !important;
-}
-
-.text-slate-100, [class*="text-slate-100"] {
-  color: #f1f5f9 !important;
-}
-
-.text-blue-400, [class*="text-blue-400"] {
-  color: #60a5fa !important;
-}
-
-.text-blue-500, [class*="text-blue-500"] {
-  color: #3b82f6 !important;
-}
-
-.text-blue-600, [class*="text-blue-600"] {
-  color: #2563eb !important;
-}
-
-.text-yellow-300, [class*="text-yellow-300"] {
-  color: #fde047 !important;
-}
-
-.text-emerald-400, [class*="text-emerald-400"] {
-  color: #34d399 !important;
+.chat-bubble-outgoing p,
+.chat-bubble-outgoing span,
+.chat-header-gradient h3,
+.chat-header-gradient p,
+.chat-header-gradient span {
+  color: #ffffff !important;
 }
 
 /* Explicit Gradient & Layout fixes */
