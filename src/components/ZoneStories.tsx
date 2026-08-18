@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Plus, X, Trash2, Eye, Heart, Flame, Smile, ThumbsUp, 
   Send, Sparkles, Image as ImageIcon, Video as VideoIcon, 
   Type, ChevronLeft, ChevronRight, Play, Pause, RefreshCw,
-  CheckCircle2
+  CheckCircle2, Layers
 } from 'lucide-react';
 import { ZoneStory, StoryViewerDetail } from '../types';
 
@@ -22,6 +22,18 @@ interface ZoneStoriesProps {
   triggerNotification: (msg: string, type?: 'success' | 'error' | 'info') => void;
   renderAvatar: (avatar: string, name: string, sizeClass?: string, textClass?: string, userId?: string) => React.ReactNode;
   onOpenDm?: (targetUser: { id: string; name: string; avatar: string }) => void;
+}
+
+export interface UserStoryGroup {
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  isMe: boolean;
+  stories: ZoneStory[];
+  allViewed: boolean;
+  latestStory: ZoneStory;
+  latestCreatedAt: string;
+  unviewedCount: number;
 }
 
 const GRADIENT_PRESETS = [
@@ -48,7 +60,10 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
 }) => {
   // Modal states
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [activeViewerStoryIndex, setActiveViewerStoryIndex] = useState<number | null>(null);
+  
+  // Grouped viewer state
+  const [activeGroupIndex, setActiveGroupIndex] = useState<number | null>(null);
+  const [activeStoryIndexInGroup, setActiveStoryIndexInGroup] = useState<number>(0);
   const [showViewersListModal, setShowViewersListModal] = useState(false);
 
   // Create Story Form states
@@ -66,25 +81,75 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
   const [progress, setProgress] = useState(0);
   const [replyText, setReplyText] = useState('');
   const [isSendingReply, setIsSendingReply] = useState(false);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Helper to check if logged-in user has viewed a story
+  // Helper to check if logged-in user has viewed a specific story
   const isStoryViewedByMe = (story: ZoneStory) => {
     return (story.viewers || []).includes(user.id) || story.userId === user.id;
   };
 
-  // Sort stories: group by author or keep chronological with unviewed first
-  const sortedStories = [...stories].sort((a, b) => {
-    const aViewed = isStoryViewedByMe(a);
-    const bViewed = isStoryViewedByMe(b);
-    if (aViewed === bViewed) {
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    }
-    return aViewed ? 1 : -1;
-  });
+  // --- 🌟 GROUP STORIES BY USER & SORT WITH LOGGED-IN USER FIRST ---
+  const storyGroups: UserStoryGroup[] = useMemo(() => {
+    const map = new Map<string, ZoneStory[]>();
+    
+    stories.forEach(story => {
+      if (!map.has(story.userId)) {
+        map.set(story.userId, []);
+      }
+      map.get(story.userId)!.push(story);
+    });
 
-  const activeStory = activeViewerStoryIndex !== null ? sortedStories[activeViewerStoryIndex] : null;
+    const groups: UserStoryGroup[] = [];
+    map.forEach((userStories, uid) => {
+      // Sort stories chronologically (earliest to latest for watching sequentially)
+      const sorted = [...userStories].sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+      const latestStory = sorted[sorted.length - 1];
+      const isMe = uid === user.id;
+      const unviewedCount = sorted.filter(s => !isStoryViewedByMe(s)).length;
+      const allViewed = isMe ? true : unviewedCount === 0;
+
+      groups.push({
+        userId: uid,
+        userName: latestStory.userName || (isMe ? user.name : 'Ka-Zone User'),
+        userAvatar: latestStory.userAvatar || (isMe ? user.avatar : '👤'),
+        isMe,
+        stories: sorted,
+        allViewed,
+        latestStory,
+        latestCreatedAt: latestStory.createdAt,
+        unviewedCount
+      });
+    });
+
+    // Sort order:
+    // 1. Current logged-in user ALWAYS comes first (isMe = true)
+    // 2. Groups with unviewed stories (sorted by newest story)
+    // 3. Groups with all viewed stories (sorted by newest story)
+    return groups.sort((a, b) => {
+      if (a.isMe && !b.isMe) return -1;
+      if (!a.isMe && b.isMe) return 1;
+      if (a.allViewed !== b.allViewed) {
+        return a.allViewed ? 1 : -1;
+      }
+      return new Date(b.latestCreatedAt).getTime() - new Date(a.latestCreatedAt).getTime();
+    });
+  }, [stories, user.id, user.name, user.avatar]);
+
+  // Current active group and story
+  const activeGroup = activeGroupIndex !== null ? storyGroups[activeGroupIndex] : null;
+  const activeStory = activeGroup ? activeGroup.stories[activeStoryIndexInGroup] : null;
+
+  // Has current user posted any active story?
+  const myGroup = useMemo(() => {
+    return storyGroups.find(g => g.isMe) || null;
+  }, [storyGroups]);
+
+  // Other users' groups (excluding current user)
+  const otherGroups = useMemo(() => {
+    return storyGroups.filter(g => !g.isMe);
+  }, [storyGroups]);
 
   // Track story view on backend when opened
   useEffect(() => {
@@ -98,26 +163,49 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
     }
   }, [activeStory?.id]);
 
-  // Story Viewer Timer Progress
+  // Handle open viewer for a user group
+  const handleOpenGroupViewer = (groupIndex: number) => {
+    const group = storyGroups[groupIndex];
+    if (!group || group.stories.length === 0) return;
+
+    // Find first unviewed story, or default to first story (0)
+    const firstUnviewedIdx = group.stories.findIndex(s => !isStoryViewedByMe(s));
+    const startIdx = firstUnviewedIdx !== -1 ? firstUnviewedIdx : 0;
+
+    setActiveGroupIndex(groupIndex);
+    setActiveStoryIndexInGroup(startIdx);
+    setProgress(0);
+  };
+
+  // Story Viewer Timer Progress & Auto Advance
   useEffect(() => {
-    if (activeViewerStoryIndex === null || isPaused || showViewersListModal) {
+    if (activeGroupIndex === null || !activeGroup || !activeStory || isPaused || showViewersListModal) {
       return;
     }
 
-    const duration = activeStory?.mediaType === 'video' ? 12000 : 6000;
+    const duration = activeStory.mediaType === 'video' ? 12000 : 6000;
     const interval = 50;
     const step = (interval / duration) * 100;
 
     const timer = setInterval(() => {
       setProgress(prev => {
         if (prev >= 100) {
-          // Advance to next story or close viewer
-          if (activeViewerStoryIndex < sortedStories.length - 1) {
-            setActiveViewerStoryIndex(activeViewerStoryIndex + 1);
+          // Check if there is a next story in the current user's group
+          if (activeStoryIndexInGroup < activeGroup.stories.length - 1) {
+            setActiveStoryIndexInGroup(activeStoryIndexInGroup + 1);
             return 0;
           } else {
-            setActiveViewerStoryIndex(null);
-            return 0;
+            // End of current user's stories -> advance to next user's group
+            if (activeGroupIndex < storyGroups.length - 1) {
+              const nextGroupIdx = activeGroupIndex + 1;
+              setActiveGroupIndex(nextGroupIdx);
+              setActiveStoryIndexInGroup(0);
+              return 0;
+            } else {
+              // Reached end of all stories -> close viewer
+              setActiveGroupIndex(null);
+              return 0;
+            }
           }
         }
         return prev + step;
@@ -125,40 +213,55 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
     }, interval);
 
     return () => clearInterval(timer);
-  }, [activeViewerStoryIndex, isPaused, showViewersListModal, activeStory?.mediaType]);
+  }, [activeGroupIndex, activeStoryIndexInGroup, isPaused, showViewersListModal, activeStory?.id, activeStory?.mediaType, activeGroup?.stories.length, storyGroups.length]);
 
-  // Reset progress when slide changes
+  // Reset progress when story index or group changes
   useEffect(() => {
     setProgress(0);
     setReplyText('');
-  }, [activeViewerStoryIndex]);
+  }, [activeGroupIndex, activeStoryIndexInGroup]);
 
   // Navigation handlers for story viewer
   const handlePrevStory = () => {
-    if (activeViewerStoryIndex !== null && activeViewerStoryIndex > 0) {
-      setActiveViewerStoryIndex(activeViewerStoryIndex - 1);
+    if (activeGroupIndex === null || !activeGroup) return;
+
+    if (activeStoryIndexInGroup > 0) {
+      setActiveStoryIndexInGroup(activeStoryIndexInGroup - 1);
+      setProgress(0);
+    } else if (activeGroupIndex > 0) {
+      // Go to previous user's last story
+      const prevGroupIdx = activeGroupIndex - 1;
+      const prevGroup = storyGroups[prevGroupIdx];
+      setActiveGroupIndex(prevGroupIdx);
+      setActiveStoryIndexInGroup(Math.max(0, prevGroup.stories.length - 1));
       setProgress(0);
     }
   };
 
   const handleNextStory = () => {
-    if (activeViewerStoryIndex !== null) {
-      if (activeViewerStoryIndex < sortedStories.length - 1) {
-        setActiveViewerStoryIndex(activeViewerStoryIndex + 1);
-        setProgress(0);
-      } else {
-        setActiveViewerStoryIndex(null);
-      }
+    if (activeGroupIndex === null || !activeGroup) return;
+
+    if (activeStoryIndexInGroup < activeGroup.stories.length - 1) {
+      setActiveStoryIndexInGroup(activeStoryIndexInGroup + 1);
+      setProgress(0);
+    } else if (activeGroupIndex < storyGroups.length - 1) {
+      // Go to next user's first story
+      setActiveGroupIndex(activeGroupIndex + 1);
+      setActiveStoryIndexInGroup(0);
+      setProgress(0);
+    } else {
+      // Reached the end
+      setActiveGroupIndex(null);
     }
   };
 
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (activeViewerStoryIndex === null) return;
+      if (activeGroupIndex === null) return;
       if (e.key === 'ArrowLeft') handlePrevStory();
       if (e.key === 'ArrowRight') handleNextStory();
-      if (e.key === 'Escape') setActiveViewerStoryIndex(null);
+      if (e.key === 'Escape') setActiveGroupIndex(null);
       if (e.key === ' ') {
         e.preventDefault();
         setIsPaused(prev => !prev);
@@ -166,7 +269,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeViewerStoryIndex]);
+  }, [activeGroupIndex, activeStoryIndexInGroup, activeGroup]);
 
   // Handle Media Picker for Create Story
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -283,7 +386,13 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
           language === 'tl' ? 'Na-delete na ang Story!' : 'Story deleted successfully!',
           'info'
         );
-        setActiveViewerStoryIndex(null);
+        
+        // If current group has only 1 story, close viewer, else adjust index
+        if (activeGroup && activeGroup.stories.length <= 1) {
+          setActiveGroupIndex(null);
+        } else if (activeStoryIndexInGroup > 0) {
+          setActiveStoryIndexInGroup(activeStoryIndexInGroup - 1);
+        }
         onRefreshStories();
       }
     } catch (err) {
@@ -291,7 +400,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
     }
   };
 
-  // Send Reaction or Reply
+  // Send Reaction
   const handleSendReaction = async (emoji: string) => {
     if (!activeStory) return;
     try {
@@ -357,9 +466,6 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
     return language === 'tl' ? `${hours}o ang nakalipas` : `${hours}h ago`;
   };
 
-  const myStories = sortedStories.filter(s => s.userId === user.id);
-  const otherStories = sortedStories.filter(s => s.userId !== user.id);
-
   return (
     <div className="w-full mb-4 select-none">
       {/* 🚀 STORIES HORIZONTAL CAROUSEL TRAY */}
@@ -378,112 +484,247 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
             </h3>
           </div>
 
-          <button
-            onClick={onRefreshStories}
-            className="text-[11px] font-bold text-slate-400 hover:text-indigo-600 flex items-center gap-1 transition p-1 rounded-lg hover:bg-indigo-50"
-            title={language === 'tl' ? 'I-refresh ang mga kwento' : 'Refresh stories'}
-          >
-            <RefreshCw className="w-3 h-3" />
-          </button>
+          <div className="flex items-center gap-2">
+            {myGroup && (
+              <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/60 hidden sm:inline-block">
+                {language === 'tl' ? `May ${myGroup.stories.length} kang aktibong My Day` : `You have ${myGroup.stories.length} active story`}
+              </span>
+            )}
+            <button
+              onClick={onRefreshStories}
+              className="text-[11px] font-bold text-slate-400 hover:text-indigo-600 flex items-center gap-1 transition p-1 rounded-lg hover:bg-indigo-50"
+              title={language === 'tl' ? 'I-refresh ang mga kwento' : 'Refresh stories'}
+            >
+              <RefreshCw className="w-3 h-3" />
+            </button>
+          </div>
         </div>
 
         {/* Horizontal Carousel */}
         <div className="flex gap-2.5 sm:gap-3 overflow-x-auto pb-1.5 pt-0.5 px-0.5 no-scrollbar scroll-smooth">
-          {/* ➕ "ADD TO STORY" CARD */}
-          <div
-            onClick={() => setShowCreateModal(true)}
-            className="group relative flex-shrink-0 w-24 sm:w-28 h-36 sm:h-44 rounded-2xl overflow-hidden cursor-pointer border border-indigo-200/80 bg-gradient-to-b from-indigo-50/50 via-white to-indigo-100/50 hover:shadow-md transition duration-200 flex flex-col justify-between"
-          >
-            {/* Top Avatar Box */}
-            <div className="h-[65%] w-full bg-gradient-to-br from-indigo-500 via-indigo-600 to-indigo-800 flex items-center justify-center relative overflow-hidden group-hover:scale-105 transition duration-300">
-              <div className="opacity-90 scale-110">
-                {renderAvatar(user.avatar, user.name, "w-14 h-14", "text-2xl", user.id)}
+          
+          {/* ========================================================================= */}
+          {/* 🌟 1. LOGGED-IN USER'S CARD (UNA LAGING MAKIKITA NG MAY-ARI NG ACCOUNT) */}
+          {/* ========================================================================= */}
+          {myGroup ? (
+            /* User HAS active stories -> Render user's story card as #1 with tap to view & (+) to add */
+            <motion.div
+              key="my-active-story-group"
+              whileHover={{ y: -3, scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => handleOpenGroupViewer(0)}
+              className="relative flex-shrink-0 w-24 sm:w-28 h-36 sm:h-44 rounded-2xl overflow-hidden cursor-pointer shadow-sm hover:shadow-md transition duration-200 flex flex-col justify-between p-2 sm:p-2.5 ring-2 ring-indigo-600 shadow-indigo-100"
+              style={{
+                background: myGroup.latestStory.mediaType === 'text' 
+                  ? (myGroup.latestStory.backgroundColor || 'linear-gradient(135deg, #3730a3, #4f46e5)')
+                  : '#0f172a'
+              }}
+            >
+              {/* Media Background if Image or Video */}
+              {myGroup.latestStory.mediaType === 'image' && myGroup.latestStory.mediaUrl && (
+                <img
+                  src={myGroup.latestStory.mediaUrl}
+                  alt={myGroup.userName}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                />
+              )}
+
+              {myGroup.latestStory.mediaType === 'video' && myGroup.latestStory.mediaUrl && (
+                <div className="absolute inset-0 w-full h-full bg-slate-900">
+                  <video
+                    src={myGroup.latestStory.mediaUrl}
+                    className="w-full h-full object-cover opacity-80"
+                    muted
+                    playsInline
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="w-7 h-7 rounded-full bg-black/50 backdrop-blur-xs flex items-center justify-center text-white">
+                      <Play className="w-3.5 h-3.5 fill-white ml-0.5" />
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Dark Gradient Overlay for readability */}
+              <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/75 pointer-events-none" />
+
+              {/* Segmented Top Indicator Dots for multiple stories */}
+              {myGroup.stories.length > 1 && (
+                <div className="absolute top-1.5 inset-x-2 z-20 flex gap-1 pointer-events-none">
+                  {myGroup.stories.map((_, dotIdx) => (
+                    <div key={dotIdx} className="flex-1 h-0.5 bg-white/70 rounded-full" />
+                  ))}
+                </div>
+              )}
+
+              {/* Top User Avatar with Glowing Indigo Ring */}
+              <div className="relative z-10 flex items-center justify-between mt-1">
+                <div className="rounded-full p-[2px] bg-gradient-to-tr from-indigo-500 via-blue-500 to-emerald-400 shadow-sm animate-pulse">
+                  <span className="block ring-1 ring-white rounded-full">
+                    {renderAvatar(user.avatar, user.name, "w-7 h-7 sm:w-8 sm:h-8", "text-xs", user.id)}
+                  </span>
+                </div>
+
+                {/* Quick Add Story (+) Overlay Button */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowCreateModal(true);
+                  }}
+                  className="w-6 h-6 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center border-2 border-white shadow-md transition transform active:scale-90"
+                  title={language === 'tl' ? 'Magdagdag ng panibagong kwento' : 'Add another story'}
+                >
+                  <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                </button>
               </div>
-              <div className="absolute inset-0 bg-black/10 group-hover:bg-transparent transition" />
-            </div>
 
-            {/* Floating Plus Badge */}
-            <div className="absolute top-[56%] left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center border-2 border-white shadow-md group-hover:scale-110 group-hover:bg-indigo-700 transition">
-              <Plus className="w-5 h-5 stroke-[2.5]" />
-            </div>
+              {/* Text excerpt for text stories */}
+              {myGroup.latestStory.mediaType === 'text' && myGroup.latestStory.text && (
+                <div className="relative z-10 my-auto text-center px-1">
+                  <p 
+                    className="text-[10px] sm:text-xs font-black line-clamp-3 leading-snug drop-shadow-sm"
+                    style={{ color: myGroup.latestStory.textColor || '#ffffff' }}
+                  >
+                    {myGroup.latestStory.text}
+                  </p>
+                </div>
+              )}
 
-            {/* Bottom Label */}
-            <div className="h-[35%] w-full pt-4 pb-2 px-1 text-center flex flex-col justify-center bg-white">
-              <span className="text-[10px] sm:text-[11px] font-black text-slate-800 leading-tight">
-                {language === 'tl' ? 'Magdagdag' : 'Add Story'}
-              </span>
-              <span className="text-[8.5px] font-bold text-indigo-600">
-                {language === 'tl' ? 'sa My Day' : 'to Story'}
-              </span>
-            </div>
-          </div>
+              {/* Bottom Label & Story Count */}
+              <div className="relative z-10 text-left">
+                <div className="flex items-center gap-1">
+                  <p className="text-[10px] sm:text-[11px] font-black text-white truncate drop-shadow-md leading-tight">
+                    {language === 'tl' ? 'Iyong Story' : 'Your Story'}
+                  </p>
+                  {myGroup.stories.length > 1 && (
+                    <span className="text-[8px] font-black px-1.5 py-0.2 rounded-full bg-white/20 backdrop-blur-xs text-white border border-white/30">
+                      {myGroup.stories.length}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[8px] font-bold text-indigo-200 drop-shadow-sm leading-none mt-0.5">
+                  {formatStoryTime(myGroup.latestCreatedAt)}
+                </p>
+              </div>
+            </motion.div>
+          ) : (
+            /* User HAS NO active stories -> Render Add to Story card as #1 */
+            <div
+              key="create-story-card"
+              onClick={() => setShowCreateModal(true)}
+              className="group relative flex-shrink-0 w-24 sm:w-28 h-36 sm:h-44 rounded-2xl overflow-hidden cursor-pointer border border-indigo-200/80 bg-gradient-to-b from-indigo-50/50 via-white to-indigo-100/50 hover:shadow-md transition duration-200 flex flex-col justify-between"
+            >
+              {/* Top Avatar Box */}
+              <div className="h-[65%] w-full bg-gradient-to-br from-indigo-500 via-indigo-600 to-indigo-800 flex items-center justify-center relative overflow-hidden group-hover:scale-105 transition duration-300">
+                <div className="opacity-90 scale-110">
+                  {renderAvatar(user.avatar, user.name, "w-14 h-14", "text-2xl", user.id)}
+                </div>
+                <div className="absolute inset-0 bg-black/10 group-hover:bg-transparent transition" />
+              </div>
 
-          {/* ACTIVE STORIES CARDS */}
-          {sortedStories.map((story, index) => {
-            const isMe = story.userId === user.id;
-            const viewed = isStoryViewedByMe(story);
+              {/* Floating Plus Badge */}
+              <div className="absolute top-[56%] left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center border-2 border-white shadow-md group-hover:scale-110 group-hover:bg-indigo-700 transition">
+                <Plus className="w-5 h-5 stroke-[2.5]" />
+              </div>
+
+              {/* Bottom Label */}
+              <div className="h-[35%] w-full pt-4 pb-2 px-1 text-center flex flex-col justify-center bg-white">
+                <span className="text-[10px] sm:text-[11px] font-black text-slate-800 leading-tight">
+                  {language === 'tl' ? 'Magdagdag' : 'Add Story'}
+                </span>
+                <span className="text-[8.5px] font-bold text-indigo-600">
+                  {language === 'tl' ? 'sa My Day' : 'to Story'}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* 👥 2. OTHER USERS' GROUPED STORY CARDS (1 CARD PER USER) */}
+          {/* ========================================================================= */}
+          {otherGroups.map((group) => {
+            // Find global index of this group in storyGroups
+            const groupIndex = storyGroups.findIndex(g => g.userId === group.userId);
+            const viewed = group.allViewed;
 
             return (
               <motion.div
-                key={story.id}
+                key={group.userId}
                 whileHover={{ y: -3, scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={() => {
-                  setActiveViewerStoryIndex(index);
-                  setProgress(0);
-                }}
+                onClick={() => handleOpenGroupViewer(groupIndex)}
                 className={`relative flex-shrink-0 w-24 sm:w-28 h-36 sm:h-44 rounded-2xl overflow-hidden cursor-pointer shadow-2xs hover:shadow-md transition duration-200 flex flex-col justify-between p-2 sm:p-2.5 ${
                   viewed
                     ? 'ring-1 ring-slate-200'
                     : 'ring-2 ring-indigo-500 shadow-indigo-100'
                 }`}
                 style={{
-                  background: story.mediaType === 'text' 
-                    ? (story.backgroundColor || 'linear-gradient(135deg, #3730a3, #4f46e5)')
+                  background: group.latestStory.mediaType === 'text' 
+                    ? (group.latestStory.backgroundColor || 'linear-gradient(135deg, #3730a3, #4f46e5)')
                     : '#0f172a'
                 }}
               >
                 {/* Media Background if Image or Video */}
-                {story.mediaType === 'image' && story.mediaUrl && (
+                {group.latestStory.mediaType === 'image' && group.latestStory.mediaUrl && (
                   <img
-                    src={story.mediaUrl}
-                    alt={story.userName}
+                    src={group.latestStory.mediaUrl}
+                    alt={group.userName}
                     className="absolute inset-0 w-full h-full object-cover"
                     loading="lazy"
                     referrerPolicy="no-referrer"
                   />
                 )}
 
-                {story.mediaType === 'video' && story.mediaUrl && (
+                {group.latestStory.mediaType === 'video' && group.latestStory.mediaUrl && (
                   <div className="absolute inset-0 w-full h-full bg-slate-900">
                     <video
-                      src={story.mediaUrl}
+                      src={group.latestStory.mediaUrl}
                       className="w-full h-full object-cover opacity-80"
                       muted
                       playsInline
                     />
                     <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="w-8 h-8 rounded-full bg-black/50 backdrop-blur-xs flex items-center justify-center text-white">
-                        <Play className="w-4 h-4 fill-white ml-0.5" />
+                      <span className="w-7 h-7 rounded-full bg-black/50 backdrop-blur-xs flex items-center justify-center text-white">
+                        <Play className="w-3.5 h-3.5 fill-white ml-0.5" />
                       </span>
                     </div>
                   </div>
                 )}
 
                 {/* Dark Gradient Overlay for readability */}
-                <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/70 pointer-events-none" />
+                <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/75 pointer-events-none" />
 
-                {/* Top User Avatar with Unviewed Glow Ring */}
-                <div className="relative z-10 flex items-center justify-between">
+                {/* Segmented Top Indicator Dots for multiple stories */}
+                {group.stories.length > 1 && (
+                  <div className="absolute top-1.5 inset-x-2 z-20 flex gap-1 pointer-events-none">
+                    {group.stories.map((s, dotIdx) => {
+                      const isDotViewed = isStoryViewedByMe(s);
+                      return (
+                        <div 
+                          key={dotIdx} 
+                          className={`flex-1 h-0.5 rounded-full ${isDotViewed ? 'bg-white/40' : 'bg-indigo-400'}`} 
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Top User Avatar with Glow Ring */}
+                <div className="relative z-10 flex items-center justify-between mt-1">
                   <div className={`rounded-full p-0.5 ${
-                    viewed ? 'bg-slate-300/80' : 'bg-gradient-to-tr from-pink-500 via-indigo-500 to-blue-400 p-[2px] shadow-sm animate-pulse'
+                    viewed 
+                      ? 'bg-slate-300/80' 
+                      : 'bg-gradient-to-tr from-pink-500 via-indigo-500 to-blue-400 p-[2px] shadow-sm animate-pulse'
                   }`}>
                     <span className="block ring-1 ring-white rounded-full">
-                      {renderAvatar(story.userAvatar, story.userName, "w-7 h-7 sm:w-8 sm:h-8", "text-xs", story.userId)}
+                      {renderAvatar(group.userAvatar, group.userName, "w-7 h-7 sm:w-8 sm:h-8", "text-xs", group.userId)}
                     </span>
                   </div>
 
-                  {story.mediaType === 'video' && (
+                  {group.latestStory.mediaType === 'video' && (
                     <span className="p-1 bg-black/40 backdrop-blur-xs rounded-lg text-white">
                       <VideoIcon className="w-3 h-3" />
                     </span>
@@ -491,24 +732,31 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                 </div>
 
                 {/* Text excerpt for text stories */}
-                {story.mediaType === 'text' && story.text && (
+                {group.latestStory.mediaType === 'text' && group.latestStory.text && (
                   <div className="relative z-10 my-auto text-center px-1">
                     <p 
                       className="text-[10px] sm:text-xs font-black line-clamp-3 leading-snug drop-shadow-sm"
-                      style={{ color: story.textColor || '#ffffff' }}
+                      style={{ color: group.latestStory.textColor || '#ffffff' }}
                     >
-                      {story.text}
+                      {group.latestStory.text}
                     </p>
                   </div>
                 )}
 
-                {/* Bottom Story Author Name */}
+                {/* Bottom Story Author Name & Total Story Count */}
                 <div className="relative z-10 text-left">
-                  <p className="text-[10px] sm:text-[11px] font-black text-white truncate drop-shadow-md leading-tight">
-                    {isMe ? (language === 'tl' ? 'Iyong Story' : 'Your Story') : story.userName.split(' ')[0]}
-                  </p>
+                  <div className="flex items-center gap-1">
+                    <p className="text-[10px] sm:text-[11px] font-black text-white truncate drop-shadow-md leading-tight">
+                      {group.userName.split(' ')[0]}
+                    </p>
+                    {group.stories.length > 1 && (
+                      <span className="text-[8px] font-black px-1.5 py-0.2 rounded-full bg-white/20 backdrop-blur-xs text-white border border-white/30">
+                        {group.stories.length}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[8px] font-bold text-white/80 drop-shadow-sm leading-none mt-0.5">
-                    {formatStoryTime(story.createdAt)}
+                    {formatStoryTime(group.latestCreatedAt)}
                   </p>
                 </div>
               </motion.div>
@@ -517,7 +765,9 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
         </div>
       </div>
 
+      {/* ========================================================================= */}
       {/* 📝 CREATE STORY ("MY DAY") MODAL */}
+      {/* ========================================================================= */}
       <AnimatePresence>
         {showCreateModal && (
           <div className="fixed inset-0 z-55 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm overflow-y-auto">
@@ -546,7 +796,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowCreateModal(false)}
-                  className="w-8 h-8 rounded-xl bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition"
+                  className="w-8 h-8 rounded-xl bg-white/20 hover:bg-white/30 text-white flex items-center justify-center transition cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -561,7 +811,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                     setMediaPreviewUrl(null);
                     setMediaFile(null);
                   }}
-                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
                     createType === 'text'
                       ? 'bg-indigo-600 text-white shadow-xs'
                       : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
@@ -577,7 +827,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                     setCreateType('image');
                     fileInputRef.current?.click();
                   }}
-                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
                     createType === 'image'
                       ? 'bg-indigo-600 text-white shadow-xs'
                       : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
@@ -593,7 +843,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                     setCreateType('video');
                     fileInputRef.current?.click();
                   }}
-                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
                     createType === 'video'
                       ? 'bg-indigo-600 text-white shadow-xs'
                       : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
@@ -648,7 +898,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                             key={preset.id}
                             type="button"
                             onClick={() => setSelectedGradient(preset)}
-                            className={`w-9 h-9 rounded-xl flex-shrink-0 transition transform ${
+                            className={`w-9 h-9 rounded-xl flex-shrink-0 transition transform cursor-pointer ${
                               selectedGradient.id === preset.id ? 'scale-110 ring-2 ring-indigo-600 ring-offset-2' : 'hover:scale-105 opacity-85'
                             }`}
                             style={{ background: preset.value }}
@@ -686,7 +936,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                             setMediaFile(null);
                             setCreateType('text');
                           }}
-                          className="absolute top-2 right-2 p-1.5 rounded-xl bg-black/60 hover:bg-red-600 text-white transition"
+                          className="absolute top-2 right-2 p-1.5 rounded-xl bg-black/60 hover:bg-red-600 text-white transition cursor-pointer"
                           title="Remove media"
                         >
                           <X className="w-4 h-4" />
@@ -752,19 +1002,22 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
         )}
       </AnimatePresence>
 
-      {/* 📱 FULLSCREEN IMMERSIVE STORY VIEWER MODAL */}
+      {/* ========================================================================= */}
+      {/* 📱 FULLSCREEN IMMERSIVE STORY VIEWER MODAL WITH SEQUENTIAL USER STORIES */}
+      {/* ========================================================================= */}
       <AnimatePresence>
-        {activeStory && (
+        {activeGroup && activeStory && (
           <div className="fixed inset-0 z-60 bg-black flex items-center justify-center overflow-hidden">
             {/* Story Card Viewport */}
             <div className="relative w-full h-full max-w-md bg-slate-950 flex flex-col justify-between overflow-hidden shadow-2xl">
-              {/* Top Progress Multi-Bars */}
+              
+              {/* Top Progress Multi-Bars (Per Story belonging to the Active User) */}
               <div className="absolute top-0 inset-x-0 z-30 p-3 pt-4 flex gap-1.5">
-                {sortedStories.map((_, idx) => {
+                {activeGroup.stories.map((_, idx) => {
                   let barProgress = 0;
-                  if (idx < (activeViewerStoryIndex || 0)) {
+                  if (idx < activeStoryIndexInGroup) {
                     barProgress = 100;
-                  } else if (idx === activeViewerStoryIndex) {
+                  } else if (idx === activeStoryIndexInGroup) {
                     barProgress = progress;
                   }
 
@@ -786,14 +1039,19 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
               <div className="absolute top-6 inset-x-0 z-30 px-3 py-2 flex items-center justify-between text-white">
                 <div className="flex items-center gap-2.5">
                   <span className="ring-2 ring-indigo-400 rounded-full select-none">
-                    {renderAvatar(activeStory.userAvatar, activeStory.userName, "w-9 h-9", "text-sm", activeStory.userId)}
+                    {renderAvatar(activeGroup.userAvatar, activeGroup.userName, "w-9 h-9", "text-sm", activeGroup.userId)}
                   </span>
                   <div className="text-left">
                     <h4 className="font-extrabold text-white text-xs leading-tight flex items-center gap-1.5 drop-shadow-md">
-                      <span>{activeStory.userName}</span>
-                      {activeStory.userId === user.id && (
+                      <span>{activeGroup.userName}</span>
+                      {activeGroup.isMe && (
                         <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-indigo-500 font-bold">
                           {language === 'tl' ? 'Ikaw' : 'You'}
+                        </span>
+                      )}
+                      {activeGroup.stories.length > 1 && (
+                        <span className="text-[9px] text-indigo-200 font-mono">
+                          ({activeStoryIndexInGroup + 1}/{activeGroup.stories.length})
                         </span>
                       )}
                     </h4>
@@ -808,7 +1066,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsPaused(prev => !prev)}
-                    className="p-2 rounded-xl bg-black/40 hover:bg-black/60 text-white backdrop-blur-xs transition"
+                    className="p-2 rounded-xl bg-black/40 hover:bg-black/60 text-white backdrop-blur-xs transition cursor-pointer"
                   >
                     {isPaused ? <Play className="w-4 h-4 fill-white" /> : <Pause className="w-4 h-4" />}
                   </button>
@@ -818,7 +1076,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                     <button
                       type="button"
                       onClick={() => handleDeleteStory(activeStory.id)}
-                      className="p-2 rounded-xl bg-red-600/80 hover:bg-red-700 text-white backdrop-blur-xs transition"
+                      className="p-2 rounded-xl bg-red-600/80 hover:bg-red-700 text-white backdrop-blur-xs transition cursor-pointer"
                       title={language === 'tl' ? 'Burahin ang Story' : 'Delete Story'}
                     >
                       <Trash2 className="w-4 h-4" />
@@ -828,8 +1086,8 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                   {/* Close Button */}
                   <button
                     type="button"
-                    onClick={() => setActiveViewerStoryIndex(null)}
-                    className="p-2 rounded-xl bg-black/40 hover:bg-black/60 text-white backdrop-blur-xs transition"
+                    onClick={() => setActiveGroupIndex(null)}
+                    className="p-2 rounded-xl bg-black/40 hover:bg-black/60 text-white backdrop-blur-xs transition cursor-pointer"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -943,7 +1201,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                           key={emoji}
                           type="button"
                           onClick={() => handleSendReaction(emoji)}
-                          className="text-xl sm:text-2xl hover:scale-125 active:scale-95 transition transform p-1"
+                          className="text-xl sm:text-2xl hover:scale-125 active:scale-95 transition transform p-1 cursor-pointer"
                         >
                           {emoji}
                         </button>
@@ -962,7 +1220,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                       <button
                         type="submit"
                         disabled={!replyText.trim() || isSendingReply}
-                        className="p-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white transition disabled:opacity-40"
+                        className="p-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white transition disabled:opacity-40 cursor-pointer"
                       >
                         <Send className="w-4 h-4" />
                       </button>
@@ -992,7 +1250,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                       <button
                         type="button"
                         onClick={() => setShowViewersListModal(false)}
-                        className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+                        className="p-1 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
                       >
                         <X className="w-4 h-4" />
                       </button>
