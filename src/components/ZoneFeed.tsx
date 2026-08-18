@@ -1352,7 +1352,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         });
 
         try {
-          localStorage.setItem('zone_posts_cache', JSON.stringify(loadedPosts));
+          localStorage.setItem('zone_posts_cache', JSON.stringify(loadedPosts.slice(0, 40)));
         } catch (cacheErr) {
           console.error('Failed to write posts to localStorage cache:', cacheErr);
         }
@@ -1422,8 +1422,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       let finalMediaUrls = item.mediaUrls;
 
       // 1. If mediaUrl is a local Base64 string, upload it to /api/zone/upload first
-      // Bypassed for images to store them as high-reliability, persistent Base64 strings in the database
-      if (finalMediaUrl && finalMediaUrl.startsWith('data:') && item.mediaType !== 'image') {
+      if (finalMediaUrl && finalMediaUrl.startsWith('data:')) {
         setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: 30 } : x));
         
         const uploadRes = await fetch('/api/zone/upload', {
@@ -1446,8 +1445,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       }
 
       // 2. If mediaUrls contains Base64 strings, upload them all to /api/zone/upload
-      // Bypassed for images to store them as high-reliability, persistent Base64 strings in the database
-      if (finalMediaUrls && Array.isArray(finalMediaUrls) && finalMediaUrls.length > 0 && item.mediaType !== 'image') {
+      if (finalMediaUrls && Array.isArray(finalMediaUrls) && finalMediaUrls.length > 0) {
         const uploadedUrls: string[] = [];
         for (let i = 0; i < finalMediaUrls.length; i++) {
           const url = finalMediaUrls[i];
@@ -1496,23 +1494,30 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       });
 
       const data = await res.json();
-      if (res.ok) {
+      if (res.ok && data.post) {
         setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: 100 } : x));
         
+        // Instantly update posts state with the real server post
+        setPosts(prev => [data.post, ...prev.filter(p => p.id !== data.post.id && p.id !== item.id)]);
+
+        // Update local cache
+        try {
+          const cached = localStorage.getItem('zone_posts_cache');
+          const currentCached = cached ? JSON.parse(cached) : [];
+          localStorage.setItem('zone_posts_cache', JSON.stringify([data.post, ...currentCached.filter((p: any) => p.id !== data.post.id && p.id !== item.id)].slice(0, 40)));
+        } catch {}
+
         setTimeout(() => {
           // Remove from outbox queue
           setOutbox(prev => prev.filter(x => x.id !== item.id));
           
-          // Silently refresh the feed so the real post replaces the pending state
-          fetchPosts(true);
-          
           triggerNotification(
             language === 'tl' 
-              ? 'Matagumpay na nai-post sa background! 🎉' 
-              : 'Successfully posted in the background! 🎉',
+              ? 'Matagumpay na nai-post sa Z-one! 🚀' 
+              : 'Successfully posted on Z-one! 🚀',
             'success'
           );
-        }, 0);
+        }, 100);
       } else {
         const errorText = data.error || (language === 'tl' ? 'May error sa paglathala.' : 'Error publishing post.');
         setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, isFailed: true, progress: 0, errorMsg: errorText } : x));

@@ -1354,12 +1354,33 @@ function initLastSyncedCache(data: DBStructure) {
   }
 }
 
-function saveDB(data: DBStructure) {
+let saveDBTimeout: NodeJS.Timeout | null = null;
+let firestoreSyncTimeout: NodeJS.Timeout | null = null;
+
+function saveDB(data: DBStructure, immediate: boolean = false) {
   cachedDB = data;
-  fs.writeFileSync(DB_FILE_PATH, JSON.stringify(data, null, 2), 'utf-8');
-  uploadToFirestore(data).catch(err => {
-    console.error('Error uploading db changes to Firestore:', err);
-  });
+  
+  const doSave = () => {
+    fs.writeFile(DB_FILE_PATH, JSON.stringify(data), 'utf-8', (err) => {
+      if (err) console.error('Error asynchronously writing db.json:', err);
+    });
+  };
+
+  if (immediate) {
+    if (saveDBTimeout) clearTimeout(saveDBTimeout);
+    doSave();
+  } else {
+    if (saveDBTimeout) clearTimeout(saveDBTimeout);
+    saveDBTimeout = setTimeout(doSave, 250);
+  }
+
+  // Debounce Firestore synchronization (3s delay) to avoid heavy operations on rapid user actions
+  if (firestoreSyncTimeout) clearTimeout(firestoreSyncTimeout);
+  firestoreSyncTimeout = setTimeout(() => {
+    uploadToFirestore(data).catch(err => {
+      console.error('Error uploading db changes to Firestore:', err);
+    });
+  }, 3000);
 }
 
 async function uploadToFirestore(data: DBStructure) {
@@ -4925,7 +4946,19 @@ app.get('/api/zone/posts', (req, res) => {
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
 
-  res.json({ posts: sortedPosts });
+  const page = parseInt(req.query.page as string) || 1;
+  const limitParam = req.query.limit ? parseInt(req.query.limit as string) : (req.query.all === 'true' ? sortedPosts.length : 35);
+  const limit = Math.min(Math.max(limitParam, 1), 100);
+  const startIndex = (page - 1) * limit;
+  const paginatedPosts = (req.query.all === 'true') ? sortedPosts : sortedPosts.slice(0, startIndex + limit);
+  const hasMore = (startIndex + limit) < sortedPosts.length;
+
+  res.json({ 
+    posts: paginatedPosts,
+    total: sortedPosts.length,
+    hasMore,
+    page
+  });
 });
 
 // UNIFIED HIGH-PERFORMANCE SYNC ROUTE (Combines Messages, Group Chats, Active Calls, & Online Heartbeats in 1 single call)
