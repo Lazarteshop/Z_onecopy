@@ -862,6 +862,28 @@ interface DirectMessage {
   createdAt: string;
 }
 
+interface GroupChat {
+  id: string;
+  name: string;
+  avatar: string;
+  description?: string;
+  createdBy: string;
+  creatorName: string;
+  members: string[]; // User IDs
+  createdAt: string;
+  updatedAt?: string;
+}
+
+interface GroupMessage {
+  id: string;
+  groupId: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar: string;
+  text: string;
+  createdAt: string;
+}
+
 interface ActiveCall {
   id: string;
   callerId: string;
@@ -970,6 +992,8 @@ interface DBStructure {
   campaigns?: any[];
   posts?: any[];
   directMessages?: DirectMessage[];
+  groupChats?: GroupChat[];
+  groupMessages?: GroupMessage[];
   activeCalls?: ActiveCall[];
   merchantAds?: MerchantAd[];
   reels?: ReelVideo[];
@@ -1043,6 +1067,43 @@ function loadDB(): DBStructure {
       }
       if (!loaded.reels || loaded.reels.length === 0) {
         loaded.reels = INITIAL_REELS;
+      }
+      if (!loaded.groupChats || loaded.groupChats.length === 0) {
+        loaded.groupChats = [
+          {
+            id: 'gc-community-main',
+            name: 'Ka-Zone Official Community GC 🌟',
+            avatar: '🇵🇭',
+            description: 'Opisyal na Group Chat ng lahat ng Ka-Zone members para sa kwentuhan, tulungan, at click-earning updates!',
+            createdBy: 'admin-rosco',
+            creatorName: 'System Administrator',
+            members: ['admin-rosco', 'user-juan', 'user-clara'],
+            createdAt: new Date(Date.now() - 86400000).toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        ];
+      }
+      if (!loaded.groupMessages || loaded.groupMessages.length === 0) {
+        loaded.groupMessages = [
+          {
+            id: 'gmsg-welcome-1',
+            groupId: 'gc-community-main',
+            senderId: 'admin-rosco',
+            senderName: 'System Administrator',
+            senderAvatar: '👑',
+            text: 'Maligayang pagdating sa Opisyal na Group Chat ng Z-one! Dito ay maaari kayong mag-usap-usap ng libre, magpalitan ng tips sa click-earning, at gumawa rin ng inyong sariling mga Group Chat kasama ang inyong mga kaibigan at team.',
+            createdAt: new Date(Date.now() - 86000000).toISOString()
+          },
+          {
+            id: 'gmsg-welcome-2',
+            groupId: 'gc-community-main',
+            senderId: 'user-juan',
+            senderName: 'Juan Dela Cruz',
+            senderAvatar: '👨‍💻',
+            text: 'Magandang araw sa lahat ng Ka-Zone members! Napakabilis ng palitan ng mensahe dito.',
+            createdAt: new Date(Date.now() - 3600000).toISOString()
+          }
+        ];
       }
 
       // Automatically purge simulated/fake withdrawals (with-db-, with-sim-, Ago 2, 2026)
@@ -4867,7 +4928,7 @@ app.get('/api/zone/posts', (req, res) => {
   res.json({ posts: sortedPosts });
 });
 
-// UNIFIED HIGH-PERFORMANCE SYNC ROUTE (Combines Messages, Active Calls, & Online Heartbeats in 1 single call)
+// UNIFIED HIGH-PERFORMANCE SYNC ROUTE (Combines Messages, Group Chats, Active Calls, & Online Heartbeats in 1 single call)
 app.get('/api/zone/sync', (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
@@ -4877,6 +4938,37 @@ app.get('/api/zone/sync', (req, res) => {
   const db = loadDB();
   const messages = (db.directMessages || []).filter(m => m.senderId === userId || m.receiverId === userId);
   
+  if (!db.groupChats) db.groupChats = [];
+  if (!db.groupMessages) db.groupMessages = [];
+
+  // Ensure community group exists
+  let commGroup = db.groupChats.find(g => g.id === 'gc-community-main');
+  if (!commGroup) {
+    commGroup = {
+      id: 'gc-community-main',
+      name: 'Ka-Zone Official Community GC 🌟',
+      avatar: '🇵🇭',
+      description: 'Opisyal na Group Chat ng lahat ng Ka-Zone members para sa kwentuhan, tulungan, at click-earning updates!',
+      createdBy: 'admin-rosco',
+      creatorName: 'System Administrator',
+      members: ['admin-rosco', 'user-juan', 'user-clara'],
+      createdAt: new Date(Date.now() - 86400000).toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    db.groupChats.push(commGroup);
+    saveDB(db);
+  }
+
+  // Ensure current user is in the community group
+  if (!commGroup.members.includes(userId)) {
+    commGroup.members.push(userId);
+    saveDB(db);
+  }
+
+  const myGroups = db.groupChats.filter(g => (g.members || []).includes(userId) || g.id === 'gc-community-main');
+  const myGroupIds = myGroups.map(g => g.id);
+  const myGroupMessages = (db.groupMessages || []).filter(m => myGroupIds.includes(m.groupId));
+
   const now = Date.now();
   const activeCalls = (db.activeCalls || []).filter(c => 
     (c.callerId === userId || c.receiverId === userId) && 
@@ -4889,8 +4981,24 @@ app.get('/api/zone/sync', (req, res) => {
   if (!onlineIds.includes('admin-rosco')) onlineIds.push('admin-rosco');
   if (!onlineIds.includes('user-juan')) onlineIds.push('user-juan');
 
+  // Format group chats with detailed member info & last message
+  const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
+  const formattedGroups = myGroups.map(g => {
+    const groupMsgs = (db.groupMessages || []).filter(m => m.groupId === g.id);
+    const lastMsg = groupMsgs.length > 0 ? groupMsgs[groupMsgs.length - 1] : null;
+    return {
+      ...g,
+      memberDetails: (g.members || []).map(mid => userMap.get(mid) || { id: mid, name: 'Ka-Zone User', avatar: '👤' }),
+      lastMessage: lastMsg ? lastMsg.text : '',
+      lastMessageSender: lastMsg ? lastMsg.senderName : '',
+      lastMessageTime: lastMsg ? lastMsg.createdAt : g.createdAt
+    };
+  });
+
   res.json({
     messages,
+    groups: formattedGroups,
+    groupMessages: myGroupMessages,
     calls: activeCalls,
     onlineUserIds: onlineIds
   });
@@ -5760,6 +5868,422 @@ app.delete('/api/zone/messages/:messageId', (req, res) => {
   saveDB(db);
 
   res.json({ success: true, message: 'Matagumpay na na-delete ang mensahe!' });
+});
+
+// --- GROUP CHAT (GC) ENDPOINTS ---
+
+// 1. GET ALL GROUP CHATS FOR CURRENT USER
+app.get('/api/zone/groups', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const db = loadDB();
+  if (!db.groupChats) db.groupChats = [];
+  if (!db.groupMessages) db.groupMessages = [];
+
+  // Ensure community group exists
+  let commGroup = db.groupChats.find(g => g.id === 'gc-community-main');
+  if (!commGroup) {
+    commGroup = {
+      id: 'gc-community-main',
+      name: 'Ka-Zone Official Community GC 🌟',
+      avatar: '🇵🇭',
+      description: 'Opisyal na Group Chat ng lahat ng Ka-Zone members para sa kwentuhan, tulungan, at click-earning updates!',
+      createdBy: 'admin-rosco',
+      creatorName: 'System Administrator',
+      members: ['admin-rosco', 'user-juan', 'user-clara'],
+      createdAt: new Date(Date.now() - 86400000).toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    db.groupChats.push(commGroup);
+    saveDB(db);
+  }
+
+  if (!commGroup.members.includes(userId)) {
+    commGroup.members.push(userId);
+    saveDB(db);
+  }
+
+  const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
+  const myGroups = db.groupChats.filter(g => (g.members || []).includes(userId) || g.id === 'gc-community-main');
+
+  const formattedGroups = myGroups.map(g => {
+    const groupMsgs = (db.groupMessages || []).filter(m => m.groupId === g.id);
+    const lastMsg = groupMsgs.length > 0 ? groupMsgs[groupMsgs.length - 1] : null;
+    return {
+      ...g,
+      memberDetails: (g.members || []).map(mid => userMap.get(mid) || { id: mid, name: 'Ka-Zone User', avatar: '👤' }),
+      lastMessage: lastMsg ? lastMsg.text : '',
+      lastMessageSender: lastMsg ? lastMsg.senderName : '',
+      lastMessageTime: lastMsg ? lastMsg.createdAt : g.createdAt
+    };
+  });
+
+  // Sort by last message time
+  formattedGroups.sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime());
+
+  res.json({ groups: formattedGroups });
+});
+
+// 2. CREATE A NEW GROUP CHAT
+app.post('/api/zone/groups', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { name, avatar, memberIds, description } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Kinakailangan ang pangalan ng Group Chat.' });
+  }
+
+  const db = loadDB();
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa system.' });
+  }
+
+  const creator = db.users.find(u => u.id === userId);
+  if (!creator) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  if (!db.groupChats) db.groupChats = [];
+  if (!db.groupMessages) db.groupMessages = [];
+
+  const allMembers = Array.from(new Set([userId, ...(Array.isArray(memberIds) ? memberIds : [])]));
+  const cleanName = filterSwearWords(name.trim());
+  const cleanDesc = description ? filterSwearWords(description.trim()) : '';
+
+  const newGroup: GroupChat = {
+    id: 'gc-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+    name: cleanName,
+    avatar: avatar || '👥',
+    description: cleanDesc,
+    createdBy: userId,
+    creatorName: creator.name,
+    members: allMembers,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  db.groupChats.push(newGroup);
+
+  // Add initial system creation message
+  const initialMsg: GroupMessage = {
+    id: 'gmsg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+    groupId: newGroup.id,
+    senderId: 'system',
+    senderName: 'System Notice',
+    senderAvatar: '📢',
+    text: `${creator.name} created the group "${cleanName}". Welcome everyone!`,
+    createdAt: new Date().toISOString()
+  };
+  db.groupMessages.push(initialMsg);
+
+  saveDB(db);
+
+  const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
+  const formattedGroup = {
+    ...newGroup,
+    memberDetails: (newGroup.members || []).map(mid => userMap.get(mid) || { id: mid, name: 'Ka-Zone User', avatar: '👤' }),
+    lastMessage: initialMsg.text,
+    lastMessageSender: initialMsg.senderName,
+    lastMessageTime: initialMsg.createdAt
+  };
+
+  res.json({ success: true, group: formattedGroup });
+});
+
+// 3. GET MESSAGES FOR A GROUP CHAT
+app.get('/api/zone/groups/:groupId/messages', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { groupId } = req.params;
+  const db = loadDB();
+  if (!db.groupChats) db.groupChats = [];
+  if (!db.groupMessages) db.groupMessages = [];
+
+  const group = db.groupChats.find(g => g.id === groupId);
+  if (!group) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Group Chat.' });
+  }
+
+  // Ensure membership if it's community group
+  if (group.id === 'gc-community-main' && !group.members.includes(userId)) {
+    group.members.push(userId);
+    saveDB(db);
+  }
+
+  if (!group.members.includes(userId)) {
+    return res.status(403).json({ error: 'Hindi ka miyembro ng Group Chat na ito.' });
+  }
+
+  const messages = db.groupMessages.filter(m => m.groupId === groupId);
+  res.json({ messages });
+});
+
+// 4. SEND A MESSAGE IN GROUP CHAT
+app.post('/api/zone/groups/:groupId/messages', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { groupId } = req.params;
+  const { text } = req.body;
+  if (!text || !text.trim()) {
+    return res.status(400).json({ error: 'Kinakailangan ang mensahe.' });
+  }
+
+  const db = loadDB();
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Ang iyong account ay banned sa system.' });
+  }
+
+  const sender = db.users.find(u => u.id === userId);
+  if (!sender) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  if (!db.groupChats) db.groupChats = [];
+  if (!db.groupMessages) db.groupMessages = [];
+
+  const group = db.groupChats.find(g => g.id === groupId);
+  if (!group) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Group Chat.' });
+  }
+
+  // Auto-join community group
+  if (group.id === 'gc-community-main' && !group.members.includes(userId)) {
+    group.members.push(userId);
+  }
+
+  if (!group.members.includes(userId)) {
+    return res.status(403).json({ error: 'Hindi ka miyembro ng Group Chat na ito.' });
+  }
+
+  const filteredText = filterSwearWords(text.trim());
+  const newMsg: GroupMessage = {
+    id: 'gmsg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+    groupId,
+    senderId: userId,
+    senderName: sender.name,
+    senderAvatar: sender.avatar,
+    text: filteredText,
+    createdAt: new Date().toISOString()
+  };
+
+  db.groupMessages.push(newMsg);
+  group.updatedAt = new Date().toISOString();
+  saveDB(db);
+
+  res.json({ success: true, message: newMsg });
+});
+
+// 5. EDIT A GROUP MESSAGE (within 2 minutes)
+app.put('/api/zone/groups/:groupId/messages/:messageId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { groupId, messageId } = req.params;
+  const { text } = req.body;
+  const db = loadDB();
+
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa system.' });
+  }
+
+  if (!db.groupMessages) db.groupMessages = [];
+  const msg = db.groupMessages.find(m => m.id === messageId && m.groupId === groupId);
+  if (!msg) {
+    return res.status(404).json({ error: 'Hindi mahanap ang mensahe.' });
+  }
+
+  if (msg.senderId !== userId) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na i-edit ang mensaheng ito.' });
+  }
+
+  // 2-minute rule
+  const messageTime = new Date(msg.createdAt).getTime();
+  if (Date.now() - messageTime > 120000) {
+    return res.status(400).json({ error: 'Hindi mo na pwedeng i-edit ang mensaheng ito dahil lumagpas na ang 2 minuto.' });
+  }
+
+  if (!text || text.trim() === '') {
+    return res.status(400).json({ error: 'Hindi pwedeng walang laman ang mensahe.' });
+  }
+
+  msg.text = filterSwearWords(text.trim());
+  saveDB(db);
+
+  res.json({ success: true, message: msg });
+});
+
+// 6. DELETE / UNSEND A GROUP MESSAGE (within 2 minutes)
+app.delete('/api/zone/groups/:groupId/messages/:messageId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { groupId, messageId } = req.params;
+  const db = loadDB();
+
+  if (!db.groupMessages) db.groupMessages = [];
+  const msgIndex = db.groupMessages.findIndex(m => m.id === messageId && m.groupId === groupId);
+  if (msgIndex === -1) {
+    return res.status(404).json({ error: 'Hindi mahanap ang mensahe.' });
+  }
+
+  const msg = db.groupMessages[msgIndex];
+  if (msg.senderId !== userId) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na i-delete ang mensaheng ito.' });
+  }
+
+  // 2-minute rule
+  const messageTime = new Date(msg.createdAt).getTime();
+  if (Date.now() - messageTime > 120000) {
+    return res.status(400).json({ error: 'Hindi mo na pwedeng i-unsend/delete ang mensaheng ito dahil lumagpas na ang 2 minuto.' });
+  }
+
+  db.groupMessages.splice(msgIndex, 1);
+  saveDB(db);
+
+  res.json({ success: true, message: 'Matagumpay na na-delete ang mensahe!' });
+});
+
+// 7. ADD MEMBERS TO GROUP CHAT
+app.post('/api/zone/groups/:groupId/members', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { groupId } = req.params;
+  const { memberIds } = req.body;
+  if (!memberIds || !Array.isArray(memberIds) || memberIds.length === 0) {
+    return res.status(400).json({ error: 'Pumili ng miyembro na idadagdag.' });
+  }
+
+  const db = loadDB();
+  if (!db.groupChats) db.groupChats = [];
+  const group = db.groupChats.find(g => g.id === groupId);
+  if (!group) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Group Chat.' });
+  }
+
+  const addedUsers = db.users.filter(u => memberIds.includes(u.id) && !group.members.includes(u.id));
+  if (addedUsers.length === 0) {
+    return res.status(400).json({ error: 'Lahat ng napili ay miyembro na ng group na ito.' });
+  }
+
+  addedUsers.forEach(u => group.members.push(u.id));
+  group.updatedAt = new Date().toISOString();
+
+  // Add system notice
+  const actor = db.users.find(u => u.id === userId);
+  const names = addedUsers.map(u => u.name).join(', ');
+  if (!db.groupMessages) db.groupMessages = [];
+  db.groupMessages.push({
+    id: 'gmsg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+    groupId,
+    senderId: 'system',
+    senderName: 'System Notice',
+    senderAvatar: '📢',
+    text: `${actor ? actor.name : 'A member'} added ${names} to the group.`,
+    createdAt: new Date().toISOString()
+  });
+
+  saveDB(db);
+
+  const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
+  const updatedGroup = {
+    ...group,
+    memberDetails: (group.members || []).map(mid => userMap.get(mid) || { id: mid, name: 'Ka-Zone User', avatar: '👤' })
+  };
+
+  res.json({ success: true, group: updatedGroup });
+});
+
+// 8. LEAVE GROUP CHAT
+app.post('/api/zone/groups/:groupId/leave', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { groupId } = req.params;
+  const db = loadDB();
+  if (!db.groupChats) db.groupChats = [];
+  const group = db.groupChats.find(g => g.id === groupId);
+  if (!group) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Group Chat.' });
+  }
+
+  if (group.id === 'gc-community-main') {
+    return res.status(400).json({ error: 'Hindi maaaring umalis sa Opisyal na Community GC.' });
+  }
+
+  group.members = group.members.filter(id => id !== userId);
+  group.updatedAt = new Date().toISOString();
+
+  const leaver = db.users.find(u => u.id === userId);
+  if (!db.groupMessages) db.groupMessages = [];
+  db.groupMessages.push({
+    id: 'gmsg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+    groupId,
+    senderId: 'system',
+    senderName: 'System Notice',
+    senderAvatar: '📢',
+    text: `${leaver ? leaver.name : 'A member'} left the group.`,
+    createdAt: new Date().toISOString()
+  });
+
+  saveDB(db);
+  res.json({ success: true, message: 'Nakaalis ka na sa group chat.' });
+});
+
+// 9. UPDATE GROUP CHAT (Name, Avatar, Description)
+app.put('/api/zone/groups/:groupId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { groupId } = req.params;
+  const { name, avatar, description } = req.body;
+  const db = loadDB();
+  if (!db.groupChats) db.groupChats = [];
+  const group = db.groupChats.find(g => g.id === groupId);
+  if (!group) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Group Chat.' });
+  }
+
+  if (!group.members.includes(userId)) {
+    return res.status(403).json({ error: 'Hindi ka miyembro ng Group Chat na ito.' });
+  }
+
+  if (name && name.trim()) group.name = filterSwearWords(name.trim());
+  if (avatar) group.avatar = avatar;
+  if (description !== undefined) group.description = filterSwearWords(description.trim());
+  group.updatedAt = new Date().toISOString();
+
+  saveDB(db);
+
+  const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
+  const updatedGroup = {
+    ...group,
+    memberDetails: (group.members || []).map(mid => userMap.get(mid) || { id: mid, name: 'Ka-Zone User', avatar: '👤' })
+  };
+
+  res.json({ success: true, group: updatedGroup });
 });
 
 // 3. GET ACTIVE CALLS FOR USER (POLLING)

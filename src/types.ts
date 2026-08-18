@@ -168,6 +168,44 @@ export interface ReelTokenSubscription {
   approvedAt?: string;
 }
 
+export interface DirectMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar: string;
+  receiverId: string;
+  receiverName: string;
+  receiverAvatar: string;
+  text: string;
+  createdAt: string;
+}
+
+export interface GroupChat {
+  id: string;
+  name: string;
+  avatar: string;
+  description?: string;
+  createdBy: string;
+  creatorName: string;
+  members: string[]; // User IDs
+  memberDetails?: { id: string; name: string; avatar: string }[];
+  lastMessage?: string;
+  lastMessageSender?: string;
+  lastMessageTime?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface GroupMessage {
+  id: string;
+  groupId: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar: string;
+  text: string;
+  createdAt: string;
+}
+
 export interface AdminUser {
   id: string;
   email: string;

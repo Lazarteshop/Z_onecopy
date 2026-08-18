@@ -34,9 +34,18 @@ import {
   Film,
   Pencil,
   Trash2,
-  Newspaper
+  Newspaper,
+  Search,
+  UserPlus,
+  Plus,
+  Check,
+  MoreHorizontal,
+  Info,
+  LogOut,
+  Settings,
+  ShieldCheck
 } from 'lucide-react';
-import { ZonePost } from '../types';
+import { ZonePost, GroupChat, GroupMessage } from '../types';
 
 interface ZoneFeedProps {
   token: string;
@@ -273,15 +282,35 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const [postFilter, setPostFilter] = useState<'all' | 'news' | 'community'>('all');
   const [visiblePostLimit, setVisiblePostLimit] = useState<number>(12);
 
-  // --- PRIVATE DIRECT MESSAGE (DM) STATES ---
+  // --- PRIVATE DIRECT MESSAGE (DM) STATES & INBOX ---
   const [activeDmUser, setActiveDmUser] = useState<{ id: string; name: string; avatar: string } | null>(null);
   const [dmMessages, setDmMessages] = useState<any[]>([]);
   const [loadingDms, setLoadingDms] = useState(false);
   const [newDmText, setNewDmText] = useState('');
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
+  const [showInboxPanel, setShowInboxPanel] = useState(false);
+  const [inboxSearch, setInboxSearch] = useState('');
+  const [inboxTab, setInboxTab] = useState<'chats' | 'groups' | 'members'>('chats');
+  const [allUsersList, setAllUsersList] = useState<any[]>([]);
+  const [loadingUsersList, setLoadingUsersList] = useState(false);
 
-  // --- VISUAL VIEWPORT RESIZING FOR MOBILE KEYBOARD ---
-  const [visualViewportHeight, setVisualViewportHeight] = useState<number | null>(null);
+  // --- GROUP CHAT (GC) STATES ---
+  const [groupChats, setGroupChats] = useState<GroupChat[]>([]);
+  const [groupMessages, setGroupMessages] = useState<GroupMessage[]>([]);
+  const [activeGroupChat, setActiveGroupChat] = useState<GroupChat | null>(null);
+  const [newGroupMessageText, setNewGroupMessageText] = useState('');
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupAvatar, setNewGroupAvatar] = useState('👥');
+  const [newGroupDescription, setNewGroupDescription] = useState('');
+  const [newGroupMemberIds, setNewGroupMemberIds] = useState<string[]>([]);
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const [showGroupInfoModal, setShowGroupInfoModal] = useState(false);
+  const [showAddMembersModal, setShowAddMembersModal] = useState(false);
+  const [addMemberSelectedIds, setAddMemberSelectedIds] = useState<string[]>([]);
+  const [isAddingMembers, setIsAddingMembers] = useState(false);
+  const [editingGroupMessageId, setEditingGroupMessageId] = useState<string | null>(null);
+  const [editingGroupMessageText, setEditingGroupMessageText] = useState('');
 
   // --- DECOMMISSIONED MEDIA HUB / LIVE FEED DUMMY STATES ---
   const socialTab = 'feed' as string;
@@ -299,39 +328,61 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const setSelectedNetflixVideo = (v: any) => {};
   const M3U8Player: any = () => null;
 
+  // --- VISUAL VIEWPORT RESIZING FOR MOBILE KEYBOARD ---
+  const [visualViewportHeight, setVisualViewportHeight] = useState<number | null>(null);
+  const [visualViewportTop, setVisualViewportTop] = useState<number>(0);
+
   useEffect(() => {
-    if (!window.visualViewport) return;
-    const updateViewportHeight = () => {
-      setVisualViewportHeight(window.visualViewport?.height || window.innerHeight);
+    const handleViewportChange = () => {
+      if (window.visualViewport) {
+        setVisualViewportHeight(window.visualViewport.height);
+        setVisualViewportTop(window.visualViewport.offsetTop || 0);
+      } else {
+        setVisualViewportHeight(window.innerHeight);
+        setVisualViewportTop(0);
+      }
     };
-    window.visualViewport.addEventListener('resize', updateViewportHeight);
-    window.visualViewport.addEventListener('scroll', updateViewportHeight);
-    updateViewportHeight();
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleViewportChange);
+      window.visualViewport.addEventListener('scroll', handleViewportChange);
+    }
+    window.addEventListener('resize', handleViewportChange);
+    handleViewportChange();
+
     return () => {
-      window.visualViewport?.removeEventListener('resize', updateViewportHeight);
-      window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleViewportChange);
+        window.visualViewport.removeEventListener('scroll', handleViewportChange);
+      }
+      window.removeEventListener('resize', handleViewportChange);
     };
-  }, [activeDmUser]);
+  }, [activeDmUser, activeGroupChat, showInboxPanel]);
 
   // Keep chat container scrolled to bottom when keyboard opens or viewport shrinks
   useEffect(() => {
-    if (activeDmUser) {
+    if (activeDmUser || activeGroupChat) {
       const scrollDown = () => {
         const el = document.getElementById('dm-chat-scroll');
         if (el) {
           el.scrollTop = el.scrollHeight;
         }
+        const gcEl = document.getElementById('gc-chat-scroll');
+        if (gcEl) {
+          gcEl.scrollTop = gcEl.scrollHeight;
+        }
       };
       scrollDown();
-      // Also delayed slightly to allow transition animations to settle
-      const t1 = setTimeout(scrollDown, 80);
-      const t2 = setTimeout(scrollDown, 250);
+      const t1 = setTimeout(scrollDown, 50);
+      const t2 = setTimeout(scrollDown, 150);
+      const t3 = setTimeout(scrollDown, 300);
       return () => {
         clearTimeout(t1);
         clearTimeout(t2);
+        clearTimeout(t3);
       };
     }
-  }, [visualViewportHeight, activeDmUser, dmMessages.length]);
+  }, [visualViewportHeight, activeDmUser, activeGroupChat, dmMessages.length, groupMessages.length]);
 
   // --- EDIT / DELETE STATE HOOKS ---
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
@@ -341,7 +392,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingMessageText, setEditingMessageText] = useState('');
 
-  // --- DM READ/UNREAD TRACKING & INBOX PANEL STATES ---
+  // --- DM READ/UNREAD TRACKING ---
   const [readMessageIds, setReadMessageIds] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem(`zone_read_msgs_${user.id}`);
@@ -351,11 +402,6 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     }
   });
   const notifiedMsgIdsRef = React.useRef<Set<string>>(new Set());
-  const [showInboxPanel, setShowInboxPanel] = useState(false);
-  const [inboxSearch, setInboxSearch] = useState('');
-  const [inboxTab, setInboxTab] = useState<'chats' | 'members'>('chats');
-  const [allUsersList, setAllUsersList] = useState<any[]>([]);
-  const [loadingUsersList, setLoadingUsersList] = useState(false);
 
   // Helper to play a lovely dual-tone chime for incoming message alerts
   const playMessageSound = () => {
@@ -612,7 +658,17 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         if (syncRes.ok && active) {
           const syncData = await syncRes.json();
           setDmMessages(syncData.messages || []);
+          setGroupChats(syncData.groups || []);
+          setGroupMessages(syncData.groupMessages || []);
           setOnlineUserIds(syncData.onlineUserIds || []);
+
+          // Sync active group chat data if open
+          if (activeGroupChat && Array.isArray(syncData.groups)) {
+            const updated = syncData.groups.find((g: GroupChat) => g.id === activeGroupChat.id);
+            if (updated) {
+              setActiveGroupChat(updated);
+            }
+          }
 
           const activeCalls = syncData.calls || [];
           if (activeCalls.length > 0) {
@@ -2013,6 +2069,213 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       }
     } catch (err) {
       triggerNotification('Koneksyon error sa pag-delete ng mensahe.', 'error');
+    }
+  };
+
+  // --- GROUP CHAT (GC) ACTION HANDLERS ---
+  const handleOpenGroupChat = (gc: GroupChat) => {
+    setActiveGroupChat(gc);
+    setShowInboxPanel(false);
+  };
+
+  const handleCreateGroup = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newGroupName.trim()) {
+      triggerNotification(language === 'tl' ? 'Ilagay ang pangalan ng Group Chat.' : 'Enter group chat name.', 'error');
+      return;
+    }
+    setIsCreatingGroup(true);
+    try {
+      const res = await fetch('/api/zone/groups', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({
+          name: newGroupName.trim(),
+          avatar: newGroupAvatar || '👥',
+          description: newGroupDescription.trim(),
+          memberIds: newGroupMemberIds
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.group) {
+        setGroupChats(prev => [data.group, ...prev]);
+        setShowCreateGroupModal(false);
+        setNewGroupName('');
+        setNewGroupAvatar('👥');
+        setNewGroupDescription('');
+        setNewGroupMemberIds([]);
+        setActiveGroupChat(data.group);
+        setShowInboxPanel(false);
+        triggerNotification(
+          language === 'tl' ? 'Matagumpay na nagawa ang Group Chat! 🎉' : 'Group chat created successfully! 🎉',
+          'success'
+        );
+      } else {
+        triggerNotification(data.error || 'Failed to create group chat.', 'error');
+      }
+    } catch (err) {
+      triggerNotification(language === 'tl' ? 'Error sa paggawa ng group chat.' : 'Error creating group chat.', 'error');
+    } finally {
+      setIsCreatingGroup(false);
+    }
+  };
+
+  const handleSendGroupMessage = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!activeGroupChat || !newGroupMessageText.trim()) return;
+
+    const tempId = 'temp-gmsg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+    const originalText = newGroupMessageText;
+
+    const optimisticMsg: GroupMessage = {
+      id: tempId,
+      groupId: activeGroupChat.id,
+      senderId: user.id,
+      senderName: user.name,
+      senderAvatar: user.avatar || '👤',
+      text: originalText,
+      createdAt: new Date().toISOString()
+    };
+
+    setGroupMessages(prev => [...prev, optimisticMsg]);
+    setNewGroupMessageText('');
+
+    setTimeout(() => {
+      const chatContainer = document.getElementById('gc-chat-scroll');
+      if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
+    }, 20);
+
+    try {
+      const res = await fetch(`/api/zone/groups/${activeGroupChat.id}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({
+          text: originalText
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setGroupMessages(prev => prev.map(msg => msg.id === tempId ? data.message : msg));
+      } else {
+        const errData = await res.json();
+        setGroupMessages(prev => prev.filter(msg => msg.id !== tempId));
+        setNewGroupMessageText(originalText);
+        triggerNotification(errData.error || 'Failed to send group message', 'error');
+      }
+    } catch (err) {
+      setGroupMessages(prev => prev.filter(msg => msg.id !== tempId));
+      setNewGroupMessageText(originalText);
+      triggerNotification(language === 'tl' ? 'Koneksyon error sa pagpapadala.' : 'Connection error.', 'error');
+    }
+  };
+
+  const handleSaveGroupMessageEdit = async (messageId: string) => {
+    if (!activeGroupChat || !editingGroupMessageText.trim()) return;
+    try {
+      const res = await fetch(`/api/zone/groups/${activeGroupChat.id}/messages/${messageId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ text: editingGroupMessageText })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setGroupMessages(prev => prev.map(m => m.id === messageId ? { ...m, text: data.message.text } : m));
+        setEditingGroupMessageId(null);
+        setEditingGroupMessageText('');
+      } else {
+        triggerNotification(data.error || 'Hindi ma-edit ang mensahe.', 'error');
+      }
+    } catch (err) {
+      triggerNotification('Koneksyon error sa pag-edit ng mensahe.', 'error');
+    }
+  };
+
+  const handleDeleteGroupMessage = async (messageId: string) => {
+    if (!activeGroupChat) return;
+    try {
+      const res = await fetch(`/api/zone/groups/${activeGroupChat.id}/messages/${messageId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': token
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setGroupMessages(prev => prev.filter(m => m.id !== messageId));
+      } else {
+        triggerNotification(data.error || 'Hindi ma-delete ang mensahe.', 'error');
+      }
+    } catch (err) {
+      triggerNotification('Koneksyon error sa pag-delete ng mensahe.', 'error');
+    }
+  };
+
+  const handleAddGroupMembers = async () => {
+    if (!activeGroupChat || addMemberSelectedIds.length === 0) return;
+    setIsAddingMembers(true);
+    try {
+      const res = await fetch(`/api/zone/groups/${activeGroupChat.id}/members`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ memberIds: addMemberSelectedIds })
+      });
+      const data = await res.json();
+      if (res.ok && data.group) {
+        setActiveGroupChat(data.group);
+        setGroupChats(prev => prev.map(g => g.id === data.group.id ? data.group : g));
+        setShowAddMembersModal(false);
+        setAddMemberSelectedIds([]);
+        triggerNotification(
+          language === 'tl' ? 'Matagumpay na naidagdag ang mga miyembro!' : 'Members added successfully!',
+          'success'
+        );
+      } else {
+        triggerNotification(data.error || 'Hindi naidagdag ang miyembro.', 'error');
+      }
+    } catch (err) {
+      triggerNotification(language === 'tl' ? 'Error sa pagdagdag ng miyembro.' : 'Error adding members.', 'error');
+    } finally {
+      setIsAddingMembers(false);
+    }
+  };
+
+  const handleLeaveGroup = async () => {
+    if (!activeGroupChat) return;
+    if (!window.confirm(language === 'tl' ? 'Sigurado ka bang nais mong umalis sa Group Chat na ito?' : 'Are you sure you want to leave this group chat?')) return;
+    try {
+      const res = await fetch(`/api/zone/groups/${activeGroupChat.id}/leave`, {
+        method: 'POST',
+        headers: {
+          'Authorization': token
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setGroupChats(prev => prev.filter(g => g.id !== activeGroupChat.id));
+        setActiveGroupChat(null);
+        setShowGroupInfoModal(false);
+        triggerNotification(
+          language === 'tl' ? 'Nakaalis ka na sa Group Chat.' : 'You left the group chat.',
+          'info'
+        );
+      } else {
+        triggerNotification(data.error || 'Failed to leave group.', 'error');
+      }
+    } catch (err) {
+      triggerNotification(language === 'tl' ? 'Error sa pag-alis sa group.' : 'Error leaving group.', 'error');
     }
   };
 
@@ -3747,69 +4010,79 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       <AnimatePresence>
         {activeDmUser && (
           <div 
-            className="fixed left-0 right-0 top-0 z-50 flex items-end sm:items-center justify-center p-4 max-sm:p-0 bg-slate-900/60 max-sm:bg-white backdrop-blur-xs overflow-hidden"
-            style={visualViewportHeight ? { height: `${visualViewportHeight}px` } : { height: '100vh' }}
+            className="fixed inset-x-0 z-50 flex items-center justify-center sm:p-4 max-sm:p-0 bg-slate-950/60 backdrop-blur-xs overflow-hidden"
+            style={{
+              top: `${visualViewportTop}px`,
+              height: visualViewportHeight ? `${visualViewportHeight}px` : '100dvh'
+            }}
           >
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-3xl max-sm:rounded-none max-w-md w-full shadow-2xl border border-slate-100 max-sm:border-none overflow-hidden flex flex-col h-[520px] max-sm:h-full text-slate-800"
+              className="bg-white rounded-3xl max-sm:rounded-none max-w-md w-full shadow-2xl border border-slate-100 max-sm:border-none overflow-hidden flex flex-col h-[560px] max-sm:h-full text-slate-800"
             >
               {/* Header */}
-              <div className="p-4 flex items-center justify-between border-b border-slate-100 bg-slate-50/50">
+              <div className="p-3.5 sm:p-4 shrink-0 flex items-center justify-between bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 text-white shadow-sm">
                 <div className="flex items-center gap-2.5">
-                  <span className="leading-none select-none block">
+                  <span className="leading-none select-none block ring-2 ring-white/40 rounded-full">
                     {renderFeedAvatar(activeDmUser.avatar, activeDmUser.name, "w-9 h-9", "text-sm", activeDmUser.id)}
                   </span>
                   <div className="text-left">
-                    <h3 className="font-extrabold text-slate-950 text-xs leading-none">{activeDmUser.name}</h3>
+                    <h3 className="font-extrabold text-white text-xs leading-none">{activeDmUser.name}</h3>
                     {(onlineUserIds.includes(activeDmUser.id) || activeDmUser.id === user.id) ? (
-                      <span className="text-[9px] text-emerald-600 font-extrabold flex items-center gap-1 mt-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      <span className="text-[9.5px] text-emerald-300 font-extrabold flex items-center gap-1 mt-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                         <span>{language === 'tl' ? 'Aktibo Ngayon' : 'Active Now'}</span>
                       </span>
                     ) : (
-                      <span className="text-[9px] text-slate-400 font-extrabold flex items-center gap-1 mt-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                      <span className="text-[9.5px] text-indigo-200 font-extrabold flex items-center gap-1 mt-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-300/70"></span>
                         <span>{language === 'tl' ? 'Hindi Aktibo' : 'Offline'}</span>
                       </span>
                     )}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-2">
                   {/* Call buttons */}
                   <button 
+                    type="button"
                     onClick={() => handleStartCall('voice')}
-                    className="p-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl cursor-pointer transition focus:outline-hidden"
+                    className="w-8 h-8 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95"
                     title={language === 'tl' ? 'Voice Call' : 'Voice Call'}
                   >
-                    <Phone className="w-4 h-4" />
+                    <Phone className="w-4 h-4 text-indigo-700" />
                   </button>
                   <button 
+                    type="button"
                     onClick={() => handleStartCall('video')}
-                    className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl cursor-pointer transition focus:outline-hidden"
+                    className="w-8 h-8 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95"
                     title={language === 'tl' ? 'Video Call' : 'Video Call'}
                   >
-                    <Video className="w-4 h-4" />
+                    <Video className="w-4 h-4 text-indigo-700" />
                   </button>
                   <button 
+                    type="button"
                     onClick={() => setActiveDmUser(null)}
-                    className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-xl cursor-pointer transition focus:outline-hidden"
+                    className="w-8 h-8 rounded-xl bg-white hover:bg-red-50 text-slate-700 hover:text-red-600 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95"
+                    title={language === 'tl' ? 'Isara' : 'Close'}
                   >
-                    <X className="w-4 h-4" />
+                    <X className="w-4 h-4 text-slate-700" />
                   </button>
                 </div>
               </div>
 
-              {/* Message scroll container */}
-              <div id="dm-chat-scroll" className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
+              {/* Message scroll container with attractive messenger wallpaper background */}
+              <div 
+                id="dm-chat-scroll" 
+                className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 bg-gradient-to-b from-indigo-50/60 via-slate-100 to-indigo-50/40"
+              >
                 {dmMessages.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-1">
-                    <span className="text-2xl select-none">👋</span>
-                    <p className="text-xs font-black text-slate-700">{language === 'tl' ? `Simulan ang usapan kay ${activeDmUser.name}` : `Say hello to ${activeDmUser.name}`}</p>
-                    <p className="text-[10px] text-slate-450 font-semibold">{language === 'tl' ? 'Maaari kayong mag-usap at mag-tawagan nang ligtas.' : 'You can message each other and place secure calls.'}</p>
+                  <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-2">
+                    <span className="text-3xl select-none animate-bounce">👋</span>
+                    <p className="text-xs font-black text-slate-800">{language === 'tl' ? `Simulan ang usapan kay ${activeDmUser.name}` : `Say hello to ${activeDmUser.name}`}</p>
+                    <p className="text-[10px] text-slate-500 font-semibold max-w-xs">{language === 'tl' ? 'Maaari kayong mag-usap at mag-tawagan nang ligtas sa Z-one.' : 'You can message each other and place secure calls on Z-one.'}</p>
                   </div>
                 ) : (
                   dmMessages
@@ -3821,7 +4094,11 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
                       return (
                         <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} group relative`}>
-                          <div className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-xs font-semibold leading-relaxed ${isMe ? 'bg-blue-600 text-white rounded-br-none shadow-xs text-left' : 'bg-slate-250 text-slate-900 rounded-bl-none text-left'}`}>
+                          <div className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-xs font-semibold leading-relaxed ${
+                            isMe 
+                              ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-br-xs shadow-sm shadow-blue-500/20 text-left' 
+                              : 'bg-white text-slate-900 border border-slate-200/90 rounded-bl-xs shadow-2xs text-left'
+                          }`}>
                             {editingMessageId === msg.id ? (
                               <div className="space-y-1.5 min-w-[150px]">
                                 <input
@@ -3845,7 +4122,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                   <button
                                     type="button"
                                     onClick={() => handleSaveMessageEdit(msg.id)}
-                                    className="text-white hover:underline"
+                                    className="text-white hover:underline font-black"
                                   >
                                     Save
                                   </button>
@@ -3895,23 +4172,677 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 )}
               </div>
 
-              {/* Message Input form */}
-              <form onSubmit={handleSendDm} className="p-3 border-t border-slate-150 flex items-center gap-2 bg-white">
+              {/* Message Input form - Fixed & Protected from Keyboard Overlap */}
+              <form 
+                onSubmit={handleSendDm} 
+                className="p-2.5 sm:p-3 border-t border-indigo-100 bg-white flex items-center gap-2 shadow-lg shrink-0"
+              >
                 <input
                   type="text"
                   value={newDmText}
                   onChange={(e) => setNewDmText(e.target.value)}
+                  onFocus={() => {
+                    setTimeout(() => {
+                      const el = document.getElementById('dm-chat-scroll');
+                      if (el) el.scrollTop = el.scrollHeight;
+                    }, 100);
+                    setTimeout(() => {
+                      const el = document.getElementById('dm-chat-scroll');
+                      if (el) el.scrollTop = el.scrollHeight;
+                    }, 300);
+                  }}
                   placeholder={language === 'tl' ? 'Sumulat ng mensahe...' : 'Write a message...'}
-                  className="flex-1 bg-slate-100 border border-slate-200 rounded-2xl px-4 py-2 text-xs font-semibold focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:bg-white transition text-slate-800"
+                  className="flex-1 bg-slate-100 hover:bg-slate-150 focus:bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-2xl px-4 py-2.5 text-xs font-semibold focus:outline-hidden transition text-slate-800 placeholder-slate-400"
                 />
                 <button
                   type="submit"
                   disabled={!newDmText.trim()}
-                  className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white p-2.5 rounded-2xl cursor-pointer transition flex items-center justify-center shadow-xs"
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-40 text-white p-2.5 rounded-2xl cursor-pointer transition flex items-center justify-center shadow-md shadow-blue-500/20 shrink-0 active:scale-95"
                 >
                   <Send className="w-4 h-4" />
                 </button>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 👥 FACEBOOK-STYLE GROUP CHAT (GC) MODAL */}
+      <AnimatePresence>
+        {activeGroupChat && (
+          <div 
+            className="fixed inset-x-0 z-50 flex items-center justify-center sm:p-4 max-sm:p-0 bg-slate-950/60 backdrop-blur-xs overflow-hidden"
+            style={{
+              top: `${visualViewportTop}px`,
+              height: visualViewportHeight ? `${visualViewportHeight}px` : '100dvh'
+            }}
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl max-sm:rounded-none max-w-lg w-full shadow-2xl border border-slate-100 max-sm:border-none overflow-hidden flex flex-col h-[580px] max-sm:h-full text-slate-800"
+            >
+              {/* GC Header */}
+              <div className="p-3.5 sm:p-4 shrink-0 flex items-center justify-between bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-700 text-white shadow-sm">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-xl shrink-0 ring-2 ring-white/30 select-none">
+                    {activeGroupChat.avatar || '👥'}
+                  </div>
+                  <div className="text-left min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <h3 className="font-black text-white text-xs sm:text-sm truncate leading-tight">
+                        {activeGroupChat.name}
+                      </h3>
+                      {activeGroupChat.id === 'gc-community-main' && (
+                        <span className="bg-amber-400 text-slate-900 text-[8px] font-black px-1.5 py-0.2 rounded-md shrink-0">
+                          Official
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-indigo-100 font-semibold flex items-center gap-1 mt-0.5 truncate font-mono">
+                      <span>👥 {(activeGroupChat.members || []).length} {language === 'tl' ? 'miyembro' : 'members'}</span>
+                      <span>•</span>
+                      <span className="text-emerald-300 font-bold">{language === 'tl' ? 'Aktibong GC' : 'Active Group'}</span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Group Info & Members Button */}
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setShowGroupInfoModal(true);
+                      fetchAllUsersList();
+                    }}
+                    className="px-2.5 py-1.5 bg-white hover:bg-indigo-50 text-indigo-700 rounded-xl cursor-pointer transition focus:outline-hidden flex items-center gap-1.5 text-xs font-black shadow-sm active:scale-95"
+                    title={language === 'tl' ? 'Mga Miyembro at Impormasyon' : 'Group info and members'}
+                  >
+                    <Users className="w-4 h-4 text-indigo-600" />
+                    <span>{language === 'tl' ? 'Miyembro' : 'Members'}</span>
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setActiveGroupChat(null)}
+                    className="w-8 h-8 rounded-xl bg-white hover:bg-red-50 text-slate-700 hover:text-red-600 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95"
+                    title={language === 'tl' ? 'Isara' : 'Close'}
+                  >
+                    <X className="w-4 h-4 text-slate-700" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Group Chat Message Scroll Area */}
+              <div 
+                id="gc-chat-scroll" 
+                className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 bg-gradient-to-b from-indigo-50/60 via-slate-100 to-indigo-50/40"
+              >
+                {/* Pinned GC Description banner */}
+                {activeGroupChat.description && (
+                  <div className="bg-indigo-50/80 border border-indigo-200/80 rounded-2xl p-2.5 text-center text-[11px] text-indigo-900 font-semibold shadow-2xs">
+                    <span className="font-bold">📢 GC Notice:</span> {activeGroupChat.description}
+                  </div>
+                )}
+
+                {(() => {
+                  const msgs = groupMessages.filter(m => m.groupId === activeGroupChat.id);
+                  if (msgs.length === 0) {
+                    return (
+                      <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-2">
+                        <span className="text-3xl select-none animate-bounce">💬</span>
+                        <p className="text-xs font-black text-slate-800">
+                          {language === 'tl' ? `Simulan ang kwentuhan sa ${activeGroupChat.name}!` : `Say hello to ${activeGroupChat.name}!`}
+                        </p>
+                        <p className="text-[10px] text-slate-500 font-semibold max-w-xs">
+                          {language === 'tl' ? 'Lahat ng mensahe ay real-time na makikita ng bawat miyembro.' : 'Messages are synchronized in real-time with all members.'}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return msgs.map((msg) => {
+                    const isSystem = msg.senderId === 'system';
+                    const isMe = msg.senderId === user.id;
+                    const msgTime = new Date(msg.createdAt).getTime();
+                    const canEditOrDelete = (Date.now() - msgTime) <= 120000;
+
+                    if (isSystem) {
+                      return (
+                        <div key={msg.id} className="flex justify-center my-1.5">
+                          <span className="px-3 py-1 bg-slate-200/80 text-slate-600 text-[10px] font-bold rounded-full text-center shadow-2xs border border-slate-300/60">
+                            {msg.text}
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div key={msg.id} className={`flex items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'} group relative`}>
+                        {/* Member avatar on incoming messages */}
+                        {!isMe && (
+                          <div className="shrink-0 mb-1">
+                            {renderFeedAvatar(msg.senderAvatar, msg.senderName, "w-7 h-7", "text-xs", msg.senderId)}
+                          </div>
+                        )}
+
+                        <div className={`max-w-[80%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                          {/* Sender name on incoming messages */}
+                          {!isMe && (
+                            <span className="text-[10px] font-black text-indigo-900 ml-1 mb-0.5">
+                              {msg.senderName}
+                            </span>
+                          )}
+
+                          <div className={`rounded-2xl px-3.5 py-2 text-xs font-semibold leading-relaxed ${
+                            isMe 
+                              ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-br-xs shadow-sm shadow-blue-500/20 text-left' 
+                              : 'bg-white text-slate-900 border border-slate-200/90 rounded-bl-xs shadow-2xs text-left'
+                          }`}>
+                            {editingGroupMessageId === msg.id ? (
+                              <div className="space-y-1.5 min-w-[150px]">
+                                <input
+                                  type="text"
+                                  value={editingGroupMessageText}
+                                  onChange={(e) => setEditingGroupMessageText(e.target.value)}
+                                  className="w-full text-xs p-1 bg-white text-slate-950 border border-slate-300 rounded-lg outline-none font-semibold"
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveGroupMessageEdit(msg.id);
+                                  }}
+                                  autoFocus
+                                />
+                                <div className="flex justify-end gap-1.5 text-[9px] font-bold uppercase tracking-wider">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingGroupMessageId(null)}
+                                    className="text-slate-300 hover:text-white cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveGroupMessageEdit(msg.id)}
+                                    className="text-white hover:underline font-black cursor-pointer"
+                                  >
+                                    Save
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <p className="break-words">{msg.text}</p>
+                                <div className="flex items-center justify-between gap-3 mt-1">
+                                  {isMe && canEditOrDelete ? (
+                                    <div className="flex items-center gap-2 select-none opacity-80 max-sm:opacity-100 md:opacity-0 md:group-hover:opacity-100 transition duration-150">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setEditingGroupMessageId(msg.id);
+                                          setEditingGroupMessageText(msg.text);
+                                        }}
+                                        className="text-blue-200 hover:text-white cursor-pointer p-0.5"
+                                        title={language === 'tl' ? 'I-edit ang mensahe' : 'Edit message'}
+                                      >
+                                        <Pencil className="w-2.5 h-2.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (!window.confirm || window.confirm(language === 'tl' ? 'Sigurado ka bang gusto mong i-delete ang mensaheng ito?' : 'Are you sure you want to delete this message?')) {
+                                            handleDeleteGroupMessage(msg.id);
+                                          }
+                                        }}
+                                        className="text-blue-200 hover:text-red-300 cursor-pointer p-0.5"
+                                        title={language === 'tl' ? 'I-delete ang mensahe (Unsend)' : 'Unsend message'}
+                                      >
+                                        <Trash2 className="w-2.5 h-2.5" />
+                                      </button>
+                                    </div>
+                                  ) : <span />}
+                                  <span className={`text-[8px] block font-mono ${isMe ? 'text-blue-100' : 'text-slate-400'}`}>
+                                    {new Date(msg.createdAt).toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+
+              {/* GC Input Form */}
+              <form 
+                onSubmit={handleSendGroupMessage} 
+                className="p-2.5 sm:p-3 border-t border-indigo-100 bg-white flex items-center gap-2 shadow-lg shrink-0"
+              >
+                <input
+                  type="text"
+                  value={newGroupMessageText}
+                  onChange={(e) => setNewGroupMessageText(e.target.value)}
+                  onFocus={() => {
+                    setTimeout(() => {
+                      const el = document.getElementById('gc-chat-scroll');
+                      if (el) el.scrollTop = el.scrollHeight;
+                    }, 100);
+                    setTimeout(() => {
+                      const el = document.getElementById('gc-chat-scroll');
+                      if (el) el.scrollTop = el.scrollHeight;
+                    }, 300);
+                  }}
+                  placeholder={language === 'tl' ? `Mensahe sa ${activeGroupChat.name}...` : `Message in ${activeGroupChat.name}...`}
+                  className="flex-1 bg-slate-100 hover:bg-slate-150 focus:bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-2xl px-4 py-2.5 text-xs font-semibold focus:outline-hidden transition text-slate-800 placeholder-slate-400"
+                />
+                <button
+                  type="submit"
+                  disabled={!newGroupMessageText.trim()}
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-40 text-white p-2.5 rounded-2xl cursor-pointer transition flex items-center justify-center shadow-md shadow-blue-500/20 shrink-0 active:scale-95"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ➕ CREATE GROUP CHAT MODAL */}
+      <AnimatePresence>
+        {showCreateGroupModal && (
+          <div className="fixed inset-0 z-55 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[90vh] text-slate-800"
+            >
+              <div className="p-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 text-white flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="p-2 bg-white/20 rounded-xl">
+                    <Users className="w-5 h-5 text-white" />
+                  </span>
+                  <div>
+                    <h3 className="font-black text-white text-sm">
+                      {language === 'tl' ? 'Gumawa ng Bagong Group Chat' : 'Create New Group Chat'}
+                    </h3>
+                    <p className="text-[10px] text-indigo-100">
+                      {language === 'tl' ? 'Mag-imbita ng mga kaibigan at ka-Zone' : 'Invite friends and community members'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowCreateGroupModal(false)}
+                  className="p-1.5 text-white/80 hover:text-white rounded-xl cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateGroup} className="p-4 space-y-4 overflow-y-auto flex-1 text-left">
+                {/* GC Name & Avatar Selector */}
+                <div>
+                  <label className="block text-[11px] font-black text-slate-700 mb-1.5 uppercase tracking-wider">
+                    {language === 'tl' ? 'Pangalan ng Group Chat' : 'Group Chat Name'} <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newGroupName}
+                    onChange={(e) => setNewGroupName(e.target.value)}
+                    placeholder={language === 'tl' ? 'Hal. Team Champions PH 🚀' : 'e.g. Warriors Team PH 🚀'}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-900 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30"
+                  />
+                </div>
+
+                {/* Avatar / Icon Emoji Picker */}
+                <div>
+                  <label className="block text-[11px] font-black text-slate-700 mb-1.5 uppercase tracking-wider">
+                    {language === 'tl' ? 'Pumili ng GC Icon' : 'Select Group Icon'}
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {['👥', '🚀', '💎', '🇵🇭', '🌟', '🔥', '🏆', '💬', '🍕', '🎯', '⚡', '🥳'].map(emoji => (
+                      <button
+                        type="button"
+                        key={emoji}
+                        onClick={() => setNewGroupAvatar(emoji)}
+                        className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg transition cursor-pointer ${
+                          newGroupAvatar === emoji
+                            ? 'bg-indigo-600 text-white scale-110 shadow-md ring-2 ring-indigo-400'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-800'
+                        }`}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Description */}
+                <div>
+                  <label className="block text-[11px] font-black text-slate-700 mb-1.5 uppercase tracking-wider">
+                    {language === 'tl' ? 'Paglalarawan / Topic (Opsyonal)' : 'Description / Topic (Optional)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={newGroupDescription}
+                    onChange={(e) => setNewGroupDescription(e.target.value)}
+                    placeholder={language === 'tl' ? 'Hal. GC para sa mga click-earning tips at referrals' : 'e.g. Group for click-earning strategies'}
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-semibold text-slate-900 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30"
+                  />
+                </div>
+
+                {/* Member Selection Checklist */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[11px] font-black text-slate-700 uppercase tracking-wider">
+                      {language === 'tl' ? 'Pumili ng mga Miyembro' : 'Select Members'} ({newGroupMemberIds.length})
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-semibold">
+                      {language === 'tl' ? 'Maaari ding magdagdag mamaya' : 'Can add more later'}
+                    </span>
+                  </div>
+
+                  <div className="border border-slate-200 rounded-2xl max-h-48 overflow-y-auto p-1.5 space-y-1 bg-slate-50">
+                    {allUsersList.filter(u => u.id !== user.id).length === 0 ? (
+                      <p className="p-3 text-center text-xs text-slate-400 font-semibold">
+                        {language === 'tl' ? 'Walang ibang miyembro sa listahan.' : 'No other users found.'}
+                      </p>
+                    ) : (
+                      allUsersList
+                        .filter(u => u.id !== user.id)
+                        .map(u => {
+                          const isSelected = newGroupMemberIds.includes(u.id);
+                          return (
+                            <div
+                              key={u.id}
+                              onClick={() => {
+                                setNewGroupMemberIds(prev =>
+                                  isSelected ? prev.filter(id => id !== u.id) : [...prev, u.id]
+                                );
+                              }}
+                              className={`p-2 rounded-xl flex items-center justify-between cursor-pointer transition ${
+                                isSelected ? 'bg-indigo-100/90 text-indigo-950 font-bold' : 'hover:bg-white text-slate-800'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                {renderFeedAvatar(u.avatar, u.name, "w-7 h-7", "text-xs", u.id)}
+                                <span className="text-xs font-bold truncate">{u.name}</span>
+                              </div>
+                              <div className={`w-5 h-5 rounded-lg flex items-center justify-center border transition ${
+                                isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'
+                              }`}>
+                                {isSelected && <Check className="w-3.5 h-3.5" />}
+                              </div>
+                            </div>
+                          );
+                        })
+                    )}
+                  </div>
+                </div>
+
+                <div className="pt-2 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateGroupModal(false)}
+                    className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 rounded-xl cursor-pointer"
+                  >
+                    {language === 'tl' ? 'Kanselahin' : 'Cancel'}
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isCreatingGroup || !newGroupName.trim()}
+                    className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-black rounded-xl cursor-pointer transition shadow-md shadow-blue-500/20 disabled:opacity-50"
+                  >
+                    {isCreatingGroup
+                      ? (language === 'tl' ? 'Ginagawa...' : 'Creating...')
+                      : (language === 'tl' ? 'Gumawa ng GC 🚀' : 'Create GC 🚀')}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ⚙️ GROUP CHAT INFO & MEMBERS MODAL */}
+      <AnimatePresence>
+        {showGroupInfoModal && activeGroupChat && (
+          <div className="fixed inset-0 z-55 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[90vh] text-slate-800"
+            >
+              <div className="p-4 bg-gradient-to-r from-indigo-600 to-blue-600 text-white flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="p-2 bg-white/20 rounded-xl">
+                    <Info className="w-5 h-5 text-white" />
+                  </span>
+                  <div>
+                    <h3 className="font-black text-white text-sm">
+                      {language === 'tl' ? 'Impormasyon ng Group Chat' : 'Group Chat Info'}
+                    </h3>
+                    <p className="text-[10px] text-indigo-100 font-mono">
+                      {(activeGroupChat.members || []).length} {language === 'tl' ? 'kabuuang miyembro' : 'total members'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowGroupInfoModal(false)}
+                  className="p-1.5 text-white/80 hover:text-white rounded-xl cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-4 space-y-4 overflow-y-auto flex-1 text-left">
+                {/* Group Banner */}
+                <div className="flex items-center gap-3 p-3 bg-indigo-50/70 border border-indigo-100 rounded-2xl">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center text-2xl shrink-0">
+                    {activeGroupChat.avatar || '👥'}
+                  </div>
+                  <div>
+                    <h4 className="font-black text-slate-900 text-sm">{activeGroupChat.name}</h4>
+                    <p className="text-[11px] text-slate-500 font-semibold mt-0.5">
+                      {activeGroupChat.description || (language === 'tl' ? 'Walang nilagay na paglalarawan' : 'No description provided')}
+                    </p>
+                    <p className="text-[9px] text-indigo-600 font-bold font-mono mt-1">
+                      {language === 'tl' ? `Ginawa ni: ${activeGroupChat.creatorName}` : `Created by: ${activeGroupChat.creatorName}`}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Members list */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                      {language === 'tl' ? 'Mga Miyembro' : 'Members List'}
+                    </h4>
+                    <button
+                      onClick={() => {
+                        setShowAddMembersModal(true);
+                        setAddMemberSelectedIds([]);
+                        fetchAllUsersList();
+                      }}
+                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black rounded-xl cursor-pointer transition flex items-center gap-1 shadow-2xs"
+                    >
+                      <UserPlus className="w-3 h-3" />
+                      <span>{language === 'tl' ? '+ Magdagdag' : '+ Add'}</span>
+                    </button>
+                  </div>
+
+                  <div className="border border-slate-100 rounded-2xl max-h-56 overflow-y-auto p-1.5 space-y-1 bg-slate-50">
+                    {(activeGroupChat.memberDetails && activeGroupChat.memberDetails.length > 0
+                      ? activeGroupChat.memberDetails
+                      : allUsersList.filter(u => (activeGroupChat.members || []).includes(u.id))
+                    ).map(m => {
+                      const isOnline = onlineUserIds.includes(m.id);
+                      const isCreator = m.id === activeGroupChat.createdBy;
+                      return (
+                        <div key={m.id} className="p-2 rounded-xl bg-white border border-slate-100 flex items-center justify-between">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="relative inline-block select-none shrink-0">
+                              {renderFeedAvatar(m.avatar, m.name, "w-8 h-8", "text-sm", m.id)}
+                              {isOnline ? (
+                                <span className="absolute bottom-0 right-0 block h-2 w-2 rounded-full bg-emerald-500 border border-white" />
+                              ) : (
+                                <span className="absolute bottom-0 right-0 block h-2 w-2 rounded-full bg-slate-400 border border-white" />
+                              )}
+                            </div>
+                            <div className="min-w-0 text-left">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-black text-slate-900 truncate">{m.name}</span>
+                                {isCreator && (
+                                  <span className="bg-amber-100 text-amber-800 text-[8px] font-black px-1.5 py-0.2 rounded-md shrink-0">
+                                    Admin
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[9px] text-slate-400 font-bold font-mono">
+                                {isOnline ? 'Online' : 'Offline'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {m.id !== user.id && (
+                            <button
+                              onClick={() => {
+                                setShowGroupInfoModal(false);
+                                setActiveDmUser({ id: m.id, name: m.name, avatar: m.avatar });
+                                setActiveGroupChat(null);
+                              }}
+                              className="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-indigo-600 text-[9.5px] font-black rounded-lg cursor-pointer transition"
+                            >
+                              {language === 'tl' ? 'I-DM' : 'DM'}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Actions (Leave Group) */}
+                {activeGroupChat.id !== 'gc-community-main' && (
+                  <div className="pt-2 border-t border-slate-100">
+                    <button
+                      onClick={handleLeaveGroup}
+                      className="w-full py-2.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-black rounded-2xl cursor-pointer transition flex items-center justify-center gap-1.5 border border-red-200"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>{language === 'tl' ? 'Umalis sa Group Chat' : 'Leave Group Chat'}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ➕ ADD MEMBERS TO GC MODAL */}
+      <AnimatePresence>
+        {showAddMembersModal && activeGroupChat && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[85vh] text-slate-800"
+            >
+              <div className="p-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="p-2 bg-white/20 rounded-xl">
+                    <UserPlus className="w-5 h-5 text-white" />
+                  </span>
+                  <div>
+                    <h3 className="font-black text-white text-sm">
+                      {language === 'tl' ? 'Magdagdag ng Miyembro' : 'Add Members to Group'}
+                    </h3>
+                    <p className="text-[10px] text-indigo-100">{activeGroupChat.name}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowAddMembersModal(false)}
+                  className="p-1.5 text-white/80 hover:text-white rounded-xl cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-4 space-y-3 overflow-y-auto flex-1 text-left">
+                <p className="text-[11px] text-slate-500 font-semibold">
+                  {language === 'tl'
+                    ? 'Pumili mula sa mga rehistradong miyembro na hindi pa kasali sa GC:'
+                    : 'Select members from registered community who are not yet in this group:'}
+                </p>
+
+                <div className="border border-slate-200 rounded-2xl max-h-56 overflow-y-auto p-1.5 space-y-1 bg-slate-50">
+                  {(() => {
+                    const available = allUsersList.filter(
+                      u => !(activeGroupChat.members || []).includes(u.id)
+                    );
+
+                    if (available.length === 0) {
+                      return (
+                        <p className="p-4 text-center text-xs text-slate-400 font-semibold">
+                          {language === 'tl' ? 'Lahat ng miyembro ay kasali na sa group!' : 'All community members are already in this group!'}
+                        </p>
+                      );
+                    }
+
+                    return available.map(u => {
+                      const isSelected = addMemberSelectedIds.includes(u.id);
+                      return (
+                        <div
+                          key={u.id}
+                          onClick={() => {
+                            setAddMemberSelectedIds(prev =>
+                              isSelected ? prev.filter(id => id !== u.id) : [...prev, u.id]
+                            );
+                          }}
+                          className={`p-2.5 rounded-xl flex items-center justify-between cursor-pointer transition ${
+                            isSelected ? 'bg-indigo-100 text-indigo-950 font-bold' : 'hover:bg-white text-slate-800'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {renderFeedAvatar(u.avatar, u.name, "w-8 h-8", "text-sm", u.id)}
+                            <span className="text-xs font-bold truncate">{u.name}</span>
+                          </div>
+                          <div className={`w-5 h-5 rounded-lg flex items-center justify-center border transition ${
+                            isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'
+                          }`}>
+                            {isSelected && <Check className="w-3.5 h-3.5" />}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+
+                <div className="pt-2 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddMembersModal(false)}
+                    className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 rounded-xl cursor-pointer"
+                  >
+                    {language === 'tl' ? 'Kanselahin' : 'Cancel'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isAddingMembers || addMemberSelectedIds.length === 0}
+                    onClick={handleAddGroupMembers}
+                    className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-black rounded-xl cursor-pointer transition shadow-md shadow-blue-500/20 disabled:opacity-50"
+                  >
+                    {isAddingMembers
+                      ? (language === 'tl' ? 'Idinadagdag...' : 'Adding...')
+                      : (language === 'tl' ? `Idagdag (${addMemberSelectedIds.length})` : `Add Selected (${addMemberSelectedIds.length})`)}
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </div>
         )}
@@ -4319,16 +5250,16 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 className="w-screen max-w-md bg-white shadow-2xl flex flex-col h-full border-l border-slate-100 text-slate-800"
               >
                 {/* Drawer Header */}
-                <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                <div className="p-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-700 text-white flex items-center justify-between shadow-sm">
+                  <div className="flex items-center gap-2.5">
+                    <span className="p-2 bg-white/15 text-white rounded-xl ring-1 ring-white/20">
                       <MessageSquare className="w-5 h-5" />
                     </span>
                     <div className="text-left">
-                      <h3 className="font-black text-slate-900 text-sm leading-tight">
+                      <h3 className="font-black text-white text-sm leading-tight">
                         {language === 'tl' ? 'Z-one Inbox (Mga Mensahe)' : 'Z-one Messages Inbox'}
                       </h3>
-                      <p className="text-[10px] text-slate-500 font-bold font-mono">
+                      <p className="text-[10px] text-indigo-100 font-bold font-mono">
                         {totalUnreadCount > 0
                           ? (language === 'tl' ? `Mayroon kang ${totalUnreadCount} unread` : `You have ${totalUnreadCount} unread`)
                           : (language === 'tl' ? 'Ligtas na end-to-end messaging' : 'Secure end-to-end messaging')}
@@ -4337,16 +5268,19 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   </div>
 
                   <button
+                    type="button"
                     onClick={() => setShowInboxPanel(false)}
-                    className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer transition"
+                    className="w-8 h-8 rounded-xl bg-white/20 hover:bg-white text-white hover:text-slate-900 shadow-sm flex items-center justify-center cursor-pointer transition active:scale-95"
+                    title={language === 'tl' ? 'Isara' : 'Close'}
                   >
                     <X className="w-5 h-5" />
                   </button>
                 </div>
 
                 {/* Search Bar */}
-                <div className="p-3 bg-white border-b border-slate-50">
+                <div className="p-3 bg-indigo-50/50 border-b border-indigo-100/70">
                   <div className="relative">
+                    <Search className="w-4 h-4 text-indigo-400 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       value={inboxSearch}
@@ -4356,7 +5290,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                           ? (language === 'tl' ? 'Maghanap ng chat o mensahe...' : 'Search chat or message...')
                           : (language === 'tl' ? 'Maghanap ng miyembro...' : 'Search members...')
                       }
-                      className="w-full pl-3 pr-10 py-2 bg-slate-100 border-none rounded-2xl text-xs font-semibold placeholder-slate-450 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30"
+                      className="w-full pl-9 pr-10 py-2.5 bg-white border border-indigo-100/80 rounded-2xl text-xs font-semibold placeholder-slate-400 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30 shadow-2xs"
                     />
                     {inboxSearch && (
                       <button
@@ -4370,33 +5304,50 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 </div>
 
                 {/* Folder Selection Tabs */}
-                <div className="px-4 py-2 bg-slate-50/50 border-b border-slate-150 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1 flex-1">
+                <div className="px-4 py-2.5 bg-indigo-50/40 border-b border-indigo-100/60 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1 flex-1 bg-slate-200/70 p-1 rounded-2xl">
                     <button
                       onClick={() => setInboxTab('chats')}
-                      className={`flex-1 py-1.5 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition ${
+                      className={`flex-1 py-1.5 px-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition ${
                         inboxTab === 'chats'
-                          ? 'bg-indigo-600 text-white shadow-sm'
-                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:bg-white/60 hover:text-slate-950'
                       }`}
                     >
-                      {language === 'tl' ? 'Mga Chat' : 'Active Chats'}
+                      {language === 'tl' ? 'Mga Chat' : 'Direct'}
+                    </button>
+                    <button
+                      onClick={() => setInboxTab('groups')}
+                      className={`flex-1 py-1.5 px-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition flex items-center justify-center gap-1 ${
+                        inboxTab === 'groups'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:bg-white/60 hover:text-slate-950'
+                      }`}
+                    >
+                      <span>{language === 'tl' ? 'Group Chat' : 'Groups'}</span>
+                      {groupChats.length > 0 && (
+                        <span className={`text-[9px] px-1 py-0.2 rounded-full font-black ${
+                          inboxTab === 'groups' ? 'bg-white text-indigo-700' : 'bg-indigo-100 text-indigo-700'
+                        }`}>
+                          {groupChats.length}
+                        </span>
+                      )}
                     </button>
                     <button
                       onClick={() => setInboxTab('members')}
-                      className={`flex-1 py-1.5 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider transition ${
+                      className={`flex-1 py-1.5 px-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition ${
                         inboxTab === 'members'
-                          ? 'bg-indigo-600 text-white shadow-sm'
-                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:bg-white/60 hover:text-slate-950'
                       }`}
                     >
-                      {language === 'tl' ? 'Mga Miyembro' : 'All Members'}
+                      {language === 'tl' ? 'Miyembro' : 'Directory'}
                     </button>
                   </div>
                 </div>
 
-                {/* Scrollable Container List */}
-                <div className="flex-1 overflow-y-auto divide-y divide-slate-50 bg-slate-50/30">
+                {/* Scrollable Container List with subtle wallpaper background */}
+                <div className="flex-1 overflow-y-auto p-2 space-y-1.5 bg-gradient-to-b from-indigo-50/30 via-slate-50 to-blue-50/20">
                   {inboxTab === 'chats' ? (
                     (() => {
                       const filtered = conversations.filter(conv =>
@@ -4413,8 +5364,8 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                             </h4>
                             <p className="text-[10px] text-slate-450 font-semibold max-w-xs leading-relaxed">
                               {language === 'tl'
-                                ? 'I-click ang "Mga Miyembro" tab sa itaas o mag-click ng avatar sa feed upang simulan ang pakikipag-chat!'
-                                : 'Switch to "All Members" above or click any avatar in the feed to start messaging someone!'}
+                                ? 'I-click ang "Miyembro" tab sa itaas o mag-click ng avatar sa feed upang simulan ang pakikipag-chat!'
+                                : 'Switch to "Directory" above or click any avatar in the feed to start messaging someone!'}
                             </p>
                           </div>
                         );
@@ -4433,7 +5384,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                               });
                               setShowInboxPanel(false);
                             }}
-                            className="p-3.5 flex items-center justify-between gap-3 hover:bg-indigo-50/40 cursor-pointer transition duration-150"
+                            className="p-3.5 rounded-2xl bg-white hover:bg-indigo-50/70 border border-slate-100/80 shadow-2xs hover:shadow-xs flex items-center justify-between gap-3 cursor-pointer transition duration-150"
                           >
                             <div className="flex items-center gap-3 min-w-0">
                               <div className="relative inline-block select-none shrink-0">
@@ -4465,7 +5416,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                 {formatInboxTime(conv.lastMessageTime)}
                               </span>
                               {conv.unreadCount > 0 && (
-                                <span className="bg-red-500 text-white font-black text-[9px] rounded-full min-w-5 h-5 px-1.5 flex items-center justify-center animate-pulse">
+                                <span className="bg-red-500 text-white font-black text-[9px] rounded-full min-w-5 h-5 px-1.5 flex items-center justify-center animate-pulse shadow-xs">
                                   {conv.unreadCount}
                                 </span>
                               )}
@@ -4473,6 +5424,122 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                           </div>
                         );
                       });
+                    })()
+                  ) : inboxTab === 'groups' ? (
+                    // GROUP CHATS (GC) TAB
+                    (() => {
+                      const filtered = groupChats.filter(gc => 
+                        gc.name.toLowerCase().includes(inboxSearch.toLowerCase()) ||
+                        (gc.description && gc.description.toLowerCase().includes(inboxSearch.toLowerCase())) ||
+                        (gc.lastMessage && gc.lastMessage.toLowerCase().includes(inboxSearch.toLowerCase()))
+                      );
+
+                      return (
+                        <div className="space-y-2">
+                          {/* Create Group Button Banner */}
+                          <div
+                            onClick={() => {
+                              setShowCreateGroupModal(true);
+                              fetchAllUsersList();
+                            }}
+                            className="p-3 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 text-white flex items-center justify-between cursor-pointer hover:shadow-md transition duration-150 group select-none"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div className="p-2 bg-white/20 rounded-xl group-hover:scale-105 transition">
+                                <Plus className="w-4 h-4 text-white" />
+                              </div>
+                              <div className="text-left">
+                                <h4 className="text-xs font-black text-white leading-tight">
+                                  {language === 'tl' ? '+ Gumawa ng Group Chat' : '+ Create Group Chat'}
+                                </h4>
+                                <p className="text-[9.5px] text-indigo-100 font-semibold">
+                                  {language === 'tl' ? 'Kwentuhan, team, at click-earning GC' : 'Create team or friend group'}
+                                </p>
+                              </div>
+                            </div>
+                            <span className="text-[10px] font-black px-2.5 py-1 bg-white text-indigo-700 rounded-xl shadow-xs">
+                              {language === 'tl' ? 'Bagong GC' : 'New'}
+                            </span>
+                          </div>
+
+                          {filtered.length === 0 ? (
+                            <div className="py-8 flex flex-col items-center justify-center text-center space-y-2">
+                              <span className="text-3xl select-none">👥</span>
+                              <h4 className="font-extrabold text-xs text-slate-800">
+                                {language === 'tl' ? 'Walang nahanap na Group Chat' : 'No Group Chats Found'}
+                              </h4>
+                              <p className="text-[10px] text-slate-450 font-semibold max-w-xs leading-relaxed">
+                                {language === 'tl'
+                                  ? 'Gumawa ng sariling group chat o i-click ang "+ Gumawa ng Group Chat" sa itaas!'
+                                  : 'Click "+ Create Group Chat" above to start your own community group!'}
+                              </p>
+                            </div>
+                          ) : (
+                            filtered.map(gc => {
+                              const isOfficial = gc.id === 'gc-community-main';
+                              return (
+                                <div
+                                  key={gc.id}
+                                  onClick={() => handleOpenGroupChat(gc)}
+                                  className={`p-3.5 rounded-2xl bg-white hover:bg-indigo-50/70 border shadow-2xs hover:shadow-xs flex items-center justify-between gap-3 cursor-pointer transition duration-150 ${
+                                    isOfficial ? 'border-indigo-200 ring-1 ring-indigo-300/40 bg-indigo-50/20' : 'border-slate-100/80'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <div className="relative inline-block select-none shrink-0">
+                                      <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-indigo-600 to-blue-500 text-white flex items-center justify-center text-xl shadow-xs border border-white">
+                                        {gc.avatar || '👥'}
+                                      </div>
+                                      {isOfficial && (
+                                        <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-[8px] font-black px-1 rounded-full shadow-xs">
+                                          ★
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="text-left min-w-0">
+                                      <div className="flex items-center gap-1.5">
+                                        <h4 className="text-xs font-black truncate text-slate-900">
+                                          {gc.name}
+                                        </h4>
+                                        {isOfficial && (
+                                          <span className="bg-indigo-100 text-indigo-700 text-[8.5px] font-black px-1.5 py-0.2 rounded-md shrink-0">
+                                            Official
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-[10px] text-slate-500 font-semibold truncate mt-0.5">
+                                        {gc.lastMessage ? (
+                                          <span>
+                                            <strong className="text-slate-700 font-bold">{gc.lastMessageSender ? `${gc.lastMessageSender}: ` : ''}</strong>
+                                            {gc.lastMessage}
+                                          </span>
+                                        ) : (
+                                          <span className="italic text-slate-400">{gc.description || (language === 'tl' ? 'Simulan ang kwentuhan sa GC!' : 'Start chatting in this GC!')}</span>
+                                        )}
+                                      </p>
+                                      <div className="flex items-center gap-2 mt-1">
+                                        <span className="text-[8.5px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.2 rounded-md font-mono">
+                                          👥 {(gc.members || []).length} {language === 'tl' ? 'miyembro' : 'members'}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-col items-end shrink-0 gap-1.5">
+                                    <span className="text-[9px] text-slate-400 font-bold font-mono">
+                                      {formatInboxTime(gc.lastMessageTime || gc.createdAt)}
+                                    </span>
+                                    <span className="px-2.5 py-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-[9.5px] font-black rounded-xl cursor-pointer shadow-2xs uppercase tracking-wider">
+                                      {language === 'tl' ? 'Buksan' : 'Open'}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      );
                     })()
                   ) : (
                     // MEMBERS DIRECTORY TAB
@@ -4508,52 +5575,75 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                         );
                       }
 
-                      return filtered.map(u => {
-                        const isOnline = onlineUserIds.includes(u.id);
-                        return (
+                      return (
+                        <div className="space-y-1.5">
+                          {/* Quick Create Group Button at top of members list */}
                           <div
-                            key={u.id}
                             onClick={() => {
-                              setActiveDmUser({
-                                id: u.id,
-                                name: u.name,
-                                avatar: u.avatar
-                              });
-                              setShowInboxPanel(false);
+                              setShowCreateGroupModal(true);
+                              fetchAllUsersList();
                             }}
-                            className="p-3.5 flex items-center justify-between gap-3 hover:bg-indigo-50/40 cursor-pointer transition duration-150"
+                            className="p-3 rounded-2xl bg-indigo-50 hover:bg-indigo-100/70 border border-indigo-200/80 flex items-center justify-between cursor-pointer transition select-none mb-2"
                           >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className="relative inline-block select-none shrink-0">
-                                {renderFeedAvatar(u.avatar, u.name, "w-10 h-10", "text-lg", u.id)}
-                                {isOnline ? (
-                                  <span className="absolute bottom-0 right-0 flex h-3 w-3">
-                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-white"></span>
-                                  </span>
-                                ) : (
-                                  <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-slate-400 border-2 border-white" />
-                                )}
-                              </div>
-
-                              <div className="text-left min-w-0">
-                                <h4 className="text-xs font-black truncate text-slate-900">
-                                  {u.name}
-                                </h4>
-                                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-mono">
-                                  {isOnline
-                                    ? (language === 'tl' ? 'Online Ngayon' : 'Active Now')
-                                    : (language === 'tl' ? 'Hindi Aktibo' : 'Offline')}
-                                </p>
-                              </div>
+                            <div className="flex items-center gap-2.5">
+                              <span className="p-1.5 bg-indigo-600 text-white rounded-xl">
+                                <Users className="w-3.5 h-3.5" />
+                              </span>
+                              <span className="text-xs font-black text-indigo-900">
+                                {language === 'tl' ? 'Gumawa ng Group Chat kasama ang mga miyembro' : 'Create a Group Chat with members'}
+                              </span>
                             </div>
-
-                            <button className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-black rounded-xl cursor-pointer transition uppercase tracking-wider shrink-0">
-                              {language === 'tl' ? 'I-chat' : 'Message'}
-                            </button>
+                            <Plus className="w-4 h-4 text-indigo-700" />
                           </div>
-                        );
-                      });
+
+                          {filtered.map(u => {
+                            const isOnline = onlineUserIds.includes(u.id);
+                            return (
+                              <div
+                                key={u.id}
+                                onClick={() => {
+                                  setActiveDmUser({
+                                    id: u.id,
+                                    name: u.name,
+                                    avatar: u.avatar
+                                  });
+                                  setShowInboxPanel(false);
+                                }}
+                                className="p-3.5 rounded-2xl bg-white hover:bg-indigo-50/70 border border-slate-100/80 shadow-2xs hover:shadow-xs flex items-center justify-between gap-3 cursor-pointer transition duration-150"
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="relative inline-block select-none shrink-0">
+                                    {renderFeedAvatar(u.avatar, u.name, "w-10 h-10", "text-lg", u.id)}
+                                    {isOnline ? (
+                                      <span className="absolute bottom-0 right-0 flex h-3 w-3">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-white"></span>
+                                      </span>
+                                    ) : (
+                                      <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-slate-400 border-2 border-white" />
+                                    )}
+                                  </div>
+
+                                  <div className="text-left min-w-0">
+                                    <h4 className="text-xs font-black truncate text-slate-900">
+                                      {u.name}
+                                    </h4>
+                                    <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-mono">
+                                      {isOnline
+                                        ? (language === 'tl' ? 'Online Ngayon' : 'Active Now')
+                                        : (language === 'tl' ? 'Hindi Aktibo' : 'Offline')}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <button className="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-[10px] font-black rounded-xl cursor-pointer transition uppercase tracking-wider shrink-0 shadow-2xs">
+                                  {language === 'tl' ? 'I-chat' : 'Message'}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
                     })()
                   )}
                 </div>
