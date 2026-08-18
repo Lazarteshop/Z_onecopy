@@ -177,6 +177,8 @@ export interface DirectMessage {
   receiverName: string;
   receiverAvatar: string;
   text: string;
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video';
   createdAt: string;
 }
 
@@ -203,7 +205,42 @@ export interface GroupMessage {
   senderName: string;
   senderAvatar: string;
   text: string;
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video';
   createdAt: string;
+}
+
+export interface StoryReaction {
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  emoji: string;
+  createdAt: string;
+}
+
+export interface StoryViewerDetail {
+  id: string;
+  name: string;
+  avatar: string;
+  viewedAt: string;
+}
+
+export interface ZoneStory {
+  id: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  mediaUrl?: string;
+  mediaType: 'image' | 'video' | 'text';
+  text?: string;
+  backgroundColor?: string;
+  textColor?: string;
+  caption?: string;
+  viewers: string[]; // user IDs
+  viewerDetails?: StoryViewerDetail[];
+  reactions?: StoryReaction[];
+  createdAt: string;
+  expiresAt: string;
 }
 
 export interface AdminUser {

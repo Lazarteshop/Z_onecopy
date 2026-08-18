@@ -859,6 +859,8 @@ interface DirectMessage {
   receiverName: string;
   receiverAvatar: string;
   text: string;
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video';
   createdAt: string;
 }
 
@@ -881,7 +883,42 @@ interface GroupMessage {
   senderName: string;
   senderAvatar: string;
   text: string;
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video';
   createdAt: string;
+}
+
+interface StoryReaction {
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  emoji: string;
+  createdAt: string;
+}
+
+interface StoryViewerDetail {
+  id: string;
+  name: string;
+  avatar: string;
+  viewedAt: string;
+}
+
+interface ZoneStory {
+  id: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  mediaUrl?: string;
+  mediaType: 'image' | 'video' | 'text';
+  text?: string;
+  backgroundColor?: string;
+  textColor?: string;
+  caption?: string;
+  viewers: string[]; // user IDs
+  viewerDetails?: StoryViewerDetail[];
+  reactions?: StoryReaction[];
+  createdAt: string;
+  expiresAt: string;
 }
 
 interface ActiveCall {
@@ -999,6 +1036,7 @@ interface DBStructure {
   reels?: ReelVideo[];
   reelSubscriptions?: ReelTokenSubscription[];
   reelRedemptions?: any[];
+  stories?: ZoneStory[];
 }
 
 // --- HELPER TO INITIALIZE AND GET DATABASE ---
@@ -4519,22 +4557,15 @@ app.get('/api/zone/online', (req, res) => {
   res.json({ onlineUserIds: onlineIds });
 });
 
-// --- MEDIA UPLOAD ENDPOINT (Saves base64 media to server disk, keeping database small) ---
-app.post('/api/zone/upload', (req, res) => {
-  const userId = req.headers.authorization;
-  if (!userId) {
-    return res.status(401).json({ error: 'Mag-login muna.' });
-  }
-
-  const { dataUrl } = req.body;
+// --- REUSABLE HELPER: Save base64 media to disk and chunked Firestore ---
+function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media'): string | null {
   if (!dataUrl || !dataUrl.startsWith('data:')) {
-    return res.status(400).json({ error: 'Walang valid media data na natanggap.' });
+    return dataUrl; // Already a URL or empty
   }
-
   try {
     const matches = dataUrl.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
     if (!matches || matches.length !== 3) {
-      return res.status(400).json({ error: 'Hindi maproseso ang media format.' });
+      return null;
     }
 
     const mimeType = matches[1];
@@ -4542,7 +4573,7 @@ app.post('/api/zone/upload', (req, res) => {
     const buffer = Buffer.from(base64Data, 'base64');
 
     const extension = mimeType.split('/')[1] || 'bin';
-    const filename = `media-${Date.now()}-${Math.floor(Math.random() * 1000000)}.${extension}`;
+    const filename = `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000000)}.${extension}`;
     const uploadDir = path.join(process.cwd(), 'uploads');
 
     if (!fs.existsSync(uploadDir)) {
@@ -4552,19 +4583,15 @@ app.post('/api/zone/upload', (req, res) => {
     const filePath = path.join(uploadDir, filename);
     fs.writeFileSync(filePath, buffer);
 
-    // Dynamic Chunked Upload to Firestore for Persistent Storage (Solution B)
+    // Dynamic Chunked Upload to Firestore for Persistent Storage
     if (isFirestoreActive && firestore) {
-      const chunkSize = 800 * 1024; // Safe 800 KB chunk sizes to stay under 1MB document limits
+      const chunkSize = 800 * 1024;
       const totalChunks = Math.ceil(buffer.length / chunkSize);
-      
-      console.log(`📦 Media Upload: Saving ${filename} (${buffer.length} bytes) to Firestore in ${totalChunks} chunks...`);
-      
       for (let i = 0; i < totalChunks; i++) {
         const start = i * chunkSize;
         const end = Math.min(start + chunkSize, buffer.length);
         const chunkBuffer = buffer.subarray(start, end);
         const chunkBase64 = chunkBuffer.toString('base64');
-        
         const chunkDocId = `${filename}_chunk_${i}`;
         firestore.collection('media_storage').doc(chunkDocId).set({
           filename,
@@ -4577,11 +4604,31 @@ app.post('/api/zone/upload', (req, res) => {
       }
     }
 
-    res.json({ success: true, url: `/uploads/${filename}` });
-  } catch (err: any) {
-    console.error('Error writing uploaded file:', err);
-    res.status(500).json({ error: 'Hindi naisulat ang media file sa server.' });
+    return `/uploads/${filename}`;
+  } catch (err) {
+    console.error('Error in saveBase64ToUploadFile:', err);
+    return null;
   }
+}
+
+// --- MEDIA UPLOAD ENDPOINT (Saves base64 media to server disk, keeping database small) ---
+app.post('/api/zone/upload', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const { dataUrl } = req.body;
+  if (!dataUrl || !dataUrl.startsWith('data:')) {
+    return res.status(400).json({ error: 'Walang valid media data na natanggap.' });
+  }
+
+  const uploadedUrl = saveBase64ToUploadFile(dataUrl, 'media');
+  if (!uploadedUrl) {
+    return res.status(500).json({ error: 'Hindi naisulat ang media file sa server.' });
+  }
+
+  res.json({ success: true, url: uploadedUrl });
 });
 
 // --- DYNAMIC GCASH QR CODE SERVICE WITH CLOUD FIRESTORE DURA-BACKUP ---
@@ -5028,12 +5075,30 @@ app.get('/api/zone/sync', (req, res) => {
     };
   });
 
+  // Active stories within 24 hours
+  if (!db.stories) db.stories = [];
+  const activeStories = db.stories.filter(s => {
+    const expires = new Date(s.expiresAt || 0).getTime();
+    if (expires > now) return true;
+    const created = new Date(s.createdAt || 0).getTime();
+    return (now - created) < 24 * 60 * 60 * 1000;
+  });
+  const enrichedStories = activeStories.map(story => {
+    const author = userMap.get(story.userId);
+    return {
+      ...story,
+      userName: author ? author.name : story.userName,
+      userAvatar: author ? (author.avatar || '👤') : story.userAvatar
+    };
+  }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
   res.json({
     messages,
     groups: formattedGroups,
     groupMessages: myGroupMessages,
     calls: activeCalls,
-    onlineUserIds: onlineIds
+    onlineUserIds: onlineIds,
+    stories: enrichedStories
   });
 });
 
@@ -5782,9 +5847,9 @@ app.post('/api/zone/messages', (req, res) => {
   if (!senderId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
   }
-  const { receiverId, text } = req.body;
-  if (!receiverId || !text || !text.trim()) {
-    return res.status(400).json({ error: 'Kinakailangan ang receiver at mensahe.' });
+  const { receiverId, text, mediaUrl, mediaType } = req.body;
+  if (!receiverId || ((!text || !text.trim()) && !mediaUrl)) {
+    return res.status(400).json({ error: 'Kinakailangan ang receiver at mensahe o litrato/video.' });
   }
 
   const db = loadDB();
@@ -5799,7 +5864,11 @@ app.post('/api/zone/messages', (req, res) => {
     return res.status(403).json({ error: 'Ang iyong account ay banned sa system.' });
   }
 
-  const filteredText = filterSwearWords(text);
+  const filteredText = text ? filterSwearWords(text) : '';
+  let processedMediaUrl = mediaUrl;
+  if (mediaUrl && mediaUrl.startsWith('data:')) {
+    processedMediaUrl = saveBase64ToUploadFile(mediaUrl, 'dm-media') || mediaUrl;
+  }
 
   const newMsg: DirectMessage = {
     id: 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
@@ -5810,6 +5879,8 @@ app.post('/api/zone/messages', (req, res) => {
     receiverName: receiver.name,
     receiverAvatar: receiver.avatar,
     text: filteredText,
+    mediaUrl: processedMediaUrl || undefined,
+    mediaType: mediaType || (processedMediaUrl ? (processedMediaUrl.match(/\.(mp4|webm|mov|ogg)$/i) ? 'video' : 'image') : undefined),
     createdAt: new Date().toISOString()
   };
 
@@ -5821,7 +5892,7 @@ app.post('/api/zone/messages', (req, res) => {
 
   // Trigger admin auto reply if sent to the System Administrator
   if (receiverId === 'admin-rosco') {
-    handleAdminAutoReply(senderId, text).catch(err => {
+    handleAdminAutoReply(senderId, text || 'Nagpadala ng media attachment').catch(err => {
       console.error('Error generating admin auto reply:', err);
     });
   }
@@ -6068,9 +6139,9 @@ app.post('/api/zone/groups/:groupId/messages', (req, res) => {
   }
 
   const { groupId } = req.params;
-  const { text } = req.body;
-  if (!text || !text.trim()) {
-    return res.status(400).json({ error: 'Kinakailangan ang mensahe.' });
+  const { text, mediaUrl, mediaType } = req.body;
+  if ((!text || !text.trim()) && !mediaUrl) {
+    return res.status(400).json({ error: 'Kinakailangan ang mensahe o media file.' });
   }
 
   const db = loadDB();
@@ -6100,7 +6171,12 @@ app.post('/api/zone/groups/:groupId/messages', (req, res) => {
     return res.status(403).json({ error: 'Hindi ka miyembro ng Group Chat na ito.' });
   }
 
-  const filteredText = filterSwearWords(text.trim());
+  const filteredText = text ? filterSwearWords(text.trim()) : '';
+  let processedMediaUrl = mediaUrl;
+  if (mediaUrl && mediaUrl.startsWith('data:')) {
+    processedMediaUrl = saveBase64ToUploadFile(mediaUrl, 'gc-media') || mediaUrl;
+  }
+
   const newMsg: GroupMessage = {
     id: 'gmsg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
     groupId,
@@ -6108,6 +6184,8 @@ app.post('/api/zone/groups/:groupId/messages', (req, res) => {
     senderName: sender.name,
     senderAvatar: sender.avatar,
     text: filteredText,
+    mediaUrl: processedMediaUrl || undefined,
+    mediaType: mediaType || (processedMediaUrl ? (processedMediaUrl.match(/\.(mp4|webm|mov|ogg)$/i) ? 'video' : 'image') : undefined),
     createdAt: new Date().toISOString()
   };
 
@@ -6317,6 +6395,252 @@ app.put('/api/zone/groups/:groupId', (req, res) => {
   };
 
   res.json({ success: true, group: updatedGroup });
+});
+
+// ==========================================
+// 📖 FACEBOOK-STYLE STORIES ("MY DAY") APIs
+// ==========================================
+
+// 1. GET ALL ACTIVE STORIES
+app.get('/api/zone/stories', (req, res) => {
+  const db = loadDB();
+  if (!db.stories) db.stories = [];
+
+  const now = Date.now();
+  // Filter stories active in the last 24 hours
+  const activeStories = db.stories.filter(s => {
+    const expires = new Date(s.expiresAt || 0).getTime();
+    if (expires > now) return true;
+    const created = new Date(s.createdAt || 0).getTime();
+    return (now - created) < 24 * 60 * 60 * 1000;
+  });
+
+  // Enrich with latest user info (avatar/name might have changed)
+  const userMap = new Map(db.users.map(u => [u.id, u]));
+  const enrichedStories = activeStories.map(story => {
+    const author = userMap.get(story.userId);
+    return {
+      ...story,
+      userName: author ? author.name : story.userName,
+      userAvatar: author ? (author.avatar || '👤') : story.userAvatar
+    };
+  });
+
+  // Sort newest stories first
+  enrichedStories.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  res.json({ stories: enrichedStories });
+});
+
+// 2. CREATE A NEW STORY ("MY DAY")
+app.post('/api/zone/stories', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const db = loadDB();
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Ang iyong account ay banned sa system.' });
+  }
+
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user profile.' });
+  }
+
+  const { mediaUrl, mediaType, text, backgroundColor, textColor, caption } = req.body;
+
+  if (!mediaUrl && (!text || !text.trim())) {
+    return res.status(400).json({ error: 'Kinakailangan ang litrato, video, o text para sa iyong My Day / Story.' });
+  }
+
+  let finalMediaUrl = mediaUrl;
+  if (mediaUrl && mediaUrl.startsWith('data:')) {
+    finalMediaUrl = saveBase64ToUploadFile(mediaUrl, 'story-media') || mediaUrl;
+  }
+
+  const cleanText = text ? filterSwearWords(text.trim()) : undefined;
+  const cleanCaption = caption ? filterSwearWords(caption.trim()) : undefined;
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+  const newStory: ZoneStory = {
+    id: 'story-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+    userId: user.id,
+    userName: user.name,
+    userAvatar: user.avatar || '👤',
+    mediaUrl: finalMediaUrl || undefined,
+    mediaType: mediaType || (finalMediaUrl ? (finalMediaUrl.match(/\.(mp4|webm|mov|ogg)$/i) ? 'video' : 'image') : 'text'),
+    text: cleanText,
+    backgroundColor: backgroundColor || '#3b82f6',
+    textColor: textColor || '#ffffff',
+    caption: cleanCaption,
+    viewers: [],
+    viewerDetails: [],
+    reactions: [],
+    createdAt: now.toISOString(),
+    expiresAt
+  };
+
+  if (!db.stories) db.stories = [];
+  db.stories.unshift(newStory);
+  saveDB(db);
+
+  res.json({ success: true, story: newStory, message: 'Matagumpay na na-post ang iyong My Day / Story!' });
+});
+
+// 3. DELETE A STORY
+app.delete('/api/zone/stories/:storyId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { storyId } = req.params;
+  const db = loadDB();
+  if (!db.stories) db.stories = [];
+
+  const index = db.stories.findIndex(s => s.id === storyId);
+  if (index === -1) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Story.' });
+  }
+
+  const story = db.stories[index];
+  const user = db.users.find(u => u.id === userId);
+  const isAdmin = user?.isAdmin || userId === 'admin-rosco';
+
+  if (story.userId !== userId && !isAdmin) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na i-delete ang Story na ito.' });
+  }
+
+  db.stories.splice(index, 1);
+  saveDB(db);
+
+  res.json({ success: true, message: 'Na-delete na ang Story!' });
+});
+
+// 4. MARK STORY AS VIEWED
+app.post('/api/zone/stories/:storyId/view', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { storyId } = req.params;
+  const db = loadDB();
+  if (!db.stories) db.stories = [];
+
+  const story = db.stories.find(s => s.id === storyId);
+  if (!story) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Story.' });
+  }
+
+  const viewer = db.users.find(u => u.id === userId);
+  if (!viewer) {
+    return res.status(404).json({ error: 'Hindi mahanap ang viewer.' });
+  }
+
+  if (!story.viewers) story.viewers = [];
+  if (!story.viewerDetails) story.viewerDetails = [];
+
+  if (!story.viewers.includes(userId)) {
+    story.viewers.push(userId);
+    story.viewerDetails.push({
+      id: viewer.id,
+      name: viewer.name,
+      avatar: viewer.avatar || '👤',
+      viewedAt: new Date().toISOString()
+    });
+    saveDB(db);
+  }
+
+  res.json({ success: true, viewersCount: story.viewers.length });
+});
+
+// 5. REACT OR REPLY TO A STORY
+app.post('/api/zone/stories/:storyId/react', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { storyId } = req.params;
+  const { emoji, replyMessage } = req.body;
+  const db = loadDB();
+  if (!db.stories) db.stories = [];
+
+  const story = db.stories.find(s => s.id === storyId);
+  if (!story) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Story.' });
+  }
+
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  if (!story.reactions) story.reactions = [];
+
+  // Add or update reaction
+  const existingIdx = story.reactions.findIndex(r => r.userId === userId);
+  const newReaction = {
+    userId: user.id,
+    userName: user.name,
+    userAvatar: user.avatar || '👤',
+    emoji: emoji || '❤️',
+    createdAt: new Date().toISOString()
+  };
+
+  if (existingIdx >= 0) {
+    story.reactions[existingIdx] = newReaction;
+  } else {
+    story.reactions.push(newReaction);
+  }
+
+  // Also auto-add to viewers if not already viewed
+  if (!story.viewers) story.viewers = [];
+  if (!story.viewerDetails) story.viewerDetails = [];
+  if (!story.viewers.includes(userId)) {
+    story.viewers.push(userId);
+    story.viewerDetails.push({
+      id: user.id,
+      name: user.name,
+      avatar: user.avatar || '👤',
+      viewedAt: new Date().toISOString()
+    });
+  }
+
+  // Also send a direct message reply to the story author (like FB/IG story replies)
+  if (story.userId !== userId && (emoji || replyMessage)) {
+    if (!db.directMessages) db.directMessages = [];
+    const author = db.users.find(u => u.id === story.userId);
+    if (author) {
+      const reactionText = replyMessage 
+        ? `${emoji ? emoji + ' ' : ''}${replyMessage} (Tugon sa iyong My Day)`
+        : `Nag-react ng ${emoji} sa iyong My Day / Story!`;
+      
+      const dmMsg: DirectMessage = {
+        id: 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+        senderId: user.id,
+        senderName: user.name,
+        senderAvatar: user.avatar || '👤',
+        receiverId: author.id,
+        receiverName: author.name,
+        receiverAvatar: author.avatar || '👤',
+        text: reactionText,
+        mediaUrl: story.mediaUrl,
+        mediaType: story.mediaType === 'text' ? undefined : story.mediaType,
+        createdAt: new Date().toISOString()
+      };
+      db.directMessages.push(dmMsg);
+    }
+  }
+
+  saveDB(db);
+
+  res.json({ success: true, reactions: story.reactions });
 });
 
 // 3. GET ACTIVE CALLS FOR USER (POLLING)

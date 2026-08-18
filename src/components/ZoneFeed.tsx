@@ -43,9 +43,11 @@ import {
   Info,
   LogOut,
   Settings,
-  ShieldCheck
+  ShieldCheck,
+  Paperclip
 } from 'lucide-react';
-import { ZonePost, GroupChat, GroupMessage } from '../types';
+import { ZonePost, GroupChat, GroupMessage, ZoneStory } from '../types';
+import { ZoneStories } from './ZoneStories';
 
 interface ZoneFeedProps {
   token: string;
@@ -311,6 +313,25 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const [isAddingMembers, setIsAddingMembers] = useState(false);
   const [editingGroupMessageId, setEditingGroupMessageId] = useState<string | null>(null);
   const [editingGroupMessageText, setEditingGroupMessageText] = useState('');
+
+  // --- 📖 STORIES ("MY DAY") STATES ---
+  const [stories, setStories] = useState<ZoneStory[]>([]);
+  const [loadingStories, setLoadingStories] = useState(false);
+
+  // --- 📸 DM & GC MEDIA UPLOAD STATES ---
+  const [dmMediaPreview, setDmMediaPreview] = useState<string | null>(null);
+  const [dmMediaType, setDmMediaType] = useState<'image' | 'video'>('image');
+  const [isUploadingDmMedia, setIsUploadingDmMedia] = useState(false);
+  const dmFileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const [gcMediaPreview, setGcMediaPreview] = useState<string | null>(null);
+  const [gcMediaType, setGcMediaType] = useState<'image' | 'video'>('image');
+  const [isUploadingGcMedia, setIsUploadingGcMedia] = useState(false);
+  const gcFileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // --- 🔍 FULLSCREEN MEDIA LIGHTBOX STATE ---
+  const [lightboxMediaUrl, setLightboxMediaUrl] = useState<string | null>(null);
+  const [lightboxMediaType, setLightboxMediaType] = useState<'image' | 'video'>('image');
 
   // --- DECOMMISSIONED MEDIA HUB / LIVE FEED DUMMY STATES ---
   const socialTab = 'feed' as string;
@@ -642,6 +663,26 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     }
   };
 
+  // Fetch stories on load or refresh
+  const fetchStories = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/zone/stories', {
+        headers: { Authorization: token }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setStories(data.stories || []);
+      }
+    } catch (err) {
+      console.error('Error fetching stories:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchStories();
+  }, [token]);
+
   // Poll for incoming Direct Messages and Call invitations in real-time (Unified fast call)
   useEffect(() => {
     if (!token) return;
@@ -661,6 +702,9 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           setGroupChats(syncData.groups || []);
           setGroupMessages(syncData.groupMessages || []);
           setOnlineUserIds(syncData.onlineUserIds || []);
+          if (syncData.stories) {
+            setStories(syncData.stories);
+          }
 
           // Sync active group chat data if open
           if (activeGroupChat && Array.isArray(syncData.groups)) {
@@ -965,13 +1009,37 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     setActiveDmUser(targetUser);
   };
 
+  // Handler to select photo/video in DM
+  const handleDmFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.type.startsWith('video/') || file.name.match(/\.(mp4|mov|webm|3gp|m4v)$/i)) {
+      setDmMediaType('video');
+      const reader = new FileReader();
+      reader.onload = () => setDmMediaPreview(reader.result as string);
+      reader.readAsDataURL(file);
+    } else {
+      setDmMediaType('image');
+      try {
+        const compressed = await compressImageFromFile(file, 1000, 1000, 0.7);
+        setDmMediaPreview(compressed);
+      } catch {
+        const reader = new FileReader();
+        reader.onload = () => setDmMediaPreview(reader.result as string);
+        reader.readAsDataURL(file);
+      }
+    }
+  };
+
   // Handler to send message
   const handleSendDm = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!activeDmUser || !newDmText.trim()) return;
+    if (!activeDmUser || (!newDmText.trim() && !dmMediaPreview)) return;
 
     const tempId = 'temp-msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
     const originalText = newDmText;
+    const mediaToSend = dmMediaPreview;
+    const mediaTypeToSend = dmMediaType;
 
     const optimisticMsg = {
       id: tempId,
@@ -982,12 +1050,16 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       receiverName: activeDmUser.name,
       receiverAvatar: activeDmUser.avatar || '👤',
       text: originalText,
+      mediaUrl: mediaToSend || undefined,
+      mediaType: mediaToSend ? mediaTypeToSend : undefined,
       createdAt: new Date().toISOString()
     };
 
     // Optimistically update messages list immediately (0ms delay)
     setDmMessages(prev => [...prev, optimisticMsg]);
     setNewDmText('');
+    setDmMediaPreview(null);
+    if (dmFileInputRef.current) dmFileInputRef.current.value = '';
 
     // Instantly scroll to bottom for maximum responsive feeling
     setTimeout(() => {
@@ -996,6 +1068,22 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     }, 20);
 
     try {
+      let finalMediaUrl = mediaToSend;
+      if (mediaToSend && mediaToSend.startsWith('data:')) {
+        const uploadRes = await fetch('/api/zone/upload', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': token
+          },
+          body: JSON.stringify({ dataUrl: mediaToSend })
+        });
+        if (uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          finalMediaUrl = uploadData.url;
+        }
+      }
+
       const res = await fetch('/api/zone/messages', {
         method: 'POST',
         headers: {
@@ -1004,7 +1092,9 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         },
         body: JSON.stringify({
           receiverId: activeDmUser.id,
-          text: originalText
+          text: originalText,
+          mediaUrl: finalMediaUrl || undefined,
+          mediaType: finalMediaUrl ? mediaTypeToSend : undefined
         })
       });
 
@@ -1017,6 +1107,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         // Remove temp message and restore text
         setDmMessages(prev => prev.filter(msg => msg.id !== tempId));
         setNewDmText(originalText);
+        setDmMediaPreview(mediaToSend);
         triggerNotification(errData.error || 'Failed to send message', 'error');
       }
     } catch (err) {
@@ -1024,6 +1115,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       // Remove temp message and restore text
       setDmMessages(prev => prev.filter(msg => msg.id !== tempId));
       setNewDmText(originalText);
+      setDmMediaPreview(mediaToSend);
       triggerNotification(language === 'tl' ? 'Koneksyon error sa pagpapadala ng mensahe.' : 'Network error sending message.', 'error');
     }
   };
@@ -2128,12 +2220,36 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     }
   };
 
+  // Handler to select photo/video in Group Chat
+  const handleGcFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.type.startsWith('video/') || file.name.match(/\.(mp4|mov|webm|3gp|m4v)$/i)) {
+      setGcMediaType('video');
+      const reader = new FileReader();
+      reader.onload = () => setGcMediaPreview(reader.result as string);
+      reader.readAsDataURL(file);
+    } else {
+      setGcMediaType('image');
+      try {
+        const compressed = await compressImageFromFile(file, 1000, 1000, 0.7);
+        setGcMediaPreview(compressed);
+      } catch {
+        const reader = new FileReader();
+        reader.onload = () => setGcMediaPreview(reader.result as string);
+        reader.readAsDataURL(file);
+      }
+    }
+  };
+
   const handleSendGroupMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!activeGroupChat || !newGroupMessageText.trim()) return;
+    if (!activeGroupChat || (!newGroupMessageText.trim() && !gcMediaPreview)) return;
 
     const tempId = 'temp-gmsg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
     const originalText = newGroupMessageText;
+    const mediaToSend = gcMediaPreview;
+    const mediaTypeToSend = gcMediaType;
 
     const optimisticMsg: GroupMessage = {
       id: tempId,
@@ -2142,11 +2258,15 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       senderName: user.name,
       senderAvatar: user.avatar || '👤',
       text: originalText,
+      mediaUrl: mediaToSend || undefined,
+      mediaType: mediaToSend ? mediaTypeToSend : undefined,
       createdAt: new Date().toISOString()
     };
 
     setGroupMessages(prev => [...prev, optimisticMsg]);
     setNewGroupMessageText('');
+    setGcMediaPreview(null);
+    if (gcFileInputRef.current) gcFileInputRef.current.value = '';
 
     setTimeout(() => {
       const chatContainer = document.getElementById('gc-chat-scroll');
@@ -2154,6 +2274,22 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     }, 20);
 
     try {
+      let finalMediaUrl = mediaToSend;
+      if (mediaToSend && mediaToSend.startsWith('data:')) {
+        const uploadRes = await fetch('/api/zone/upload', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': token
+          },
+          body: JSON.stringify({ dataUrl: mediaToSend })
+        });
+        if (uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          finalMediaUrl = uploadData.url;
+        }
+      }
+
       const res = await fetch(`/api/zone/groups/${activeGroupChat.id}/messages`, {
         method: 'POST',
         headers: {
@@ -2161,7 +2297,9 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           'Authorization': token
         },
         body: JSON.stringify({
-          text: originalText
+          text: originalText,
+          mediaUrl: finalMediaUrl || undefined,
+          mediaType: finalMediaUrl ? mediaTypeToSend : undefined
         })
       });
 
@@ -2172,11 +2310,13 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         const errData = await res.json();
         setGroupMessages(prev => prev.filter(msg => msg.id !== tempId));
         setNewGroupMessageText(originalText);
+        setGcMediaPreview(mediaToSend);
         triggerNotification(errData.error || 'Failed to send group message', 'error');
       }
     } catch (err) {
       setGroupMessages(prev => prev.filter(msg => msg.id !== tempId));
       setNewGroupMessageText(originalText);
+      setGcMediaPreview(mediaToSend);
       triggerNotification(language === 'tl' ? 'Koneksyon error sa pagpapadala.' : 'Connection error.', 'error');
     }
   };
@@ -2515,6 +2655,18 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 📖 FACEBOOK-STYLE STORIES ("MY DAY") TRAY */}
+      <ZoneStories
+        user={user}
+        token={token}
+        language={language}
+        stories={stories}
+        onRefreshStories={fetchStories}
+        triggerNotification={triggerNotification}
+        renderAvatar={renderFeedAvatar}
+        onOpenDm={handleOpenDm}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
@@ -4147,7 +4299,31 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                               </div>
                             ) : (
                               <>
-                                <p className="break-words font-medium" style={isMe ? { color: '#ffffff' } : { color: '#0f172a' }}>{msg.text}</p>
+                                {msg.mediaUrl && (
+                                  <div className="mb-2 rounded-xl overflow-hidden bg-black/5">
+                                    {msg.mediaType === 'video' || msg.mediaUrl.match(/\.(mp4|webm|mov|ogg|m4v)$/i) ? (
+                                      <video 
+                                        src={msg.mediaUrl} 
+                                        controls 
+                                        playsInline
+                                        className="max-w-full max-h-60 rounded-xl bg-black w-full"
+                                      />
+                                    ) : (
+                                      <img 
+                                        src={msg.mediaUrl} 
+                                        alt="Attachment" 
+                                        onClick={() => {
+                                          setLightboxMediaUrl(msg.mediaUrl);
+                                          setLightboxMediaType('image');
+                                        }}
+                                        className="max-w-full max-h-60 rounded-xl object-cover cursor-zoom-in hover:opacity-95 transition w-full"
+                                      />
+                                    )}
+                                  </div>
+                                )}
+                                {msg.text && (
+                                  <p className="break-words font-medium" style={isMe ? { color: '#ffffff' } : { color: '#0f172a' }}>{msg.text}</p>
+                                )}
                                 <div className="flex items-center justify-between gap-3 mt-1">
                                   {isMe && canEditOrDelete ? (
                                     <div className="flex items-center gap-2 select-none opacity-80 max-sm:opacity-100 md:opacity-0 md:group-hover:opacity-100 transition duration-150">
@@ -4155,7 +4331,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                         type="button"
                                         onClick={() => {
                                           setEditingMessageId(msg.id);
-                                          setEditingMessageText(msg.text);
+                                          setEditingMessageText(msg.text || '');
                                         }}
                                         className="text-blue-200 hover:text-white cursor-pointer p-0.5"
                                         title={language === 'tl' ? 'I-edit ang mensahe' : 'Edit message'}
@@ -4192,11 +4368,64 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 )}
               </div>
 
+              {/* DM Media Preview Box */}
+              {dmMediaPreview && (
+                <div className="p-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="relative w-14 h-14 rounded-xl overflow-hidden border border-slate-300 bg-slate-900 shrink-0">
+                      {dmMediaType === 'video' ? (
+                        <video src={dmMediaPreview} className="w-full h-full object-cover" />
+                      ) : (
+                        <img src={dmMediaPreview} alt="Preview" className="w-full h-full object-cover" />
+                      )}
+                    </div>
+                    <div className="text-left min-w-0">
+                      <p className="text-xs font-black text-slate-800 truncate">
+                        {dmMediaType === 'video' ? (language === 'tl' ? '📹 Video Attachment' : '📹 Video Attachment') : (language === 'tl' ? '📷 Larawan Attachment' : '📷 Photo Attachment')}
+                      </p>
+                      <p className="text-[10px] text-slate-500 font-semibold">
+                        {language === 'tl' ? 'Isasama sa ipapadalang mensahe' : 'Ready to send'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDmMediaPreview(null);
+                      if (dmFileInputRef.current) dmFileInputRef.current.value = '';
+                    }}
+                    className="p-1.5 rounded-full bg-slate-200 hover:bg-rose-100 text-slate-600 hover:text-rose-600 transition cursor-pointer shrink-0"
+                    title={language === 'tl' ? 'Tanggalin' : 'Remove'}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
               {/* Message Input form - Fixed & Protected from Keyboard Overlap */}
               <form 
                 onSubmit={handleSendDm} 
                 className="p-2.5 sm:p-3 border-t border-slate-200 bg-white flex items-center gap-2 shadow-lg shrink-0"
               >
+                {/* Hidden Media Input */}
+                <input
+                  type="file"
+                  ref={dmFileInputRef}
+                  onChange={handleDmFileSelect}
+                  accept="image/*,video/*"
+                  className="hidden"
+                />
+
+                {/* Attach Media Button */}
+                <button
+                  type="button"
+                  onClick={() => dmFileInputRef.current?.click()}
+                  className="p-2.5 rounded-2xl bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 transition flex items-center justify-center shrink-0 cursor-pointer active:scale-95"
+                  title={language === 'tl' ? 'Mag-attach ng picture o video' : 'Attach photo or video'}
+                >
+                  <ImageIcon className="w-4 h-4" />
+                </button>
+
                 <input
                   type="text"
                   value={newDmText}
@@ -4216,7 +4445,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 />
                 <button
                   type="submit"
-                  disabled={!newDmText.trim()}
+                  disabled={!newDmText.trim() && !dmMediaPreview}
                   className="chat-send-btn disabled:opacity-40 text-white p-2.5 rounded-2xl cursor-pointer transition flex items-center justify-center shadow-md shrink-0 active:scale-95"
                   style={{ backgroundColor: '#2563eb', color: '#ffffff' }}
                 >
@@ -4400,7 +4629,31 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                               </div>
                             ) : (
                               <>
-                                <p className="break-words font-medium" style={isMe ? { color: '#ffffff' } : { color: '#0f172a' }}>{msg.text}</p>
+                                {msg.mediaUrl && (
+                                  <div className="mb-2 rounded-xl overflow-hidden bg-black/5">
+                                    {msg.mediaType === 'video' || msg.mediaUrl.match(/\.(mp4|webm|mov|ogg|m4v)$/i) ? (
+                                      <video 
+                                        src={msg.mediaUrl} 
+                                        controls 
+                                        playsInline
+                                        className="max-w-full max-h-60 rounded-xl bg-black w-full"
+                                      />
+                                    ) : (
+                                      <img 
+                                        src={msg.mediaUrl} 
+                                        alt="Attachment" 
+                                        onClick={() => {
+                                          setLightboxMediaUrl(msg.mediaUrl);
+                                          setLightboxMediaType('image');
+                                        }}
+                                        className="max-w-full max-h-60 rounded-xl object-cover cursor-zoom-in hover:opacity-95 transition w-full"
+                                      />
+                                    )}
+                                  </div>
+                                )}
+                                {msg.text && (
+                                  <p className="break-words font-medium" style={isMe ? { color: '#ffffff' } : { color: '#0f172a' }}>{msg.text}</p>
+                                )}
                                 <div className="flex items-center justify-between gap-3 mt-1">
                                   {isMe && canEditOrDelete ? (
                                     <div className="flex items-center gap-2 select-none opacity-80 max-sm:opacity-100 md:opacity-0 md:group-hover:opacity-100 transition duration-150">
@@ -4408,7 +4661,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                         type="button"
                                         onClick={() => {
                                           setEditingGroupMessageId(msg.id);
-                                          setEditingGroupMessageText(msg.text);
+                                          setEditingGroupMessageText(msg.text || '');
                                         }}
                                         className="text-blue-200 hover:text-white cursor-pointer p-0.5"
                                         title={language === 'tl' ? 'I-edit ang mensahe' : 'Edit message'}
@@ -4446,11 +4699,64 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 })()}
               </div>
 
+              {/* Group Chat Media Preview Box */}
+              {gcMediaPreview && (
+                <div className="p-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="relative w-14 h-14 rounded-xl overflow-hidden border border-slate-300 bg-slate-900 shrink-0">
+                      {gcMediaType === 'video' ? (
+                        <video src={gcMediaPreview} className="w-full h-full object-cover" />
+                      ) : (
+                        <img src={gcMediaPreview} alt="Preview" className="w-full h-full object-cover" />
+                      )}
+                    </div>
+                    <div className="text-left min-w-0">
+                      <p className="text-xs font-black text-slate-800 truncate">
+                        {gcMediaType === 'video' ? (language === 'tl' ? '📹 Video Attachment' : '📹 Video Attachment') : (language === 'tl' ? '📷 Larawan Attachment' : '📷 Photo Attachment')}
+                      </p>
+                      <p className="text-[10px] text-slate-500 font-semibold">
+                        {language === 'tl' ? 'Isasama sa mensahe ng GC' : 'Ready to send to group'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGcMediaPreview(null);
+                      if (gcFileInputRef.current) gcFileInputRef.current.value = '';
+                    }}
+                    className="p-1.5 rounded-full bg-slate-200 hover:bg-rose-100 text-slate-600 hover:text-rose-600 transition cursor-pointer shrink-0"
+                    title={language === 'tl' ? 'Tanggalin' : 'Remove'}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
               {/* GC Input Form */}
               <form 
                 onSubmit={handleSendGroupMessage} 
                 className="p-2.5 sm:p-3 border-t border-slate-200 bg-white flex items-center gap-2 shadow-lg shrink-0"
               >
+                {/* Hidden GC Media Input */}
+                <input
+                  type="file"
+                  ref={gcFileInputRef}
+                  onChange={handleGcFileSelect}
+                  accept="image/*,video/*"
+                  className="hidden"
+                />
+
+                {/* Attach Media Button */}
+                <button
+                  type="button"
+                  onClick={() => gcFileInputRef.current?.click()}
+                  className="p-2.5 rounded-2xl bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 transition flex items-center justify-center shrink-0 cursor-pointer active:scale-95"
+                  title={language === 'tl' ? 'Mag-attach ng picture o video' : 'Attach photo or video'}
+                >
+                  <ImageIcon className="w-4 h-4" />
+                </button>
+
                 <input
                   type="text"
                   value={newGroupMessageText}
@@ -4470,7 +4776,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 />
                 <button
                   type="submit"
-                  disabled={!newGroupMessageText.trim()}
+                  disabled={!newGroupMessageText.trim() && !gcMediaPreview}
                   className="chat-send-btn disabled:opacity-40 text-white p-2.5 rounded-2xl cursor-pointer transition flex items-center justify-center shadow-md shrink-0 active:scale-95"
                   style={{ backgroundColor: '#2563eb', color: '#ffffff' }}
                 >
@@ -5274,14 +5580,14 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
               className="absolute inset-0 bg-slate-950/60 backdrop-blur-xs"
             />
 
-            {/* Slide-over Panel Container */}
-            <div className="absolute inset-y-0 right-0 max-w-full flex pl-10">
+            {/* Slide-over Panel Container - Responsive Full-Width on Mobile */}
+            <div className="absolute inset-y-0 right-0 max-w-full flex w-full justify-end">
               <motion.div
                 initial={{ x: '100%' }}
                 animate={{ x: 0 }}
                 exit={{ x: '100%' }}
                 transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-                className="w-screen max-w-md bg-white shadow-2xl flex flex-col h-full border-l border-slate-100 text-slate-800"
+                className="w-full sm:w-[420px] max-w-full bg-white shadow-2xl flex flex-col h-full border-l border-slate-100 text-slate-800"
               >
                 {/* Drawer Header */}
                 <div 
@@ -5691,32 +5997,62 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         )}
       </AnimatePresence>
 
-      {/* FULL PHOTO LIGHTBOX OVERLAY */}
+      {/* FULL PHOTO / VIDEO LIGHTBOX OVERLAY */}
       <AnimatePresence>
-        {lightboxImage && (
+        {(lightboxImage || lightboxMediaUrl) && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => setLightboxImage(null)}
-            className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 cursor-zoom-out"
+            onClick={() => {
+              setLightboxImage(null);
+              setLightboxMediaUrl(null);
+            }}
+            className="fixed inset-0 bg-black/95 z-60 flex items-center justify-center p-4 cursor-zoom-out"
           >
             <motion.button
               type="button"
-              className="absolute top-4 right-4 bg-slate-900/80 hover:bg-slate-850 text-white rounded-full p-2 h-10 w-10 flex items-center justify-center font-black cursor-pointer shadow-lg z-50 transition"
-              onClick={() => setLightboxImage(null)}
+              className="absolute top-4 right-4 bg-white/20 hover:bg-white/30 text-white rounded-full p-2 h-10 w-10 flex items-center justify-center font-black cursor-pointer shadow-lg z-60 transition"
+              onClick={() => {
+                setLightboxImage(null);
+                setLightboxMediaUrl(null);
+              }}
             >
-              ×
+              <X className="w-5 h-5 text-white" />
             </motion.button>
-            <motion.img
-              initial={{ scale: 0.95 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.95 }}
-              src={lightboxImage}
-              alt="Full view"
-              className="max-w-full max-h-[90vh] object-contain rounded-xl shadow-2xl border border-slate-800 pointer-events-auto"
-              onClick={(e) => e.stopPropagation()}
-            />
+            
+            {(() => {
+              const url = lightboxMediaUrl || lightboxImage;
+              if (!url) return null;
+              const isVideo = lightboxMediaType === 'video' || url.match(/\.(mp4|webm|mov|ogg|m4v)$/i);
+              
+              if (isVideo) {
+                return (
+                  <motion.video
+                    initial={{ scale: 0.95 }}
+                    animate={{ scale: 1 }}
+                    exit={{ scale: 0.95 }}
+                    src={url}
+                    controls
+                    autoPlay
+                    playsInline
+                    className="max-w-full max-h-[90vh] object-contain rounded-2xl shadow-2xl border border-slate-800 pointer-events-auto"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                );
+              }
+              return (
+                <motion.img
+                  initial={{ scale: 0.95 }}
+                  animate={{ scale: 1 }}
+                  exit={{ scale: 0.95 }}
+                  src={url}
+                  alt="Full view"
+                  className="max-w-full max-h-[90vh] object-contain rounded-2xl shadow-2xl border border-slate-800 pointer-events-auto"
+                  onClick={(e) => e.stopPropagation()}
+                />
+              );
+            })()}
           </motion.div>
         )}
       </AnimatePresence>
