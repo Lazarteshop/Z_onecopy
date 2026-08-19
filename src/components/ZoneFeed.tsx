@@ -82,6 +82,21 @@ const PRESET_VIDEOS = [
 
 // Media Hub features cleaned up with ultra-fast Mobile PWA File Compressor
 
+const safeJsonParse = async (res: Response, defaultError: string = 'Koneksyon error sa server.'): Promise<any> => {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    if (res.status === 413) {
+      throw new Error('Masyadong malaki ang video/media file (Max 25MB). Pumili ng mas maikling video.');
+    }
+    if (res.status === 502 || res.status === 504 || res.status === 503) {
+      throw new Error('Nag-timeout o pansamantalang nag-restart ang koneksyon sa server. Subukan muli.');
+    }
+    throw new Error(defaultError);
+  }
+};
+
 const compressImageFromFile = (file: File, maxWidth: number = 1000, maxHeight: number = 1000, quality: number = 0.7): Promise<string> => {
   return new Promise((resolve, reject) => {
     // If not an image, fallback to standard FileReader
@@ -1079,8 +1094,11 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           body: JSON.stringify({ dataUrl: mediaToSend })
         });
         if (uploadRes.ok) {
-          const uploadData = await uploadRes.json();
-          finalMediaUrl = uploadData.url;
+          const uploadText = await uploadRes.text();
+          try {
+            const uploadData = JSON.parse(uploadText);
+            finalMediaUrl = uploadData.url;
+          } catch {}
         }
       }
 
@@ -1527,11 +1545,11 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         });
 
         if (!uploadRes.ok) {
-          const errData = await uploadRes.json();
+          const errData = await safeJsonParse(uploadRes, 'Hindi ma-upload ang media file. Baka masyadong malaki.');
           throw new Error(errData.error || 'Hindi ma-upload ang media file.');
         }
 
-        const uploadData = await uploadRes.json();
+        const uploadData = await safeJsonParse(uploadRes);
         finalMediaUrl = uploadData.url;
         setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: 60 } : x));
       }
@@ -1555,11 +1573,11 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
             });
 
             if (!uploadRes.ok) {
-              const errData = await uploadRes.json();
+              const errData = await safeJsonParse(uploadRes, 'Hindi ma-upload ang isa sa mga larawan.');
               throw new Error(errData.error || 'Hindi ma-upload ang isa sa mga larawan.');
             }
 
-            const uploadData = await uploadRes.json();
+            const uploadData = await safeJsonParse(uploadRes);
             uploadedUrls.push(uploadData.url);
           } else {
             uploadedUrls.push(url);
@@ -1585,7 +1603,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         })
       });
 
-      const data = await res.json();
+      const data = await safeJsonParse(res, 'Hindi ma-publish ang post.');
       if (res.ok && data.post) {
         setOutbox(prev => prev.map(x => x.id === item.id ? { ...x, progress: 100 } : x));
         
@@ -2285,8 +2303,11 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           body: JSON.stringify({ dataUrl: mediaToSend })
         });
         if (uploadRes.ok) {
-          const uploadData = await uploadRes.json();
-          finalMediaUrl = uploadData.url;
+          const uploadText = await uploadRes.text();
+          try {
+            const uploadData = JSON.parse(uploadText);
+            finalMediaUrl = uploadData.url;
+          } catch {}
         }
       }
 

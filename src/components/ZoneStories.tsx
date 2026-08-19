@@ -323,8 +323,13 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
           body: JSON.stringify({ dataUrl: mediaPreviewUrl })
         });
         if (uploadRes.ok) {
-          const uploadData = await uploadRes.json();
-          finalMediaUrl = uploadData.url;
+          const uploadText = await uploadRes.text();
+          try {
+            const uploadData = JSON.parse(uploadText);
+            finalMediaUrl = uploadData.url;
+          } catch {
+            // fallback
+          }
         }
       }
 
@@ -344,7 +349,17 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
         })
       });
 
-      const data = await res.json();
+      const resText = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(resText);
+      } catch {
+        if (res.status === 413) {
+          throw new Error('Masyadong malaki ang video/media file (Max 25MB). Mangyaring pumili ng mas maikling video.');
+        }
+        throw new Error('Pansamantalang nagka-error sa koneksyon. Subukan muli.');
+      }
+
       if (res.ok) {
         triggerNotification(
           language === 'tl' ? 'Matagumpay na nai-post ang iyong My Day / Story! 🎉' : 'Story posted successfully! 🎉',
@@ -360,10 +375,10 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
       } else {
         triggerNotification(data.error || 'Failed to create story', 'error');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error posting story:', err);
       triggerNotification(
-        language === 'tl' ? 'Koneksyon error sa pag-post ng Story.' : 'Connection error posting story.',
+        err?.message || (language === 'tl' ? 'Koneksyon error sa pag-post ng Story.' : 'Connection error posting story.'),
         'error'
       );
     } finally {
