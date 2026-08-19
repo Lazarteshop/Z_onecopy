@@ -5140,15 +5140,31 @@ app.post('/api/zone/posts', (req, res) => {
   // Clean swear words
   const cleanedText = filterSwearWords(text);
 
+  // Convert heavy base64 media to disk files to prevent memory exhaustion & server restart crashes
+  let finalMediaUrl = mediaUrl;
+  if (mediaUrl && (mediaUrl.startsWith('data:') || mediaUrl.startsWith('blob:'))) {
+    finalMediaUrl = saveBase64ToUploadFile(mediaUrl, 'post-media') || mediaUrl;
+  }
+
+  let finalMediaUrls: string[] | undefined = undefined;
+  if (mediaUrls && Array.isArray(mediaUrls)) {
+    finalMediaUrls = mediaUrls.map((url: string) => {
+      if (url && (url.startsWith('data:') || url.startsWith('blob:'))) {
+        return saveBase64ToUploadFile(url, 'post-media') || url;
+      }
+      return url;
+    });
+  }
+
   const newPost = {
     id: 'post-' + Date.now(),
     userId: user.id,
     userName: user.name,
     userAvatar: user.avatar || '👤',
     text: cleanedText,
-    mediaUrl: mediaUrl || undefined,
+    mediaUrl: finalMediaUrl || undefined,
     mediaType: mediaType || undefined,
-    mediaUrls: mediaUrls || undefined,
+    mediaUrls: finalMediaUrls || undefined,
     likes: [],
     comments: [],
     createdAt: new Date().toISOString()
