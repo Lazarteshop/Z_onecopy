@@ -1448,18 +1448,22 @@ function saveDB(data: DBStructure, immediate: boolean = false) {
   if (immediate) {
     if (saveDBTimeout) clearTimeout(saveDBTimeout);
     doSave();
-  } else {
-    if (saveDBTimeout) clearTimeout(saveDBTimeout);
-    saveDBTimeout = setTimeout(doSave, 250);
-  }
-
-  // Debounce Firestore synchronization (3s delay) to avoid heavy operations on rapid user actions
-  if (firestoreSyncTimeout) clearTimeout(firestoreSyncTimeout);
-  firestoreSyncTimeout = setTimeout(() => {
+    if (firestoreSyncTimeout) clearTimeout(firestoreSyncTimeout);
     uploadToFirestore(data).catch(err => {
       console.error('Error uploading db changes to Firestore:', err);
     });
-  }, 3000);
+  } else {
+    if (saveDBTimeout) clearTimeout(saveDBTimeout);
+    saveDBTimeout = setTimeout(doSave, 150);
+
+    // Fast debounced Firestore synchronization (500ms) so data is never lost during republishes or restarts
+    if (firestoreSyncTimeout) clearTimeout(firestoreSyncTimeout);
+    firestoreSyncTimeout = setTimeout(() => {
+      uploadToFirestore(data).catch(err => {
+        console.error('Error uploading db changes to Firestore:', err);
+      });
+    }, 500);
+  }
 }
 
 async function uploadToFirestore(data: DBStructure) {
@@ -1628,6 +1632,9 @@ async function uploadToFirestore(data: DBStructure) {
             try {
               const sDocRef = firestore!.collection('stories').doc(s.id);
               const { id, ...sWithoutId } = s;
+              if (sWithoutId.mediaUrl && sWithoutId.mediaUrl.startsWith('data:') && sWithoutId.mediaUrl.length > 500000) {
+                sWithoutId.mediaUrl = saveBase64ToUploadFile(sWithoutId.mediaUrl, 'story-media') || undefined;
+              }
               await sDocRef.set(sWithoutId);
               lastSyncedCache.stories.set(s.id, sStr);
             } catch (sErr) {
@@ -1666,6 +1673,9 @@ async function uploadToFirestore(data: DBStructure) {
             try {
               const gmDocRef = firestore!.collection('group_messages').doc(gm.id);
               const { id, ...gmWithoutId } = gm;
+              if (gmWithoutId.mediaUrl && gmWithoutId.mediaUrl.startsWith('data:') && gmWithoutId.mediaUrl.length > 500000) {
+                gmWithoutId.mediaUrl = saveBase64ToUploadFile(gmWithoutId.mediaUrl, 'gc-media') || undefined;
+              }
               await gmDocRef.set(gmWithoutId);
               lastSyncedCache.groupMessages.set(gm.id, gmStr);
             } catch (gmErr) {
@@ -1907,15 +1917,21 @@ async function syncFromFirestore() {
       console.log('No stories collection yet in Firestore');
     }
 
-    const groupsColRef = firestore.collection('groups');
     let dbGroups: any[] = [];
     try {
-      const groupsSnapshot = await groupsColRef.get();
-      groupsSnapshot.forEach((docSnap) => {
+      // Support both group_chats (standard) and legacy groups collection
+      const gcSnapshot = await firestore.collection('group_chats').get();
+      gcSnapshot.forEach((docSnap) => {
         dbGroups.push({ id: docSnap.id, ...docSnap.data() });
       });
+      if (dbGroups.length === 0) {
+        const groupsSnapshot = await firestore.collection('groups').get();
+        groupsSnapshot.forEach((docSnap) => {
+          dbGroups.push({ id: docSnap.id, ...docSnap.data() });
+        });
+      }
     } catch (e) {
-      console.log('No groups collection yet in Firestore');
+      console.log('No group_chats collection yet in Firestore');
     }
 
     const gmColRef = firestore.collection('group_messages');
@@ -1977,17 +1993,45 @@ async function syncFromFirestore() {
         }
       }
 
+      // Safely merge existing local state with Firestore state to prevent data loss on restarts
+      const localDB = loadDB();
+
+      const mergedStoriesMap = new Map<string, any>();
+      (localDB.stories || []).forEach((s: any) => mergedStoriesMap.set(s.id, s));
+      dbStories.forEach((s: any) => mergedStoriesMap.set(s.id, s));
+      const finalStories = Array.from(mergedStoriesMap.values());
+
+      const mergedGroupsMap = new Map<string, any>();
+      (localDB.groupChats || []).forEach((g: any) => mergedGroupsMap.set(g.id, g));
+      dbGroups.forEach((g: any) => mergedGroupsMap.set(g.id, g));
+      const finalGroups = Array.from(mergedGroupsMap.values());
+
+      const mergedGMsMap = new Map<string, any>();
+      (localDB.groupMessages || []).forEach((gm: any) => mergedGMsMap.set(gm.id, gm));
+      dbGroupMessages.forEach((gm: any) => mergedGMsMap.set(gm.id, gm));
+      const finalGMs = Array.from(mergedGMsMap.values());
+
+      const mergedPostsMap = new Map<string, any>();
+      (localDB.posts || []).forEach((p: any) => mergedPostsMap.set(p.id, p));
+      dbPosts.forEach((p: any) => mergedPostsMap.set(p.id, p));
+      const finalPosts = Array.from(mergedPostsMap.values());
+
+      const mergedDMsMap = new Map<string, any>();
+      (localDB.directMessages || []).forEach((dm: any) => mergedDMsMap.set(dm.id, dm));
+      dbDMs.forEach((dm: any) => mergedDMsMap.set(dm.id, dm));
+      const finalDMs = Array.from(mergedDMsMap.values());
+
       const loadedDB: DBStructure = { 
         users: dbUsers,
         campaigns: dbCampaigns.length > 0 ? dbCampaigns : INITIAL_CAMPAIGNS,
-        posts: dbPosts.length > 0 ? dbPosts : undefined,
-        directMessages: dbDMs.length > 0 ? dbDMs : undefined,
+        posts: finalPosts.length > 0 ? finalPosts : undefined,
+        directMessages: finalDMs.length > 0 ? finalDMs : undefined,
         merchantAds: dbMerchantAds.length > 0 ? dbMerchantAds : undefined,
         reels: dbReels.length > 0 ? dbReels : INITIAL_REELS,
         reelSubscriptions: dbReelSubs,
-        stories: dbStories,
-        groupChats: dbGroups,
-        groupMessages: dbGroupMessages
+        stories: finalStories,
+        groupChats: finalGroups,
+        groupMessages: finalGMs
       };
       
       // Update/synchronize admin details if needed
@@ -1997,12 +2041,9 @@ async function syncFromFirestore() {
         admin.password = envAdminPassword;
         admin.name = envAdminName;
       }
-      if (!loadedDB.posts) {
-        const temp = loadDB();
-        loadedDB.posts = temp.posts;
-      }
       fs.writeFileSync(DB_FILE_PATH, JSON.stringify(loadedDB, null, 2), 'utf-8');
       cachedDB = loadedDB;
+      initLastSyncedCache(loadedDB);
     } else {
       console.log('🌱 Firestore cloud database is empty. Seeding defaults from local template...');
       // Load local database or create a new one using loadDB
