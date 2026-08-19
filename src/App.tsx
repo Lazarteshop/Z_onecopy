@@ -73,7 +73,14 @@ import { DemoTestingFloatingBanner } from './components/DemoTestingFloatingBanne
 import { WithdrawalPolicyModal } from './components/WithdrawalPolicyModal';
 import { WithdrawalPolicyBanner } from './components/WithdrawalPolicyBanner';
 import { AddCampaignModal } from './components/AddCampaignModal';
+import { BackgroundNotificationModal } from './components/BackgroundNotificationModal';
 import { soundEffects } from './utils/audio';
+import { 
+  subscribeUserToPush, 
+  sendTestPushNotification, 
+  isPushNotificationSupported, 
+  getNotificationPermissionState 
+} from './utils/pushManager';
 
 interface UserSession {
   id: string;
@@ -187,6 +194,7 @@ export default function App() {
   const [showPromoAdModal, setShowPromoAdModal] = useState<boolean>(true);
   // Always true on initial app load / open so the popup banner shows every time
   const [showWithdrawalPolicyModal, setShowWithdrawalPolicyModal] = useState<boolean>(true);
+  const [showPushNotifModal, setShowPushNotifModal] = useState<boolean>(false);
 
   // 🌐 CLONE / TESTING DEMO MODE DETECTOR
   const [isDemoMode, setIsDemoMode] = useState<boolean>(() => {
@@ -579,46 +587,57 @@ export default function App() {
   };
 
   const requestNotificationPermission = async () => {
-    if (!('Notification' in window)) {
+    if (!isPushNotificationSupported()) {
       triggerNotification(
         language === 'tl'
-          ? '⚠️ Hindi suportado ng iyong device ang system notifications.'
-          : '⚠️ Your device does not support system notifications.',
+          ? '⚠️ Hindi suportado ng iyong device/browser ang system push notifications.'
+          : '⚠️ Your device/browser does not support system push notifications.',
         'error'
       );
       return;
     }
 
     try {
-      const permission = await Notification.requestPermission();
-      setNotificationPermission(permission);
-      if (permission === 'granted') {
-        triggerNotification(
-          language === 'tl'
-            ? '🎉 Matagumpay na pinagana ang notifications sa iyong device!'
-            : '🎉 Device notifications successfully enabled!',
-          'success'
-        );
-        setTimeout(() => {
-          showDeviceNotification(
+      if (token) {
+        const res = await subscribeUserToPush(token);
+        if (res.permission) {
+          setNotificationPermission(res.permission);
+        }
+        if (res.success) {
+          triggerNotification(
             language === 'tl'
-              ? 'Salamat sa pag-enable! Makakatanggap ka na ng balita at update dito.'
-              : 'Thank you for enabling! You will now receive alerts and updates here.',
+              ? '🎉 Aktibo na ang Background Push Notifications! Makakatanggap ka na ng alert sa GCash Cashouts, Group Chat, at kita kahit sarado ang app.'
+              : '🎉 Background Push Notifications active! You will receive alerts on payouts, chats, and rewards even when the app is closed.',
             'success'
           );
-        }, 1000);
-      } else if (permission === 'denied') {
-        triggerNotification(
-          language === 'tl'
-            ? '⚠️ Na-deny ang notifications. I-reset ang settings ng iyong Chrome/browser para payagan ito.'
-            : '⚠️ Notifications denied. Please reset your browser/Chrome settings to allow them.',
-          'error'
-        );
+        } else {
+          triggerNotification(res.message, res.permission === 'denied' ? 'error' : 'info');
+        }
+      } else {
+        const permission = await Notification.requestPermission();
+        setNotificationPermission(permission);
+        if (permission === 'granted') {
+          triggerNotification(
+            language === 'tl'
+              ? '🎉 Pinayagan ang notifications! Mag-login upang kumonekta ang background alerts.'
+              : '🎉 Notifications allowed! Log in to connect background alerts.',
+            'success'
+          );
+        }
       }
     } catch (err) {
       console.error('Error requesting notification permission:', err);
     }
   };
+
+  // Auto-subscribe to push notifications in background if permission is already granted
+  useEffect(() => {
+    if (token && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      subscribeUserToPush(token).catch(err => {
+        console.log('Background push auto-subscribe info:', err);
+      });
+    }
+  }, [token]);
 
   const triggerNotification = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
     setNotification({ message, type });
@@ -1951,6 +1970,15 @@ export default function App() {
         triggerNotification={triggerNotification}
       />
 
+      {/* 🔔 BACKGROUND PUSH NOTIFICATION SETTINGS & TEST MODAL */}
+      <BackgroundNotificationModal
+        isOpen={showPushNotifModal}
+        onClose={() => setShowPushNotifModal(false)}
+        token={token}
+        language={language}
+        triggerNotification={triggerNotification}
+      />
+
       {/* 🚀 SCREEN GATEWAY 1: NOT AUTHENTICATED SCREEN */}
       {!token || !user ? (
         <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 py-12 relative overflow-hidden">
@@ -2144,17 +2172,29 @@ export default function App() {
               <div className="w-full sm:w-auto overflow-x-auto no-scrollbar py-0.5 overscroll-x-contain touch-pan-x">
                 <div className="flex items-center gap-2 sm:gap-3 justify-start sm:justify-end min-w-max">
 
-                  {/* 🔔 Allow Device Notifications Prompt if state is default */}
-                  {notificationPermission === 'default' && (
-                    <button
-                      onClick={requestNotificationPermission}
-                      className="bg-emerald-600/90 hover:bg-emerald-600 hover:scale-[1.02] active:scale-[0.98] text-white text-[8px] font-black px-2 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer shrink-0 shadow-2xs select-none"
-                      title={language === 'tl' ? 'Paganahin ang Notifications sa CP / Device' : 'Enable Device Notifications'}
-                    >
-                      <Bell className="w-3 h-3 text-yellow-300 animate-pulse shrink-0" />
-                      <span>{language === 'tl' ? 'Payagan Notif' : 'Allow Notif'}</span>
-                    </button>
-                  )}
+                  {/* 🔔 Background Push Notifications Button & Indicator */}
+                  <button
+                    onClick={() => {
+                      if (notificationPermission === 'default') {
+                        requestNotificationPermission();
+                      } else {
+                        setShowPushNotifModal(true);
+                      }
+                    }}
+                    className={`${
+                      notificationPermission === 'granted'
+                        ? 'bg-slate-800/80 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30'
+                        : 'bg-emerald-600/90 hover:bg-emerald-600 text-white'
+                    } hover:scale-[1.02] active:scale-[0.98] text-[9px] sm:text-[10px] font-black px-2 sm:px-2.5 py-1.5 rounded-lg sm:rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 shadow-md select-none`}
+                    title={language === 'tl' ? 'Background Push Notifications Settings' : 'Background Push Notifications Settings'}
+                  >
+                    <Bell className={`w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0 ${notificationPermission === 'granted' ? 'text-emerald-400' : 'text-yellow-300 animate-pulse'}`} />
+                    <span className="whitespace-nowrap">
+                      {notificationPermission === 'granted'
+                        ? (language === 'tl' ? '🔔 Notif: Aktibo' : '🔔 Notif: Active')
+                        : (language === 'tl' ? '🔔 I-on ang Notif' : '🔔 Enable Notif')}
+                    </span>
+                  </button>
 
                   {/* 🎬 WATCH REELS HEADER BUTTON (Smaller & Compact, next to Allow Notif) */}
                   <button

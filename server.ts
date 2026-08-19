@@ -6,9 +6,22 @@ import { createServer as createViteServer } from 'vite';
 import { Firestore } from '@google-cloud/firestore';
 import { INITIAL_CAMPAIGNS } from './src/data/campaigns';
 import { GoogleGenAI } from '@google/genai';
+import webpush from 'web-push';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+
+// VAPID Web Push Setup
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BEoePhNL4BlPYLBzw1foKQm1ajHEWnbtORLuPFlKcOd1F33VSaS9Rcmb_2Hyq9hvfONzJS6l6OPDegY55gMjemg';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '4mJ867usD6R8PMeN2ECtUVJMm0N8cA8jR9Ab7HfYCTk';
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:support@gcash-click-earn.com';
+
+try {
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+  console.log('🔔 Web Push VAPID initialized successfully.');
+} catch (vapidErr) {
+  console.error('Failed to initialize VAPID details:', vapidErr);
+}
 
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
@@ -848,6 +861,16 @@ interface UserSession {
     bonusClaimed: boolean;
     joinedAt: string;
   }[];
+  pushSubscriptions?: Array<{
+    endpoint: string;
+    expirationTime?: number | null;
+    keys: {
+      p256dh: string;
+      auth: string;
+    };
+    userAgent?: string;
+    createdAt?: string;
+  }>;
 }
 
 interface DirectMessage {
@@ -2091,6 +2114,159 @@ function hasActiveAccess(user: UserSession): boolean {
   
   return false;
 }
+
+// ============================================
+//         WEB PUSH NOTIFICATION ENGINE
+// ============================================
+
+async function sendPushNotificationToUser(userId: string, payload: { title: string; body: string; url?: string; icon?: string; tag?: string }) {
+  if (!userId) return;
+  try {
+    const db = loadDB();
+    const user = db.users.find(u => u.id === userId);
+    if (!user || !user.pushSubscriptions || user.pushSubscriptions.length === 0) return;
+
+    const notificationPayload = JSON.stringify({
+      title: payload.title || 'GCash Click-Earn / Z-one',
+      body: payload.body,
+      icon: payload.icon || '/icon-192.png',
+      badge: '/icon-192.png',
+      url: payload.url || '/',
+      tag: payload.tag || `zone-${Date.now()}`
+    });
+
+    const activeSubs: any[] = [];
+    for (const sub of user.pushSubscriptions) {
+      if (!sub || !sub.endpoint || !sub.keys) continue;
+      try {
+        await webpush.sendNotification(sub as any, notificationPayload);
+        activeSubs.push(sub);
+      } catch (err: any) {
+        const statusCode = err?.statusCode;
+        if (statusCode === 404 || statusCode === 410) {
+          console.log(`Push sub expired/unregistered for user ${user.name} (${user.id}). Removing.`);
+        } else {
+          console.log(`Push sub failed for user ${user.name}:`, err?.message || statusCode);
+          activeSubs.push(sub);
+        }
+      }
+    }
+
+    if (activeSubs.length !== user.pushSubscriptions.length) {
+      user.pushSubscriptions = activeSubs;
+      saveDB(db);
+    }
+  } catch (pushErr) {
+    console.error('Error in sendPushNotificationToUser:', pushErr);
+  }
+}
+
+async function broadcastPushNotification(payload: { title: string; body: string; url?: string; icon?: string; tag?: string }, excludeUserId?: string) {
+  try {
+    const db = loadDB();
+    for (const user of db.users) {
+      if (user.id === excludeUserId) continue;
+      if (user.pushSubscriptions && user.pushSubscriptions.length > 0) {
+        sendPushNotificationToUser(user.id, payload).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.error('Error in broadcastPushNotification:', err);
+  }
+}
+
+// GET VAPID PUBLIC KEY
+app.get('/api/push/vapid-public-key', (req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+// SUBSCRIBE TO PUSH NOTIFICATIONS
+app.post('/api/push/subscribe', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan ng login upang mag-subscribe sa notifications.' });
+  }
+
+  const { subscription } = req.body;
+  if (!subscription || !subscription.endpoint || !subscription.keys) {
+    return res.status(400).json({ error: 'Invalid push subscription payload.' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi nahanap ang user.' });
+  }
+
+  if (!user.pushSubscriptions) {
+    user.pushSubscriptions = [];
+  }
+
+  const existingIdx = user.pushSubscriptions.findIndex(s => s.endpoint === subscription.endpoint);
+  const userAgent = req.headers['user-agent'] || '';
+  const newSubData = {
+    endpoint: subscription.endpoint,
+    expirationTime: subscription.expirationTime || null,
+    keys: subscription.keys,
+    userAgent,
+    createdAt: new Date().toISOString()
+  };
+
+  if (existingIdx >= 0) {
+    user.pushSubscriptions[existingIdx] = newSubData;
+  } else {
+    user.pushSubscriptions.push(newSubData);
+  }
+
+  saveDB(db);
+  console.log(`🔔 Registered push subscription for user ${user.name} (${user.id}). Total devices: ${user.pushSubscriptions.length}`);
+  
+  res.json({
+    success: true,
+    message: 'Matagumpay na na-activate ang background notifications para sa device na ito! 🔔',
+    activeDevicesCount: user.pushSubscriptions.length
+  });
+});
+
+// UNSUBSCRIBE FROM PUSH NOTIFICATIONS
+app.post('/api/push/unsubscribe', (req, res) => {
+  const userId = req.headers.authorization;
+  const { endpoint } = req.body;
+
+  if (userId) {
+    const db = loadDB();
+    const user = db.users.find(u => u.id === userId);
+    if (user && user.pushSubscriptions) {
+      user.pushSubscriptions = user.pushSubscriptions.filter(s => s.endpoint !== endpoint);
+      saveDB(db);
+    }
+  }
+
+  res.json({ success: true, message: 'Unsubscribed from notifications.' });
+});
+
+// TEST PUSH NOTIFICATION
+app.post('/api/push/test', async (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan ng login.' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user || !user.pushSubscriptions || user.pushSubscriptions.length === 0) {
+    return res.status(400).json({ error: 'Wala pang aktibong notification subscription ang device na ito. I-enable muna ang notifications.' });
+  }
+
+  await sendPushNotificationToUser(userId, {
+    title: '🔔 Test Notification - GCash Click-Earn',
+    body: 'Gumagana ang background notifications! Kahit naka-close ang app basta bukas ang mobile data/internet, makakatanggap ka pa rin ng updates. 🎉',
+    url: '/',
+    tag: 'test-notification'
+  });
+
+  res.json({ success: true, message: 'Naipadala ang test notification sa iyong device!' });
+});
 
 // ============================================
 //               AUTHENTICATION
@@ -4354,6 +4530,13 @@ app.post('/api/admin/withdrawals/:withdrawId/action', (req, res) => {
       timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
       details: `Inaprubahan ng Admin ang iyong cashout na nagkakahalaga ng ₱${reqObj.amount.toFixed(2)}. Matagumpay itong naipadala sa GCash number mo!`
     });
+
+    sendPushNotificationToUser(targetUser.id, {
+      title: '🎉 GCash Cashout Approved!',
+      body: `Matagumpay na naipadala ang ₱${reqObj.amount.toFixed(2)} sa iyong GCash (${reqObj.gcashNumber})!`,
+      url: '/?tab=profile',
+      tag: 'payout-success'
+    });
   } else if (action === 'decline') {
     reqObj.status = 'failed';
     
@@ -4368,6 +4551,13 @@ app.post('/api/admin/withdrawals/:withdrawId/action', (req, res) => {
       amount: reqObj.amount,
       timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
       details: `Tinanggihan ng Admin ang iyong withdrawal request para sa ₱${reqObj.amount.toFixed(2)}. Binalik ang pera sa iyong balance.`
+    });
+
+    sendPushNotificationToUser(targetUser.id, {
+      title: '⚠️ GCash Withdrawal Update',
+      body: `Tinanggihan ng Admin ang iyong cashout na ₱${reqObj.amount.toFixed(2)}. Na-refund na ito sa iyong balance.`,
+      url: '/?tab=profile',
+      tag: 'payout-declined'
     });
   } else {
     return res.status(400).json({ error: 'Maling desisyon. Approve o Decline lang ang pwedeng gawin.' });
@@ -5378,6 +5568,17 @@ app.post('/api/zone/posts/:postId/like', (req, res) => {
   }
 
   saveDB(db);
+
+  // Send push notification to post author if someone else liked the post
+  if (post.userId && post.userId !== userId) {
+    sendPushNotificationToUser(post.userId, {
+      title: '❤️ Bagong Like sa iyong Post',
+      body: `Nag-like si ${user ? user.name : 'isang user'} sa iyong post sa Z-one!`,
+      url: '/?tab=zone',
+      tag: `post-like-${postId}`
+    }).catch(() => {});
+  }
+
   res.json({ 
     success: true, 
     likes: post.likes, 
@@ -5436,6 +5637,16 @@ app.post('/api/zone/posts/:postId/comment', (req, res) => {
 
   post.comments.push(newComment);
   saveDB(db);
+
+  // Send push notification to post author if someone else commented
+  if (post.userId && post.userId !== userId) {
+    sendPushNotificationToUser(post.userId, {
+      title: `💬 Bagong Komento mula kay ${user.name}`,
+      body: `"${cleanedComment.slice(0, 70)}"`,
+      url: '/?tab=zone',
+      tag: `post-comment-${postId}`
+    }).catch(() => {});
+  }
 
   res.json({ success: true, comments: post.comments });
 });
@@ -6059,6 +6270,14 @@ app.post('/api/zone/messages', (req, res) => {
   db.directMessages.push(newMsg);
   saveDB(db);
 
+  // Send background push notification to the receiver
+  sendPushNotificationToUser(receiverId, {
+    title: `💬 ${sender.name}`,
+    body: filteredText || (newMsg.mediaType === 'video' ? '📹 Nagpadala ng video' : '📷 Nagpadala ng litrato'),
+    url: '/?tab=zone&zoneTab=messages',
+    tag: `dm-${senderId}`
+  });
+
   // Trigger admin auto reply if sent to the System Administrator
   if (receiverId === 'admin-rosco') {
     handleAdminAutoReply(senderId, text || 'Nagpadala ng media attachment').catch(err => {
@@ -6361,6 +6580,20 @@ app.post('/api/zone/groups/:groupId/messages', (req, res) => {
   db.groupMessages.push(newMsg);
   group.updatedAt = new Date().toISOString();
   saveDB(db);
+
+  // Send background push notifications to all other group members
+  if (Array.isArray(group.members)) {
+    for (const memberId of group.members) {
+      if (memberId !== userId) {
+        sendPushNotificationToUser(memberId, {
+          title: `👥 ${group.name} - ${sender.name}`,
+          body: filteredText || (newMsg.mediaType === 'video' ? '📹 Nagpadala ng video' : '📷 Nagpadala ng larawan'),
+          url: '/?tab=zone&zoneTab=groups',
+          tag: `gc-${groupId}`
+        }).catch(() => {});
+      }
+    }
+  }
 
   res.json({ success: true, message: newMsg });
 });
@@ -6804,6 +7037,14 @@ app.post('/api/zone/stories/:storyId/react', (req, res) => {
         createdAt: new Date().toISOString()
       };
       db.directMessages.push(dmMsg);
+
+      // Send push notification to story author
+      sendPushNotificationToUser(author.id, {
+        title: `✨ ${user.name} nag-react sa iyong My Day`,
+        body: reactionText,
+        url: '/?tab=zone',
+        tag: `story-reaction-${storyId}`
+      }).catch(() => {});
     }
   }
 

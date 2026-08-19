@@ -72,21 +72,62 @@ self.addEventListener("fetch", event => {
 
 self.addEventListener('notificationclick', event => {
   event.notification.close();
+  const targetUrl = event.notification.data && event.notification.data.url ? event.notification.data.url : '/';
+
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
-      if (clientList.length > 0) {
-        let client = clientList[0];
-        for (let i = 0; i < clientList.length; i++) {
-          if (clientList[i].focused) {
-            client = clientList[i];
-            break;
+      for (let i = 0; i < clientList.length; i++) {
+        const client = clientList[i];
+        if ('focus' in client) {
+          if (client.url.includes(targetUrl) || targetUrl === '/') {
+            return client.focus();
           }
         }
-        return client.focus();
       }
       if (clients.openWindow) {
-        return clients.openWindow('/');
+        return clients.openWindow(targetUrl);
       }
     })
+  );
+});
+
+// Real Background Web Push Notification Handler (Active even when browser/app is closed as long as data/wifi is active)
+self.addEventListener('push', event => {
+  let notificationData = {
+    title: 'GCash Click-Earn / Z-one',
+    body: 'Mayroon kang bagong alert o mensahe sa iyong account.',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    url: '/',
+    tag: 'zone-general-notification'
+  };
+
+  if (event.data) {
+    try {
+      const payload = event.data.json();
+      notificationData = { ...notificationData, ...payload };
+    } catch (err) {
+      try {
+        notificationData.body = event.data.text();
+      } catch (textErr) {}
+    }
+  }
+
+  const notificationOptions = {
+    body: notificationData.body,
+    icon: notificationData.icon || '/icon-192.png',
+    badge: notificationData.badge || '/icon-192.png',
+    vibrate: [200, 100, 200, 100, 200],
+    data: {
+      url: notificationData.url || '/',
+      dateOfArrival: Date.now()
+    },
+    tag: notificationData.tag || `zone-notif-${Date.now()}`,
+    renotify: true,
+    requireInteraction: false
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(notificationData.title, notificationOptions)
   );
 });
