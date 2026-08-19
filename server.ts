@@ -1351,7 +1351,10 @@ const lastSyncedCache = {
   directMessages: new Map<string, string>(),
   merchantAds: new Map<string, string>(),
   reels: new Map<string, string>(),
-  reelSubscriptions: new Map<string, string>()
+  reelSubscriptions: new Map<string, string>(),
+  stories: new Map<string, string>(),
+  groupChats: new Map<string, string>(),
+  groupMessages: new Map<string, string>()
 };
 
 function initLastSyncedCache(data: DBStructure) {
@@ -1388,6 +1391,21 @@ function initLastSyncedCache(data: DBStructure) {
   if (lastSyncedCache.reelSubscriptions.size === 0 && data.reelSubscriptions && data.reelSubscriptions.length > 0) {
     for (const rs of data.reelSubscriptions) {
       lastSyncedCache.reelSubscriptions.set(rs.id, JSON.stringify(rs));
+    }
+  }
+  if (lastSyncedCache.stories.size === 0 && data.stories && data.stories.length > 0) {
+    for (const s of data.stories) {
+      lastSyncedCache.stories.set(s.id, JSON.stringify(s));
+    }
+  }
+  if (lastSyncedCache.groupChats.size === 0 && data.groupChats && data.groupChats.length > 0) {
+    for (const g of data.groupChats) {
+      lastSyncedCache.groupChats.set(g.id, JSON.stringify(g));
+    }
+  }
+  if (lastSyncedCache.groupMessages.size === 0 && data.groupMessages && data.groupMessages.length > 0) {
+    for (const gm of data.groupMessages) {
+      lastSyncedCache.groupMessages.set(gm.id, JSON.stringify(gm));
     }
   }
 }
@@ -1578,7 +1596,106 @@ async function uploadToFirestore(data: DBStructure) {
       }
     }
 
+    const storyPromises: Promise<any>[] = [];
+    if (data.stories) {
+      for (const s of data.stories) {
+        const sStr = JSON.stringify(s);
+        if (lastSyncedCache.stories.get(s.id) !== sStr) {
+          storyPromises.push((async () => {
+            try {
+              const sDocRef = firestore!.collection('stories').doc(s.id);
+              const { id, ...sWithoutId } = s;
+              await sDocRef.set(sWithoutId);
+              lastSyncedCache.stories.set(s.id, sStr);
+            } catch (sErr) {
+              console.error(`Error saving Story ${s.id} to Firestore:`, sErr);
+            }
+          })());
+        }
+      }
+    }
+
+    const groupPromises: Promise<any>[] = [];
+    if (data.groupChats) {
+      for (const g of data.groupChats) {
+        const gStr = JSON.stringify(g);
+        if (lastSyncedCache.groupChats.get(g.id) !== gStr) {
+          groupPromises.push((async () => {
+            try {
+              const gDocRef = firestore!.collection('group_chats').doc(g.id);
+              const { id, ...gWithoutId } = g;
+              await gDocRef.set(gWithoutId);
+              lastSyncedCache.groupChats.set(g.id, gStr);
+            } catch (gErr) {
+              console.error(`Error saving Group ${g.id} to Firestore:`, gErr);
+            }
+          })());
+        }
+      }
+    }
+
+    const gmPromises: Promise<any>[] = [];
+    if (data.groupMessages) {
+      for (const gm of data.groupMessages) {
+        const gmStr = JSON.stringify(gm);
+        if (lastSyncedCache.groupMessages.get(gm.id) !== gmStr) {
+          gmPromises.push((async () => {
+            try {
+              const gmDocRef = firestore!.collection('group_messages').doc(gm.id);
+              const { id, ...gmWithoutId } = gm;
+              await gmDocRef.set(gmWithoutId);
+              lastSyncedCache.groupMessages.set(gm.id, gmStr);
+            } catch (gmErr) {
+              console.error(`Error saving Group Message ${gm.id} to Firestore:`, gmErr);
+            }
+          })());
+        }
+      }
+    }
+
     const deletionPromises: Promise<any>[] = [];
+
+    const currentStoryIds = new Set(data.stories ? data.stories.map(s => s.id) : []);
+    for (const cachedId of lastSyncedCache.stories.keys()) {
+      if (!currentStoryIds.has(cachedId)) {
+        deletionPromises.push((async () => {
+          try {
+            await firestore!.collection('stories').doc(cachedId).delete();
+            lastSyncedCache.stories.delete(cachedId);
+          } catch (delErr) {
+            console.error(`Error deleting Story ${cachedId} from Firestore:`, delErr);
+          }
+        })());
+      }
+    }
+
+    const currentGroupIds = new Set(data.groupChats ? data.groupChats.map(g => g.id) : []);
+    for (const cachedId of lastSyncedCache.groupChats.keys()) {
+      if (!currentGroupIds.has(cachedId)) {
+        deletionPromises.push((async () => {
+          try {
+            await firestore!.collection('group_chats').doc(cachedId).delete();
+            lastSyncedCache.groupChats.delete(cachedId);
+          } catch (delErr) {
+            console.error(`Error deleting Group ${cachedId} from Firestore:`, delErr);
+          }
+        })());
+      }
+    }
+
+    const currentGmIds = new Set(data.groupMessages ? data.groupMessages.map(gm => gm.id) : []);
+    for (const cachedId of lastSyncedCache.groupMessages.keys()) {
+      if (!currentGmIds.has(cachedId)) {
+        deletionPromises.push((async () => {
+          try {
+            await firestore!.collection('group_messages').doc(cachedId).delete();
+            lastSyncedCache.groupMessages.delete(cachedId);
+          } catch (delErr) {
+            console.error(`Error deleting Group Message ${cachedId} from Firestore:`, delErr);
+          }
+        })());
+      }
+    }
     
     const currentReelSubIds = new Set(data.reelSubscriptions ? data.reelSubscriptions.map(rs => rs.id) : []);
     for (const cachedId of lastSyncedCache.reelSubscriptions.keys()) {
@@ -1756,6 +1873,39 @@ async function syncFromFirestore() {
       console.log('No reel_subscriptions collection yet in Firestore');
     }
 
+    const storiesColRef = firestore.collection('stories');
+    let dbStories: any[] = [];
+    try {
+      const storiesSnapshot = await storiesColRef.get();
+      storiesSnapshot.forEach((docSnap) => {
+        dbStories.push({ id: docSnap.id, ...docSnap.data() });
+      });
+    } catch (e) {
+      console.log('No stories collection yet in Firestore');
+    }
+
+    const groupsColRef = firestore.collection('groups');
+    let dbGroups: any[] = [];
+    try {
+      const groupsSnapshot = await groupsColRef.get();
+      groupsSnapshot.forEach((docSnap) => {
+        dbGroups.push({ id: docSnap.id, ...docSnap.data() });
+      });
+    } catch (e) {
+      console.log('No groups collection yet in Firestore');
+    }
+
+    const gmColRef = firestore.collection('group_messages');
+    let dbGroupMessages: any[] = [];
+    try {
+      const gmSnapshot = await gmColRef.get();
+      gmSnapshot.forEach((docSnap) => {
+        dbGroupMessages.push({ id: docSnap.id, ...docSnap.data() });
+      });
+    } catch (e) {
+      console.log('No group_messages collection yet in Firestore');
+    }
+
     if (dbUsers.length > 0) {
       console.log(`📱 Found ${dbUsers.length} users in Firestore. Cleaning fake records & updating local cache...`);
 
@@ -1811,7 +1961,10 @@ async function syncFromFirestore() {
         directMessages: dbDMs.length > 0 ? dbDMs : undefined,
         merchantAds: dbMerchantAds.length > 0 ? dbMerchantAds : undefined,
         reels: dbReels.length > 0 ? dbReels : INITIAL_REELS,
-        reelSubscriptions: dbReelSubs
+        reelSubscriptions: dbReelSubs,
+        stories: dbStories,
+        groupChats: dbGroups,
+        groupMessages: dbGroupMessages
       };
       
       // Update/synchronize admin details if needed
