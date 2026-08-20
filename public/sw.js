@@ -1,12 +1,21 @@
-const CACHE = "zone-v2";
+const CACHE = "zone-v3";
+const MEDIA_CACHE = "zone-media-v1";
+const API_CACHE = "zone-api-v1";
+
+const STATIC_ASSETS = [
+  "/",
+  "/index.html",
+  "/manifest.json",
+  "/icon-192.png",
+  "/icon-512.png"
+];
 
 self.addEventListener("install", event => {
   event.waitUntil(
     caches.open(CACHE).then(cache => {
-      return Promise.allSettled([
-        cache.add("/"),
-        cache.add("/index.html")
-      ]).then(() => {
+      return Promise.allSettled(
+        STATIC_ASSETS.map(url => cache.add(url))
+      ).then(() => {
         console.log("SW: Cached default assets");
       });
     }).then(() => self.skipWaiting())
@@ -18,7 +27,7 @@ self.addEventListener("activate", event => {
     caches.keys().then(keys => {
       return Promise.all(
         keys.map(key => {
-          if (key !== CACHE) {
+          if (key !== CACHE && key !== MEDIA_CACHE && key !== API_CACHE) {
             console.log("SW: Removing old cache", key);
             return caches.delete(key);
           }
@@ -38,9 +47,14 @@ self.addEventListener("fetch", event => {
 
   const url = new URL(event.request.url);
   const isHTML = url.pathname === '/' || url.pathname.endsWith('.html');
+  const isMedia = url.pathname.startsWith('/uploads/') || 
+                  url.pathname.match(/\.(png|jpg|jpeg|webp|gif|svg|ico)$/i) || 
+                  url.hostname.includes('unsplash.com') || 
+                  url.hostname.includes('picsum.photos');
+  const isApi = url.pathname.startsWith('/api/');
 
   if (isHTML) {
-    // Network-First para sa index.html upang laging makuha ang pinakabagong CSS at JS filenames
+    // Network-First for HTML to always get the latest bundle hash
     event.respondWith(
       fetch(event.request)
         .then(response => {
@@ -54,12 +68,48 @@ self.addEventListener("fetch", event => {
           return caches.match(event.request);
         })
     );
+  } else if (isMedia) {
+    // Cache-First for images & media to preserve mobile data bandwidth
+    event.respondWith(
+      caches.open(MEDIA_CACHE).then(async cache => {
+        const cached = await cache.match(event.request);
+        if (cached) {
+          return cached;
+        }
+
+        try {
+          const networkResponse = await fetch(event.request);
+          if (networkResponse && networkResponse.status === 200) {
+            cache.put(event.request, networkResponse.clone());
+          }
+          return networkResponse;
+        } catch (err) {
+          // If offline and not in cache, fallback
+          return cached || new Response('', { status: 408 });
+        }
+      })
+    );
+  } else if (isApi) {
+    // Network-First with API cache fallback for resilient offline reading
+    event.respondWith(
+      fetch(event.request)
+        .then(response => {
+          if (response.status === 200 && (url.pathname.includes('/posts') || url.pathname.includes('/reels') || url.pathname.includes('/profile'))) {
+            const copy = response.clone();
+            caches.open(API_CACHE).then(cache => cache.put(event.request, copy));
+          }
+          return response;
+        })
+        .catch(() => {
+          return caches.match(event.request);
+        })
+    );
   } else {
-    // Cache-First na may Network fallback para sa iba pang asset
+    // Cache-First with Network fallback for static JavaScript and CSS assets
     event.respondWith(
       caches.match(event.request).then(response => {
         return response || fetch(event.request).then(networkResponse => {
-          if (networkResponse.status === 200 && (url.pathname.includes('/assets/') || url.pathname.endsWith('.png') || url.pathname.endsWith('.jpg') || url.pathname.endsWith('.json'))) {
+          if (networkResponse.status === 200 && (url.pathname.includes('/assets/') || url.pathname.endsWith('.json'))) {
             const copy = networkResponse.clone();
             caches.open(CACHE).then(cache => cache.put(event.request, copy));
           }

@@ -7,6 +7,7 @@ import {
   CheckCircle2, Layers
 } from 'lucide-react';
 import { ZoneStory, StoryViewerDetail } from '../types';
+import { dataSaver } from '../utils/dataSaver';
 
 interface ZoneStoriesProps {
   user: {
@@ -538,22 +539,27 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
               {/* Media Background if Image or Video */}
               {myGroup.latestStory.mediaType === 'image' && myGroup.latestStory.mediaUrl && (
                 <img
-                  src={myGroup.latestStory.mediaUrl}
+                  src={dataSaver.getOptimizedImageUrl(myGroup.latestStory.mediaUrl, { width: 280, quality: 50 })}
                   alt={myGroup.userName}
                   className="absolute inset-0 w-full h-full object-cover"
                   loading="lazy"
+                  decoding="async"
                   referrerPolicy="no-referrer"
                 />
               )}
 
               {myGroup.latestStory.mediaType === 'video' && myGroup.latestStory.mediaUrl && (
                 <div className="absolute inset-0 w-full h-full bg-slate-900">
-                  <video
-                    src={myGroup.latestStory.mediaUrl}
-                    className="w-full h-full object-cover opacity-80"
-                    muted
-                    playsInline
-                  />
+                  {!dataSaver.isDataSaverActive() ? (
+                    <video
+                      src={myGroup.latestStory.mediaUrl}
+                      className="w-full h-full object-cover opacity-80"
+                      muted
+                      playsInline
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-b from-indigo-950 to-slate-900 opacity-90" />
+                  )}
                   <div className="absolute inset-0 flex items-center justify-center">
                     <span className="w-7 h-7 rounded-full bg-black/50 backdrop-blur-xs flex items-center justify-center text-white">
                       <Play className="w-3.5 h-3.5 fill-white ml-0.5" />
@@ -685,22 +691,27 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
                 {/* Media Background if Image or Video */}
                 {group.latestStory.mediaType === 'image' && group.latestStory.mediaUrl && (
                   <img
-                    src={group.latestStory.mediaUrl}
+                    src={dataSaver.getOptimizedImageUrl(group.latestStory.mediaUrl, { width: 280, quality: 50 })}
                     alt={group.userName}
                     className="absolute inset-0 w-full h-full object-cover"
                     loading="lazy"
+                    decoding="async"
                     referrerPolicy="no-referrer"
                   />
                 )}
 
                 {group.latestStory.mediaType === 'video' && group.latestStory.mediaUrl && (
                   <div className="absolute inset-0 w-full h-full bg-slate-900">
-                    <video
-                      src={group.latestStory.mediaUrl}
-                      className="w-full h-full object-cover opacity-80"
-                      muted
-                      playsInline
-                    />
+                    {!dataSaver.isDataSaverActive() ? (
+                      <video
+                        src={group.latestStory.mediaUrl}
+                        className="w-full h-full object-cover opacity-80"
+                        muted
+                        playsInline
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-gradient-to-b from-indigo-950 to-slate-900 opacity-90" />
+                    )}
                     <div className="absolute inset-0 flex items-center justify-center">
                       <span className="w-7 h-7 rounded-full bg-black/50 backdrop-blur-xs flex items-center justify-center text-white">
                         <Play className="w-3.5 h-3.5 fill-white ml-0.5" />

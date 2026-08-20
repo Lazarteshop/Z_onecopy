@@ -74,6 +74,8 @@ import { WithdrawalPolicyModal } from './components/WithdrawalPolicyModal';
 import { WithdrawalPolicyBanner } from './components/WithdrawalPolicyBanner';
 import { AddCampaignModal } from './components/AddCampaignModal';
 import { BackgroundNotificationModal } from './components/BackgroundNotificationModal';
+import { DataSaverSettingsModal } from './components/DataSaverSettingsModal';
+import { dataSaver } from './utils/dataSaver';
 import { soundEffects } from './utils/audio';
 import { 
   subscribeUserToPush, 
@@ -195,6 +197,15 @@ export default function App() {
   // Always true on initial app load / open so the popup banner shows every time
   const [showWithdrawalPolicyModal, setShowWithdrawalPolicyModal] = useState<boolean>(true);
   const [showPushNotifModal, setShowPushNotifModal] = useState<boolean>(false);
+  const [showDataSaverModal, setShowDataSaverModal] = useState<boolean>(false);
+  const [isDataSaverActive, setIsDataSaverActive] = useState<boolean>(() => dataSaver.isDataSaverActive());
+
+  useEffect(() => {
+    const unsub = dataSaver.subscribe((active) => {
+      setIsDataSaverActive(active);
+    });
+    return unsub;
+  }, []);
 
   // 🌐 CLONE / TESTING DEMO MODE DETECTOR
   const [isDemoMode, setIsDemoMode] = useState<boolean>(() => {
@@ -285,7 +296,12 @@ export default function App() {
 
   useEffect(() => {
     fetchReels();
-    const interval = setInterval(fetchReels, 15000);
+    const pollTime = dataSaver.getPollingInterval(25000);
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        fetchReels();
+      }
+    }, pollTime);
     const handleOpen = () => fetchReels();
     window.addEventListener('open-reels-widget', handleOpen);
     window.addEventListener('refresh-reels', handleOpen);
@@ -868,12 +884,13 @@ export default function App() {
   // Periodic active polling check to sync admin or other devices' actions
   useEffect(() => {
     if (!token) return;
+    const pollTime = dataSaver.getPollingInterval(20000);
     const interval = setInterval(() => {
       // Only poll when the browser tab is actually visible and active
       if (!document.hidden) {
         fetchUserProfile(token, true);
       }
-    }, 15000); // Polling every 15 seconds (aligned with Facebook real-time sync)
+    }, pollTime);
 
     const handleRefresh = () => {
       fetchUserProfile(token, true);
@@ -2196,6 +2213,24 @@ export default function App() {
                     </span>
                   </button>
 
+                  {/* 📶 INTELLIGENT MOBILE DATA SAVER BUTTON */}
+                  <button
+                    onClick={() => setShowDataSaverModal(true)}
+                    className={`${
+                      isDataSaverActive
+                        ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40'
+                        : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                    } hover:scale-[1.02] active:scale-[0.98] text-[9px] sm:text-[10px] font-black px-2 sm:px-2.5 py-1.5 rounded-lg sm:rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 shadow-md select-none`}
+                    title={language === 'tl' ? 'Mobile Data Saver Settings' : 'Mobile Data Saver Settings'}
+                  >
+                    <Smartphone className={`w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0 ${isDataSaverActive ? 'text-amber-400 animate-pulse' : 'text-slate-400'}`} />
+                    <span className="whitespace-nowrap">
+                      {isDataSaverActive
+                        ? (language === 'tl' ? '📶 Data Saver: ON' : '📶 Data Saver: ON')
+                        : (language === 'tl' ? '📶 Data Saver: OFF' : '📶 Data Saver: OFF')}
+                    </span>
+                  </button>
+
                   {/* 🎬 WATCH REELS HEADER BUTTON (Smaller & Compact, next to Allow Notif) */}
                   <button
                     onClick={() => {
@@ -3181,6 +3216,14 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
         onWatchRewardReel={handleWatchRewardReel}
         triggerNotification={triggerNotification}
         onRefreshReels={fetchReels}
+      />
+
+      {/* 📶 INTELLIGENT MOBILE DATA SAVER SETTINGS MODAL */}
+      <DataSaverSettingsModal
+        isOpen={showDataSaverModal}
+        onClose={() => setShowDataSaverModal(false)}
+        language={language}
+        triggerNotification={triggerNotification}
       />
 
     </div>

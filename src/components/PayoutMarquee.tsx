@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { WithdrawalRequest } from '../types';
 import { CheckCircle2, Sparkles, Star, TrendingUp, ShieldCheck } from 'lucide-react';
+import { dataSaver } from '../utils/dataSaver';
 
 interface PayoutMarqueeProps {
   realUserWithdrawals?: WithdrawalRequest[];
@@ -159,25 +160,22 @@ export default function PayoutMarquee({
     let mounted = true;
     const fetchRecentPayouts = async () => {
       try {
-        const res = await fetch('/api/payouts/recent');
-        if (res.ok) {
-          const data = await res.json();
-          if (mounted && Array.isArray(data.payouts)) {
-            const formatted = data.payouts
-              .filter((p: any) => {
-                const name = (p.userName || '').trim();
-                return name && !name.toLowerCase().includes('unknown') && !/^\d+$/.test(name);
-              })
-              .map((p: any) => ({
-                id: `real-server-${p.id}`,
-                userName: p.userName,
-                amount: p.amount || 100,
-                dateStr: p.createdAt || 'Ngayon',
-                method: 'GCash',
-                isReal: true
-              }));
-            setFetchedRealPayouts(formatted);
-          }
+        const data = await dataSaver.dedupedFetch<{ payouts: any[] }>('/api/payouts/recent', undefined, 10000);
+        if (mounted && Array.isArray(data.payouts)) {
+          const formatted = data.payouts
+            .filter((p: any) => {
+              const name = (p.userName || '').trim();
+              return name && !name.toLowerCase().includes('unknown') && !/^\d+$/.test(name);
+            })
+            .map((p: any) => ({
+              id: `real-server-${p.id}`,
+              userName: p.userName,
+              amount: p.amount || 100,
+              dateStr: p.createdAt || 'Ngayon',
+              method: 'GCash',
+              isReal: true
+            }));
+          setFetchedRealPayouts(formatted);
         }
       } catch (err) {
         // Silently handle offline/dev fallback
@@ -185,7 +183,12 @@ export default function PayoutMarquee({
     };
 
     fetchRecentPayouts();
-    const interval = setInterval(fetchRecentPayouts, 15000); // refresh every 15s
+    const pollTime = dataSaver.getPollingInterval(30000);
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        fetchRecentPayouts();
+      }
+    }, pollTime);
     return () => {
       mounted = false;
       clearInterval(interval);

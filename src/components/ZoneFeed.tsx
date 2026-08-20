@@ -44,10 +44,14 @@ import {
   LogOut,
   Settings,
   ShieldCheck,
-  Paperclip
+  Paperclip,
+  Wifi,
+  Smartphone
 } from 'lucide-react';
 import { ZonePost, GroupChat, GroupMessage, ZoneStory } from '../types';
 import { ZoneStories } from './ZoneStories';
+import { dataSaver } from '../utils/dataSaver';
+import { DataSaverSettingsModal } from './DataSaverSettingsModal';
 
 interface ZoneFeedProps {
   token: string;
@@ -779,9 +783,15 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       }
     };
 
-    // Run immediately and poll every 6s when idle (1.5s when in active call)
+    // Run immediately and poll adaptively based on network status (1.5s when in active call)
     pollDmsAndCalls();
-    const intervalId = setInterval(pollDmsAndCalls, activeCallSession ? 1500 : 6000);
+    const pollInterval = activeCallSession ? 1500 : dataSaver.getPollingInterval(6000);
+    const intervalId = setInterval(() => {
+      // Pause background synchronization when tab is hidden unless in an active call
+      if (!document.hidden || activeCallSession) {
+        pollDmsAndCalls();
+      }
+    }, pollInterval);
 
     return () => {
       active = false;
@@ -1234,27 +1244,38 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     }
   };
 
-  // Z-one Social Free/Basic Mode State
+  // Z-one Social Free/Basic Mode & Intelligent Mobile Data Saver State
   const [isBasicMode, setIsBasicMode] = useState<boolean>(() => {
-    return localStorage.getItem('zone_basic_mode') === 'true';
+    return dataSaver.isDataSaverActive();
   });
+  const [showDataSaverModal, setShowDataSaverModal] = useState<boolean>(false);
   const [revealedMedia, setRevealedMedia] = useState<Set<string>>(new Set());
+  const [revealedVideos, setRevealedVideos] = useState<Set<string>>(new Set());
+
+  // Subscribe to DataSaverManager changes (Auto detection, manual toggles)
+  useEffect(() => {
+    const unsub = dataSaver.subscribe((isActive) => {
+      setIsBasicMode(isActive);
+    });
+    return unsub;
+  }, []);
 
   const handleToggleBasicMode = (val: boolean) => {
+    dataSaver.setMode(val ? 'on' : 'off');
     setIsBasicMode(val);
     localStorage.setItem('zone_basic_mode', String(val));
     if (val) {
       triggerNotification(
         language === 'tl'
-          ? 'Naka-ON na ang Basic Mode (Libre)! Itinago muna ang mga larawan at video para makatipid sa load.'
-          : 'Basic Mode is ON! Photos and videos are temporarily hidden to save mobile data.',
+          ? 'Naka-ON na ang Mobile Data Saver! Naka-optimize ang images at naka-pause ang videos.'
+          : 'Mobile Data Saver is ON! Media is optimized and video auto-download is paused.',
         'info'
       );
     } else {
       triggerNotification(
         language === 'tl'
-          ? 'Naka-OFF na ang Basic Mode. Ilo-load na muli ang lahat ng larawan at video.'
-          : 'Basic Mode is OFF. All images and videos will load normally.',
+          ? 'Naka-OFF na ang Data Saver. Ilo-load na muli ang lahat ng full-resolution media.'
+          : 'Data Saver is OFF. All images and videos will load in standard resolution.',
         'success'
       );
     }
@@ -1290,8 +1311,10 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     } else if (avatarUrl && (avatarUrl.startsWith('http') || avatarUrl.startsWith('data:') || avatarUrl.startsWith('blob:'))) {
       avatarEl = (
         <img 
-          src={avatarUrl} 
+          src={dataSaver.getOptimizedImageUrl(avatarUrl, { width: 80, quality: 40 })} 
           alt={name} 
+          loading="lazy"
+          decoding="async"
           className={`${sizeClass} rounded-full object-cover border border-slate-200 shadow-sm shrink-0`} 
           referrerPolicy="no-referrer" 
         />
@@ -1745,12 +1768,13 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       fetchModUsers();
     }
 
-    // Auto-refresh the feed every 15 seconds silently like Facebook (only when window is active)
+    // Auto-refresh the feed silently (only when window is active, throttled on Mobile Data Saver)
+    const feedInterval = dataSaver.getPollingInterval(15000);
     const interval = setInterval(() => {
       if (!document.hidden) {
         fetchPosts(true);
       }
-    }, 15000);
+    }, feedInterval);
 
     return () => clearInterval(interval);
   }, [token]);
@@ -2473,7 +2497,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   return (
     <div id="z-one-container" className="space-y-6">
 
-      {/* 📶 PHILIPPINE FREE/BASIC MODE CONTROL BAR */}
+      {/* 📶 INTELLIGENT MOBILE DATA SAVER CONTROL BAR */}
       <div className={`rounded-3xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 border shadow-xs transition-all duration-300 ${
         isBasicMode 
           ? 'bg-slate-900 border-slate-800 text-white' 
@@ -2487,39 +2511,58 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           <div className="text-xs space-y-0.5">
             {isBasicMode ? (
               <>
-                <p className="font-extrabold text-amber-400 uppercase tracking-wider text-[10px] sm:text-xs">
-                  🇵🇭 Naka-Basic Mode Ka (Free Data)
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="font-extrabold text-amber-400 uppercase tracking-wider text-[10px] sm:text-xs">
+                    🇵🇭 Intelligent Mobile Data Saver: ON
+                  </p>
+                  <span className="bg-amber-500/20 text-amber-300 text-[9px] font-black px-2 py-0.2 rounded-full border border-amber-500/30">
+                    {dataSaver.getNetworkInfo().effectiveType?.toUpperCase() || 'MOBILE'}
+                  </span>
+                </div>
                 <p className="text-[10px] sm:text-xs text-slate-300 font-semibold">
-                  Naitago ang mga payout screenshot, preset photos, at videos para makatipid sa mobile load/data. Libreng mag-post at mag-interact!
+                  Naka-compress ang mga larawan at naka-pause ang video auto-load para makatipid sa prepaid mobile load.
                 </p>
               </>
             ) : (
               <>
-                <p className="font-extrabold text-indigo-800 uppercase tracking-wider text-[10px] sm:text-xs">
-                  🌐 Naka-Normal Mode Ka (With Data)
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="font-extrabold text-indigo-800 uppercase tracking-wider text-[10px] sm:text-xs">
+                    🌐 Standard Mode (Full Quality)
+                  </p>
+                  <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black px-2 py-0.2 rounded-full border border-emerald-200">
+                    {dataSaver.getNetworkInfo().effectiveType?.toUpperCase() || 'FAST'}
+                  </span>
+                </div>
                 <p className="text-[10px] sm:text-xs text-indigo-900/85 font-semibold">
-                  Ilo-load ang lahat ng profile pics at payout screenshots. Lumipat sa Basic Mode kung ubos na ang iyong mobile internet load.
+                  Naka-load ang full resolution images at media. Awtomatikong mag-titipid kung lumipat sa mobile data.
                 </p>
               </>
             )}
           </div>
         </div>
-        <div className="flex gap-2 shrink-0 w-full sm:w-auto justify-end">
+        <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end">
+          <button
+            type="button"
+            onClick={() => setShowDataSaverModal(true)}
+            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition cursor-pointer"
+            title="Data Saver Settings"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
           {isBasicMode ? (
             <button
               onClick={() => handleToggleBasicMode(false)}
-              className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] sm:text-xs px-4 py-2 rounded-xl cursor-pointer shadow-md transition"
+              className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] sm:text-xs px-4 py-2 rounded-xl cursor-pointer shadow-md transition"
             >
-              🌐 Use Normal Mode
+              🌐 Standard Mode
             </button>
           ) : (
             <button
               onClick={() => handleToggleBasicMode(true)}
-              className="w-full sm:w-auto bg-slate-800 hover:bg-slate-700 text-white font-black text-[10px] sm:text-xs px-4 py-2 rounded-xl cursor-pointer shadow-md transition"
+              className="flex-1 sm:flex-none bg-slate-800 hover:bg-slate-700 text-white font-black text-[10px] sm:text-xs px-4 py-2 rounded-xl cursor-pointer shadow-md transition flex items-center justify-center gap-1.5"
             >
-              📶 Go to Basic Mode (Libre)
+              <Smartphone className="w-3.5 h-3.5 text-amber-400" />
+              <span>📶 Data Saver (Libre)</span>
             </button>
           )}
         </div>
@@ -3543,8 +3586,10 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                               {post.mediaType === 'image' && (
                                 <div className="rounded-2xl overflow-hidden border border-slate-100 relative cursor-zoom-in group hover:opacity-95 transition">
                                   <img 
-                                    src={post.mediaUrl} 
+                                    src={dataSaver.getOptimizedImageUrl(post.mediaUrl, { width: 720, quality: 55 })} 
                                     alt="Post Attachment" 
+                                    loading="lazy"
+                                    decoding="async"
                                     className="w-full max-h-80 object-cover" 
                                     referrerPolicy="no-referrer" 
                                     onClick={() => setLightboxImage(post.mediaUrl!)}
@@ -3557,20 +3602,40 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                     }}
                                   />
                                   {isBasicMode && (
-                                    <span className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[9px] font-black px-2 py-0.5 rounded-full">
-                                      Loaded via Mobile Data
+                                    <span className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 backdrop-blur-xs">
+                                      <Smartphone className="w-2.5 h-2.5 text-emerald-400" />
+                                      <span>Data Saver Optimized</span>
                                     </span>
                                   )}
                                 </div>
                               )}
 
                               {post.mediaType === 'video' && (
-                                <div className="rounded-2xl overflow-hidden border border-slate-100 relative">
-                                  <video src={post.mediaUrl} controls className="w-full max-h-80 object-cover" />
-                                  {isBasicMode && (
-                                    <span className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[9px] font-black px-2 py-0.5 rounded-full">
-                                      Loaded via Mobile Data
-                                    </span>
+                                <div className="rounded-2xl overflow-hidden border border-slate-100 relative bg-slate-950">
+                                  {isBasicMode && !revealedVideos.has(post.id) ? (
+                                    <div 
+                                      onClick={() => setRevealedVideos(prev => new Set(prev).add(post.id))}
+                                      className="w-full h-52 sm:h-64 bg-gradient-to-br from-slate-900 via-slate-850 to-slate-950 flex flex-col items-center justify-center p-4 cursor-pointer group hover:bg-slate-900 transition relative"
+                                    >
+                                      <div className="w-14 h-14 rounded-full bg-rose-600 group-hover:bg-rose-500 flex items-center justify-center text-white shadow-xl transition-transform group-hover:scale-110 mb-2">
+                                        <Play className="w-6 h-6 fill-white ml-0.5" />
+                                      </div>
+                                      <p className="text-xs font-black text-white tracking-wide">
+                                        {language === 'tl' ? 'I-tap para i-play ang video' : 'Tap to play video'}
+                                      </p>
+                                      <span className="text-[10px] text-emerald-400 font-bold mt-1 bg-emerald-950/80 px-2.5 py-0.5 rounded-full border border-emerald-700/50 flex items-center gap-1">
+                                        <Smartphone className="w-3 h-3" />
+                                        <span>{language === 'tl' ? 'Naka-pause ang auto-download' : 'Auto-download paused'}</span>
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <video 
+                                      src={post.mediaUrl} 
+                                      controls 
+                                      preload="metadata"
+                                      playsInline
+                                      className="w-full max-h-80 object-cover bg-black" 
+                                    />
                                   )}
                                 </div>
                               )}
@@ -6077,6 +6142,13 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 📶 INTELLIGENT MOBILE DATA SAVER SETTINGS MODAL */}
+      <DataSaverSettingsModal
+        isOpen={showDataSaverModal}
+        onClose={() => setShowDataSaverModal(false)}
+        language={language}
+      />
 
     </div>
   );
