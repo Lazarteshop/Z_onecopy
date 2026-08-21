@@ -24,8 +24,8 @@ try {
   console.error('Failed to initialize VAPID details:', vapidErr);
 }
 
-app.use(express.json({ limit: '25mb' }));
-app.use(express.urlencoded({ limit: '25mb', extended: true }));
+app.use(express.json({ limit: '200mb' }));
+app.use(express.urlencoded({ limit: '200mb', extended: true }));
 
 // --- HIGH-QUALITY TEXT-TO-SPEECH PROXY ENDPOINT ---
 function splitTextIntoChunks(text: string, maxLength: number = 150): string[] {
@@ -709,6 +709,8 @@ app.use((req, res, next) => {
 });
 
 const DB_FILE_PATH = path.join(process.cwd(), 'src', 'data', 'db.json');
+const DB_BACKUP_PATH = path.join(process.cwd(), 'src', 'data', 'db.json.bak');
+const DB_TMP_PATH = path.join(process.cwd(), 'src', 'data', 'db.json.tmp');
 
 // --- FIREBASE CONFIGURATION & INITIALIZATION ---
 let firebaseConfigObj = {
@@ -1067,7 +1069,7 @@ interface DBStructure {
 let cachedDB: DBStructure | null = null;
 
 function loadDB(): DBStructure {
-  if (cachedDB) {
+  if (cachedDB && Array.isArray(cachedDB.users) && cachedDB.users.length > 0) {
     return cachedDB;
   }
   const envAdminEmail = process.env.ADMIN_EMAIL || 'admin@example.com';
@@ -1080,129 +1082,108 @@ function loadDB(): DBStructure {
     fs.mkdirSync(dir, { recursive: true });
   }
 
+  let loaded: DBStructure | null = null;
+
+  // 1. Try reading primary db.json
   if (fs.existsSync(DB_FILE_PATH)) {
     try {
       const data = fs.readFileSync(DB_FILE_PATH, 'utf-8');
-      const loaded: DBStructure = JSON.parse(data);
-      // Synchronize/Update admin credentials dynamically from environment info
-      const admin = loaded.users.find(u => u.isAdmin);
-      if (admin) {
-        admin.email = envAdminEmail;
-        admin.password = envAdminPassword;
-        admin.name = envAdminName;
-      }
-      loaded.merchantAds = loaded.merchantAds || [];
-      if (!loaded.campaigns || loaded.campaigns.length < INITIAL_CAMPAIGNS.length) {
-        const existingIds = new Set(loaded.campaigns ? loaded.campaigns.map((c: any) => c.id) : []);
-        const newCampaignsToAdd = INITIAL_CAMPAIGNS.filter(c => !existingIds.has(c.id));
-        loaded.campaigns = [...(loaded.campaigns || []), ...newCampaignsToAdd];
-        try {
-          fs.writeFileSync(DB_FILE_PATH, JSON.stringify(loaded, null, 2));
-        } catch (writeErr) {
-          console.error('Failed to write back updated campaigns to db.json', writeErr);
+      if (data && data.trim().length > 0) {
+        const parsed = JSON.parse(data);
+        if (parsed && Array.isArray(parsed.users) && parsed.users.length > 0) {
+          loaded = parsed;
         }
       }
-      if (!loaded.posts) {
-        loaded.posts = [
-          {
-            id: 'post-welcome',
-            userId: 'admin-rosco',
-            userName: 'System Administrator',
-            userAvatar: '👑',
-            text: 'Welcome sa Z-one! Ang pinakabagong social media portal kung saan pwede kayong mag-post, mag-like, mag-comment, at mag-Zone (Follow) sa bawat isa. Iwasan po natin ang bastos/pornographic na content at bad words upang maiwasan ang ma-banned. Happy Click-Earning!',
-            mediaUrl: 'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=800&auto=format&fit=crop&q=60',
-            mediaType: 'image',
-            likes: [],
-            comments: [
-              {
-                id: 'comment-seed-1',
-                userId: 'user-juan',
-                userName: 'Juan Dela Cruz',
-                userAvatar: '👨‍💻',
-                text: 'Wow, napakagandang platform naman nito! Salamat admin!',
-                createdAt: new Date(Date.now() - 3600000).toISOString()
-              }
-            ],
-            createdAt: new Date(Date.now() - 7200000).toISOString()
-          }
-        ];
-      }
-      if (!loaded.reels || loaded.reels.length === 0) {
-        loaded.reels = INITIAL_REELS;
-      }
-      if (!loaded.groupChats || loaded.groupChats.length === 0) {
-        loaded.groupChats = [
-          {
-            id: 'gc-community-main',
-            name: 'Ka-Zone Official Community GC 🌟',
-            avatar: '🇵🇭',
-            description: 'Opisyal na Group Chat ng lahat ng Ka-Zone members para sa kwentuhan, tulungan, at click-earning updates!',
-            createdBy: 'admin-rosco',
-            creatorName: 'System Administrator',
-            members: ['admin-rosco', 'user-juan', 'user-clara'],
-            createdAt: new Date(Date.now() - 86400000).toISOString(),
-            updatedAt: new Date().toISOString()
-          }
-        ];
-      }
-      if (!loaded.groupMessages || loaded.groupMessages.length === 0) {
-        loaded.groupMessages = [
-          {
-            id: 'gmsg-welcome-1',
-            groupId: 'gc-community-main',
-            senderId: 'admin-rosco',
-            senderName: 'System Administrator',
-            senderAvatar: '👑',
-            text: 'Maligayang pagdating sa Opisyal na Group Chat ng Z-one! Dito ay maaari kayong mag-usap-usap ng libre, magpalitan ng tips sa click-earning, at gumawa rin ng inyong sariling mga Group Chat kasama ang inyong mga kaibigan at team.',
-            createdAt: new Date(Date.now() - 86000000).toISOString()
-          },
-          {
-            id: 'gmsg-welcome-2',
-            groupId: 'gc-community-main',
-            senderId: 'user-juan',
-            senderName: 'Juan Dela Cruz',
-            senderAvatar: '👨‍💻',
-            text: 'Magandang araw sa lahat ng Ka-Zone members! Napakabilis ng palitan ng mensahe dito.',
-            createdAt: new Date(Date.now() - 3600000).toISOString()
-          }
-        ];
-      }
-
-      // Automatically purge simulated/fake withdrawals (with-db-, with-sim-, Ago 2, 2026)
-      if (loaded.users && Array.isArray(loaded.users)) {
-        loaded.users.forEach(u => {
-          if (Array.isArray(u.withdrawals)) {
-            u.withdrawals = u.withdrawals.filter(w => {
-              if (w.id === 'with-1785655833689') return true; // Preserve Jonard Belleza real withdrawal
-              const isFake = w.id.startsWith('with-db-') || w.id.startsWith('with-sim-') || String(w.createdAt || '').includes('Ago 2, 2026');
-              return !isFake;
-            });
-          }
-        });
-
-        // Ensure Jonard Belleza has his real withdrawal
-        const jonardB = loaded.users.find(u => u.name && u.name.toLowerCase().includes('jonard belleza'));
-        if (jonardB) {
-          if (!Array.isArray(jonardB.withdrawals)) jonardB.withdrawals = [];
-          if (!jonardB.withdrawals.some(w => w.id === 'with-1785655833689')) {
-            jonardB.withdrawals.push({
-              id: 'with-1785655833689',
-              accountName: 'JONARD BELLEZA',
-              gcashNumber: '09932143141',
-              amount: 126,
-              status: 'success',
-              createdAt: '8/2/2026, 7:30:33 AM',
-              referenceNo: 'REF1136831562'
-            });
-          }
-        }
-      }
-
-      cachedDB = loaded;
-      return loaded;
     } catch (e) {
-      console.error('Error reading database file, resetting...', e);
+      console.error('⚠️ Warning: Primary db.json reading/parsing failed, attempting backup recovery...', e);
     }
+  }
+
+  // 2. Try recovering from backup if primary failed or was corrupted
+  if (!loaded && fs.existsSync(DB_BACKUP_PATH)) {
+    try {
+      const data = fs.readFileSync(DB_BACKUP_PATH, 'utf-8');
+      if (data && data.trim().length > 0) {
+        const parsed = JSON.parse(data);
+        if (parsed && Array.isArray(parsed.users) && parsed.users.length > 0) {
+          console.log('🛡️ Auto-Recovery: Successfully restored database from db.json.bak!');
+          loaded = parsed;
+          try {
+            fs.writeFileSync(DB_FILE_PATH, data, 'utf-8');
+          } catch {}
+        }
+      }
+    } catch (bakErr) {
+      console.error('⚠️ Backup recovery error:', bakErr);
+    }
+  }
+
+  // 3. If loaded successfully from file or backup, ensure integrity
+  if (loaded) {
+    // Synchronize/Update admin credentials dynamically from environment info
+    const admin = loaded.users.find(u => u.isAdmin);
+    if (admin) {
+      admin.email = envAdminEmail;
+      admin.password = envAdminPassword;
+      admin.name = envAdminName;
+    }
+    loaded.merchantAds = loaded.merchantAds || [];
+    if (!loaded.campaigns || loaded.campaigns.length < INITIAL_CAMPAIGNS.length) {
+      const existingIds = new Set(loaded.campaigns ? loaded.campaigns.map((c: any) => c.id) : []);
+      const newCampaignsToAdd = INITIAL_CAMPAIGNS.filter(c => !existingIds.has(c.id));
+      loaded.campaigns = [...(loaded.campaigns || []), ...newCampaignsToAdd];
+    }
+    if (!loaded.posts) {
+      loaded.posts = [];
+    }
+    if (!loaded.reels || loaded.reels.length === 0) {
+      loaded.reels = INITIAL_REELS;
+    }
+    if (!loaded.groupChats) {
+      loaded.groupChats = [];
+    }
+    if (!loaded.groupMessages) {
+      loaded.groupMessages = [];
+    }
+    if (!loaded.stories) {
+      loaded.stories = [];
+    }
+    if (!loaded.directMessages) {
+      loaded.directMessages = [];
+    }
+
+    // Automatically purge simulated/fake withdrawals
+    if (loaded.users && Array.isArray(loaded.users)) {
+      loaded.users.forEach(u => {
+        if (Array.isArray(u.withdrawals)) {
+          u.withdrawals = u.withdrawals.filter(w => {
+            if (w.id === 'with-1785655833689') return true; // Preserve Jonard Belleza real withdrawal
+            const isFake = w.id.startsWith('with-db-') || w.id.startsWith('with-sim-') || String(w.createdAt || '').includes('Ago 2, 2026');
+            return !isFake;
+          });
+        }
+      });
+
+      // Ensure Jonard Belleza has his real withdrawal
+      const jonardB = loaded.users.find(u => u.name && u.name.toLowerCase().includes('jonard belleza'));
+      if (jonardB) {
+        if (!Array.isArray(jonardB.withdrawals)) jonardB.withdrawals = [];
+        if (!jonardB.withdrawals.some(w => w.id === 'with-1785655833689')) {
+          jonardB.withdrawals.push({
+            id: 'with-1785655833689',
+            accountName: 'JONARD BELLEZA',
+            gcashNumber: '09932143141',
+            amount: 126,
+            status: 'success',
+            createdAt: '8/2/2026, 7:30:33 AM',
+            referenceNo: 'REF1136831562'
+          });
+        }
+      }
+    }
+
+    cachedDB = loaded;
+    return loaded;
   }
 
   // Generate unique code helper
@@ -1316,7 +1297,7 @@ function loadDB(): DBStructure {
         name: 'Maria Clara Santos',
         avatar: '👩‍⚕️',
         referralCode: 'REF-CLARAS',
-        invitedBy: 'ADMIN-ROSCO', // Admin can claim bonus for Clara if Clara earnings reach 500!
+        invitedBy: 'ADMIN-ROSCO',
         isAdmin: false,
         stats: {
           balance: 280.00,
@@ -1350,7 +1331,41 @@ function loadDB(): DBStructure {
     ],
     campaigns: INITIAL_CAMPAIGNS,
     merchantAds: [],
-    reels: INITIAL_REELS
+    reels: INITIAL_REELS,
+    stories: [],
+    groupChats: [
+      {
+        id: 'gc-community-main',
+        name: 'Ka-Zone Official Community GC 🌟',
+        avatar: '🇵🇭',
+        description: 'Opisyal na Group Chat ng lahat ng Ka-Zone members para sa kwentuhan, tulungan, at click-earning updates!',
+        createdBy: 'admin-rosco',
+        creatorName: 'System Administrator',
+        members: ['admin-rosco', 'user-juan', 'user-clara'],
+        createdAt: new Date(Date.now() - 86400000).toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+    ],
+    groupMessages: [
+      {
+        id: 'gmsg-welcome-1',
+        groupId: 'gc-community-main',
+        senderId: 'admin-rosco',
+        senderName: 'System Administrator',
+        senderAvatar: '👑',
+        text: 'Maligayang pagdating sa Opisyal na Group Chat ng Z-one! Dito ay maaari kayong mag-usap-usap ng libre, magpalitan ng tips sa click-earning, at gumawa rin ng inyong sariling mga Group Chat kasama ang inyong mga kaibigan at team.',
+        createdAt: new Date(Date.now() - 86000000).toISOString()
+      },
+      {
+        id: 'gmsg-welcome-2',
+        groupId: 'gc-community-main',
+        senderId: 'user-juan',
+        senderName: 'Juan Dela Cruz',
+        senderAvatar: '👨‍💻',
+        text: 'Magandang araw sa lahat ng Ka-Zone members! Napakabilis ng palitan ng mensahe dito.',
+        createdAt: new Date(Date.now() - 3600000).toISOString()
+      }
+    ]
   };
 
   // Add Maria Clara as admin's referred friend at the start
@@ -1358,12 +1373,18 @@ function loadDB(): DBStructure {
     id: 'user-clara',
     name: 'Maria Clara Santos',
     avatar: '👩‍⚕️',
-    currentEarnings: 530.00, // already reached 500! Ready to claim!
+    currentEarnings: 530.00,
     bonusClaimed: false,
     joinedAt: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toLocaleDateString('fil-PH', { month: 'short', day: 'numeric', year: 'numeric' })
   });
 
-  fs.writeFileSync(DB_FILE_PATH, JSON.stringify(defaultDB, null, 2), 'utf-8');
+  try {
+    fs.writeFileSync(DB_FILE_PATH, JSON.stringify(defaultDB, null, 2), 'utf-8');
+    fs.writeFileSync(DB_BACKUP_PATH, JSON.stringify(defaultDB, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Failed to write initial default database:', err);
+  }
+
   cachedDB = defaultDB;
   return defaultDB;
 }
@@ -1438,12 +1459,24 @@ let saveDBTimeout: NodeJS.Timeout | null = null;
 let firestoreSyncTimeout: NodeJS.Timeout | null = null;
 
 function saveDB(data: DBStructure, immediate: boolean = false) {
+  if (!data || !Array.isArray(data.users) || data.users.length === 0) {
+    console.error('⚠️ REFUSING TO SAVE EMPTY/CORRUPTED DB OBJECT TO DISK!');
+    return;
+  }
+
   cachedDB = data;
   
   const doSave = () => {
-    fs.writeFile(DB_FILE_PATH, JSON.stringify(data), 'utf-8', (err) => {
-      if (err) console.error('Error asynchronously writing db.json:', err);
-    });
+    try {
+      const jsonStr = JSON.stringify(data, null, 2);
+      // 1. Atomic write using temp file + rename
+      fs.writeFileSync(DB_TMP_PATH, jsonStr, 'utf-8');
+      fs.renameSync(DB_TMP_PATH, DB_FILE_PATH);
+      // 2. Verified backup copy
+      fs.writeFileSync(DB_BACKUP_PATH, jsonStr, 'utf-8');
+    } catch (err) {
+      console.error('Error in atomic saveDB:', err);
+    }
   };
 
   if (immediate) {
@@ -4989,20 +5022,34 @@ app.get('/api/zone/online', (req, res) => {
 
 // --- REUSABLE HELPER: Save base64 media to disk and chunked Firestore ---
 function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media'): string | null {
-  if (!dataUrl || !dataUrl.startsWith('data:')) {
-    return dataUrl; // Already a URL or empty
+  if (!dataUrl || typeof dataUrl !== 'string') {
+    return null;
+  }
+  if (!dataUrl.startsWith('data:')) {
+    return dataUrl; // Already a clean static URL (/uploads/... or https://...)
   }
   try {
-    const matches = dataUrl.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
-    if (!matches || matches.length !== 3) {
+    const commaIndex = dataUrl.indexOf(',');
+    if (commaIndex === -1) {
       return null;
     }
+    const metaPart = dataUrl.substring(0, commaIndex);
+    const base64Data = dataUrl.substring(commaIndex + 1);
 
-    const mimeType = matches[1];
-    const base64Data = matches[2];
+    const mimeMatch = metaPart.match(/data:([^;]+)/);
+    const mimeType = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
     const buffer = Buffer.from(base64Data, 'base64');
 
-    const extension = mimeType.split('/')[1] || 'bin';
+    let extension = 'bin';
+    if (mimeType.includes('/')) {
+      extension = mimeType.split('/')[1];
+    }
+    if (extension.includes('+')) extension = extension.split('+')[0];
+    if (extension.includes(';')) extension = extension.split(';')[0];
+    if (extension === 'jpeg') extension = 'jpg';
+    if (extension === 'quicktime') extension = 'mov';
+    if (extension === 'x-matroska') extension = 'mkv';
+
     const filename = `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000000)}.${extension}`;
     const uploadDir = path.join(process.cwd(), 'uploads');
 
@@ -5013,25 +5060,31 @@ function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media'): stri
     const filePath = path.join(uploadDir, filename);
     fs.writeFileSync(filePath, buffer);
 
-    // Dynamic Chunked Upload to Firestore for Persistent Storage
+    // Asynchronously and safely upload chunks to Firestore in background
     if (isFirestoreActive && firestore) {
-      const chunkSize = 800 * 1024;
+      const chunkSize = 750 * 1024; // 750KB chunks to safely avoid 1MB document limit
       const totalChunks = Math.ceil(buffer.length / chunkSize);
-      for (let i = 0; i < totalChunks; i++) {
-        const start = i * chunkSize;
-        const end = Math.min(start + chunkSize, buffer.length);
-        const chunkBuffer = buffer.subarray(start, end);
-        const chunkBase64 = chunkBuffer.toString('base64');
-        const chunkDocId = `${filename}_chunk_${i}`;
-        firestore.collection('media_storage').doc(chunkDocId).set({
-          filename,
-          chunkIndex: i,
-          totalChunks,
-          base64: chunkBase64,
-          mimeType,
-          uploadedAt: new Date().toISOString()
-        }).catch((e: any) => console.error(`❌ Error uploading chunk ${i} for ${filename}:`, e));
-      }
+      (async () => {
+        for (let i = 0; i < totalChunks; i++) {
+          try {
+            const start = i * chunkSize;
+            const end = Math.min(start + chunkSize, buffer.length);
+            const chunkBuffer = buffer.subarray(start, end);
+            const chunkBase64 = chunkBuffer.toString('base64');
+            const chunkDocId = `${filename}_chunk_${i}`;
+            await firestore.collection('media_storage').doc(chunkDocId).set({
+              filename,
+              chunkIndex: i,
+              totalChunks,
+              base64: chunkBase64,
+              mimeType,
+              uploadedAt: new Date().toISOString()
+            });
+          } catch (chunkErr) {
+            console.error(`❌ Error uploading chunk ${i} for ${filename}:`, chunkErr);
+          }
+        }
+      })().catch(e => console.error(`Error in async Firestore chunk upload for ${filename}:`, e));
     }
 
     return `/uploads/${filename}`;

@@ -783,8 +783,8 @@ export default function App() {
         if (!silent && data.user.isAdmin && activeTab === 'earn') {
           setActiveTab('admin');
         }
-      } else {
-        // Token has expired/invalid, or server rebooted on Cloud Run. Try auto-restoring session from offline backup!
+      } else if (res.status === 401) {
+        // Token has explicitly expired/invalid. Try auto-restoring session from offline backup!
         const backupStr = localStorage.getItem('gcash_user_backup_profile');
         if (backupStr) {
           try {
@@ -827,8 +827,11 @@ export default function App() {
           }
         }
 
-        // Token has expired or is invalid
+        // Only log out if strictly 401 Unauthorized and auto-restore failed
         handleLogout();
+      } else {
+        // Server temporary 500/502/503 or network lag - DO NOT log out user!
+        console.warn('⚠️ Server temporarily busy (Status: ' + res.status + '). Preserving local session.');
       }
     } catch (e) {
       console.error(e);

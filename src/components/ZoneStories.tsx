@@ -356,7 +356,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
         data = JSON.parse(resText);
       } catch {
         if (res.status === 413) {
-          throw new Error('Masyadong malaki ang video/media file (Max 25MB). Mangyaring pumili ng mas maikling video.');
+          throw new Error('Masyadong malaki ang video/media file (Max 100MB). Mangyaring pumili ng mas maikling video.');
         }
         throw new Error('Pansamantalang nagka-error sa koneksyon. Subukan muli.');
       }
