@@ -82,12 +82,17 @@ export interface ZonePost {
   userAvatar: string;
   text: string;
   mediaUrl?: string;
-  mediaType?: 'image' | 'video';
+  mediaType?: 'image' | 'video' | 'embed';
   mediaUrls?: string[];
+  embedUrl?: string;
+  embedUrls?: string[];
   likes: string[]; // List of user IDs who liked
   comments: ZoneComment[];
   createdAt: string;
   isFlagged?: boolean;
+  isRss?: boolean;
+  rssLink?: string;
+  category?: string;
   sharedPost?: {
     id: string;
     userId: string;
@@ -95,8 +100,9 @@ export interface ZonePost {
     userAvatar: string;
     text: string;
     mediaUrl?: string;
-    mediaType?: 'image' | 'video';
+    mediaType?: 'image' | 'video' | 'embed';
     mediaUrls?: string[];
+    embedUrl?: string;
     createdAt: string;
   };
 }

@@ -300,8 +300,11 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     ];
   });
   const [loadingPosts, setLoadingPosts] = useState(false);
-  const [postFilter, setPostFilter] = useState<'all' | 'news' | 'community'>('all');
-  const [visiblePostLimit, setVisiblePostLimit] = useState<number>(12);
+  const [postFilter, setPostFilter] = useState<'all' | 'news' | 'community' | 'teleserye'>('all');
+  const [selectedServerMap, setSelectedServerMap] = useState<Record<string, string>>({});
+  const [teleseryeSearch, setTeleseryeSearch] = useState<string>('');
+  const [isRefreshingRss, setIsRefreshingRss] = useState(false);
+  const [visiblePostLimit, setVisiblePostLimit] = useState<number>(24);
 
   // --- PRIVATE DIRECT MESSAGE (DM) STATES & INBOX ---
   const [activeDmUser, setActiveDmUser] = useState<{ id: string; name: string; avatar: string } | null>(null);
@@ -1748,13 +1751,19 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   // Memoized filtered posts list based on selected filter
   const filteredPosts = React.useMemo(() => {
     if (postFilter === 'news') {
-      return visiblePosts.filter(p => (p as any).isRss === true || p.userId === 'balita-rss-author');
+      return visiblePosts.filter(p => p.userId === 'balita-rss-author');
+    }
+    if (postFilter === 'teleserye') {
+      const teleseryes = visiblePosts.filter(p => p.userId === 'teleserye-feed-author' || (p as any).category === 'Teleserye');
+      if (!teleseryeSearch.trim()) return teleseryes;
+      const q = teleseryeSearch.toLowerCase().trim();
+      return teleseryes.filter(p => (p.text || '').toLowerCase().includes(q) || (p.userName || '').toLowerCase().includes(q));
     }
     if (postFilter === 'community') {
-      return visiblePosts.filter(p => !(p as any).isRss && p.userId !== 'balita-rss-author');
+      return visiblePosts.filter(p => !(p as any).isRss && p.userId !== 'balita-rss-author' && p.userId !== 'teleserye-feed-author');
     }
     return visiblePosts;
-  }, [visiblePosts, postFilter]);
+  }, [visiblePosts, postFilter, teleseryeSearch]);
 
   // Progressive posts slicing for ultra-fast 60 FPS performance (like Facebook News Feed)
   const displayedPosts = React.useMemo(() => {
@@ -3054,17 +3063,17 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 </div>
 
                 {/* 🏷️ Interactive Post Filter Tabs */}
-                <div className="bg-slate-150/60 p-1.5 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5 border border-slate-200/50">
+                <div className="bg-slate-150/60 p-1.5 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-1.5 border border-slate-200/50">
                   <button
                     onClick={() => setPostFilter('all')}
-                    className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer select-none ${
+                    className={`py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
                       postFilter === 'all'
                         ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
                         : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
                     }`}
                   >
                     <Sparkles className={`w-3.5 h-3.5 ${postFilter === 'all' ? 'text-indigo-600' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Lahat ng Post' : 'All Posts'}</span>
+                    <span className="truncate">{language === 'tl' ? 'Lahat' : 'All'}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
                       postFilter === 'all' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-200/60 text-slate-550'
                     }`}>
@@ -3073,39 +3082,131 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   </button>
 
                   <button
+                    onClick={() => setPostFilter('teleserye')}
+                    className={`py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                      postFilter === 'teleserye'
+                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                    }`}
+                  >
+                    <Tv className={`w-3.5 h-3.5 ${postFilter === 'teleserye' ? 'text-red-600' : 'text-slate-400'}`} />
+                    <span className="truncate">{language === 'tl' ? 'Teleserye' : 'Teleserye'}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                      postFilter === 'teleserye' ? 'bg-red-50 text-red-700' : 'bg-slate-200/60 text-slate-550'
+                    }`}>
+                      {visiblePosts.filter(p => p.userId === 'teleserye-feed-author' || (p as any).category === 'Teleserye').length}
+                    </span>
+                  </button>
+
+                  <button
                     onClick={() => setPostFilter('news')}
-                    className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer select-none ${
+                    className={`py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
                       postFilter === 'news'
                         ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
                         : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
                     }`}
                   >
                     <Newspaper className={`w-3.5 h-3.5 ${postFilter === 'news' ? 'text-emerald-600' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Mga Balita' : 'News Updates'}</span>
+                    <span className="truncate">{language === 'tl' ? 'Balita' : 'News'}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
                       postFilter === 'news' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-200/60 text-slate-550'
                     }`}>
-                      {visiblePosts.filter(p => (p as any).isRss === true || p.userId === 'balita-rss-author').length}
+                      {visiblePosts.filter(p => p.userId === 'balita-rss-author').length}
                     </span>
                   </button>
 
                   <button
                     onClick={() => setPostFilter('community')}
-                    className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer select-none ${
+                    className={`py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
                       postFilter === 'community'
                         ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
                         : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
                     }`}
                   >
                     <Users className={`w-3.5 h-3.5 ${postFilter === 'community' ? 'text-blue-600' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Komunidad' : 'Community Posts'}</span>
+                    <span className="truncate">{language === 'tl' ? 'Komunidad' : 'Community'}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
                       postFilter === 'community' ? 'bg-blue-50 text-blue-700' : 'bg-slate-200/60 text-slate-550'
                     }`}>
-                      {visiblePosts.filter(p => !(p as any).isRss && p.userId !== 'balita-rss-author').length}
+                      {visiblePosts.filter(p => !(p as any).isRss && p.userId !== 'balita-rss-author' && p.userId !== 'teleserye-feed-author').length}
                     </span>
                   </button>
                 </div>
+
+                {/* Teleserye Discovery & Search Toolbar */}
+                {postFilter === 'teleserye' && (
+                  <div className="mt-3 pt-3 border-t border-slate-100/80 flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
+                        <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+                        <span className="font-extrabold text-slate-900">Pinoy Teleserye Replay</span>
+                        <span className="text-[11px] text-slate-500 font-medium">({filteredPosts.length} episodes available)</span>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          setIsRefreshingRss(true);
+                          try {
+                            const res = await fetch('/api/zone/posts/refresh-rss', { method: 'POST' });
+                            if (res.ok) {
+                              await fetchPosts(true);
+                            }
+                          } catch (err) {
+                            console.error(err);
+                          } finally {
+                            setIsRefreshingRss(false);
+                          }
+                        }}
+                        disabled={isRefreshingRss}
+                        className="inline-flex items-center gap-1.5 text-[11px] font-bold text-red-600 bg-red-50 hover:bg-red-100/80 active:scale-95 px-2.5 py-1 rounded-lg transition cursor-pointer disabled:opacity-60"
+                        title="Mag-check ng pinakabagong teleserye episodes ngayon"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isRefreshingRss ? 'animate-spin' : ''}`} />
+                        <span>{isRefreshingRss ? (language === 'tl' ? 'Kinukuha...' : 'Syncing...') : (language === 'tl' ? 'I-refresh ang Feed' : 'Refresh Episodes')}</span>
+                      </button>
+                    </div>
+
+                    {/* Teleserye Search Input */}
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={teleseryeSearch}
+                        onChange={(e) => setTeleseryeSearch(e.target.value)}
+                        placeholder={language === 'tl' ? 'Maghanap ng teleserye (e.g. Sigabo, Taskforce Firewall, 24 Oras, TV Patrol)...' : 'Search teleserye show (e.g. Sigabo, Taskforce Firewall, TV Patrol)...'}
+                        className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200/80 rounded-xl text-xs font-medium placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 focus:bg-white transition"
+                      />
+                      <Tv className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      {teleseryeSearch && (
+                        <button
+                          onClick={() => setTeleseryeSearch('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Quick Popular Show Filter Chips */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-[11px]">
+                      {['Lahat', 'Sigabo', 'Taskforce Firewall', 'The Master Cutter', '24 Oras', 'TV Patrol', 'Its Showtime', 'Family Feud'].map((show) => {
+                        const isAll = show === 'Lahat';
+                        const isActive = isAll ? !teleseryeSearch : teleseryeSearch.toLowerCase() === show.toLowerCase();
+                        return (
+                          <button
+                            key={show}
+                            onClick={() => setTeleseryeSearch(isAll ? '' : show)}
+                            className={`px-2.5 py-1 rounded-full font-bold whitespace-nowrap transition cursor-pointer ${
+                              isActive
+                                ? 'bg-red-600 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
+                            }`}
+                          >
+                            {show}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {outbox.length > 0 && (
@@ -3610,32 +3711,117 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                 </div>
                               )}
 
-                              {post.mediaType === 'video' && (
-                                <div className="rounded-2xl overflow-hidden border border-slate-100 relative bg-slate-950">
-                                  {isBasicMode && !revealedVideos.has(post.id) ? (
-                                    <div 
-                                      onClick={() => setRevealedVideos(prev => new Set(prev).add(post.id))}
-                                      className="w-full h-52 sm:h-64 bg-gradient-to-br from-slate-900 via-slate-850 to-slate-950 flex flex-col items-center justify-center p-4 cursor-pointer group hover:bg-slate-900 transition relative"
-                                    >
-                                      <div className="w-14 h-14 rounded-full bg-rose-600 group-hover:bg-rose-500 flex items-center justify-center text-white shadow-xl transition-transform group-hover:scale-110 mb-2">
-                                        <Play className="w-6 h-6 fill-white ml-0.5" />
+                              {(post.mediaType === 'video' || (post as any).mediaType === 'embed' || post.embedUrl) && (
+                                <div className="rounded-2xl overflow-hidden border border-slate-800/80 relative bg-slate-950 shadow-md">
+                                  {/* Pinoy Teleserye Replay Header Bar */}
+                                  {(post.userId === 'teleserye-feed-author' || (post as any).category === 'Teleserye' || post.embedUrl) && (
+                                    <div className="bg-gradient-to-r from-red-950/90 via-slate-900 to-slate-900 px-3.5 py-2 border-b border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
+                                      <div className="flex items-center gap-1.5 font-bold text-white">
+                                        <span className="flex h-2 w-2 relative">
+                                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                                          <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                                        </span>
+                                        <Tv className="w-3.5 h-3.5 text-red-400" />
+                                        <span>Pinoy Teleserye Replay</span>
+                                        <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.5 rounded tracking-wide">FULL HD</span>
                                       </div>
-                                      <p className="text-xs font-black text-white tracking-wide">
-                                        {language === 'tl' ? 'I-tap para i-play ang video' : 'Tap to play video'}
-                                      </p>
-                                      <span className="text-[10px] text-emerald-400 font-bold mt-1 bg-emerald-950/80 px-2.5 py-0.5 rounded-full border border-emerald-700/50 flex items-center gap-1">
-                                        <Smartphone className="w-3 h-3" />
-                                        <span>{language === 'tl' ? 'Naka-pause ang auto-download' : 'Auto-download paused'}</span>
-                                      </span>
+
+                                      {/* Server Switchers if multiple embed servers exist */}
+                                      {post.embedUrls && post.embedUrls.length > 1 && (
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-[10px] text-slate-400 font-bold">Server:</span>
+                                          {post.embedUrls.map((sUrl, sIdx) => {
+                                            const currentActive = selectedServerMap[post.id] || post.embedUrl || post.embedUrls![0];
+                                            const isSelected = currentActive === sUrl;
+                                            return (
+                                              <button
+                                                key={sIdx}
+                                                onClick={() => setSelectedServerMap(prev => ({ ...prev, [post.id]: sUrl }))}
+                                                className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition cursor-pointer ${
+                                                  isSelected 
+                                                    ? 'bg-red-600 text-white shadow-sm ring-1 ring-white/30' 
+                                                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                                }`}
+                                              >
+                                                Server {sIdx + 1}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
                                     </div>
+                                  )}
+
+                                  {/* Video Player or Tap-to-Play Poster */}
+                                  {post.embedUrl || (post.embedUrls && post.embedUrls.length > 0) ? (
+                                    <>
+                                      {!revealedVideos.has(post.id) ? (
+                                        <div 
+                                          onClick={() => setRevealedVideos(prev => new Set(prev).add(post.id))}
+                                          className="w-full aspect-video min-h-52 sm:min-h-64 bg-slate-900 flex flex-col items-center justify-center p-4 cursor-pointer group relative overflow-hidden select-none"
+                                        >
+                                          {post.mediaUrl && (
+                                            <img 
+                                              src={post.mediaUrl} 
+                                              alt={post.text.slice(0, 40)} 
+                                              className="absolute inset-0 w-full h-full object-cover opacity-60 group-hover:scale-105 transition-transform duration-500 group-hover:opacity-75"
+                                              loading="lazy"
+                                              referrerPolicy="no-referrer"
+                                            />
+                                          )}
+                                          <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none" />
+                                          <div className="relative z-10 flex flex-col items-center">
+                                            <div className="w-16 h-16 rounded-full bg-red-600/90 group-hover:bg-red-500 flex items-center justify-center text-white shadow-2xl transition-transform group-hover:scale-110 mb-2.5 border-2 border-white/40 backdrop-blur-xs">
+                                              <Play className="w-8 h-8 fill-white ml-1 text-white" />
+                                            </div>
+                                            <p className="text-sm font-black text-white tracking-wide text-center px-4 drop-shadow-md">
+                                              {language === 'tl' ? 'Panoorin ang Buong Episode' : 'Watch Full Episode'}
+                                            </p>
+                                            <span className="text-[11px] text-red-200 font-bold mt-1 bg-red-950/80 px-3 py-0.5 rounded-full border border-red-700/50 flex items-center gap-1.5 backdrop-blur-xs shadow-sm">
+                                              <Film className="w-3 h-3 text-red-400" />
+                                              <span>{language === 'tl' ? 'Pindutin para simulan ang video' : 'Click to play stream'}</span>
+                                            </span>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div className="relative w-full aspect-video bg-black">
+                                          <iframe 
+                                            src={selectedServerMap[post.id] || post.embedUrl || (post.embedUrls ? post.embedUrls[0] : '')} 
+                                            className="w-full h-full border-0"
+                                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                            allowFullScreen
+                                            title={post.text.slice(0, 50)}
+                                          />
+                                        </div>
+                                      )}
+                                    </>
                                   ) : (
-                                    <video 
-                                      src={post.mediaUrl} 
-                                      controls 
-                                      preload="metadata"
-                                      playsInline
-                                      className="w-full max-h-80 object-cover bg-black" 
-                                    />
+                                    /* Standard HTML5 Video */
+                                    isBasicMode && !revealedVideos.has(post.id) ? (
+                                      <div 
+                                        onClick={() => setRevealedVideos(prev => new Set(prev).add(post.id))}
+                                        className="w-full h-52 sm:h-64 bg-gradient-to-br from-slate-900 via-slate-850 to-slate-950 flex flex-col items-center justify-center p-4 cursor-pointer group hover:bg-slate-900 transition relative"
+                                      >
+                                        <div className="w-14 h-14 rounded-full bg-rose-600 group-hover:bg-rose-500 flex items-center justify-center text-white shadow-xl transition-transform group-hover:scale-110 mb-2">
+                                          <Play className="w-6 h-6 fill-white ml-0.5" />
+                                        </div>
+                                        <p className="text-xs font-black text-white tracking-wide">
+                                          {language === 'tl' ? 'I-tap para i-play ang video' : 'Tap to play video'}
+                                        </p>
+                                        <span className="text-[10px] text-emerald-400 font-bold mt-1 bg-emerald-950/80 px-2.5 py-0.5 rounded-full border border-emerald-700/50 flex items-center gap-1">
+                                          <Smartphone className="w-3 h-3" />
+                                          <span>{language === 'tl' ? 'Naka-pause ang auto-download' : 'Auto-download paused'}</span>
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <video 
+                                        src={post.mediaUrl} 
+                                        controls 
+                                        preload="metadata"
+                                        playsInline
+                                        className="w-full max-h-80 object-cover bg-black" 
+                                      />
+                                    )
                                   )}
                                 </div>
                               )}

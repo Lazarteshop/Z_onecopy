@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import { Firestore } from '@google-cloud/firestore';
 import { INITIAL_CAMPAIGNS } from './src/data/campaigns';
@@ -5361,6 +5362,164 @@ async function fetchBalitaRSS(): Promise<any[]> {
   }
 }
 
+// --- PINOY TELESERYE REPLAY RSS FEED & VIDEO EMBED INTEGRATION ---
+const teleseryeImageCache = new Map<string, string>();
+
+function setCachedTeleseryeImage(url: string, img: string) {
+  if (teleseryeImageCache.size > 150) {
+    const firstKey = teleseryeImageCache.keys().next().value;
+    if (firstKey) teleseryeImageCache.delete(firstKey);
+  }
+  teleseryeImageCache.set(url, img);
+}
+
+async function fetchExactTeleseryeImage(articleUrl: string): Promise<string | null> {
+  if (!articleUrl) return null;
+  if (teleseryeImageCache.has(articleUrl)) {
+    return teleseryeImageCache.get(articleUrl) || null;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    const res = await fetch(articleUrl, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+      }
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const html = await res.text();
+      const ogMatch = html.match(/<meta property=["']og:image["'] content=["']([^"']+)["']/i);
+      if (ogMatch && ogMatch[1] && ogMatch[1].startsWith('http')) {
+        const cleanImg = ogMatch[1].trim();
+        setCachedTeleseryeImage(articleUrl, cleanImg);
+        return cleanImg;
+      }
+
+      const wpUploadMatch = html.match(/https:\/\/replayteleserye\.su\/wp-content\/uploads\/[^\s"']+\.(?:jpg|jpeg|png|webp)/i);
+      if (wpUploadMatch && wpUploadMatch[0]) {
+        const cleanImg = wpUploadMatch[0].trim();
+        setCachedTeleseryeImage(articleUrl, cleanImg);
+        return cleanImg;
+      }
+    }
+  } catch (err: any) {
+    // Non-blocking timeout
+  }
+
+  return null;
+}
+
+async function fetchTeleseryeRSS(): Promise<any[]> {
+  try {
+    const feedUrls = [
+      'https://replayteleserye.su/feed/',
+      'https://replayteleserye.su/feed/?paged=2'
+    ];
+
+    const formattedPosts: any[] = [];
+    const seenLinks = new Set<string>();
+
+    for (const feedUrl of feedUrls) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 7000);
+
+        const res = await fetch(feedUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+            'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+          },
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (!res.ok) continue;
+
+        const xml = await res.text();
+        const itemMatches = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
+        if (itemMatches.length === 0) continue;
+
+        const processed = await Promise.all(
+          itemMatches.map(async (itemXml: string) => {
+            const titleMatch = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || itemXml.match(/<title>(.*?)<\/title>/);
+            const linkMatch = itemXml.match(/<link>(.*?)<\/link>/);
+            const pubDateMatch = itemXml.match(/<pubDate>(.*?)<\/pubDate>/);
+            const contentMatch = itemXml.match(/<content:encoded><!\[CDATA\[([\s\S]*?)\]\]><\/content:encoded>/) || itemXml.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>/);
+
+            const rawTitle = titleMatch ? titleMatch[1].trim() : '';
+            const link = linkMatch ? linkMatch[1].trim() : '';
+            const pubDate = pubDateMatch ? pubDateMatch[1].trim() : new Date().toISOString();
+            const content = contentMatch ? contentMatch[1] : '';
+
+            if (!rawTitle || !link || seenLinks.has(link)) return null;
+            seenLinks.add(link);
+
+            const cleanTitle = rawTitle.replace(/\s+/g, ' ');
+            // Generate distinct, human-readable slug + hash ID for every single episode
+            const slug = (link || cleanTitle).toLowerCase().replace(/https?:\/\/[^\/]+\/?/i, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+            const hash = crypto.createHash('md5').update(link || cleanTitle).digest('hex').slice(0, 12);
+            const cleanId = `post-teleserye-${slug || hash}`;
+
+            // Extract all iframes and video embed urls
+            const rawIframes = [...content.matchAll(/<iframe[^>]+src=["']([^"']+)["']/gi)].map(m => m[1]);
+            const normalizedIframes = rawIframes.map(url => {
+              if (url.startsWith('//')) return 'https:' + url;
+              return url;
+            }).filter(u => u.startsWith('http'));
+
+            // Identify primary embed URL
+            const primaryEmbed = normalizedIframes.length > 0 ? normalizedIframes[0] : undefined;
+
+            // Try extracting poster image from content or fetch from page
+            let posterUrl: string | null = null;
+            const inlineImg = content.match(/<img[^>]+src=["'](https:\/\/replayteleserye\.su\/wp-content\/uploads\/[^"']+)["']/i);
+            if (inlineImg && inlineImg[1]) {
+              posterUrl = inlineImg[1];
+            } else if (link) {
+              posterUrl = await fetchExactTeleseryeImage(link);
+            }
+
+            return {
+              id: cleanId,
+              userId: 'teleserye-feed-author',
+              userName: 'Pinoy Teleserye Replay',
+              userAvatar: '📺',
+              text: `📺 **${cleanTitle}** (Full Episode Replay)\n\nPanoorin ang pinakabagong episode ng **${cleanTitle}** dito sa Z-one Social Community Feed!\n\n▶ Pindutin ang video player para panoorin ang libreng HD video stream.\n\n🔗 Source: ${link}`,
+              mediaUrl: posterUrl || undefined,
+              mediaType: 'video',
+              embedUrl: primaryEmbed,
+              embedUrls: normalizedIframes.length > 0 ? normalizedIframes : undefined,
+              likes: [],
+              comments: [],
+              createdAt: new Date(pubDate).toISOString(),
+              isRss: true,
+              rssLink: link,
+              category: 'Teleserye'
+            };
+          })
+        );
+
+        for (const post of processed) {
+          if (post) formattedPosts.push(post);
+        }
+      } catch (pageErr) {
+        console.error(`Error fetching page ${feedUrl}:`, pageErr);
+      }
+    }
+
+    return formattedPosts;
+  } catch (err) {
+    console.error('Error fetching Teleserye RSS:', err);
+    return [];
+  }
+}
+
 let lastRssSyncTime = 0;
 
 async function syncRssToDatabase() {
@@ -5368,9 +5527,12 @@ async function syncRssToDatabase() {
     const db = loadDB();
     if (!db.posts) db.posts = [];
 
+    // Remove legacy single-clobbered post ID if present
+    db.posts = db.posts.filter(p => p.id !== 'post-teleserye-aHR0cHM6Ly9yZXBsYXl0ZWxlc2VyeWUu');
+
     let hasUpdates = false;
 
-    // Fetch fresh articles with exact Manila Bulletin photos
+    // 1. Fetch fresh Manila Bulletin News articles
     const rssArticles = await fetchBalitaRSS();
     if (rssArticles.length > 0) {
       for (const article of rssArticles) {
@@ -5383,6 +5545,37 @@ async function syncRssToDatabase() {
           if (article.mediaUrl && db.posts[existsIndex].mediaUrl !== article.mediaUrl) {
             db.posts[existsIndex].mediaUrl = article.mediaUrl;
             db.posts[existsIndex].mediaType = 'image';
+            hasUpdates = true;
+          }
+        }
+      }
+    }
+
+    // 2. Fetch ALL fresh Pinoy Teleserye Replay Video Episodes of the day
+    const teleseryeArticles = await fetchTeleseryeRSS();
+    if (teleseryeArticles.length > 0) {
+      for (const ep of teleseryeArticles) {
+        const existsIndex = db.posts.findIndex(p => p.id === ep.id);
+        if (existsIndex === -1) {
+          db.posts.push(ep);
+          hasUpdates = true;
+        } else {
+          // Update embedUrl, embedUrls, or mediaUrl if newly resolved
+          let itemUpdated = false;
+          if (ep.embedUrl && db.posts[existsIndex].embedUrl !== ep.embedUrl) {
+            db.posts[existsIndex].embedUrl = ep.embedUrl;
+            itemUpdated = true;
+          }
+          if (ep.embedUrls && JSON.stringify(db.posts[existsIndex].embedUrls) !== JSON.stringify(ep.embedUrls)) {
+            db.posts[existsIndex].embedUrls = ep.embedUrls;
+            itemUpdated = true;
+          }
+          if (ep.mediaUrl && db.posts[existsIndex].mediaUrl !== ep.mediaUrl) {
+            db.posts[existsIndex].mediaUrl = ep.mediaUrl;
+            itemUpdated = true;
+          }
+          if (itemUpdated) {
+            db.posts[existsIndex].mediaType = 'video';
             hasUpdates = true;
           }
         }
@@ -5406,7 +5599,7 @@ async function syncRssToDatabase() {
 
     if (hasUpdates) {
       saveDB(db);
-      console.log(`✅ Synced Balita RSS articles and updated genuine MB pictures in DB!`);
+      console.log(`✅ Synced ${teleseryeArticles.length} Teleserye Replay Video Feeds & Balita News into Z-one DB!`);
     }
   } catch (err) {
     console.error('Error syncing RSS to DB:', err);
@@ -5431,8 +5624,8 @@ app.get('/api/zone/posts', (req, res) => {
   });
 
   const page = parseInt(req.query.page as string) || 1;
-  const limitParam = req.query.limit ? parseInt(req.query.limit as string) : (req.query.all === 'true' ? sortedPosts.length : 35);
-  const limit = Math.min(Math.max(limitParam, 1), 100);
+  const limitParam = req.query.limit ? parseInt(req.query.limit as string) : (req.query.all === 'true' ? sortedPosts.length : 120);
+  const limit = Math.min(Math.max(limitParam, 1), 500);
   const startIndex = (page - 1) * limit;
   const paginatedPosts = (req.query.all === 'true') ? sortedPosts : sortedPosts.slice(0, startIndex + limit);
   const hasMore = (startIndex + limit) < sortedPosts.length;
@@ -5443,6 +5636,19 @@ app.get('/api/zone/posts', (req, res) => {
     hasMore,
     page
   });
+});
+
+// Explicit endpoint to force refresh RSS feeds on demand
+app.post('/api/zone/posts/refresh-rss', async (req, res) => {
+  try {
+    lastRssSyncTime = Date.now();
+    await syncRssToDatabase();
+    const db = loadDB();
+    const teleseryeCount = (db.posts || []).filter(p => p.userId === 'teleserye-feed-author' || p.category === 'Teleserye').length;
+    res.json({ success: true, teleseryeCount, totalPosts: (db.posts || []).length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // UNIFIED HIGH-PERFORMANCE SYNC ROUTE (Combines Messages, Group Chats, Active Calls, & Online Heartbeats in 1 single call)
