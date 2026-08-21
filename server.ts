@@ -23,8 +23,8 @@ try {
   console.error('Failed to initialize VAPID details:', vapidErr);
 }
 
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ limit: '100mb', extended: true }));
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ limit: '25mb', extended: true }));
 
 // --- HIGH-QUALITY TEXT-TO-SPEECH PROXY ENDPOINT ---
 function splitTextIntoChunks(text: string, maxLength: number = 150): string[] {
@@ -1556,6 +1556,9 @@ async function uploadToFirestore(data: DBStructure) {
             try {
               const dmDocRef = firestore!.collection('direct_messages').doc(dm.id);
               const { id, ...dmWithoutId } = dm;
+              if (dmWithoutId.mediaUrl && dmWithoutId.mediaUrl.startsWith('data:') && dmWithoutId.mediaUrl.length > 500000) {
+                dmWithoutId.mediaUrl = saveBase64ToUploadFile(dmWithoutId.mediaUrl, 'dm-media') || undefined;
+              }
               await dmDocRef.set(dmWithoutId);
               lastSyncedCache.directMessages.set(dm.id, dmStr);
             } catch (dmErr) {
@@ -1814,7 +1817,19 @@ async function uploadToFirestore(data: DBStructure) {
       }
     }
 
-    const allPromises = [...userPromises, ...campPromises, ...postPromises, ...dmPromises, ...maPromises, ...reelPromises, ...reelSubPromises, ...deletionPromises];
+    const allPromises = [
+      ...userPromises,
+      ...campPromises,
+      ...postPromises,
+      ...dmPromises,
+      ...maPromises,
+      ...reelPromises,
+      ...reelSubPromises,
+      ...storyPromises,
+      ...groupPromises,
+      ...gmPromises,
+      ...deletionPromises
+    ];
     if (allPromises.length > 0) {
       await Promise.all(allPromises);
       console.log(`☁️ GCash Click-Earn: Firestore cloud backup completed. Synced ${allPromises.length} updates/deletes.`);
@@ -1945,8 +1960,8 @@ async function syncFromFirestore() {
       console.log('No group_messages collection yet in Firestore');
     }
 
-    if (dbUsers.length > 0) {
-      console.log(`📱 Found ${dbUsers.length} users in Firestore. Cleaning fake records & updating local cache...`);
+    if (dbUsers.length > 0 || dbStories.length > 0 || dbGroups.length > 0 || dbGroupMessages.length > 0 || dbDMs.length > 0 || dbPosts.length > 0) {
+      console.log(`📱 Found Firestore cloud data (${dbUsers.length} users, ${dbStories.length} stories, ${dbGroups.length} groups, ${dbDMs.length} DMs, ${dbGroupMessages.length} group msgs). Updating local cache...`);
 
       // Filter out all fake/simulated withdrawals from Firestore user records
       for (const u of dbUsers) {
@@ -2101,13 +2116,43 @@ async function syncFromFirestore() {
         });
       }
 
+      let seedStoryPromises: Promise<any>[] = [];
+      if (localDB.stories) {
+        seedStoryPromises = localDB.stories.map(async (s) => {
+          const sDocRef = firestore.collection('stories').doc(s.id);
+          const { id, ...sWithoutId } = s;
+          await sDocRef.set(sWithoutId);
+        });
+      }
+
+      let seedGroupPromises: Promise<any>[] = [];
+      if (localDB.groupChats) {
+        seedGroupPromises = localDB.groupChats.map(async (g) => {
+          const gDocRef = firestore.collection('group_chats').doc(g.id);
+          const { id, ...gWithoutId } = g;
+          await gDocRef.set(gWithoutId);
+        });
+      }
+
+      let seedGmPromises: Promise<any>[] = [];
+      if (localDB.groupMessages) {
+        seedGmPromises = localDB.groupMessages.map(async (gm) => {
+          const gmDocRef = firestore.collection('group_messages').doc(gm.id);
+          const { id, ...gmWithoutId } = gm;
+          await gmDocRef.set(gmWithoutId);
+        });
+      }
+
       await Promise.all([
         ...batchPromises, 
         ...seedCampPromises, 
         ...seedPostPromises, 
         ...seedDmPromises, 
         ...seedMerchantPromises,
-        ...seedReelPromises
+        ...seedReelPromises,
+        ...seedStoryPromises,
+        ...seedGroupPromises,
+        ...seedGmPromises
       ]);
       console.log('✅ Seeding of Firestore complete.');
     }
@@ -5168,6 +5213,14 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 // --- MANILA BULLETIN BALITA RSS FEED INTEGRATION ---
 const mbImageCache = new Map<string, string>();
 
+function setCachedMBImage(url: string, img: string) {
+  if (mbImageCache.size > 150) {
+    const firstKey = mbImageCache.keys().next().value;
+    if (firstKey) mbImageCache.delete(firstKey);
+  }
+  mbImageCache.set(url, img);
+}
+
 async function fetchExactManilaBulletinImage(articleUrl: string): Promise<string | null> {
   if (!articleUrl) return null;
   if (mbImageCache.has(articleUrl)) {
@@ -5193,7 +5246,7 @@ async function fetchExactManilaBulletinImage(articleUrl: string): Promise<string
       const cfMatches = text.match(/https:\/\/d1t2sru3bhidc1\.cloudfront\.net\/balita\/uploads\/images\/[^\s\)"'<>]+/g);
       if (cfMatches && cfMatches.length > 0) {
         const cleanUrl = cfMatches[0].trim();
-        mbImageCache.set(articleUrl, cleanUrl);
+        setCachedMBImage(articleUrl, cleanUrl);
         return cleanUrl;
       }
 
@@ -5201,7 +5254,7 @@ async function fetchExactManilaBulletinImage(articleUrl: string): Promise<string
       const mbMatch = text.match(/!\[.*?\]\((https:\/\/[^\)]*(?:balita\.mb\.com\.ph|mb\.com\.ph)[^\)]+\.(?:jpg|jpeg|png|webp|avif))\)/i);
       if (mbMatch && mbMatch[1]) {
         const cleanUrl = mbMatch[1].trim();
-        mbImageCache.set(articleUrl, cleanUrl);
+        setCachedMBImage(articleUrl, cleanUrl);
         return cleanUrl;
       }
 
@@ -5209,7 +5262,7 @@ async function fetchExactManilaBulletinImage(articleUrl: string): Promise<string
       const anyMatch = text.match(/!\[.*?\]\((https:\/\/[^\)]+\.(?:jpg|jpeg|png|webp|avif))\)/i);
       if (anyMatch && anyMatch[1] && !anyMatch[1].includes('logo') && !anyMatch[1].includes('arrow') && !anyMatch[1].includes('icon') && !anyMatch[1].includes('favicon')) {
         const cleanUrl = anyMatch[1].trim();
-        mbImageCache.set(articleUrl, cleanUrl);
+        setCachedMBImage(articleUrl, cleanUrl);
         return cleanUrl;
       }
     }
@@ -6309,7 +6362,7 @@ app.post('/api/zone/messages', (req, res) => {
     db.directMessages = [];
   }
   db.directMessages.push(newMsg);
-  saveDB(db);
+  saveDB(db, true);
 
   // Send background push notification to the receiver
   sendPushNotificationToUser(receiverId, {
@@ -6515,7 +6568,7 @@ app.post('/api/zone/groups', (req, res) => {
   };
   db.groupMessages.push(initialMsg);
 
-  saveDB(db);
+  saveDB(db, true);
 
   const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
   const formattedGroup = {
@@ -6620,7 +6673,7 @@ app.post('/api/zone/groups/:groupId/messages', (req, res) => {
 
   db.groupMessages.push(newMsg);
   group.updatedAt = new Date().toISOString();
-  saveDB(db);
+  saveDB(db, true);
 
   // Send background push notifications to all other group members
   if (Array.isArray(group.members)) {
@@ -6929,7 +6982,7 @@ app.post('/api/zone/stories', (req, res) => {
 
   if (!db.stories) db.stories = [];
   db.stories.unshift(newStory);
-  saveDB(db);
+  saveDB(db, true);
 
   res.json({ success: true, story: newStory, message: 'Matagumpay na na-post ang iyong My Day / Story!' });
 });
@@ -6959,7 +7012,7 @@ app.delete('/api/zone/stories/:storyId', (req, res) => {
   }
 
   db.stories.splice(index, 1);
-  saveDB(db);
+  saveDB(db, true);
 
   res.json({ success: true, message: 'Na-delete na ang Story!' });
 });

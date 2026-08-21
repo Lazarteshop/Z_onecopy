@@ -2,7 +2,7 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "Represents a GCash Click-Earn user profile with their sub status and statistics.",
+      "description": "Represents a user profile with subscription status, wallet balance, and activities.",
       "type": "object",
       "properties": {
         "email": { "type": "string" },
@@ -14,14 +14,121 @@
         "createdAt": { "type": "string" },
         "subscription": { "type": "object" },
         "stats": { "type": "object" },
+        "withdrawals": { "type": "array" },
         "lastActivities": { "type": "array" }
+      }
+    },
+    "DirectMessage": {
+      "title": "DirectMessage",
+      "description": "Represents a direct message in Z-one Inbox.",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderAvatar": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "receiverName": { "type": "string" },
+        "receiverAvatar": { "type": "string" },
+        "text": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "mediaType": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "Story": {
+      "title": "Story",
+      "description": "Represents a 24-hour temporary story (My Day) in Z-one.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userAvatar": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "mediaType": { "type": "string" },
+        "text": { "type": "string" },
+        "backgroundColor": { "type": "string" },
+        "textColor": { "type": "string" },
+        "caption": { "type": "string" },
+        "viewers": { "type": "array" },
+        "viewerDetails": { "type": "array" },
+        "reactions": { "type": "array" },
+        "createdAt": { "type": "string" },
+        "expiresAt": { "type": "string" }
+      }
+    },
+    "GroupChat": {
+      "title": "GroupChat",
+      "description": "Represents a group chat room in Z-one.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "avatar": { "type": "string" },
+        "creatorId": { "type": "string" },
+        "creatorName": { "type": "string" },
+        "members": { "type": "array" },
+        "memberCount": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "GroupMessage": {
+      "title": "GroupMessage",
+      "description": "Represents a chat message inside a group chat room.",
+      "type": "object",
+      "properties": {
+        "groupId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderAvatar": { "type": "string" },
+        "text": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "mediaType": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "Post": {
+      "title": "Post",
+      "description": "Represents a community feed post.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userAvatar": { "type": "string" },
+        "text": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "mediaType": { "type": "string" },
+        "mediaUrls": { "type": "array" },
+        "likes": { "type": "array" },
+        "comments": { "type": "array" },
+        "createdAt": { "type": "string" }
       }
     }
   },
   "firestore": {
     "users/{userId}": {
       "schema": "User",
-      "description": "User records mapping to individual user profiles."
+      "description": "Collection of user profiles."
+    },
+    "direct_messages/{messageId}": {
+      "schema": "DirectMessage",
+      "description": "Collection of 1-on-1 direct messages."
+    },
+    "stories/{storyId}": {
+      "schema": "Story",
+      "description": "Collection of temporary 24-hour stories (My Day)."
+    },
+    "group_chats/{groupId}": {
+      "schema": "GroupChat",
+      "description": "Collection of group chat channels."
+    },
+    "group_messages/{messageId}": {
+      "schema": "GroupMessage",
+      "description": "Collection of messages posted in group chats."
+    },
+    "posts/{postId}": {
+      "schema": "Post",
+      "description": "Collection of community feed posts."
     }
   }
 }
