@@ -361,6 +361,11 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
     e.preventDefault();
     if (!selectedBasketForBanner) return;
 
+    if (selectedBasketForBanner.userId === user.id || (user as any).email === selectedBasketForBanner.userEmail) {
+      triggerNotification('Bawal sa Sariling Basket', 'Hindi ka maaaring mag-place ng marketing banner sa sarili mong shopping order.', 'warning');
+      return;
+    }
+
     try {
       setPlacingBanner(true);
       const res = await fetch('/api/va/place-banner', {
@@ -1078,6 +1083,7 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
                   const hasMyBanner = (basket as any).isMyBanner;
                   const hasActiveBanner = (basket as any).hasActiveBanner;
                   const activeBannerInfo = (basket as any).activeBanner;
+                  const isOwnBasket = basket.userId === user.id || (user as any).email === basket.userEmail;
 
                   return (
                     <div 
@@ -1087,18 +1093,16 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
                       <div className="space-y-2.5">
                         {/* Customer Header */}
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="h-8 w-8 bg-white border border-slate-200 rounded-full flex items-center justify-center text-sm shadow-2xs">
-                              {basket.userAvatar || '🛍️'}
-                            </span>
-                            <div>
-                              <h4 className="font-black text-xs text-slate-900 leading-tight">{basket.userName}</h4>
-                              <span className="text-[10px] text-slate-400 font-semibold block">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {renderVAAvatar(basket.userAvatar, basket.userName, "w-8 h-8", "text-xs")}
+                            <div className="min-w-0">
+                              <h4 className="font-black text-xs text-slate-900 leading-tight truncate">{basket.userName}</h4>
+                              <span className="text-[10px] text-slate-400 font-semibold block truncate">
                                 Cart id: {basket.id.substring(0, 12)}...
                               </span>
                             </div>
                           </div>
-                          <span className="text-xs font-mono font-black text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-lg">
+                          <span className="text-xs font-mono font-black text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-lg shrink-0">
                             ₱{basket.totalAmount.toFixed(2)}
                           </span>
                         </div>
@@ -1141,41 +1145,66 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
                       {/* Actions */}
                       <div className="border-t border-slate-100 pt-3 space-y-2">
                         {!hasActiveBanner ? (
-                          <button
-                            onClick={() => {
-                              setSelectedBasketForBanner(basket);
-                              setBannerTitle(`Special ₱${(basket.totalAmount * 0.1).toFixed(0)} Voucher for You!`);
-                              setBannerMessage('Kumpletuhin ang iyong order ngayon upang makuha ang special promotion at libreng delivery!');
-                              setShowPlaceBannerModal(true);
-                            }}
-                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black text-xs py-2.5 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
-                          >
-                            <PlusCircle className="w-3.5 h-3.5" />
-                            <span>Mag-place ng Marketing Banner</span>
-                          </button>
+                          isOwnBasket ? (
+                            <button
+                              disabled
+                              className="w-full bg-slate-100 text-slate-400 font-bold text-xs py-2.5 rounded-xl border border-slate-200 cursor-not-allowed flex items-center justify-center gap-1.5 shadow-none"
+                              title="Bawal mag-place ng marketing banner sa sarili mong shopping cart / basket"
+                            >
+                              <AlertCircle className="w-3.5 h-3.5 text-slate-400" />
+                              <span>Bawal sa Sariling Basket</span>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setSelectedBasketForBanner(basket);
+                                setBannerTitle(`Special ₱${(basket.totalAmount * 0.1).toFixed(0)} Voucher for You!`);
+                                setBannerMessage('Kumpletuhin ang iyong order ngayon upang makuha ang special promotion at libreng delivery!');
+                                setShowPlaceBannerModal(true);
+                              }}
+                              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black text-xs py-2.5 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                            >
+                              <PlusCircle className="w-3.5 h-3.5" />
+                              <span>Mag-place ng Marketing Banner</span>
+                            </button>
+                          )
                         ) : (
                           <div className="space-y-1.5">
                             <div className="text-[10px] text-center text-slate-500 font-semibold">
                               {hasMyBanner ? '✅ Aktibo ang iyong banner dito!' : '⚠️ May banner na mula sa ibang VA.'}
                             </div>
-                            {/* SIMULATION CONTROLS FOR TESTING */}
-                            <div className="flex gap-1.5">
-                              <button
-                                onClick={() => handleSimulateBasketAction(basket.id, 'customer_pay_deliver')}
-                                title="Simulate customer paying and order being delivered"
-                                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] py-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1"
-                              >
-                                <CheckCircle2 className="w-3 h-3" />
-                                <span>Bayaran at I-deliver (Earn)</span>
-                              </button>
-                              <button
-                                onClick={() => handleSimulateBasketAction(basket.id, 'force_expire')}
-                                title="Simulate expiration into Bad Order"
-                                className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-black text-[10px] px-2 py-1.5 rounded-lg transition cursor-pointer"
-                              >
-                                Expire Lead
-                              </button>
-                            </div>
+                            {/* SIMULATION CONTROLS FOR TESTING - ADMIN ONLY */}
+                            {user.isAdmin ? (
+                              <div className="space-y-1 pt-1">
+                                <span className="text-[9px] font-black text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded block text-center uppercase tracking-wider">
+                                  🛡️ Admin Action Controls
+                                </span>
+                                <div className="flex gap-1.5">
+                                  <button
+                                    onClick={() => handleSimulateBasketAction(basket.id, 'customer_pay_deliver')}
+                                    title="Admin Action: Bayaran at I-deliver ang order"
+                                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] py-1.5 rounded-lg transition cursor-pointer flex items-center justify-center gap-1 shadow-xs"
+                                  >
+                                    <CheckCircle2 className="w-3 h-3" />
+                                    <span>Bayaran at I-deliver (Earn)</span>
+                                  </button>
+                                  <button
+                                    onClick={() => handleSimulateBasketAction(basket.id, 'force_expire')}
+                                    title="Admin Action: Expire Lead into Bad Order"
+                                    className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-black text-[10px] px-2 py-1.5 rounded-lg transition cursor-pointer"
+                                  >
+                                    Expire Lead
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="p-2 bg-slate-50 border border-slate-200/80 rounded-xl text-center">
+                                <span className="text-[11px] font-bold text-slate-600 flex items-center justify-center gap-1.5">
+                                  <Clock className="w-3.5 h-3.5 text-blue-500 animate-spin-slow" />
+                                  <span>Naka-abang sa Checkout ng Customer o Delivery ng Admin</span>
+                                </span>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1215,21 +1244,24 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
 
                   return (
                     <div key={banner.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
-                            banner.bannerType === 'paid' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'
-                          }`}>
-                            {banner.bannerType === 'paid' ? '7-Day Paid (5%)' : '3-Day Free (2.5%)'}
+                      <div className="flex items-start gap-3">
+                        {renderVAAvatar((banner as any).targetCustomerAvatar, banner.targetCustomerName, "w-8 h-8", "text-xs")}
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                              banner.bannerType === 'paid' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'
+                            }`}>
+                              {banner.bannerType === 'paid' ? '7-Day Paid (5%)' : '3-Day Free (2.5%)'}
+                            </span>
+                            <h4 className="font-extrabold text-xs text-slate-900">{banner.title}</h4>
+                          </div>
+                          <p className="text-xs text-slate-600 font-medium">
+                            Customer: <span className="font-bold text-slate-800">{banner.targetCustomerName}</span> | Cart Amount: <span className="font-bold text-emerald-700">₱{banner.targetOrderAmount?.toFixed(2)}</span>
+                          </p>
+                          <span className="text-[10px] text-slate-400 font-semibold block">
+                            Nailagay noong: {new Date(banner.createdAt).toLocaleString('fil-PH', { hour12: true })}
                           </span>
-                          <h4 className="font-extrabold text-xs text-slate-900">{banner.title}</h4>
                         </div>
-                        <p className="text-xs text-slate-600 font-medium">
-                          Customer: <span className="font-bold text-slate-800">{banner.targetCustomerName}</span> | Cart Amount: <span className="font-bold text-emerald-700">₱{banner.targetOrderAmount?.toFixed(2)}</span>
-                        </p>
-                        <span className="text-[10px] text-slate-400 font-semibold block">
-                          Nailagay noong: {new Date(banner.createdAt).toLocaleString('fil-PH', { hour12: true })}
-                        </span>
                       </div>
 
                       {/* Status and Commission */}
@@ -1286,8 +1318,8 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
           {customerActiveBanner && customerActiveBanner.status === 'active' && (
             <div className="relative overflow-hidden bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 rounded-3xl p-4 sm:p-5 text-slate-950 shadow-xl border border-amber-300 animate-fadeIn flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-3.5">
-                <div className="w-12 h-12 rounded-2xl bg-white/90 text-slate-950 font-black text-xl flex items-center justify-center shadow-md shrink-0">
-                  {customerActiveBanner.vaAvatar || '🎁'}
+                <div className="w-12 h-12 rounded-2xl overflow-hidden bg-white/90 text-slate-950 font-black text-xl flex items-center justify-center shadow-md shrink-0">
+                  {renderVAAvatar(customerActiveBanner.vaAvatar, customerActiveBanner.vaName, "w-12 h-12", "text-xl")}
                 </div>
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">

@@ -10,10 +10,13 @@ import {
   getFirestore as getWebFirestore, 
   collection as webCollection, 
   doc as webDoc, 
+  getDoc as webGetDoc,
   getDocs as webGetDocs, 
   setDoc as webSetDoc, 
   deleteDoc as webDeleteDoc,
-  updateDoc as webUpdateDoc
+  updateDoc as webUpdateDoc,
+  query as webQuery,
+  where as webWhere
 } from 'firebase/firestore';
 import { INITIAL_CAMPAIGNS } from './src/data/campaigns';
 import { GoogleGenAI } from '@google/genai';
@@ -768,18 +771,22 @@ interface CloudDBAdapter {
   isActive: boolean;
   type: 'gcp-admin' | 'web-client' | 'none';
   getCollection: (colName: string) => Promise<any[]>;
+  getDoc: (colName: string, docId: string) => Promise<any | null>;
   setDoc: (colName: string, docId: string, data: any) => Promise<void>;
   deleteDoc: (colName: string, docId: string) => Promise<void>;
   updateDoc: (colName: string, docId: string, data: any) => Promise<void>;
+  queryByField: (colName: string, field: string, value: any) => Promise<any[]>;
 }
 
 let cloudDb: CloudDBAdapter = {
   isActive: false,
   type: 'none',
   getCollection: async () => [],
+  getDoc: async () => null,
   setDoc: async () => {},
   deleteDoc: async () => {},
-  updateDoc: async () => {}
+  updateDoc: async () => {},
+  queryByField: async () => []
 };
 
 let isFirestoreActive = false;
@@ -844,6 +851,11 @@ if (hasServiceAccount || isOnGoogleCloud) {
         snap.forEach(docSnap => items.push({ id: docSnap.id, ...docSnap.data() }));
         return items;
       },
+      getDoc: async (colName: string, docId: string) => {
+        const snap = await gcpFirestore.collection(colName).doc(docId).get();
+        if (!snap.exists) return null;
+        return { id: snap.id, ...snap.data() };
+      },
       setDoc: async (colName: string, docId: string, data: any) => {
         await gcpFirestore.collection(colName).doc(docId).set(data);
       },
@@ -852,6 +864,12 @@ if (hasServiceAccount || isOnGoogleCloud) {
       },
       updateDoc: async (colName: string, docId: string, data: any) => {
         await gcpFirestore.collection(colName).doc(docId).update(data);
+      },
+      queryByField: async (colName: string, field: string, value: any) => {
+        const snap = await gcpFirestore.collection(colName).where(field, '==', value).get();
+        const items: any[] = [];
+        snap.forEach(docSnap => items.push({ id: docSnap.id, ...docSnap.data() }));
+        return items;
       }
     };
     console.log('☁️ @google-cloud/firestore client initialized successfully.');
@@ -885,6 +903,11 @@ if (!cloudDb.isActive) {
         snap.forEach(docSnap => items.push({ id: docSnap.id, ...docSnap.data() }));
         return items;
       },
+      getDoc: async (colName: string, docId: string) => {
+        const snap = await webGetDoc(webDoc(webDbInstance, colName, docId));
+        if (!snap.exists()) return null;
+        return { id: snap.id, ...snap.data() };
+      },
       setDoc: async (colName: string, docId: string, data: any) => {
         await webSetDoc(webDoc(webDbInstance, colName, docId), data);
       },
@@ -893,6 +916,13 @@ if (!cloudDb.isActive) {
       },
       updateDoc: async (colName: string, docId: string, data: any) => {
         await webUpdateDoc(webDoc(webDbInstance, colName, docId), data);
+      },
+      queryByField: async (colName: string, field: string, value: any) => {
+        const q = webQuery(webCollection(webDbInstance, colName), webWhere(field, '==', value));
+        const snap = await webGetDocs(q);
+        const items: any[] = [];
+        snap.forEach(docSnap => items.push({ id: docSnap.id, ...docSnap.data() }));
+        return items;
       }
     };
     isFirestoreActive = true;
@@ -3173,12 +3203,10 @@ app.post('/api/admin/users/:userId/ban', async (req, res) => {
   targetUser.isBanned = !targetUser.isBanned;
   saveDB(db);
 
-  if (isFirestoreActive && firestore) {
-    try {
-      await firestore.collection('users').doc(userId).update({ isBanned: targetUser.isBanned });
-    } catch (e) {
-      console.error('Firestore ban update error:', e);
-    }
+  if (cloudDb.isActive) {
+    cloudDb.updateDoc('users', userId, { isBanned: targetUser.isBanned }).catch((e) => {
+      console.error('Cloud DB ban update error:', e);
+    });
   }
 
   res.json({ 
@@ -3215,12 +3243,10 @@ app.delete('/api/admin/users/:userId', async (req, res) => {
   db.users.splice(userIndex, 1);
   saveDB(db);
 
-  if (isFirestoreActive && firestore) {
-    try {
-      await firestore.collection('users').doc(userId).delete();
-    } catch (e) {
-      console.error('Firestore delete user error:', e);
-    }
+  if (cloudDb.isActive) {
+    cloudDb.deleteDoc('users', userId).catch((e) => {
+      console.error('Cloud DB delete user error:', e);
+    });
   }
 
   res.json({ success: true, message: `Si ${targetUser.name} ay matagumpay na na-delete sa sistema.` });
@@ -3521,16 +3547,14 @@ app.post('/api/reels/redeem-profit', (req, res) => {
 
   saveDB(db);
 
-  if (isFirestoreActive && firestore) {
-    try {
-      firestore.collection('users').doc(user.id).set({
-        balance: user.balance,
-        lifetimeEarnings: user.lifetimeEarnings,
-        activityLogs: user.activityLogs
-      }, { merge: true });
-    } catch (e) {
-      console.error('Firestore update balance error:', e);
-    }
+  if (cloudDb.isActive) {
+    cloudDb.updateDoc('users', user.id, {
+      balance: user.balance,
+      lifetimeEarnings: user.lifetimeEarnings,
+      activityLogs: user.activityLogs
+    }).catch((e) => {
+      console.error('Cloud DB update balance error:', e);
+    });
   }
 
   res.json({
@@ -4009,14 +4033,11 @@ app.delete('/api/admin/campaigns/:id', async (req, res) => {
 
   saveDB(db);
 
-  // If firestore is active, also delete the document from Firestore campaigns collection
-  if (isFirestoreActive && firestore) {
-    try {
-      await firestore.collection('campaigns').doc(campaignId).delete();
-      console.log(`🗑️ Deleted campaign ${campaignId} from Firestore collection.`);
-    } catch (err) {
-      console.error(`❌ Failed to delete campaign ${campaignId} from Firestore:`, err);
-    }
+  // If cloudDb is active, also delete the document from Firestore campaigns collection
+  if (cloudDb.isActive) {
+    cloudDb.deleteDoc('campaigns', campaignId).catch((err) => {
+      console.error(`❌ Failed to delete campaign ${campaignId} from Cloud DB:`, err);
+    });
   }
 
   res.json({ success: true, campaigns: db.campaigns });
@@ -4427,15 +4448,11 @@ app.post('/api/admin/merchant/ads/:id/action', async (req, res) => {
 
   saveDB(db);
 
-  // Sync campaign and post to Firestore if active
-  if (isFirestoreActive && firestore) {
-    try {
-      firestore.collection('campaigns').doc(newCampaign.id).set(newCampaign).catch((e: any) => console.error(e));
-      firestore.collection('posts').doc(sponsorPost.id).set(sponsorPost).catch((e: any) => console.error(e));
-      console.log(`🔥 Synced new merchant campaign and sponsor post to Firestore.`);
-    } catch (fsErr) {
-      console.error(`❌ Firestore sync error for merchant ad approval:`, fsErr);
-    }
+  // Sync campaign and post to Cloud DB if active
+  if (cloudDb.isActive) {
+    cloudDb.setDoc('campaigns', newCampaign.id, newCampaign).catch((e: any) => console.error(e));
+    cloudDb.setDoc('posts', sponsorPost.id, sponsorPost).catch((e: any) => console.error(e));
+    console.log(`🔥 Synced new merchant campaign and sponsor post to Cloud DB.`);
   }
 
   res.json({ success: true, ad });
@@ -4487,13 +4504,9 @@ app.post('/api/user/task-complete', (req, res) => {
       if (merchantCamp) {
         merchantCamp.clicks = (merchantCamp.clicks || 0) + 1;
         
-        // Sync with Firestore if active
-        if (isFirestoreActive && firestore) {
-          try {
-            firestore.collection('campaigns').doc(campaignId).update({ clicks: merchantCamp.clicks }).catch((e: any) => console.error(e));
-          } catch (fsErr) {
-            console.error('❌ Firestore click count update error:', fsErr);
-          }
+        // Sync with Cloud DB if active
+        if (cloudDb.isActive) {
+          cloudDb.updateDoc('campaigns', campaignId, { clicks: merchantCamp.clicks }).catch((e: any) => console.error(e));
         }
       }
     }
@@ -5488,8 +5501,8 @@ function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media'): stri
     const filePath = path.join(uploadDir, filename);
     fs.writeFileSync(filePath, buffer);
 
-    // Asynchronously and safely upload chunks to Firestore in background
-    if (isFirestoreActive && firestore) {
+    // Asynchronously and safely upload chunks to Cloud DB in background
+    if (cloudDb.isActive) {
       const chunkSize = 750 * 1024; // 750KB chunks to safely avoid 1MB document limit
       const totalChunks = Math.ceil(buffer.length / chunkSize);
       (async () => {
@@ -5500,7 +5513,7 @@ function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media'): stri
             const chunkBuffer = buffer.subarray(start, end);
             const chunkBase64 = chunkBuffer.toString('base64');
             const chunkDocId = `${filename}_chunk_${i}`;
-            await firestore.collection('media_storage').doc(chunkDocId).set({
+            await cloudDb.setDoc('media_storage', chunkDocId, {
               filename,
               chunkIndex: i,
               totalChunks,
@@ -5512,7 +5525,7 @@ function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media'): stri
             console.error(`❌ Error uploading chunk ${i} for ${filename}:`, chunkErr);
           }
         }
-      })().catch(e => console.error(`Error in async Firestore chunk upload for ${filename}:`, e));
+      })().catch(e => console.error(`Error in async Cloud DB chunk upload for ${filename}:`, e));
     }
 
     return `/uploads/${filename}`;
@@ -5545,20 +5558,17 @@ app.post('/api/zone/upload', (req, res) => {
 // --- DYNAMIC GCASH QR CODE SERVICE WITH CLOUD FIRESTORE DURA-BACKUP ---
 app.get('/admin_gcash_qr.png', async (req, res) => {
   // 1. Try to fetch from persistent cloud storage (Firestore) first so restarts never wipe it out
-  if (isFirestoreActive && firestore) {
+  if (cloudDb.isActive) {
     try {
-      const doc = await firestore.collection('app_settings').doc('gcash_qr').get();
-      if (doc.exists) {
-        const data = doc.data();
-        if (data && data.base64) {
-          const buffer = Buffer.from(data.base64, 'base64');
-          res.setHeader('Content-Type', data.mimeType || 'image/png');
-          res.setHeader('Cache-Control', 'public, max-age=3600');
-          return res.send(buffer);
-        }
+      const data = await cloudDb.getDoc('app_settings', 'gcash_qr');
+      if (data && data.base64) {
+        const buffer = Buffer.from(data.base64, 'base64');
+        res.setHeader('Content-Type', data.mimeType || 'image/png');
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+        return res.send(buffer);
       }
     } catch (err) {
-      console.error('❌ Firestore QR recovery error:', err);
+      console.error('❌ Cloud DB QR recovery error:', err);
     }
   }
 
@@ -5618,14 +5628,14 @@ app.post('/api/admin/update-qr', async (req, res) => {
     }
 
     // Save persistently to Firestore
-    if (isFirestoreActive && firestore) {
-      await firestore.collection('app_settings').doc('gcash_qr').set({
+    if (cloudDb.isActive) {
+      await cloudDb.setDoc('app_settings', 'gcash_qr', {
         base64: base64Data,
         mimeType,
         updatedAt: new Date().toISOString(),
         updatedBy: userId
       });
-      console.log('☁️ Persistent custom GCash QR saved to Cloud Firestore.');
+      console.log('☁️ Persistent custom GCash QR saved to Cloud DB.');
     }
 
     res.json({ success: true, message: 'Tagumpay na napalitan ang iyong GCash QR Code!' });
@@ -5647,19 +5657,12 @@ app.get('/uploads/:filename', async (req, res) => {
   }
 
   // 2. If physical file was wiped out by a server restart, dynamically reconstruct from Firestore
-  if (isFirestoreActive && firestore) {
+  if (cloudDb.isActive) {
     try {
-      console.log(`🔍 Media Recovery: Recovering ${filename} from Firestore media_storage collection...`);
-      const snapshot = await firestore.collection('media_storage')
-        .where('filename', '==', filename)
-        .get();
+      console.log(`🔍 Media Recovery: Recovering ${filename} from Cloud DB media_storage collection...`);
+      const chunks = await cloudDb.queryByField('media_storage', 'filename', filename);
 
-      if (!snapshot.empty) {
-        const chunks: any[] = [];
-        snapshot.forEach((doc: any) => {
-          chunks.push(doc.data());
-        });
-
+      if (chunks && chunks.length > 0) {
         // Sort chunks sequentially by index
         chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
 
@@ -5679,7 +5682,7 @@ app.get('/uploads/:filename', async (req, res) => {
         // Serve the reconstructed file
         return res.sendFile(filePath);
       } else {
-        console.log(`⚠️ Media Recovery: No Firestore backup records found for filename ${filename}`);
+        console.log(`⚠️ Media Recovery: No Cloud DB backup records found for filename ${filename}`);
       }
     } catch (err) {
       console.error(`❌ Media Recovery Error for filename ${filename}:`, err);
@@ -8625,6 +8628,11 @@ app.post('/api/va/place-banner', (req, res) => {
     return res.status(400).json({ error: 'Ang basket na ito ay wala na o nabayaran na.' });
   }
 
+  // Check if basket is user's own basket (Disallow placing banner on own orders)
+  if (basket.userId === user.id) {
+    return res.status(400).json({ error: 'Hindi maaaring mag-place ng marketing banner sa sarili mong basket o shopping order.' });
+  }
+
   // Check if basket already has an active banner
   const existingActiveBanner = (db.vaBanners || []).find(b => b.targetBasketId === targetBasketId && b.status === 'active');
   if (existingActiveBanner) {
@@ -8774,13 +8782,18 @@ app.post('/api/va/convert-vm', (req, res) => {
   });
 });
 
-// 10. POST /api/shop/simulate-action - Customer payment & delivery or forced expiry
+// 10. POST /api/shop/simulate-action - Customer payment & delivery or forced expiry (Admin only)
 app.post('/api/shop/simulate-action', (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const { basketId, action } = req.body;
   const db = loadDB();
+
+  const user = db.users.find(u => u.id === token);
+  if (!user || !user.isAdmin) {
+    return res.status(403).json({ error: 'Forbidden: Admin lamang ang maaaring mag-proseso ng Bayaran at I-deliver o Expire Lead.' });
+  }
 
   const basket = (db.shopBaskets || []).find(b => b.id === basketId);
   if (!basket) return res.status(404).json({ error: 'Shopping basket not found' });
