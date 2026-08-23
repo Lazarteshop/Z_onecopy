@@ -2274,10 +2274,12 @@ export default function App() {
                       className="relative group cursor-pointer focus:outline-none shrink-0"
                     >
                       <div className="text-xl sm:text-2xl leading-none select-none flex items-center justify-center">
-                        {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:')) ? (
-                          <img src={user.avatar} alt="Profile" className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover border border-slate-700 shadow-inner group-hover:opacity-85 transition" referrerPolicy="no-referrer" />
+                        {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:') || user.avatar.startsWith('blob:') || user.avatar.startsWith('/')) ? (
+                          <img src={user.avatar} alt="Profile" className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover border border-slate-700 shadow-inner group-hover:opacity-85 transition" referrerPolicy="no-referrer" onError={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }} />
+                        ) : user.avatar && user.avatar.length > 30 ? (
+                          <img src={`data:image/jpeg;base64,${user.avatar}`} alt="Profile" className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover border border-slate-700 shadow-inner group-hover:opacity-85 transition" referrerPolicy="no-referrer" onError={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }} />
                         ) : (
-                          <span className="text-lg sm:text-xl bg-slate-900 p-1 rounded-full shadow-inner group-hover:scale-105 transition block">{user.avatar || '👤'}</span>
+                          <span className="text-lg sm:text-xl bg-slate-900 p-1 rounded-full shadow-inner group-hover:scale-105 transition block">{user.avatar && user.avatar.length <= 8 ? user.avatar : '👤'}</span>
                         )}
                       </div>
                       <span className="absolute -bottom-1 -right-1 bg-blue-600 text-[8px] text-white font-black p-0.5 rounded-full border border-slate-900 group-hover:bg-blue-500 transition scale-90">

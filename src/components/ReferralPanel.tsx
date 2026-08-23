@@ -211,15 +211,28 @@ export default function ReferralPanel({
                 <div key={friend.id} className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/70 text-xs space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5 min-w-0">
-                      {friend.avatar && (friend.avatar.startsWith('http') || friend.avatar.startsWith('data:') || friend.avatar.startsWith('blob:')) ? (
+                      {friend.avatar && (friend.avatar.startsWith('http') || friend.avatar.startsWith('data:') || friend.avatar.startsWith('blob:') || friend.avatar.startsWith('/')) ? (
                         <img 
                           src={friend.avatar} 
                           alt="Avatar" 
                           className="w-6 h-6 rounded-full object-cover border border-slate-200/60 shadow-xs shrink-0" 
                           referrerPolicy="no-referrer" 
+                          onError={(e) => {
+                            (e.currentTarget as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                      ) : friend.avatar && friend.avatar.length > 30 ? (
+                        <img 
+                          src={`data:image/jpeg;base64,${friend.avatar}`} 
+                          alt="Avatar" 
+                          className="w-6 h-6 rounded-full object-cover border border-slate-200/60 shadow-xs shrink-0" 
+                          referrerPolicy="no-referrer" 
+                          onError={(e) => {
+                            (e.currentTarget as HTMLElement).style.display = 'none';
+                          }}
                         />
                       ) : (
-                        <span className="text-base shrink-0">{friend.avatar || '👤'}</span>
+                        <span className="text-base shrink-0 select-none">{friend.avatar && friend.avatar.length <= 8 ? friend.avatar : (friend.name ? friend.name.charAt(0).toUpperCase() : '👤')}</span>
                       )}
                       <div className="min-w-0">
                         <h5 className="font-extrabold text-slate-800 truncate leading-tight">{friend.name}</h5>

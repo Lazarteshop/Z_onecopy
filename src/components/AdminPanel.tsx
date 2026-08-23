@@ -326,17 +326,33 @@ export default function AdminPanel({
   // Helper function to render avatar gracefully regardless of type (emoji or base64 or URL)
   const renderAvatar = (avatar: string | undefined, sizeClass: string = "w-6 h-6") => {
     const avatarStr = avatar || '👤';
-    if (avatarStr.startsWith('http') || avatarStr.startsWith('data:') || avatarStr.startsWith('blob:')) {
+    if (avatarStr.startsWith('http') || avatarStr.startsWith('data:') || avatarStr.startsWith('blob:') || avatarStr.startsWith('/')) {
       return (
         <img 
           src={avatarStr} 
           alt="Avatar" 
           className={`${sizeClass} rounded-full object-cover border border-slate-200/60 shadow-xs shrink-0`} 
           referrerPolicy="no-referrer" 
+          onError={(e) => {
+            (e.currentTarget as HTMLElement).style.display = 'none';
+          }}
         />
       );
     }
-    if (avatarStr.length > 100) {
+    if (avatarStr.length > 30) {
+      return (
+        <img 
+          src={`data:image/jpeg;base64,${avatarStr}`} 
+          alt="Avatar" 
+          className={`${sizeClass} rounded-full object-cover border border-slate-200/60 shadow-xs shrink-0`} 
+          referrerPolicy="no-referrer" 
+          onError={(e) => {
+            (e.currentTarget as HTMLElement).style.display = 'none';
+          }}
+        />
+      );
+    }
+    if (avatarStr.length > 8) {
       return <span className="text-sm shrink-0">👤</span>;
     }
     return <span className="shrink-0">{avatarStr}</span>;

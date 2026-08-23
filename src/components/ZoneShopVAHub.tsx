@@ -127,6 +127,64 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
   // Copy feedback
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
+  // Helper to safely and cleanly render avatar image or emoji
+  const renderVAAvatar = (avatar: string | undefined, name: string = 'User', sizeClass = 'w-9 h-9', textClass = 'text-sm') => {
+    const fallbackChar = name ? name.charAt(0).toUpperCase() : '👤';
+    if (!avatar) {
+      return (
+        <div className={`${sizeClass} rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-slate-700 shrink-0 select-none shadow-2xs ${textClass}`}>
+          {fallbackChar}
+        </div>
+      );
+    }
+
+    const isImg = avatar.startsWith('http') || avatar.startsWith('data:') || avatar.startsWith('blob:') || avatar.startsWith('/');
+    if (isImg) {
+      return (
+        <img
+          src={avatar}
+          alt={name}
+          className={`${sizeClass} rounded-full object-cover border border-slate-200 shrink-0 shadow-2xs`}
+          referrerPolicy="no-referrer"
+          onError={(e) => {
+            (e.currentTarget as HTMLElement).style.display = 'none';
+          }}
+        />
+      );
+    }
+
+    // Raw base64 string
+    if (avatar.length > 30) {
+      return (
+        <img
+          src={`data:image/jpeg;base64,${avatar}`}
+          alt={name}
+          className={`${sizeClass} rounded-full object-cover border border-slate-200 shrink-0 shadow-2xs`}
+          referrerPolicy="no-referrer"
+          onError={(e) => {
+            (e.currentTarget as HTMLElement).style.display = 'none';
+          }}
+        />
+      );
+    }
+
+    // Long string that is not an image - show fallback letter
+    if (avatar.length > 8) {
+      return (
+        <div className={`${sizeClass} rounded-full bg-blue-100 border border-blue-200 text-blue-800 flex items-center justify-center font-black shrink-0 select-none shadow-2xs ${textClass}`}>
+          {fallbackChar}
+        </div>
+      );
+    }
+
+    // Short emoji
+    return (
+      <div className={`${sizeClass} bg-white border border-slate-200 rounded-full flex items-center justify-center ${textClass} shrink-0 select-none shadow-2xs`}>
+        {avatar}
+      </div>
+    );
+  };
+
   // Fetch all data
   const fetchData = async () => {
     try {
@@ -875,9 +933,7 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
                     className="p-3.5 bg-slate-50 hover:bg-slate-100/80 border border-slate-200/80 rounded-2xl flex items-center justify-between gap-3 transition"
                   >
                     <div className="flex items-center gap-3 truncate">
-                      <span className="h-10 w-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-lg shrink-0 shadow-2xs">
-                        {va.avatar || '👩‍💼'}
-                      </span>
+                      {renderVAAvatar(va.avatar, va.name, "w-10 h-10", "text-base")}
                       <div className="truncate">
                         <h4 className="font-extrabold text-xs text-slate-900 truncate">{va.name}</h4>
                         <span className="text-[10px] text-slate-400 font-medium block">
@@ -1538,9 +1594,7 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
                         {item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank === 3 ? '🥉' : `#${item.rank}`}
                       </span>
 
-                      <span className="h-9 w-9 bg-white border border-slate-200 rounded-full flex items-center justify-center text-sm shadow-2xs">
-                        {item.avatar || '👤'}
-                      </span>
+                      {renderVAAvatar(item.avatar, item.name, "w-9 h-9", "text-sm")}
 
                       <div>
                         <div className="flex items-center gap-1.5">

@@ -1311,7 +1311,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           </div>
         );
       }
-    } else if (avatarUrl && (avatarUrl.startsWith('http') || avatarUrl.startsWith('data:') || avatarUrl.startsWith('blob:'))) {
+    } else if (avatarUrl && (avatarUrl.startsWith('http') || avatarUrl.startsWith('data:') || avatarUrl.startsWith('blob:') || avatarUrl.startsWith('/'))) {
       avatarEl = (
         <img 
           src={dataSaver.getOptimizedImageUrl(avatarUrl, { width: 80, quality: 40 })} 
@@ -1320,7 +1320,30 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           decoding="async"
           className={`${sizeClass} rounded-full object-cover border border-slate-200 shadow-sm shrink-0`} 
           referrerPolicy="no-referrer" 
+          onError={(e) => {
+            (e.currentTarget as HTMLElement).style.display = 'none';
+          }}
         />
+      );
+    } else if (avatarUrl && avatarUrl.length > 30) {
+      avatarEl = (
+        <img 
+          src={`data:image/jpeg;base64,${avatarUrl}`} 
+          alt={name} 
+          loading="lazy"
+          decoding="async"
+          className={`${sizeClass} rounded-full object-cover border border-slate-200 shadow-sm shrink-0`} 
+          referrerPolicy="no-referrer" 
+          onError={(e) => {
+            (e.currentTarget as HTMLElement).style.display = 'none';
+          }}
+        />
+      );
+    } else if (avatarUrl && avatarUrl.length > 8) {
+      avatarEl = (
+        <div className={`${sizeClass} rounded-full bg-blue-100 text-blue-800 flex items-center justify-center font-black select-none border border-blue-200 shrink-0 ${textClass}`}>
+          {fallbackChar}
+        </div>
       );
     } else {
       avatarEl = (
@@ -2691,7 +2714,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   <div key={u.id} className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2.5">
                       <div className="relative inline-block select-none">
-                        <span className="text-2xl">{u.avatar || '👤'}</span>
+                        {renderFeedAvatar(u.avatar, u.name, "w-9 h-9", "text-sm")}
                         {(u.id === user.id || onlineUserIds.includes(u.id)) ? (
                           <span className="absolute bottom-0 right-0 flex h-2.5 w-2.5">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
