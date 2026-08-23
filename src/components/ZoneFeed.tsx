@@ -46,7 +46,8 @@ import {
   ShieldCheck,
   Paperclip,
   Wifi,
-  Smartphone
+  Smartphone,
+  ExternalLink
 } from 'lucide-react';
 import { ZonePost, GroupChat, GroupMessage, ZoneStory } from '../types';
 import { ZoneStories } from './ZoneStories';
@@ -3210,7 +3211,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
                     {/* Quick Popular Show Filter Chips */}
                     <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-[11px]">
-                      {['Lahat', 'Sigabo', 'Taskforce Firewall', 'The Master Cutter', '24 Oras', 'TV Patrol', 'Its Showtime', 'Family Feud'].map((show) => {
+                      {['Lahat', 'Someone Someday', 'The Master Cutter', 'Born to Shine', 'Magpakailanman', 'TiktoClock', 'TV Patrol', 'Wish Ko Lang'].map((show) => {
                         const isAll = show === 'Lahat';
                         const isActive = isAll ? !teleseryeSearch : teleseryeSearch.toLowerCase() === show.toLowerCase();
                         return (
@@ -3807,14 +3808,35 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                           </div>
                                         </div>
                                       ) : (
-                                        <div className="relative w-full aspect-video bg-black">
-                                          <iframe 
-                                            src={selectedServerMap[post.id] || post.embedUrl || (post.embedUrls ? post.embedUrls[0] : '')} 
-                                            className="w-full h-full border-0"
-                                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                            allowFullScreen
-                                            title={post.text.slice(0, 50)}
-                                          />
+                                        <div className="flex flex-col bg-black">
+                                          <div className="relative w-full aspect-video bg-black">
+                                            <iframe 
+                                              src={selectedServerMap[post.id] || post.embedUrl || (post.embedUrls ? post.embedUrls[0] : '')} 
+                                              className="w-full h-full border-0"
+                                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                              allowFullScreen
+                                              title={post.text.slice(0, 50)}
+                                            />
+                                          </div>
+                                          {(post.userId === 'teleserye-feed-author' || (post as any).category === 'Teleserye' || post.rssLink) && (
+                                            <div className="bg-slate-900 px-3.5 py-2 border-t border-slate-800 flex items-center justify-between gap-2 text-xs">
+                                              <div className="flex items-center gap-1.5 text-slate-300 font-bold truncate">
+                                                <Tv className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                                                <span className="truncate">Pinoy Tambayan Teleserye</span>
+                                              </div>
+                                              {post.rssLink && (
+                                                <a
+                                                  href={post.rssLink}
+                                                  target="_blank"
+                                                  rel="noopener noreferrer"
+                                                  className="text-red-400 hover:text-red-300 font-extrabold flex items-center gap-1 hover:underline shrink-0 bg-red-950/60 px-2 py-0.5 rounded border border-red-800/40 text-[11px]"
+                                                >
+                                                  <span>{language === 'tl' ? 'Buksan sa Browser' : 'Open in Browser'}</span>
+                                                  <ExternalLink className="w-3 h-3" />
+                                                </a>
+                                              )}
+                                            </div>
+                                          )}
                                         </div>
                                       )}
                                     </>

@@ -5865,7 +5865,7 @@ async function fetchExactTeleseryeImage(articleUrl: string): Promise<string | nu
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
     const res = await fetch(articleUrl, {
       signal: controller.signal,
@@ -5878,6 +5878,7 @@ async function fetchExactTeleseryeImage(articleUrl: string): Promise<string | nu
 
     if (res.ok) {
       const html = await res.text();
+      // 1. Check og:image meta tag (returns full resolution show poster)
       const ogMatch = html.match(/<meta property=["']og:image["'] content=["']([^"']+)["']/i);
       if (ogMatch && ogMatch[1] && ogMatch[1].startsWith('http')) {
         const cleanImg = ogMatch[1].trim();
@@ -5885,7 +5886,16 @@ async function fetchExactTeleseryeImage(articleUrl: string): Promise<string | nu
         return cleanImg;
       }
 
-      const wpUploadMatch = html.match(/https:\/\/replayteleserye\.su\/wp-content\/uploads\/[^\s"']+\.(?:jpg|jpeg|png|webp)/i);
+      // 2. Check data-layzr thumbnail in article
+      const layzrMatch = html.match(/data-layzr=["'](https:\/\/pinoytambayanteleserye\.com\/wp-content\/uploads\/[^\s"']+\.(?:png|jpg|jpeg|webp))["']/i);
+      if (layzrMatch && layzrMatch[1]) {
+        const cleanImg = layzrMatch[1].trim();
+        setCachedTeleseryeImage(articleUrl, cleanImg);
+        return cleanImg;
+      }
+
+      // 3. Check wp-content/uploads match
+      const wpUploadMatch = html.match(/https:\/\/pinoytambayanteleserye\.com\/wp-content\/uploads\/[^\s"']+\.(?:jpg|jpeg|png|webp)/i);
       if (wpUploadMatch && wpUploadMatch[0]) {
         const cleanImg = wpUploadMatch[0].trim();
         setCachedTeleseryeImage(articleUrl, cleanImg);
@@ -5902,8 +5912,10 @@ async function fetchExactTeleseryeImage(articleUrl: string): Promise<string | nu
 async function fetchTeleseryeRSS(): Promise<any[]> {
   try {
     const feedUrls = [
-      'https://replayteleserye.su/feed/',
-      'https://replayteleserye.su/feed/?paged=2'
+      'https://pinoytambayanteleserye.com/feed/',
+      'https://pinoytambayanteleserye.com/feed/?paged=2',
+      'https://pinoytambayanteleserye.com/feed/?paged=3',
+      'https://pinoytambayanteleserye.com/category/pinoy-tambayan/pinoy-teleserye/feed/'
     ];
 
     const formattedPosts: any[] = [];
@@ -5912,7 +5924,7 @@ async function fetchTeleseryeRSS(): Promise<any[]> {
     for (const feedUrl of feedUrls) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
 
         const res = await fetch(feedUrl, {
           headers: {
@@ -5950,19 +5962,20 @@ async function fetchTeleseryeRSS(): Promise<any[]> {
             const hash = crypto.createHash('md5').update(link || cleanTitle).digest('hex').slice(0, 12);
             const cleanId = `post-teleserye-${slug || hash}`;
 
-            // Extract all iframes and video embed urls
+            // Extract all iframes and video embed urls if present
             const rawIframes = [...content.matchAll(/<iframe[^>]+src=["']([^"']+)["']/gi)].map(m => m[1]);
             const normalizedIframes = rawIframes.map(url => {
               if (url.startsWith('//')) return 'https:' + url;
               return url;
             }).filter(u => u.startsWith('http'));
 
-            // Identify primary embed URL
-            const primaryEmbed = normalizedIframes.length > 0 ? normalizedIframes[0] : undefined;
+            // Identify primary embed URL and server options (falls back to direct episode video link)
+            const primaryEmbed = normalizedIframes.length > 0 ? normalizedIframes[0] : (link || undefined);
+            const allEmbeds = normalizedIframes.length > 0 ? normalizedIframes : (link ? [link] : undefined);
 
             // Try extracting poster image from content or fetch from page
             let posterUrl: string | null = null;
-            const inlineImg = content.match(/<img[^>]+src=["'](https:\/\/replayteleserye\.su\/wp-content\/uploads\/[^"']+)["']/i);
+            const inlineImg = content.match(/<img[^>]+src=["'](https:\/\/pinoytambayanteleserye\.com\/wp-content\/uploads\/[^"']+)["']/i);
             if (inlineImg && inlineImg[1]) {
               posterUrl = inlineImg[1];
             } else if (link) {
@@ -5972,13 +5985,13 @@ async function fetchTeleseryeRSS(): Promise<any[]> {
             return {
               id: cleanId,
               userId: 'teleserye-feed-author',
-              userName: 'Pinoy Teleserye Replay',
+              userName: 'Pinoy Tambayan Teleserye',
               userAvatar: '📺',
-              text: `📺 **${cleanTitle}** (Full Episode Replay)\n\nPanoorin ang pinakabagong episode ng **${cleanTitle}** dito sa Z-one Social Community Feed!\n\n▶ Pindutin ang video player para panoorin ang libreng HD video stream.\n\n🔗 Source: ${link}`,
+              text: `📺 **${cleanTitle}** (Pinoy Tambayan Teleserye Replay)\n\nPanoorin ang pinakabagong episode ng **${cleanTitle}** dito sa Z-one Social Community Feed!\n\n▶ Pindutin ang video player para panoorin ang libreng HD video stream.\n\n🔗 Source: ${link}`,
               mediaUrl: posterUrl || undefined,
               mediaType: 'video',
               embedUrl: primaryEmbed,
-              embedUrls: normalizedIframes.length > 0 ? normalizedIframes : undefined,
+              embedUrls: allEmbeds,
               likes: [],
               comments: [],
               createdAt: new Date(pubDate).toISOString(),
@@ -6011,10 +6024,20 @@ async function syncRssToDatabase() {
     const db = loadDB();
     if (!db.posts) db.posts = [];
 
-    // Remove legacy single-clobbered post ID if present
-    db.posts = db.posts.filter(p => p.id !== 'post-teleserye-aHR0cHM6Ly9yZXBsYXl0ZWxlc2VyeWUu');
-
     let hasUpdates = false;
+
+    // Clean out legacy replayteleserye.su posts
+    const initialCount = db.posts.length;
+    db.posts = db.posts.filter(p => {
+      if (p.id === 'post-teleserye-aHR0cHM6Ly9yZXBsYXl0ZWxlc2VyeWUu') return false;
+      if (p.rssLink && p.rssLink.includes('replayteleserye.su')) return false;
+      if (p.mediaUrl && p.mediaUrl.includes('replayteleserye.su')) return false;
+      if (p.text && p.text.includes('replayteleserye.su')) return false;
+      return true;
+    });
+    if (db.posts.length !== initialCount) {
+      hasUpdates = true;
+    }
 
     // 1. Fetch fresh Manila Bulletin News articles
     const rssArticles = await fetchBalitaRSS();
