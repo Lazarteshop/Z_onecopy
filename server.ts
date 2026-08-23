@@ -5,6 +5,16 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import { Firestore } from '@google-cloud/firestore';
+import { initializeApp as initFirebaseApp, getApps as getFirebaseApps, getApp as getFirebaseApp } from 'firebase/app';
+import { 
+  getFirestore as getWebFirestore, 
+  collection as webCollection, 
+  doc as webDoc, 
+  getDocs as webGetDocs, 
+  setDoc as webSetDoc, 
+  deleteDoc as webDeleteDoc,
+  updateDoc as webUpdateDoc
+} from 'firebase/firestore';
 import { INITIAL_CAMPAIGNS } from './src/data/campaigns';
 import { GoogleGenAI } from '@google/genai';
 import webpush from 'web-push';
@@ -708,9 +718,30 @@ app.use((req, res, next) => {
   next();
 });
 
-const DB_FILE_PATH = path.join(process.cwd(), 'src', 'data', 'db.json');
-const DB_BACKUP_PATH = path.join(process.cwd(), 'src', 'data', 'db.json.bak');
-const DB_TMP_PATH = path.join(process.cwd(), 'src', 'data', 'db.json.tmp');
+// --- PERSISTENT DATA STORAGE PATHS ---
+const DATA_DIRECTORY = process.env.DATA_DIR || process.env.RENDER_DATA_PATH || (fs.existsSync('/var/data') ? '/var/data' : path.join(process.cwd(), 'src', 'data'));
+if (!fs.existsSync(DATA_DIRECTORY)) {
+  try {
+    fs.mkdirSync(DATA_DIRECTORY, { recursive: true });
+  } catch (mkErr) {
+    console.error('Failed creating DATA_DIRECTORY:', mkErr);
+  }
+}
+
+const DB_FILE_PATH = path.join(DATA_DIRECTORY, 'db.json');
+const DB_BACKUP_PATH = path.join(DATA_DIRECTORY, 'db.json.bak');
+const DB_TMP_PATH = path.join(DATA_DIRECTORY, 'db.json.tmp');
+
+// If running with a dedicated persistent disk (e.g. on Render) and DB does not exist yet there, copy initial db.json
+const BASE_DEFAULT_DB = path.join(process.cwd(), 'src', 'data', 'db.json');
+if (DATA_DIRECTORY !== path.join(process.cwd(), 'src', 'data') && !fs.existsSync(DB_FILE_PATH) && fs.existsSync(BASE_DEFAULT_DB)) {
+  try {
+    fs.copyFileSync(BASE_DEFAULT_DB, DB_FILE_PATH);
+    console.log(`📁 Persistent storage initialized: Copied baseline database from ${BASE_DEFAULT_DB} to ${DB_FILE_PATH}`);
+  } catch (copyErr) {
+    console.error('Error copying baseline database to persistent disk:', copyErr);
+  }
+}
 
 // --- FIREBASE CONFIGURATION & INITIALIZATION ---
 let firebaseConfigObj = {
@@ -718,7 +749,7 @@ let firebaseConfigObj = {
   appId: "1:828078909829:web:ce668cbe71588119b33cec",
   apiKey: "AIzaSyCxS9Nt3GHIfo82RSuDEvzYrdJtpJSFTHk",
   authDomain: "feisty-listener-3d2jw.firebaseapp.com",
-  firestoreDatabaseId: "ai-studio-a97ac6ad-011f-411e-9d04-596438effa7f",
+  firestoreDatabaseId: "ai-studio-websiteviewerand-39fa42c9-2ddb-4a73-9de1-b8f9fc2b550c",
   storageBucket: "feisty-listener-3d2jw.firebasestorage.app",
   messagingSenderId: "828078909829"
 };
@@ -732,6 +763,25 @@ try {
   console.error('Warning: Failed to load dynamic firebase-applet-config.json, using defaults.', e);
 }
 
+// Unified Cloud DB Adapter
+interface CloudDBAdapter {
+  isActive: boolean;
+  type: 'gcp-admin' | 'web-client' | 'none';
+  getCollection: (colName: string) => Promise<any[]>;
+  setDoc: (colName: string, docId: string, data: any) => Promise<void>;
+  deleteDoc: (colName: string, docId: string) => Promise<void>;
+  updateDoc: (colName: string, docId: string, data: any) => Promise<void>;
+}
+
+let cloudDb: CloudDBAdapter = {
+  isActive: false,
+  type: 'none',
+  getCollection: async () => [],
+  setDoc: async () => {},
+  deleteDoc: async () => {},
+  updateDoc: async () => {}
+};
+
 let isFirestoreActive = false;
 let firestore: any = null;
 
@@ -740,19 +790,16 @@ let serviceAccountData: any = null;
 
 if (rawServiceAccountValue) {
   if (rawServiceAccountValue.startsWith('{')) {
-    // Sa tingin natin ito ay raw JSON string
     try {
       serviceAccountData = JSON.parse(rawServiceAccountValue);
       console.log('🗝️ GCP: Na-parse ang raw JSON credentials mula sa FIREBASE_SERVICE_ACCOUNT environment variable.');
     } catch (err) {
-      console.error('⚠️ GCP: Failed parsing inline JSON from FIREBASE_SERVICE_ACCOUNT. Susubukan nating basahin bilang file path kung ito ay path pala...', err);
+      console.error('⚠️ GCP: Failed parsing inline JSON from FIREBASE_SERVICE_ACCOUNT. Susubukan nating basahin bilang file path...', err);
     }
   }
   
-  // Kung hindi pa rin na-parse at baka ito ay file path (e.g. Render Secret File)
   if (!serviceAccountData) {
     try {
-      const fs = require('fs');
       if (fs.existsSync(rawServiceAccountValue)) {
         const fileContent = fs.readFileSync(rawServiceAccountValue, 'utf-8');
         serviceAccountData = JSON.parse(fileContent);
@@ -767,6 +814,7 @@ if (rawServiceAccountValue) {
 const hasServiceAccount = !!serviceAccountData;
 const isOnGoogleCloud = !!process.env.K_SERVICE || !!process.env.GOOGLE_APPLICATION_CREDENTIALS;
 
+// 1. First attempt: @google-cloud/firestore (GCP IAM / Service Account)
 if (hasServiceAccount || isOnGoogleCloud) {
   try {
     const isCustomProject = hasServiceAccount && serviceAccountData?.project_id && (serviceAccountData.project_id !== firebaseConfigObj.projectId);
@@ -775,29 +823,86 @@ if (hasServiceAccount || isOnGoogleCloud) {
       projectId: hasServiceAccount ? (serviceAccountData.project_id || firebaseConfigObj.projectId) : firebaseConfigObj.projectId,
     };
 
-    // If it's a custom deployed project (like on Render), use its default database,
-    // otherwise use the workspace-specific firestoreDatabaseId if defined.
     if (!isCustomProject && firebaseConfigObj.firestoreDatabaseId) {
       firestoreOptions.databaseId = firebaseConfigObj.firestoreDatabaseId;
     }
 
     if (hasServiceAccount) {
       firestoreOptions.credentials = serviceAccountData;
-      console.log(`🗝️ GCP: Gagamitin ang nahanap na FIREBASE_SERVICE_ACCOUNT para sa project: ${firestoreOptions.projectId}`);
     }
 
-    firestore = new Firestore(firestoreOptions);
+    const gcpFirestore = new Firestore(firestoreOptions);
+    firestore = gcpFirestore;
     isFirestoreActive = true;
-    console.log('☁️ Firestore client initialized successfully.');
+
+    cloudDb = {
+      isActive: true,
+      type: 'gcp-admin',
+      getCollection: async (colName: string) => {
+        const snap = await gcpFirestore.collection(colName).get();
+        const items: any[] = [];
+        snap.forEach(docSnap => items.push({ id: docSnap.id, ...docSnap.data() }));
+        return items;
+      },
+      setDoc: async (colName: string, docId: string, data: any) => {
+        await gcpFirestore.collection(colName).doc(docId).set(data);
+      },
+      deleteDoc: async (colName: string, docId: string) => {
+        await gcpFirestore.collection(colName).doc(docId).delete();
+      },
+      updateDoc: async (colName: string, docId: string, data: any) => {
+        await gcpFirestore.collection(colName).doc(docId).update(data);
+      }
+    };
+    console.log('☁️ @google-cloud/firestore client initialized successfully.');
   } catch (err) {
-    console.error('⚠️ Failed to initialize Firestore client. Falling back to local storage:', err);
+    console.warn('⚠️ @google-cloud/firestore initialization failed, switching to Firebase Web Client SDK fallback:', err);
+  }
+}
+
+// 2. Second attempt: Firebase Web SDK (works anywhere including Render without GCP IAM setup)
+if (!cloudDb.isActive) {
+  try {
+    const fbApp = getFirebaseApps().length > 0 ? getFirebaseApp() : initFirebaseApp({
+      apiKey: firebaseConfigObj.apiKey,
+      projectId: firebaseConfigObj.projectId,
+      authDomain: firebaseConfigObj.authDomain,
+      storageBucket: firebaseConfigObj.storageBucket,
+      messagingSenderId: firebaseConfigObj.messagingSenderId,
+      appId: firebaseConfigObj.appId
+    });
+
+    const webDbInstance = firebaseConfigObj.firestoreDatabaseId
+      ? getWebFirestore(fbApp, firebaseConfigObj.firestoreDatabaseId)
+      : getWebFirestore(fbApp);
+
+    cloudDb = {
+      isActive: true,
+      type: 'web-client',
+      getCollection: async (colName: string) => {
+        const snap = await webGetDocs(webCollection(webDbInstance, colName));
+        const items: any[] = [];
+        snap.forEach(docSnap => items.push({ id: docSnap.id, ...docSnap.data() }));
+        return items;
+      },
+      setDoc: async (colName: string, docId: string, data: any) => {
+        await webSetDoc(webDoc(webDbInstance, colName, docId), data);
+      },
+      deleteDoc: async (colName: string, docId: string) => {
+        await webDeleteDoc(webDoc(webDbInstance, colName, docId));
+      },
+      updateDoc: async (colName: string, docId: string, data: any) => {
+        await webUpdateDoc(webDoc(webDbInstance, colName, docId), data);
+      }
+    };
+    isFirestoreActive = true;
+    firestore = webDbInstance;
+    console.log(`☁️ Firebase Web SDK Firestore adapter initialized successfully (Database: ${firebaseConfigObj.firestoreDatabaseId || 'default'}).`);
+  } catch (webErr) {
+    console.error('⚠️ Could not initialize Firebase Web SDK adapter. Active storage will use persistent local database:', webErr);
     isFirestoreActive = false;
     firestore = null;
   }
-} else {
-  console.log('⚠️ No Firebase credentials detected (please configure FIREBASE_SERVICE_ACCOUNT env var on Render.com). Falling back to local db.json storage.');
-  isFirestoreActive = false;
-  firestore = null;
 }
 
 // --- DATABASE TYPES ---
@@ -1762,7 +1867,12 @@ const lastSyncedCache = {
   reelSubscriptions: new Map<string, string>(),
   stories: new Map<string, string>(),
   groupChats: new Map<string, string>(),
-  groupMessages: new Map<string, string>()
+  groupMessages: new Map<string, string>(),
+  shopProducts: new Map<string, string>(),
+  shopBaskets: new Map<string, string>(),
+  shopOrders: new Map<string, string>(),
+  vaBanners: new Map<string, string>(),
+  vaSubscriptions: new Map<string, string>()
 };
 
 function initLastSyncedCache(data: DBStructure) {
@@ -1816,10 +1926,36 @@ function initLastSyncedCache(data: DBStructure) {
       lastSyncedCache.groupMessages.set(gm.id, JSON.stringify(gm));
     }
   }
+  if (lastSyncedCache.shopProducts.size === 0 && data.shopProducts && data.shopProducts.length > 0) {
+    for (const sp of data.shopProducts) {
+      lastSyncedCache.shopProducts.set(sp.id, JSON.stringify(sp));
+    }
+  }
+  if (lastSyncedCache.shopBaskets.size === 0 && data.shopBaskets && data.shopBaskets.length > 0) {
+    for (const sb of data.shopBaskets) {
+      lastSyncedCache.shopBaskets.set(sb.id, JSON.stringify(sb));
+    }
+  }
+  if (lastSyncedCache.shopOrders.size === 0 && data.shopOrders && data.shopOrders.length > 0) {
+    for (const so of data.shopOrders) {
+      lastSyncedCache.shopOrders.set(so.id, JSON.stringify(so));
+    }
+  }
+  if (lastSyncedCache.vaBanners.size === 0 && data.vaBanners && data.vaBanners.length > 0) {
+    for (const vb of data.vaBanners) {
+      lastSyncedCache.vaBanners.set(vb.id, JSON.stringify(vb));
+    }
+  }
+  if (lastSyncedCache.vaSubscriptions.size === 0 && data.vaSubscriptions && data.vaSubscriptions.length > 0) {
+    for (const vs of data.vaSubscriptions) {
+      lastSyncedCache.vaSubscriptions.set(vs.id, JSON.stringify(vs));
+    }
+  }
 }
 
 let saveDBTimeout: NodeJS.Timeout | null = null;
 let firestoreSyncTimeout: NodeJS.Timeout | null = null;
+let lastCloudSyncTimestamp: string | null = null;
 
 function saveDB(data: DBStructure, immediate: boolean = false) {
   if (!data || !Array.isArray(data.users) || data.users.length === 0) {
@@ -1847,77 +1983,76 @@ function saveDB(data: DBStructure, immediate: boolean = false) {
     doSave();
     if (firestoreSyncTimeout) clearTimeout(firestoreSyncTimeout);
     uploadToFirestore(data).catch(err => {
-      console.error('Error uploading db changes to Firestore:', err);
+      console.error('Error uploading db changes to Cloud Firestore:', err);
     });
   } else {
     if (saveDBTimeout) clearTimeout(saveDBTimeout);
     saveDBTimeout = setTimeout(doSave, 150);
 
-    // Fast debounced Firestore synchronization (500ms) so data is never lost during republishes or restarts
+    // Fast debounced Cloud Firestore synchronization (500ms) so data is never lost during republishes or restarts
     if (firestoreSyncTimeout) clearTimeout(firestoreSyncTimeout);
     firestoreSyncTimeout = setTimeout(() => {
       uploadToFirestore(data).catch(err => {
-        console.error('Error uploading db changes to Firestore:', err);
+        console.error('Error uploading db changes to Cloud Firestore:', err);
       });
     }, 500);
   }
 }
 
 async function uploadToFirestore(data: DBStructure) {
-  if (!isFirestoreActive || !firestore) {
+  if (!cloudDb.isActive) {
     return;
   }
   
   initLastSyncedCache(data);
 
   try {
-    const userPromises: Promise<any>[] = [];
+    const promises: Promise<any>[] = [];
+
+    // 1. Users
     for (const u of data.users) {
       const uStr = JSON.stringify(u);
       if (lastSyncedCache.users.get(u.id) !== uStr) {
-        userPromises.push((async () => {
+        promises.push((async () => {
           try {
-            const uDocRef = firestore!.collection('users').doc(u.id);
             const { id, ...uWithoutId } = u;
             if (uWithoutId.avatar && uWithoutId.avatar.startsWith('data:') && uWithoutId.avatar.length > 500000) {
               uWithoutId.avatar = '👤';
             }
-            await uDocRef.set(uWithoutId);
+            await cloudDb.setDoc('users', u.id, uWithoutId);
             lastSyncedCache.users.set(u.id, uStr);
           } catch (userErr) {
-            console.error(`Error saving user ${u.id} to Firestore:`, userErr);
+            console.error(`Error saving user ${u.id} to Cloud DB:`, userErr);
           }
         })());
       }
     }
 
-    const campPromises: Promise<any>[] = [];
+    // 2. Campaigns
     if (data.campaigns) {
       for (const c of data.campaigns) {
         const cStr = JSON.stringify(c);
         if (lastSyncedCache.campaigns.get(c.id) !== cStr) {
-          campPromises.push((async () => {
+          promises.push((async () => {
             try {
-              const cDocRef = firestore!.collection('campaigns').doc(c.id);
               const { id, ...cWithoutId } = c;
-              await cDocRef.set(cWithoutId);
+              await cloudDb.setDoc('campaigns', c.id, cWithoutId);
               lastSyncedCache.campaigns.set(c.id, cStr);
             } catch (campErr) {
-              console.error(`Error saving campaign ${c.id} to Firestore:`, campErr);
+              console.error(`Error saving campaign ${c.id} to Cloud DB:`, campErr);
             }
           })());
         }
       }
     }
 
-    const postPromises: Promise<any>[] = [];
+    // 3. Posts
     if (data.posts) {
       for (const p of data.posts) {
         const pStr = JSON.stringify(p);
         if (lastSyncedCache.posts.get(p.id) !== pStr) {
-          postPromises.push((async () => {
+          promises.push((async () => {
             try {
-              const pDocRef = firestore!.collection('posts').doc(p.id);
               const { id, ...pWithoutId } = p;
               if (pWithoutId.mediaUrl && pWithoutId.mediaUrl.startsWith('data:') && pWithoutId.mediaUrl.length > 500000) {
                 if (pWithoutId.mediaType === 'video') {
@@ -1934,169 +2069,213 @@ async function uploadToFirestore(data: DBStructure) {
                   return url;
                 });
               }
-              await pDocRef.set(pWithoutId);
+              await cloudDb.setDoc('posts', p.id, pWithoutId);
               lastSyncedCache.posts.set(p.id, pStr);
             } catch (postErr) {
-              console.error(`Error saving post ${p.id} to Firestore:`, postErr);
+              console.error(`Error saving post ${p.id} to Cloud DB:`, postErr);
             }
           })());
         }
       }
     }
 
-    const dmPromises: Promise<any>[] = [];
+    // 4. Direct Messages
     if (data.directMessages) {
       for (const dm of data.directMessages) {
         const dmStr = JSON.stringify(dm);
         if (lastSyncedCache.directMessages.get(dm.id) !== dmStr) {
-          dmPromises.push((async () => {
+          promises.push((async () => {
             try {
-              const dmDocRef = firestore!.collection('direct_messages').doc(dm.id);
               const { id, ...dmWithoutId } = dm;
               if (dmWithoutId.mediaUrl && dmWithoutId.mediaUrl.startsWith('data:') && dmWithoutId.mediaUrl.length > 500000) {
                 dmWithoutId.mediaUrl = saveBase64ToUploadFile(dmWithoutId.mediaUrl, 'dm-media') || undefined;
               }
-              await dmDocRef.set(dmWithoutId);
+              await cloudDb.setDoc('direct_messages', dm.id, dmWithoutId);
               lastSyncedCache.directMessages.set(dm.id, dmStr);
             } catch (dmErr) {
-              console.error(`Error saving DM ${dm.id} to Firestore:`, dmErr);
+              console.error(`Error saving DM ${dm.id} to Cloud DB:`, dmErr);
             }
           })());
         }
       }
     }
 
-    const maPromises: Promise<any>[] = [];
+    // 5. Merchant Ads
     if (data.merchantAds) {
       for (const ma of data.merchantAds) {
         const maStr = JSON.stringify(ma);
         if (lastSyncedCache.merchantAds.get(ma.id) !== maStr) {
-          maPromises.push((async () => {
+          promises.push((async () => {
             try {
-              const maDocRef = firestore!.collection('merchant_ads').doc(ma.id);
               const { id, ...maWithoutId } = ma;
-              await maDocRef.set(maWithoutId);
+              await cloudDb.setDoc('merchant_ads', ma.id, maWithoutId);
               lastSyncedCache.merchantAds.set(ma.id, maStr);
             } catch (maErr) {
-              console.error(`Error saving Merchant Ad ${ma.id} to Firestore:`, maErr);
+              console.error(`Error saving Merchant Ad ${ma.id} to Cloud DB:`, maErr);
             }
           })());
         }
       }
     }
 
-    const reelPromises: Promise<any>[] = [];
+    // 6. Reels (Videos)
     if (data.reels) {
       for (const r of data.reels) {
         const rStr = JSON.stringify(r);
         if (lastSyncedCache.reels.get(r.id) !== rStr) {
-          reelPromises.push((async () => {
+          promises.push((async () => {
             try {
-              const rDocRef = firestore!.collection('reels').doc(r.id);
               const { id, ...rWithoutId } = r;
-              await rDocRef.set(rWithoutId);
+              await cloudDb.setDoc('reels', r.id, rWithoutId);
               lastSyncedCache.reels.set(r.id, rStr);
             } catch (reelErr) {
-              console.error(`Error saving Reel ${r.id} to Firestore:`, reelErr);
+              console.error(`Error saving Reel ${r.id} to Cloud DB:`, reelErr);
             }
           })());
         }
       }
     }
 
-    const reelSubPromises: Promise<any>[] = [];
+    // 7. Reel Subscriptions
     if (data.reelSubscriptions) {
       for (const rs of data.reelSubscriptions) {
         const rsStr = JSON.stringify(rs);
         if (lastSyncedCache.reelSubscriptions.get(rs.id) !== rsStr) {
-          reelSubPromises.push((async () => {
+          promises.push((async () => {
             try {
-              const rsDocRef = firestore!.collection('reel_subscriptions').doc(rs.id);
               const { id, ...rsWithoutId } = rs;
-              await rsDocRef.set(rsWithoutId);
+              await cloudDb.setDoc('reel_subscriptions', rs.id, rsWithoutId);
               lastSyncedCache.reelSubscriptions.set(rs.id, rsStr);
             } catch (rsErr) {
-              console.error(`Error saving Reel Subscription ${rs.id} to Firestore:`, rsErr);
+              console.error(`Error saving Reel Subscription ${rs.id} to Cloud DB:`, rsErr);
             }
           })());
         }
       }
     }
 
-    const storyPromises: Promise<any>[] = [];
+    // 8. Stories (MyDay)
     if (data.stories) {
       for (const s of data.stories) {
         const sStr = JSON.stringify(s);
         if (lastSyncedCache.stories.get(s.id) !== sStr) {
-          storyPromises.push((async () => {
+          promises.push((async () => {
             try {
-              const sDocRef = firestore!.collection('stories').doc(s.id);
               const { id, ...sWithoutId } = s;
               if (sWithoutId.mediaUrl && sWithoutId.mediaUrl.startsWith('data:') && sWithoutId.mediaUrl.length > 500000) {
                 sWithoutId.mediaUrl = saveBase64ToUploadFile(sWithoutId.mediaUrl, 'story-media') || undefined;
               }
-              await sDocRef.set(sWithoutId);
+              await cloudDb.setDoc('stories', s.id, sWithoutId);
               lastSyncedCache.stories.set(s.id, sStr);
             } catch (sErr) {
-              console.error(`Error saving Story ${s.id} to Firestore:`, sErr);
+              console.error(`Error saving Story ${s.id} to Cloud DB:`, sErr);
             }
           })());
         }
       }
     }
 
-    const groupPromises: Promise<any>[] = [];
+    // 9. Group Chats
     if (data.groupChats) {
       for (const g of data.groupChats) {
         const gStr = JSON.stringify(g);
         if (lastSyncedCache.groupChats.get(g.id) !== gStr) {
-          groupPromises.push((async () => {
+          promises.push((async () => {
             try {
-              const gDocRef = firestore!.collection('group_chats').doc(g.id);
               const { id, ...gWithoutId } = g;
-              await gDocRef.set(gWithoutId);
+              await cloudDb.setDoc('group_chats', g.id, gWithoutId);
               lastSyncedCache.groupChats.set(g.id, gStr);
             } catch (gErr) {
-              console.error(`Error saving Group ${g.id} to Firestore:`, gErr);
+              console.error(`Error saving Group ${g.id} to Cloud DB:`, gErr);
             }
           })());
         }
       }
     }
 
-    const gmPromises: Promise<any>[] = [];
+    // 10. Group Messages
     if (data.groupMessages) {
       for (const gm of data.groupMessages) {
         const gmStr = JSON.stringify(gm);
         if (lastSyncedCache.groupMessages.get(gm.id) !== gmStr) {
-          gmPromises.push((async () => {
+          promises.push((async () => {
             try {
-              const gmDocRef = firestore!.collection('group_messages').doc(gm.id);
               const { id, ...gmWithoutId } = gm;
               if (gmWithoutId.mediaUrl && gmWithoutId.mediaUrl.startsWith('data:') && gmWithoutId.mediaUrl.length > 500000) {
                 gmWithoutId.mediaUrl = saveBase64ToUploadFile(gmWithoutId.mediaUrl, 'gc-media') || undefined;
               }
-              await gmDocRef.set(gmWithoutId);
+              await cloudDb.setDoc('group_messages', gm.id, gmWithoutId);
               lastSyncedCache.groupMessages.set(gm.id, gmStr);
             } catch (gmErr) {
-              console.error(`Error saving Group Message ${gm.id} to Firestore:`, gmErr);
+              console.error(`Error saving Group Message ${gm.id} to Cloud DB:`, gmErr);
             }
           })());
         }
       }
     }
 
-    const deletionPromises: Promise<any>[] = [];
+    // 11. Shop Products, Baskets, Orders & VA Banners
+    if (data.shopProducts) {
+      for (const sp of data.shopProducts) {
+        const spStr = JSON.stringify(sp);
+        if (lastSyncedCache.shopProducts.get(sp.id) !== spStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...spWithoutId } = sp;
+              await cloudDb.setDoc('shop_products', sp.id, spWithoutId);
+              lastSyncedCache.shopProducts.set(sp.id, spStr);
+            } catch (spErr) {
+              console.error(`Error saving shop product ${sp.id} to Cloud DB:`, spErr);
+            }
+          })());
+        }
+      }
+    }
 
+    if (data.shopOrders) {
+      for (const so of data.shopOrders) {
+        const soStr = JSON.stringify(so);
+        if (lastSyncedCache.shopOrders.get(so.id) !== soStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...soWithoutId } = so;
+              await cloudDb.setDoc('shop_orders', so.id, soWithoutId);
+              lastSyncedCache.shopOrders.set(so.id, soStr);
+            } catch (soErr) {
+              console.error(`Error saving shop order ${so.id} to Cloud DB:`, soErr);
+            }
+          })());
+        }
+      }
+    }
+
+    if (data.vaBanners) {
+      for (const vb of data.vaBanners) {
+        const vbStr = JSON.stringify(vb);
+        if (lastSyncedCache.vaBanners.get(vb.id) !== vbStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...vbWithoutId } = vb;
+              await cloudDb.setDoc('va_banners', vb.id, vbWithoutId);
+              lastSyncedCache.vaBanners.set(vb.id, vbStr);
+            } catch (vbErr) {
+              console.error(`Error saving VA Banner ${vb.id} to Cloud DB:`, vbErr);
+            }
+          })());
+        }
+      }
+    }
+
+    // Deletion syncs
     const currentStoryIds = new Set(data.stories ? data.stories.map(s => s.id) : []);
     for (const cachedId of lastSyncedCache.stories.keys()) {
       if (!currentStoryIds.has(cachedId)) {
-        deletionPromises.push((async () => {
+        promises.push((async () => {
           try {
-            await firestore!.collection('stories').doc(cachedId).delete();
+            await cloudDb.deleteDoc('stories', cachedId);
             lastSyncedCache.stories.delete(cachedId);
           } catch (delErr) {
-            console.error(`Error deleting Story ${cachedId} from Firestore:`, delErr);
+            console.error(`Error deleting Story ${cachedId} from Cloud DB:`, delErr);
           }
         })());
       }
@@ -2105,12 +2284,12 @@ async function uploadToFirestore(data: DBStructure) {
     const currentGroupIds = new Set(data.groupChats ? data.groupChats.map(g => g.id) : []);
     for (const cachedId of lastSyncedCache.groupChats.keys()) {
       if (!currentGroupIds.has(cachedId)) {
-        deletionPromises.push((async () => {
+        promises.push((async () => {
           try {
-            await firestore!.collection('group_chats').doc(cachedId).delete();
+            await cloudDb.deleteDoc('group_chats', cachedId);
             lastSyncedCache.groupChats.delete(cachedId);
           } catch (delErr) {
-            console.error(`Error deleting Group ${cachedId} from Firestore:`, delErr);
+            console.error(`Error deleting Group ${cachedId} from Cloud DB:`, delErr);
           }
         })());
       }
@@ -2119,54 +2298,40 @@ async function uploadToFirestore(data: DBStructure) {
     const currentGmIds = new Set(data.groupMessages ? data.groupMessages.map(gm => gm.id) : []);
     for (const cachedId of lastSyncedCache.groupMessages.keys()) {
       if (!currentGmIds.has(cachedId)) {
-        deletionPromises.push((async () => {
+        promises.push((async () => {
           try {
-            await firestore!.collection('group_messages').doc(cachedId).delete();
+            await cloudDb.deleteDoc('group_messages', cachedId);
             lastSyncedCache.groupMessages.delete(cachedId);
           } catch (delErr) {
-            console.error(`Error deleting Group Message ${cachedId} from Firestore:`, delErr);
+            console.error(`Error deleting Group Message ${cachedId} from Cloud DB:`, delErr);
           }
         })());
       }
     }
-    
-    const currentReelSubIds = new Set(data.reelSubscriptions ? data.reelSubscriptions.map(rs => rs.id) : []);
-    for (const cachedId of lastSyncedCache.reelSubscriptions.keys()) {
-      if (!currentReelSubIds.has(cachedId)) {
-        deletionPromises.push((async () => {
-          try {
-            await firestore!.collection('reel_subscriptions').doc(cachedId).delete();
-            lastSyncedCache.reelSubscriptions.delete(cachedId);
-          } catch (delErr) {
-            console.error(`Error deleting Reel Subscription ${cachedId} from Firestore:`, delErr);
-          }
-        })());
-      }
-    }
-    
+
     const currentReelIds = new Set(data.reels ? data.reels.map(r => r.id) : []);
     for (const cachedId of lastSyncedCache.reels.keys()) {
       if (!currentReelIds.has(cachedId)) {
-        deletionPromises.push((async () => {
+        promises.push((async () => {
           try {
-            await firestore!.collection('reels').doc(cachedId).delete();
+            await cloudDb.deleteDoc('reels', cachedId);
             lastSyncedCache.reels.delete(cachedId);
           } catch (delErr) {
-            console.error(`Error deleting Reel ${cachedId} from Firestore:`, delErr);
+            console.error(`Error deleting Reel ${cachedId} from Cloud DB:`, delErr);
           }
         })());
       }
     }
-    
+
     const currentPostIds = new Set(data.posts ? data.posts.map(p => p.id) : []);
     for (const cachedId of lastSyncedCache.posts.keys()) {
       if (!currentPostIds.has(cachedId)) {
-        deletionPromises.push((async () => {
+        promises.push((async () => {
           try {
-            await firestore!.collection('posts').doc(cachedId).delete();
+            await cloudDb.deleteDoc('posts', cachedId);
             lastSyncedCache.posts.delete(cachedId);
           } catch (delErr) {
-            console.error(`Error deleting post ${cachedId} from Firestore:`, delErr);
+            console.error(`Error deleting post ${cachedId} from Cloud DB:`, delErr);
           }
         })());
       }
@@ -2175,386 +2340,168 @@ async function uploadToFirestore(data: DBStructure) {
     const currentDmIds = new Set(data.directMessages ? data.directMessages.map(dm => dm.id) : []);
     for (const cachedId of lastSyncedCache.directMessages.keys()) {
       if (!currentDmIds.has(cachedId)) {
-        deletionPromises.push((async () => {
+        promises.push((async () => {
           try {
-            await firestore!.collection('direct_messages').doc(cachedId).delete();
+            await cloudDb.deleteDoc('direct_messages', cachedId);
             lastSyncedCache.directMessages.delete(cachedId);
           } catch (delErr) {
-            console.error(`Error deleting DM ${cachedId} from Firestore:`, delErr);
+            console.error(`Error deleting DM ${cachedId} from Cloud DB:`, delErr);
           }
         })());
       }
     }
 
-    const currentMaIds = new Set(data.merchantAds ? data.merchantAds.map(ma => ma.id) : []);
-    for (const cachedId of lastSyncedCache.merchantAds.keys()) {
-      if (!currentMaIds.has(cachedId)) {
-        deletionPromises.push((async () => {
-          try {
-            await firestore!.collection('merchant_ads').doc(cachedId).delete();
-            lastSyncedCache.merchantAds.delete(cachedId);
-          } catch (delErr) {
-            console.error(`Error deleting Merchant Ad ${cachedId} from Firestore:`, delErr);
-          }
-        })());
-      }
-    }
-
-    const currentUserIds = new Set(data.users.map(u => u.id));
-    for (const cachedId of lastSyncedCache.users.keys()) {
-      if (!currentUserIds.has(cachedId)) {
-        deletionPromises.push((async () => {
-          try {
-            await firestore!.collection('users').doc(cachedId).delete();
-            lastSyncedCache.users.delete(cachedId);
-          } catch (delErr) {
-            console.error(`Error deleting user ${cachedId} from Firestore:`, delErr);
-          }
-        })());
-      }
-    }
-
-    const allPromises = [
-      ...userPromises,
-      ...campPromises,
-      ...postPromises,
-      ...dmPromises,
-      ...maPromises,
-      ...reelPromises,
-      ...reelSubPromises,
-      ...storyPromises,
-      ...groupPromises,
-      ...gmPromises,
-      ...deletionPromises
-    ];
-    if (allPromises.length > 0) {
-      await Promise.all(allPromises);
-      console.log(`☁️ GCash Click-Earn: Firestore cloud backup completed. Synced ${allPromises.length} updates/deletes.`);
+    if (promises.length > 0) {
+      await Promise.all(promises);
+      lastCloudSyncTimestamp = new Date().toISOString();
+      console.log(`☁️ Cloud DB sync finished: Pushed ${promises.length} changes to persistent Firestore.`);
     }
   } catch (err) {
-    console.error('❌ Failed background write to Firestore:', err);
+    console.error('❌ Failed background write to Cloud DB:', err);
   }
 }
 
 async function syncFromFirestore() {
-  if (!isFirestoreActive || !firestore) {
-    console.log('ℹ️ Local fallback active: Sini-synchronize ay lalaktawan dahil walang nakitang Firebase credentials.');
+  if (!cloudDb.isActive) {
+    console.log('ℹ️ Cloud DB adapter not active. Using persistent local disk storage.');
     return;
   }
+
   try {
     const envAdminEmail = process.env.ADMIN_EMAIL || 'admin@example.com';
     const envAdminPassword = process.env.ADMIN_PASSWORD || 'AdminSecurePassword123';
     const envAdminName = process.env.ADMIN_NAME || 'System Administrator';
 
-    // Ensure directory exists
-    const dir = path.dirname(DB_FILE_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    console.log('☁️ Initiating cloud synchronization from Firestore database...');
 
-    const usersColRef = firestore.collection('users');
-    const qSnapshot = await usersColRef.get();
-    
-    const dbUsers: any[] = [];
-    qSnapshot.forEach((docSnap) => {
-      dbUsers.push({ id: docSnap.id, ...docSnap.data() });
-    });
+    // Load all collections concurrently
+    const [
+      dbUsers,
+      dbCampaigns,
+      dbPosts,
+      dbDMs,
+      dbMerchantAds,
+      dbReels,
+      dbReelSubs,
+      dbStories,
+      dbGroupChats,
+      dbGroupMessages,
+      dbShopProducts,
+      dbShopBaskets,
+      dbShopOrders,
+      dbVaBanners
+    ] = await Promise.all([
+      cloudDb.getCollection('users').catch(() => []),
+      cloudDb.getCollection('campaigns').catch(() => []),
+      cloudDb.getCollection('posts').catch(() => []),
+      cloudDb.getCollection('direct_messages').catch(() => []),
+      cloudDb.getCollection('merchant_ads').catch(() => []),
+      cloudDb.getCollection('reels').catch(() => []),
+      cloudDb.getCollection('reel_subscriptions').catch(() => []),
+      cloudDb.getCollection('stories').catch(() => []),
+      cloudDb.getCollection('group_chats').catch(() => []),
+      cloudDb.getCollection('group_messages').catch(() => []),
+      cloudDb.getCollection('shop_products').catch(() => []),
+      cloudDb.getCollection('shop_baskets').catch(() => []),
+      cloudDb.getCollection('shop_orders').catch(() => []),
+      cloudDb.getCollection('va_banners').catch(() => [])
+    ]);
 
-    const campaignsColRef = firestore.collection('campaigns');
-    const cSnapshot = await campaignsColRef.get();
-    const dbCampaigns: any[] = [];
-    cSnapshot.forEach((docSnap) => {
-      dbCampaigns.push({ id: docSnap.id, ...docSnap.data() });
-    });
+    const hasAnyCloudData = dbUsers.length > 0 || dbStories.length > 0 || dbGroupChats.length > 0 || 
+                            dbGroupMessages.length > 0 || dbDMs.length > 0 || dbPosts.length > 0 || 
+                            dbReels.length > 0 || dbShopOrders.length > 0;
 
-    const postsColRef = firestore.collection('posts');
-    const pSnapshot = await postsColRef.get();
-    const dbPosts: any[] = [];
-    pSnapshot.forEach((docSnap) => {
-      dbPosts.push({ id: docSnap.id, ...docSnap.data() });
-    });
+    const localDB = loadDB(); // Read current local records
 
-    const dmColRef = firestore.collection('direct_messages');
-    let dbDMs: any[] = [];
-    try {
-      const dmSnapshot = await dmColRef.get();
-      dmSnapshot.forEach((docSnap) => {
-        dbDMs.push({ id: docSnap.id, ...docSnap.data() });
-      });
-    } catch (e) {
-      console.log('No direct_messages collection yet in Firestore');
-    }
+    if (hasAnyCloudData) {
+      console.log(`📱 Found Cloud Firestore records: ${dbUsers.length} users, ${dbReels.length} reels, ${dbStories.length} stories, ${dbGroupChats.length} group chats, ${dbGroupMessages.length} group msgs, ${dbDMs.length} DMs, ${dbPosts.length} posts. Merging with local storage...`);
 
-    const maColRef = firestore.collection('merchant_ads');
-    let dbMerchantAds: any[] = [];
-    try {
-      const maSnapshot = await maColRef.get();
-      maSnapshot.forEach((docSnap) => {
-        dbMerchantAds.push({ id: docSnap.id, ...docSnap.data() });
-      });
-    } catch (e) {
-      console.log('No merchant_ads collection yet in Firestore');
-    }
-
-    const reelsColRef = firestore.collection('reels');
-    let dbReels: any[] = [];
-    try {
-      const reelsSnapshot = await reelsColRef.get();
-      reelsSnapshot.forEach((docSnap) => {
-        dbReels.push({ id: docSnap.id, ...docSnap.data() });
-      });
-    } catch (e) {
-      console.log('No reels collection yet in Firestore');
-    }
-
-    const reelSubsColRef = firestore.collection('reel_subscriptions');
-    let dbReelSubs: any[] = [];
-    try {
-      const reelSubsSnapshot = await reelSubsColRef.get();
-      reelSubsSnapshot.forEach((docSnap) => {
-        dbReelSubs.push({ id: docSnap.id, ...docSnap.data() });
-      });
-    } catch (e) {
-      console.log('No reel_subscriptions collection yet in Firestore');
-    }
-
-    const storiesColRef = firestore.collection('stories');
-    let dbStories: any[] = [];
-    try {
-      const storiesSnapshot = await storiesColRef.get();
-      storiesSnapshot.forEach((docSnap) => {
-        dbStories.push({ id: docSnap.id, ...docSnap.data() });
-      });
-    } catch (e) {
-      console.log('No stories collection yet in Firestore');
-    }
-
-    let dbGroups: any[] = [];
-    try {
-      // Support both group_chats (standard) and legacy groups collection
-      const gcSnapshot = await firestore.collection('group_chats').get();
-      gcSnapshot.forEach((docSnap) => {
-        dbGroups.push({ id: docSnap.id, ...docSnap.data() });
-      });
-      if (dbGroups.length === 0) {
-        const groupsSnapshot = await firestore.collection('groups').get();
-        groupsSnapshot.forEach((docSnap) => {
-          dbGroups.push({ id: docSnap.id, ...docSnap.data() });
-        });
-      }
-    } catch (e) {
-      console.log('No group_chats collection yet in Firestore');
-    }
-
-    const gmColRef = firestore.collection('group_messages');
-    let dbGroupMessages: any[] = [];
-    try {
-      const gmSnapshot = await gmColRef.get();
-      gmSnapshot.forEach((docSnap) => {
-        dbGroupMessages.push({ id: docSnap.id, ...docSnap.data() });
-      });
-    } catch (e) {
-      console.log('No group_messages collection yet in Firestore');
-    }
-
-    if (dbUsers.length > 0 || dbStories.length > 0 || dbGroups.length > 0 || dbGroupMessages.length > 0 || dbDMs.length > 0 || dbPosts.length > 0) {
-      console.log(`📱 Found Firestore cloud data (${dbUsers.length} users, ${dbStories.length} stories, ${dbGroups.length} groups, ${dbDMs.length} DMs, ${dbGroupMessages.length} group msgs). Updating local cache...`);
-
-      // Filter out all fake/simulated withdrawals from Firestore user records
+      // 1. Clean withdrawals
       for (const u of dbUsers) {
         if (Array.isArray(u.withdrawals)) {
-          const originalLength = u.withdrawals.length;
+          const originalLen = u.withdrawals.length;
           u.withdrawals = u.withdrawals.filter((w: any) => {
-            if (w.id === 'with-1785655833689') return true; // Keep Jonard Belleza real withdrawal
+            if (w.id === 'with-1785655833689') return true;
             const isFake = w.id.startsWith('with-db-') || w.id.startsWith('with-sim-') || String(w.createdAt || '').includes('Ago 2, 2026');
             return !isFake;
           });
-
-          // Sync cleaned withdrawals array back to Firestore if changed
-          if (u.withdrawals.length !== originalLength && firestore) {
-            try {
-              await firestore.collection('users').doc(u.id).update({ withdrawals: u.withdrawals });
-              console.log(`🧹 Cleaned ${originalLength - u.withdrawals.length} fake withdrawals from Firestore user ${u.name || u.id}`);
-            } catch (err) {
-              console.error(`Error updating cleaned user ${u.id} in Firestore:`, err);
-            }
+          if (u.withdrawals.length !== originalLen) {
+            cloudDb.updateDoc('users', u.id, { withdrawals: u.withdrawals }).catch(() => {});
           }
         }
       }
 
-      // Ensure Jonard Belleza has his legitimate real withdrawal restored if missing
-      const jonardB = dbUsers.find((u: any) => u.name && u.name.toLowerCase().includes('jonard belleza'));
-      if (jonardB) {
-        if (!Array.isArray(jonardB.withdrawals)) jonardB.withdrawals = [];
-        if (!jonardB.withdrawals.some((w: any) => w.id === 'with-1785655833689')) {
-          const realW = {
-            id: 'with-1785655833689',
-            accountName: 'JONARD BELLEZA',
-            gcashNumber: '09932143141',
-            amount: 126,
-            status: 'success',
-            createdAt: '8/2/2026, 7:30:33 AM',
-            referenceNo: 'REF1136831562'
-          };
-          jonardB.withdrawals.push(realW);
-          if (firestore) {
-            try {
-              await firestore.collection('users').doc(jonardB.id).update({ withdrawals: jonardB.withdrawals });
-            } catch (e) {}
-          }
-        }
-      }
-
-      // Safely merge existing local state with Firestore state to prevent data loss on restarts
-      const localDB = loadDB();
-
-      const mergedStoriesMap = new Map<string, any>();
-      (localDB.stories || []).forEach((s: any) => mergedStoriesMap.set(s.id, s));
-      dbStories.forEach((s: any) => mergedStoriesMap.set(s.id, s));
-      const finalStories = Array.from(mergedStoriesMap.values());
-
-      const mergedGroupsMap = new Map<string, any>();
-      (localDB.groupChats || []).forEach((g: any) => mergedGroupsMap.set(g.id, g));
-      dbGroups.forEach((g: any) => mergedGroupsMap.set(g.id, g));
-      const finalGroups = Array.from(mergedGroupsMap.values());
-
-      const mergedGMsMap = new Map<string, any>();
-      (localDB.groupMessages || []).forEach((gm: any) => mergedGMsMap.set(gm.id, gm));
-      dbGroupMessages.forEach((gm: any) => mergedGMsMap.set(gm.id, gm));
-      const finalGMs = Array.from(mergedGMsMap.values());
-
-      const mergedPostsMap = new Map<string, any>();
-      (localDB.posts || []).forEach((p: any) => mergedPostsMap.set(p.id, p));
-      dbPosts.forEach((p: any) => mergedPostsMap.set(p.id, p));
-      const finalPosts = Array.from(mergedPostsMap.values());
-
-      const mergedDMsMap = new Map<string, any>();
-      (localDB.directMessages || []).forEach((dm: any) => mergedDMsMap.set(dm.id, dm));
-      dbDMs.forEach((dm: any) => mergedDMsMap.set(dm.id, dm));
-      const finalDMs = Array.from(mergedDMsMap.values());
-
-      const loadedDB: DBStructure = { 
-        users: dbUsers,
-        campaigns: dbCampaigns.length > 0 ? dbCampaigns : INITIAL_CAMPAIGNS,
-        posts: finalPosts.length > 0 ? finalPosts : undefined,
-        directMessages: finalDMs.length > 0 ? finalDMs : undefined,
-        merchantAds: dbMerchantAds.length > 0 ? dbMerchantAds : undefined,
-        reels: dbReels.length > 0 ? dbReels : INITIAL_REELS,
-        reelSubscriptions: dbReelSubs,
-        stories: finalStories,
-        groupChats: finalGroups,
-        groupMessages: finalGMs
+      // 2. Safe merge of all collections so NO local or cloud record is lost
+      const mergeById = (localArr: any[] = [], cloudArr: any[] = []) => {
+        const map = new Map<string, any>();
+        localArr.forEach(it => { if (it && it.id) map.set(it.id, it); });
+        cloudArr.forEach(it => { if (it && it.id) map.set(it.id, it); });
+        return Array.from(map.values());
       };
-      
-      // Update/synchronize admin details if needed
-      const admin = loadedDB.users.find(u => u.isAdmin);
+
+      const finalUsers = mergeById(localDB.users, dbUsers);
+      const finalPosts = mergeById(localDB.posts, dbPosts);
+      const finalDMs = mergeById(localDB.directMessages, dbDMs);
+      const finalMerchantAds = mergeById(localDB.merchantAds, dbMerchantAds);
+      const finalReels = mergeById(localDB.reels, dbReels);
+      const finalReelSubs = mergeById(localDB.reelSubscriptions, dbReelSubs);
+      const finalStories = mergeById(localDB.stories, dbStories);
+      const finalGroupChats = mergeById(localDB.groupChats, dbGroupChats);
+      const finalGroupMessages = mergeById(localDB.groupMessages, dbGroupMessages);
+      const finalCampaigns = dbCampaigns.length > 0 ? dbCampaigns : (localDB.campaigns || INITIAL_CAMPAIGNS);
+      const finalShopProducts = mergeById(localDB.shopProducts || INITIAL_SHOP_PRODUCTS, dbShopProducts);
+      const finalShopBaskets = mergeById(localDB.shopBaskets || INITIAL_SHOP_BASKETS, dbShopBaskets);
+      const finalShopOrders = mergeById(localDB.shopOrders || INITIAL_SHOP_ORDERS, dbShopOrders);
+      const finalVaBanners = mergeById(localDB.vaBanners || [], dbVaBanners);
+
+      const mergedDB: DBStructure = {
+        users: finalUsers.length > 0 ? finalUsers : localDB.users,
+        campaigns: finalCampaigns,
+        posts: finalPosts,
+        directMessages: finalDMs,
+        merchantAds: finalMerchantAds,
+        reels: finalReels.length > 0 ? finalReels : INITIAL_REELS,
+        reelSubscriptions: finalReelSubs,
+        stories: finalStories,
+        groupChats: finalGroupChats.length > 0 ? finalGroupChats : localDB.groupChats,
+        groupMessages: finalGroupMessages.length > 0 ? finalGroupMessages : localDB.groupMessages,
+        shopProducts: finalShopProducts,
+        shopBaskets: finalShopBaskets,
+        shopCarts: localDB.shopCarts || {},
+        shopOrders: finalShopOrders,
+        vaBanners: finalVaBanners,
+        vaSubscriptions: localDB.vaSubscriptions || []
+      };
+
+      // Admin verification
+      const admin = mergedDB.users.find(u => u.isAdmin);
       if (admin) {
         admin.email = envAdminEmail;
         admin.password = envAdminPassword;
         admin.name = envAdminName;
       }
-      fs.writeFileSync(DB_FILE_PATH, JSON.stringify(loadedDB, null, 2), 'utf-8');
-      cachedDB = loadedDB;
-      initLastSyncedCache(loadedDB);
-    } else {
-      console.log('🌱 Firestore cloud database is empty. Seeding defaults from local template...');
-      // Load local database or create a new one using loadDB
-      const localDB = loadDB(); // This creates db.json locally if empty
-      
-      // Now seed Firestore
-      const batchPromises = localDB.users.map(async (u) => {
-        const uDocRef = firestore.collection('users').doc(u.id);
-        const { id, ...uWithoutId } = u;
-        await uDocRef.set(uWithoutId);
+
+      cachedDB = mergedDB;
+      fs.writeFileSync(DB_FILE_PATH, JSON.stringify(mergedDB, null, 2), 'utf-8');
+      fs.writeFileSync(DB_BACKUP_PATH, JSON.stringify(mergedDB, null, 2), 'utf-8');
+      initLastSyncedCache(mergedDB);
+      lastCloudSyncTimestamp = new Date().toISOString();
+      console.log(`✅ Merged state saved: ${mergedDB.users.length} users, ${mergedDB.reels?.length} reels, ${mergedDB.stories?.length} stories, ${mergedDB.groupChats?.length} group chats, ${mergedDB.groupMessages?.length} group msgs.`);
+
+      // Push any local items not yet in Cloud to Firestore
+      uploadToFirestore(mergedDB).catch(err => {
+        console.error('Error in initial post-merge upload to Cloud DB:', err);
       });
-
-      let seedCampPromises: Promise<any>[] = [];
-      if (localDB.campaigns) {
-        seedCampPromises = localDB.campaigns.map(async (c) => {
-          const cDocRef = firestore.collection('campaigns').doc(c.id);
-          const { id, ...cWithoutId } = c;
-          await cDocRef.set(cWithoutId);
-        });
-      }
-
-      let seedPostPromises: Promise<any>[] = [];
-      if (localDB.posts) {
-        seedPostPromises = localDB.posts.map(async (p) => {
-          const pDocRef = firestore.collection('posts').doc(p.id);
-          const { id, ...pWithoutId } = p;
-          await pDocRef.set(pWithoutId);
-        });
-      }
-
-      let seedDmPromises: Promise<any>[] = [];
-      if (localDB.directMessages) {
-        seedDmPromises = localDB.directMessages.map(async (dm) => {
-          const dmDocRef = firestore.collection('direct_messages').doc(dm.id);
-          const { id, ...dmWithoutId } = dm;
-          await dmDocRef.set(dmWithoutId);
-        });
-      }
-
-      let seedMerchantPromises: Promise<any>[] = [];
-      if (localDB.merchantAds) {
-        seedMerchantPromises = localDB.merchantAds.map(async (ma) => {
-          const maDocRef = firestore.collection('merchant_ads').doc(ma.id);
-          const { id, ...maWithoutId } = ma;
-          await maDocRef.set(maWithoutId);
-        });
-      }
-
-      let seedReelPromises: Promise<any>[] = [];
-      if (localDB.reels) {
-        seedReelPromises = localDB.reels.map(async (r) => {
-          const rDocRef = firestore.collection('reels').doc(r.id);
-          const { id, ...rWithoutId } = r;
-          await rDocRef.set(rWithoutId);
-        });
-      }
-
-      let seedStoryPromises: Promise<any>[] = [];
-      if (localDB.stories) {
-        seedStoryPromises = localDB.stories.map(async (s) => {
-          const sDocRef = firestore.collection('stories').doc(s.id);
-          const { id, ...sWithoutId } = s;
-          await sDocRef.set(sWithoutId);
-        });
-      }
-
-      let seedGroupPromises: Promise<any>[] = [];
-      if (localDB.groupChats) {
-        seedGroupPromises = localDB.groupChats.map(async (g) => {
-          const gDocRef = firestore.collection('group_chats').doc(g.id);
-          const { id, ...gWithoutId } = g;
-          await gDocRef.set(gWithoutId);
-        });
-      }
-
-      let seedGmPromises: Promise<any>[] = [];
-      if (localDB.groupMessages) {
-        seedGmPromises = localDB.groupMessages.map(async (gm) => {
-          const gmDocRef = firestore.collection('group_messages').doc(gm.id);
-          const { id, ...gmWithoutId } = gm;
-          await gmDocRef.set(gmWithoutId);
-        });
-      }
-
-      await Promise.all([
-        ...batchPromises, 
-        ...seedCampPromises, 
-        ...seedPostPromises, 
-        ...seedDmPromises, 
-        ...seedMerchantPromises,
-        ...seedReelPromises,
-        ...seedStoryPromises,
-        ...seedGroupPromises,
-        ...seedGmPromises
-      ]);
-      console.log('✅ Seeding of Firestore complete.');
+    } else {
+      console.log('🌱 Cloud Firestore has no records yet. Seeding all local baseline records to Cloud...');
+      const seedDB = localDB;
+      initLastSyncedCache(seedDB);
+      await uploadToFirestore(seedDB);
+      lastCloudSyncTimestamp = new Date().toISOString();
+      console.log('✅ Baseline seed completed: All initial reels, group chats, and stories are now persistent in Cloud Firestore!');
     }
   } catch (err) {
-    console.error('⚠️ Could not sync with Firestore at startup. Using local database fallback:', err);
+    console.error('⚠️ Could not sync with Cloud DB at startup. Using local database fallback:', err);
   }
 }
 
@@ -5328,6 +5275,124 @@ app.post('/api/admin/subscription/:userId/decline', (req, res) => {
 
   saveDB(db);
   res.json({ success: true, message: `Subscription ay matagumpay na tinanggihan.` });
+});
+
+
+// ============================================
+//     ADMIN CLOUD DATABASE & BACKUP APIS
+// ============================================
+
+// GET CLOUD DB STATUS
+app.get('/api/admin/db/status', (req, res) => {
+  const adminId = req.headers.authorization;
+  const db = loadDB();
+  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
+  }
+
+  res.json({
+    cloudActive: cloudDb.isActive,
+    cloudType: cloudDb.type,
+    databaseId: firebaseConfigObj.firestoreDatabaseId || 'default',
+    storagePath: DB_FILE_PATH,
+    lastCloudSync: lastCloudSyncTimestamp,
+    counts: {
+      users: db.users ? db.users.length : 0,
+      posts: db.posts ? db.posts.length : 0,
+      reels: db.reels ? db.reels.length : 0,
+      stories: db.stories ? db.stories.length : 0,
+      groupChats: db.groupChats ? db.groupChats.length : 0,
+      groupMessages: db.groupMessages ? db.groupMessages.length : 0,
+      directMessages: db.directMessages ? db.directMessages.length : 0,
+      shopProducts: db.shopProducts ? db.shopProducts.length : 0,
+      shopOrders: db.shopOrders ? db.shopOrders.length : 0,
+      campaigns: db.campaigns ? db.campaigns.length : 0
+    }
+  });
+});
+
+// FORCE CLOUD PUSH (UPLOAD ALL LOCAL TO FIRESTORE)
+app.post('/api/admin/db/force-cloud-push', async (req, res) => {
+  const adminId = req.headers.authorization;
+  const db = loadDB();
+  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
+  }
+
+  try {
+    initLastSyncedCache(db);
+    await uploadToFirestore(db);
+    res.json({ success: true, message: 'Matagumpay na na-upload ang lahat ng data sa Cloud Firestore!' });
+  } catch (err) {
+    res.status(500).json({ error: 'Nabigo ang cloud sync: ' + (err as any).message });
+  }
+});
+
+// FORCE CLOUD PULL (PULL FROM FIRESTORE AND MERGE)
+app.post('/api/admin/db/force-cloud-pull', async (req, res) => {
+  const adminId = req.headers.authorization;
+  const db = loadDB();
+  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
+  }
+
+  try {
+    await syncFromFirestore();
+    const updated = loadDB();
+    res.json({ 
+      success: true, 
+      message: 'Matagumpay na na-sync at na-merge ang lahat ng data mula sa Cloud Firestore!',
+      counts: {
+        users: updated.users?.length || 0,
+        reels: updated.reels?.length || 0,
+        stories: updated.stories?.length || 0,
+        groupChats: updated.groupChats?.length || 0,
+        groupMessages: updated.groupMessages?.length || 0
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Nabigo ang cloud pull: ' + (err as any).message });
+  }
+});
+
+// EXPORT DATABASE BACKUP (DOWNLOAD JSON)
+app.get('/api/admin/db/export', (req, res) => {
+  const adminId = req.query.token as string || req.headers.authorization;
+  const db = loadDB();
+  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  res.setHeader('Content-Disposition', `attachment; filename=z-one-db-backup-${timestamp}.json`);
+  res.setHeader('Content-Type', 'application/json');
+  res.send(JSON.stringify(db, null, 2));
+});
+
+// IMPORT DATABASE BACKUP (RESTORE JSON)
+app.post('/api/admin/db/import', (req, res) => {
+  const adminId = req.headers.authorization;
+  const { backupData } = req.body;
+  const currentDB = loadDB();
+  const adminUser = (currentDB.users || []).find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
+  }
+
+  if (!backupData || !Array.isArray(backupData.users) || backupData.users.length === 0) {
+    return res.status(400).json({ error: 'Hindi balidong database backup JSON file.' });
+  }
+
+  try {
+    saveDB(backupData, true);
+    res.json({ success: true, message: 'Matagumpay na naibalik ang backup database at na-upload sa Cloud!' });
+  } catch (err) {
+    res.status(500).json({ error: 'Nabigo ang pag-restore ng database: ' + (err as any).message });
+  }
 });
 
 
