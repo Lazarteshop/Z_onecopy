@@ -4,6 +4,7 @@ import { formatEmbedUrl } from '../utils/reels';
 import { SuccessStoryModal } from './SuccessStoryModal';
 import { RedemptionBannerModal, RedemptionRecordItem } from './RedemptionBannerModal';
 import { AddCampaignModal } from './AddCampaignModal';
+import { ZoneShopAdminManagement } from './ZoneShopAdminManagement';
 import { 
   Shield, 
   Users, 
@@ -41,7 +42,9 @@ import {
   Copy,
   CheckCircle2,
   PlusCircle,
-  Plus
+  Plus,
+  ShoppingBag,
+  Truck
 } from 'lucide-react';
 import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd, WebsiteCampaign } from '../types';
 
@@ -85,7 +88,7 @@ export default function AdminPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'campaigns' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'settings'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'campaigns' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'shop_management' | 'settings'>('overview');
   const [adminCampaigns, setAdminCampaigns] = useState<WebsiteCampaign[]>([]);
   const [showAddCampaignModal, setShowAddCampaignModal] = useState<boolean>(false);
   const [campaignSearch, setCampaignSearch] = useState<string>('');
@@ -889,6 +892,17 @@ export default function AdminPanel({
               {reelsData.reels.filter((r: any) => r.status === 'pending').length + reelsData.reelSubscriptions.filter((s: any) => s.status === 'pending').length}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('shop_management'); }}
+          className={`px-3.5 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            activeSubTab === 'shop_management'
+              ? 'border-orange-500 text-orange-600 bg-white/70'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <ShoppingBag className="w-3.5 h-3.5 text-orange-500" />
+          <span>🛍️ Z-oneShop & Orders</span>
         </button>
         <button
           onClick={() => { setActiveSubTab('settings'); }}
@@ -2477,6 +2491,14 @@ export default function AdminPanel({
 
           </div>
         </div>
+      )}
+
+      {/* SECTION 8: Z-ONESHOP CATALOGUE & ORDERS FULFILLMENT */}
+      {activeSubTab === 'shop_management' && (
+        <ZoneShopAdminManagement
+          token={token}
+          triggerNotification={triggerNotification}
+        />
       )}
 
     </div>

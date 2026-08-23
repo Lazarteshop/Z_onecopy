@@ -874,6 +874,31 @@ interface UserSession {
     userAgent?: string;
     createdAt?: string;
   }>;
+  vaStats?: {
+    hiredCount: number;
+    virtualMoneyBalance: number;
+    totalVMEarned: number;
+    hiringRewardClaimed: boolean;
+    hiringRewardClaimedAt?: string;
+    isVaRegistered?: boolean;
+    vaSubscription?: {
+      status: 'none' | 'pending' | 'active' | 'expired';
+      subscribedAt?: string;
+      expiresAt?: string;
+      paymentMethod?: 'balance' | 'gcash';
+      gcashSenderNumber?: string;
+      gcashRefNo?: string;
+    };
+    hiredVAs?: Array<{
+      id: string;
+      userId: string;
+      name: string;
+      avatar: string;
+      email?: string;
+      hiredAt: string;
+      status: 'active' | 'flagged';
+    }>;
+  };
 }
 
 interface DirectMessage {
@@ -1063,6 +1088,322 @@ interface DBStructure {
   reelSubscriptions?: ReelTokenSubscription[];
   reelRedemptions?: any[];
   stories?: ZoneStory[];
+  vaLeaderboardWinner?: any;
+  shopProducts?: any[];
+  shopBaskets?: any[];
+  shopCarts?: Record<string, any[]>;
+  shopOrders?: any[];
+  vaBanners?: any[];
+  vaSubscriptions?: any[];
+}
+
+const INITIAL_SHOP_PRODUCTS = [
+  {
+    id: 'prod-1',
+    name: 'Ultra Pro Smartwatch Series 9 (AMOLED Screen, Heart & Sleep Monitor)',
+    price: 1499.00,
+    originalPrice: 2999.00,
+    image: 'https://images.unsplash.com/photo-1579586337278-3befd40fd17a?w=600&auto=format&fit=crop&q=60',
+    category: 'Gadgets',
+    description: 'High-definition AMOLED Bluetooth smartwatch with waterproof casing, fitness tracking, and 7-day battery life.',
+    stock: 45,
+    rating: 4.9,
+    isActive: true,
+    salesCount: 412,
+    tags: ['Bestseller', 'Free Shipping']
+  },
+  {
+    id: 'prod-2',
+    name: 'Wireless ANC Noise-Cancelling Earbuds Pro 3 (Deep Bass & HD Mic)',
+    price: 850.00,
+    originalPrice: 1699.00,
+    image: 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=600&auto=format&fit=crop&q=60',
+    category: 'Gadgets',
+    description: 'Active Noise Cancellation Bluetooth 5.3 earbuds with low-latency gaming mode and crystal-clear calls.',
+    stock: 80,
+    rating: 4.8,
+    isActive: true,
+    salesCount: 620,
+    tags: ['Popular', 'Flash Sale']
+  },
+  {
+    id: 'prod-3',
+    name: 'Korean Glass Skin Serum with 10% Niacinamide & Hyaluronic Acid',
+    price: 599.00,
+    originalPrice: 999.00,
+    image: 'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=600&auto=format&fit=crop&q=60',
+    category: 'Beauty',
+    description: 'Glow booster serum to brighten dull skin, minimize pores, and retain 24-hour hydration.',
+    stock: 120,
+    rating: 4.9,
+    isActive: true,
+    salesCount: 890,
+    tags: ['Beauty Pick', 'Organic']
+  },
+  {
+    id: 'prod-4',
+    name: 'Ergonomic Orthopedic Memory Foam Support Pillow',
+    price: 780.00,
+    originalPrice: 1450.00,
+    image: 'https://images.unsplash.com/photo-1584100936595-c0654b55a2e2?w=600&auto=format&fit=crop&q=60',
+    category: 'Home',
+    description: 'Premium contour memory foam pillow for neck pain relief and optimal cervical spine alignment.',
+    stock: 60,
+    rating: 4.7,
+    isActive: true,
+    salesCount: 295,
+    tags: ['Top Rated']
+  },
+  {
+    id: 'prod-5',
+    name: 'Premium Leather Classic Slim Bifold RFID-Blocking Wallet',
+    price: 490.00,
+    originalPrice: 950.00,
+    image: 'https://images.unsplash.com/photo-1627123424574-724758594e93?w=600&auto=format&fit=crop&q=60',
+    category: 'Fashion',
+    description: 'Genuine leather slim men\'s wallet with 8 card slots, dual cash compartment, and RFID protection.',
+    stock: 95,
+    rating: 4.8,
+    isActive: true,
+    salesCount: 512,
+    tags: ['Genuine Leather']
+  },
+  {
+    id: 'prod-6',
+    name: 'Portable USB-C Rechargeable Desk Air Purifier with HEPA Filter',
+    price: 1150.00,
+    originalPrice: 2200.00,
+    image: 'https://images.unsplash.com/photo-1585771724684-38269d6639fd?w=600&auto=format&fit=crop&q=60',
+    category: 'Home',
+    description: 'Quiet desktop air purifier that captures 99.97% of dust, smoke, allergens, and odors.',
+    stock: 35,
+    rating: 4.9,
+    isActive: true,
+    salesCount: 180,
+    tags: ['HEPA Filter']
+  }
+];
+
+const INITIAL_SHOP_ORDERS: any[] = [
+  {
+    id: 'ord-demo-1',
+    orderNumber: 'ZONE-ORD-88129',
+    userId: 'user-juan',
+    userName: 'Juan Dela Cruz',
+    userEmail: 'juan@example.com',
+    userAvatar: '👨‍💻',
+    items: [
+      {
+        productId: 'prod-1',
+        productName: 'Ultra Pro Smartwatch Series 9 (AMOLED Screen, Heart & Sleep Monitor)',
+        price: 1499.00,
+        quantity: 1,
+        image: 'https://images.unsplash.com/photo-1579586337278-3befd40fd17a?w=600&auto=format&fit=crop&q=60',
+        category: 'Gadgets'
+      }
+    ],
+    itemCount: 1,
+    subtotal: 1499.00,
+    shippingFee: 0,
+    discount: 50.00,
+    promoCode: 'VA-PROMO50',
+    totalAmount: 1449.00,
+    paymentMethod: 'gcash',
+    paymentStatus: 'paid',
+    gcashSenderName: 'Juan Dela Cruz',
+    gcashSenderNumber: '09171234567',
+    gcashRefNo: '992831002341',
+    shippingAddress: {
+      recipientName: 'Juan Dela Cruz',
+      phoneNumber: '09171234567',
+      region: 'NCR',
+      province: 'Metro Manila',
+      city: 'Quezon City',
+      barangay: 'Brgy. Central',
+      streetAddress: 'Unit 4B Sunrise Towers, Katipunan Ave.',
+      postalCode: '1101',
+      deliveryNotes: 'Leave at lobby security guard if not around',
+      label: 'Home'
+    },
+    trackingNumber: 'ZEX-88912034',
+    courierName: 'Z-one Express',
+    riderName: 'Kuya Elmer (0918-555-1234)',
+    riderPhone: '09185551234',
+    status: 'to_ship',
+    statusTimeline: [
+      {
+        status: 'order_placed',
+        title: 'Order Placed & Payment Verified',
+        description: 'Your order was successfully placed via GCash (Ref #992831002341).',
+        timestamp: new Date(Date.now() - 24 * 3600000).toISOString(),
+        location: 'Z-oneShop Central Warehouse'
+      },
+      {
+        status: 'for_packing',
+        title: 'Package Packed with Bubble Wrap',
+        description: 'Items have been quality-checked and safely boxed with security seal.',
+        timestamp: new Date(Date.now() - 18 * 3600000).toISOString(),
+        location: 'Warehouse Fulfillment Bay 3'
+      },
+      {
+        status: 'sorting_hub',
+        title: 'Arrived at Central Sorting Hub',
+        description: 'Parcel scanned at Pasig Central Sorting Hub and queued for route dispatch.',
+        timestamp: new Date(Date.now() - 10 * 3600000).toISOString(),
+        location: 'Pasig Central Hub'
+      },
+      {
+        status: 'rider_pickup',
+        title: 'Picked Up by Assigned Courier Rider',
+        description: 'Kuya Elmer picked up the parcel and is heading to delivery territory.',
+        timestamp: new Date(Date.now() - 4 * 3600000).toISOString(),
+        location: 'Quezon City Delivery Hub'
+      },
+      {
+        status: 'to_ship',
+        title: 'Out for Delivery (To Ship)',
+        description: 'Rider is on the way to your delivery address. Please keep your phone reachable!',
+        timestamp: new Date(Date.now() - 1 * 3600000).toISOString(),
+        location: 'Katipunan Ave, Quezon City'
+      }
+    ],
+    createdAt: new Date(Date.now() - 24 * 3600000).toISOString(),
+    updatedAt: new Date(Date.now() - 1 * 3600000).toISOString(),
+    paidAt: new Date(Date.now() - 24 * 3600000).toISOString()
+  }
+];
+
+const INITIAL_SHOP_BASKETS = [
+  {
+    id: 'basket-demo-1',
+    userId: 'user-juan',
+    userName: 'Juan Dela Cruz',
+    userAvatar: '👨‍💻',
+    items: [
+      { productId: 'prod-1', productName: 'Ultra Pro Smartwatch Series 9', price: 1499.00, quantity: 1, image: 'https://images.unsplash.com/photo-1579586337278-3befd40fd17a?w=600&auto=format&fit=crop&q=60' },
+      { productId: 'prod-2', productName: 'Wireless ANC Noise-Cancelling Earbuds Pro 3', price: 850.00, quantity: 1, image: 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=600&auto=format&fit=crop&q=60' }
+    ],
+    totalAmount: 2349.00,
+    status: 'unpaid',
+    createdAt: new Date(Date.now() - 4 * 3600000).toISOString()
+  },
+  {
+    id: 'basket-demo-2',
+    userId: 'user-clara',
+    userName: 'Maria Clara Santos',
+    userAvatar: '👩‍⚕️',
+    items: [
+      { productId: 'prod-3', productName: 'Korean Glass Skin Serum with 10% Niacinamide', price: 599.00, quantity: 2, image: 'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=600&auto=format&fit=crop&q=60' },
+      { productId: 'prod-5', productName: 'Premium Leather Classic Slim Bifold Wallet', price: 490.00, quantity: 1, image: 'https://images.unsplash.com/photo-1627123424574-724758594e93?w=600&auto=format&fit=crop&q=60' }
+    ],
+    totalAmount: 1688.00,
+    status: 'unpaid',
+    createdAt: new Date(Date.now() - 12 * 3600000).toISOString()
+  },
+  {
+    id: 'basket-demo-3',
+    userId: 'user-roberto',
+    userName: 'Roberto Gutierrez',
+    userAvatar: '👨‍💼',
+    items: [
+      { productId: 'prod-6', productName: 'Portable USB-C Rechargeable Desk Air Purifier', price: 1150.00, quantity: 1, image: 'https://images.unsplash.com/photo-1585771724684-38269d6639fd?w=600&auto=format&fit=crop&q=60' },
+      { productId: 'prod-4', productName: 'Ergonomic Orthopedic Memory Foam Support Pillow', price: 780.00, quantity: 1, image: 'https://images.unsplash.com/photo-1584100936595-c0654b55a2e2?w=600&auto=format&fit=crop&q=60' }
+    ],
+    totalAmount: 1930.00,
+    status: 'unpaid',
+    createdAt: new Date(Date.now() - 20 * 3600000).toISOString()
+  }
+];
+
+// Helper to auto-expire unpaid banners/baskets
+function checkAndExpireBanners(db: DBStructure) {
+  if (!db || !Array.isArray(db.vaBanners)) return;
+  const now = Date.now();
+  let changed = false;
+
+  for (const banner of db.vaBanners) {
+    if (banner.status === 'active' && banner.expiresAt) {
+      if (new Date(banner.expiresAt).getTime() <= now) {
+        banner.status = 'bad_order_expired';
+        banner.completedAt = new Date().toISOString();
+        changed = true;
+
+        if (banner.targetBasketId && Array.isArray(db.shopBaskets)) {
+          const basket = db.shopBaskets.find(b => b.id === banner.targetBasketId);
+          if (basket && basket.status === 'unpaid') {
+            basket.status = 'expired_bad_order';
+          }
+        }
+      }
+    }
+  }
+
+  return changed;
+}
+
+// Helper to sync a single user's active shopping cart into unpaid shopBaskets (Active Leads for VAs)
+function syncUserCartToBasket(db: DBStructure, userId: string) {
+  if (!db.shopBaskets) {
+    db.shopBaskets = [...INITIAL_SHOP_BASKETS];
+  }
+  if (!db.shopCarts) {
+    db.shopCarts = {};
+  }
+
+  const user = (db.users || []).find(u => u.id === userId);
+  const cart = db.shopCarts[userId] || [];
+
+  const existingBasketIndex = db.shopBaskets.findIndex(b => b.userId === userId && b.status === 'unpaid');
+
+  if (cart.length > 0) {
+    const totalAmount = cart.reduce((sum: number, it: any) => sum + (Number(it.price || 0) * Number(it.quantity || 1)), 0);
+    const basketItems = cart.map((it: any) => ({
+      productId: it.productId,
+      productName: it.productName,
+      price: it.price,
+      quantity: it.quantity,
+      image: it.image
+    }));
+
+    if (existingBasketIndex !== -1) {
+      db.shopBaskets[existingBasketIndex].items = basketItems;
+      db.shopBaskets[existingBasketIndex].totalAmount = totalAmount;
+      if (user?.name) db.shopBaskets[existingBasketIndex].userName = user.name;
+      if (user?.avatar) db.shopBaskets[existingBasketIndex].userAvatar = user.avatar;
+    } else {
+      db.shopBaskets.unshift({
+        id: 'basket-' + userId.replace(/[^a-zA-Z0-9]/g, '') + '-' + Date.now(),
+        userId: userId,
+        userName: user?.name || 'Customer Lead',
+        userAvatar: user?.avatar || '🛍️',
+        items: basketItems,
+        totalAmount: totalAmount,
+        status: 'unpaid',
+        createdAt: new Date().toISOString()
+      });
+    }
+  } else {
+    // If cart is now empty, remove unpaid basket only if it doesn't have an active banner attached
+    if (existingBasketIndex !== -1) {
+      const basket = db.shopBaskets[existingBasketIndex];
+      const hasBanner = (db.vaBanners || []).some(ban => ban.targetBasketId === basket.id && ban.status === 'active');
+      if (!hasBanner) {
+        db.shopBaskets.splice(existingBasketIndex, 1);
+      }
+    }
+  }
+}
+
+// Helper to sync all active carts into unpaid shopBaskets
+function checkAndSyncAllCartsToBaskets(db: DBStructure) {
+  if (!db.shopBaskets || db.shopBaskets.length === 0) {
+    db.shopBaskets = [...INITIAL_SHOP_BASKETS];
+  }
+  if (db.shopCarts) {
+    Object.keys(db.shopCarts).forEach(userId => {
+      syncUserCartToBasket(db, userId);
+    });
+  }
 }
 
 // --- HELPER TO INITIALIZE AND GET DATABASE ---
@@ -1151,6 +1492,28 @@ function loadDB(): DBStructure {
     if (!loaded.directMessages) {
       loaded.directMessages = [];
     }
+    if (!loaded.shopProducts || loaded.shopProducts.length === 0) {
+      loaded.shopProducts = INITIAL_SHOP_PRODUCTS;
+    }
+    if (!loaded.shopBaskets || loaded.shopBaskets.length === 0) {
+      loaded.shopBaskets = INITIAL_SHOP_BASKETS;
+    }
+    if (!loaded.shopCarts) {
+      loaded.shopCarts = {};
+    }
+    if (!loaded.shopOrders || loaded.shopOrders.length === 0) {
+      loaded.shopOrders = INITIAL_SHOP_ORDERS;
+    }
+    if (!loaded.vaBanners) {
+      loaded.vaBanners = [];
+    }
+    if (!loaded.vaSubscriptions) {
+      loaded.vaSubscriptions = [];
+    }
+
+    // Run auto-expiration on banners & unpaid baskets
+    checkAndExpireBanners(loaded);
+    checkAndSyncAllCartsToBaskets(loaded);
 
     // Automatically purge simulated/fake withdrawals
     if (loaded.users && Array.isArray(loaded.users)) {
@@ -7742,6 +8105,1822 @@ function getPredefinedTourScenes(prompt: string): any[] {
 
 
 
+
+// ============================================================================
+// 💼 Z-ONESHOP & VIRTUAL ASSISTANT (VA) HIRING & MARKETING BANNER ENGINE
+// ============================================================================
+
+const VA_REWARD_DEADLINE = '2026-11-15T23:59:59Z';
+const VA_HIRING_TARGET = 500;
+const VA_BOUNTY_REWARD = 3000.00;
+const VA_VM_MIN_TRANSFER = 600.00;
+const VA_SUB_PRICE = 100.00;
+
+// Anti-fraud in-memory tracker for recent hire requests (IP & timestamps)
+const hireRateLimitMap = new Map<string, number[]>();
+
+function checkHireRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000; // 10 minutes
+  const timestamps = (hireRateLimitMap.get(ip) || []).filter(t => now - t < windowMs);
+  if (timestamps.length >= 6) {
+    return false; // Exceeded 6 hires per 10 mins
+  }
+  timestamps.push(now);
+  hireRateLimitMap.set(ip, timestamps);
+  return true;
+}
+
+// 1. GET /api/va/status - User VA status, metrics, progress & leaderboard summary
+app.get('/api/va/status', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  // Initialize VA stats if not present
+  if (!user.vaStats) {
+    user.vaStats = {
+      hiredCount: 0,
+      virtualMoneyBalance: 0,
+      totalVMEarned: 0,
+      hiringRewardClaimed: false,
+      isVaRegistered: true,
+      hiredVAs: [],
+      vaSubscription: { status: 'none' }
+    };
+  }
+
+  // Auto-expire banners and check subscription expiry
+  checkAndExpireBanners(db);
+  checkAndSyncAllCartsToBaskets(db);
+  saveDB(db);
+
+  if (user.vaStats.vaSubscription?.status === 'active' && user.vaStats.vaSubscription.expiresAt) {
+    if (new Date(user.vaStats.vaSubscription.expiresAt).getTime() <= Date.now()) {
+      user.vaStats.vaSubscription.status = 'expired';
+    }
+  }
+
+  const hiredCount = user.vaStats.hiredCount || (user.vaStats.hiredVAs ? user.vaStats.hiredVAs.length : 0);
+  user.vaStats.hiredCount = hiredCount;
+
+  const isDeadlinePassed = Date.now() > new Date(VA_REWARD_DEADLINE).getTime();
+  const progressPercent = Math.min(100, Math.round((hiredCount / VA_HIRING_TARGET) * 100));
+
+  const myBanners = (db.vaBanners || []).filter(b => b.vaUserId === user.id);
+  const myActiveBannersCount = myBanners.filter(b => b.status === 'active').length;
+  const unpaidBasketsCount = (db.shopBaskets || []).filter(b => b.status === 'unpaid').length;
+
+  return res.json({
+    success: true,
+    vaStats: user.vaStats,
+    referralCode: user.referralCode,
+    hiringTarget: VA_HIRING_TARGET,
+    rewardAmount: VA_BOUNTY_REWARD,
+    rewardDeadline: VA_REWARD_DEADLINE,
+    isDeadlinePassed,
+    progressPercent,
+    leaderboardWinner: db.vaLeaderboardWinner || null,
+    isEligibleForReward: hiredCount >= VA_HIRING_TARGET && !isDeadlinePassed && (!db.vaLeaderboardWinner || db.vaLeaderboardWinner.userId === user.id),
+    minVMTransferThreshold: VA_VM_MIN_TRANSFER,
+    myActiveBannersCount,
+    unpaidBasketsCount
+  });
+});
+
+// 2. POST /api/va/hire - Process hiring of a Virtual Assistant via referral link/code
+app.post('/api/va/hire', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const { referralCode, candidateName, candidateEmail } = req.body;
+  const clientIp = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
+
+  if (!referralCode) {
+    return res.status(400).json({ error: 'Referral code / VA Code is required' });
+  }
+
+  // Anti-fraud rate limit
+  if (!checkHireRateLimit(String(clientIp))) {
+    return res.status(429).json({ error: 'Masyadong maraming requests mula sa iyong koneksyon. Subukan muli pagkatapos ng ilang minuto.' });
+  }
+
+  const db = loadDB();
+  const referrer = db.users.find(u => u.referralCode && u.referralCode.toUpperCase() === String(referralCode).toUpperCase());
+
+  if (!referrer) {
+    return res.status(404).json({ error: 'Hindi natagpuan ang referral / VA link ng employer.' });
+  }
+
+  // Anti-self-referral prevention
+  if (token && referrer.id === token) {
+    return res.status(400).json({ error: 'Bawal i-hire ang sarili bilang sariling Virtual Assistant.' });
+  }
+
+  if (!referrer.vaStats) {
+    referrer.vaStats = {
+      hiredCount: 0,
+      virtualMoneyBalance: 0,
+      totalVMEarned: 0,
+      hiringRewardClaimed: false,
+      isVaRegistered: true,
+      hiredVAs: [],
+      vaSubscription: { status: 'none' }
+    };
+  }
+  if (!referrer.vaStats.hiredVAs) {
+    referrer.vaStats.hiredVAs = [];
+  }
+
+  // Check candidate duplication
+  const targetEmail = candidateEmail ? candidateEmail.trim().toLowerCase() : null;
+  const targetName = candidateName ? candidateName.trim() : `VA Assistant #${referrer.vaStats.hiredVAs.length + 1}`;
+
+  if (targetEmail) {
+    const alreadyHired = referrer.vaStats.hiredVAs.some(h => h.email && h.email.toLowerCase() === targetEmail);
+    if (alreadyHired) {
+      return res.status(400).json({ error: 'Ang VA applicant na ito ay nai-hire na dati.' });
+    }
+  }
+
+  const newHireId = 'hire-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
+  const newHiredVA = {
+    id: newHireId,
+    userId: token || ('guest-' + Date.now()),
+    name: targetName,
+    avatar: ['👩‍💼', '👨‍💼', '💻', '🚀', '⭐', '🎧'][referrer.vaStats.hiredVAs.length % 6],
+    email: targetEmail || undefined,
+    hiredAt: new Date().toISOString(),
+    status: 'active' as const
+  };
+
+  referrer.vaStats.hiredVAs.unshift(newHiredVA);
+  referrer.vaStats.hiredCount = referrer.vaStats.hiredVAs.length;
+
+  // Add notification & activity log to referrer
+  if (!referrer.activityLogs) referrer.activityLogs = [];
+  referrer.activityLogs.unshift({
+    id: 'log-va-' + Date.now(),
+    type: 'bonus',
+    title: 'Bagong Hired Virtual Assistant! 🎉',
+    amount: 0,
+    timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+    details: `Matagumpay na na-hire si ${targetName} bilang iyong Virtual Assistant (${referrer.vaStats.hiredCount}/500 target)!`
+  });
+
+  saveDB(db);
+
+  // Send push notification to referrer
+  sendPushNotificationToUser(referrer.id, {
+    title: '🎉 Bagong Hired Virtual Assistant!',
+    body: `Na-hire mo si ${targetName}! Kasalukuyang Hired VAs: ${referrer.vaStats.hiredCount}/500.`
+  }).catch(() => {});
+
+  return res.json({
+    success: true,
+    message: `Matagumpay na nai-hire si ${targetName}!`,
+    currentHiredCount: referrer.vaStats.hiredCount,
+    progressPercent: Math.min(100, Math.round((referrer.vaStats.hiredCount / VA_HIRING_TARGET) * 100))
+  });
+});
+
+// 3. GET /api/va/leaderboard - Live leaderboard of top hirers towards 500 VAs
+app.get('/api/va/leaderboard', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const db = loadDB();
+
+  const hirers = db.users
+    .filter(u => !u.isAdmin)
+    .map(u => {
+      const count = u.vaStats?.hiredCount || (u.vaStats?.hiredVAs ? u.vaStats.hiredVAs.length : 0);
+      return {
+        userId: u.id,
+        name: u.name,
+        avatar: u.avatar || '👤',
+        hiredCount: count,
+        progressPercent: Math.min(100, Math.round((count / VA_HIRING_TARGET) * 100)),
+        isCurrentUser: token ? u.id === token : false,
+        hasClaimedReward: !!(u.vaStats?.hiringRewardClaimed)
+      };
+    })
+    .sort((a, b) => b.hiredCount - a.hiredCount)
+    .slice(0, 20)
+    .map((item, index) => ({
+      ...item,
+      rank: index + 1
+    }));
+
+  return res.json({
+    success: true,
+    leaderboard: hirers,
+    winner: db.vaLeaderboardWinner || null,
+    target: VA_HIRING_TARGET,
+    rewardAmount: VA_BOUNTY_REWARD,
+    deadline: VA_REWARD_DEADLINE
+  });
+});
+
+// 4. POST /api/va/claim-500-reward - First user reaching 500 hires claims ₱3,000
+app.post('/api/va/claim-500-reward', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const hiredCount = user.vaStats?.hiredCount || (user.vaStats?.hiredVAs ? user.vaStats.hiredVAs.length : 0);
+
+  if (hiredCount < VA_HIRING_TARGET) {
+    return res.status(400).json({ 
+      error: `Hindi pa sapat ang iyong hired VAs (${hiredCount}/${VA_HIRING_TARGET}). Kailangan mo ng ${VA_HIRING_TARGET - hiredCount} pang VAs!` 
+    });
+  }
+
+  // Check deadline
+  if (Date.now() > new Date(VA_REWARD_DEADLINE).getTime()) {
+    return res.status(400).json({ error: 'Tapos na ang promo deadline para sa ₱3,000 Bounty noong November 15, 2026.' });
+  }
+
+  // Check if someone has already claimed
+  if (db.vaLeaderboardWinner) {
+    if (db.vaLeaderboardWinner.userId === user.id) {
+      return res.status(400).json({ error: 'Nai-claim mo na ang ₱3,000 Hiring Bounty reward!' });
+    }
+    return res.status(400).json({ 
+      error: `Paumanhin! Naunahan ka na ni ${db.vaLeaderboardWinner.userName} sa pag-abot ng 500 VAs at na-claim na ang solong ₱3,000 1st Prize Bounty.` 
+    });
+  }
+
+  // Lock in winner
+  const winnerRecord = {
+    userId: user.id,
+    userName: user.name,
+    userAvatar: user.avatar || '🏆',
+    hiredCount: hiredCount,
+    claimedAt: new Date().toISOString(),
+    rewardAmount: VA_BOUNTY_REWARD
+  };
+
+  db.vaLeaderboardWinner = winnerRecord;
+
+  if (!user.vaStats) {
+    user.vaStats = {
+      hiredCount,
+      virtualMoneyBalance: 0,
+      totalVMEarned: 0,
+      hiringRewardClaimed: true,
+      isVaRegistered: true
+    };
+  } else {
+    user.vaStats.hiringRewardClaimed = true;
+    user.vaStats.hiringRewardClaimedAt = winnerRecord.claimedAt;
+  }
+
+  // Award ₱3,000 cash to user's real balance
+  user.stats.balance = (user.stats.balance || 0) + VA_BOUNTY_REWARD;
+  user.stats.lifetimeEarnings = (user.stats.lifetimeEarnings || 0) + VA_BOUNTY_REWARD;
+
+  if (!user.activityLogs) user.activityLogs = [];
+  user.activityLogs.unshift({
+    id: 'log-bounty-' + Date.now(),
+    type: 'bonus',
+    title: '🏆 ₱3,000 500-VA Grand Champion Bounty Claimed!',
+    amount: VA_BOUNTY_REWARD,
+    timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+    details: `Unang nakarating sa 500 Hired Virtual Assistants bago ang Nov 15, 2026! Naidagdag na ang ₱3,000 sa iyong GCash wallet balance.`
+  });
+
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    message: '🎉 Maligayang pagbati! Matagumpay mong na-claim ang ₱3,000 Grand Hiring Bounty!',
+    rewardAmount: VA_BOUNTY_REWARD,
+    newBalance: user.stats.balance,
+    winner: winnerRecord
+  });
+});
+
+// 5. POST /api/va/subscribe - Subscribe to ₱100/mo Paid Banner Plan
+app.post('/api/va/subscribe', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { paymentMethod, gcashSenderNumber, gcashRefNo } = req.body;
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (!user.vaStats) {
+    user.vaStats = {
+      hiredCount: 0,
+      virtualMoneyBalance: 0,
+      totalVMEarned: 0,
+      hiringRewardClaimed: false,
+      isVaRegistered: true,
+      hiredVAs: [],
+      vaSubscription: { status: 'none' }
+    };
+  }
+
+  if (paymentMethod === 'balance') {
+    if ((user.stats.balance || 0) < VA_SUB_PRICE) {
+      return res.status(400).json({ error: `Kulang ang iyong wallet balance (₱${(user.stats.balance || 0).toFixed(2)}). Kailangan ng ₱${VA_SUB_PRICE.toFixed(2)}.` });
+    }
+
+    // Deduct ₱100 immediately
+    user.stats.balance -= VA_SUB_PRICE;
+    const now = new Date();
+    const expires = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    user.vaStats.vaSubscription = {
+      status: 'active',
+      subscribedAt: now.toISOString(),
+      expiresAt: expires.toISOString(),
+      paymentMethod: 'balance'
+    };
+
+    if (!db.vaSubscriptions) db.vaSubscriptions = [];
+    db.vaSubscriptions.unshift({
+      id: 'vasub-' + Date.now(),
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
+      paymentType: 'balance',
+      amount: VA_SUB_PRICE,
+      status: 'active',
+      createdAt: now.toISOString(),
+      approvedAt: now.toISOString(),
+      expiresAt: expires.toISOString()
+    });
+
+    if (!user.activityLogs) user.activityLogs = [];
+    user.activityLogs.unshift({
+      id: 'log-vasub-' + Date.now(),
+      type: 'withdraw',
+      title: 'VA Paid Banner Plan Subscribed',
+      amount: VA_SUB_PRICE,
+      timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+      details: 'Na-activate ang 30-Day Paid Banner Access (7 Days Visibility, 5.0% Virtual Money Commission).'
+    });
+
+    saveDB(db);
+
+    return res.json({
+      success: true,
+      message: 'Matagumpay na na-activate ang Paid Banner Subscription (₱100/buwan)!',
+      subscription: user.vaStats.vaSubscription,
+      newBalance: user.stats.balance
+    });
+  } else if (paymentMethod === 'gcash') {
+    if (!gcashRefNo || !gcashSenderNumber) {
+      return res.status(400).json({ error: 'Pakilagay ang GCash Sender Mobile Number at Reference Number.' });
+    }
+
+    user.vaStats.vaSubscription = {
+      status: 'pending',
+      subscribedAt: new Date().toISOString(),
+      paymentMethod: 'gcash',
+      gcashSenderNumber,
+      gcashRefNo
+    };
+
+    if (!db.vaSubscriptions) db.vaSubscriptions = [];
+    db.vaSubscriptions.unshift({
+      id: 'vasub-' + Date.now(),
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
+      paymentType: 'gcash',
+      gcashSenderNumber,
+      gcashRefNo,
+      amount: VA_SUB_PRICE,
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    });
+
+    saveDB(db);
+
+    return res.json({
+      success: true,
+      message: 'Naipadala na ang iyong GCash payment reference sa Admin para sa validation!',
+      subscription: user.vaStats.vaSubscription
+    });
+  } else {
+    return res.status(400).json({ error: 'Pumili ng payment method (balance o gcash).' });
+  }
+});
+
+// 6. GET /api/shop/unpaid-baskets - List unpaid baskets in Z-oneShop
+app.get('/api/shop/unpaid-baskets', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  checkAndExpireBanners(db);
+  checkAndSyncAllCartsToBaskets(db);
+  saveDB(db);
+
+  const unpaidBaskets = (db.shopBaskets || [])
+    .filter(b => b.status === 'unpaid')
+    .map(b => {
+      const activeBanner = (db.vaBanners || []).find(ban => ban.id === b.assignedBannerId && ban.status === 'active');
+      return {
+        ...b,
+        hasActiveBanner: !!activeBanner,
+        activeBanner: activeBanner || null,
+        isMyBanner: activeBanner ? activeBanner.vaUserId === token : false
+      };
+    });
+
+  return res.json({
+    success: true,
+    baskets: unpaidBaskets
+  });
+});
+
+// 7. POST /api/va/place-banner - Place Free (3 days, 2.5%) or Paid (7 days, 5.0%) marketing banner
+app.post('/api/va/place-banner', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { targetBasketId, bannerType, title, message, promoCode, discountPercent, imageUrl } = req.body;
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (!targetBasketId || !title || !message) {
+    return res.status(400).json({ error: 'Pakipunan ang lahat ng kinakailangang impormasyon ng Marketing Banner.' });
+  }
+
+  const basket = (db.shopBaskets || []).find(b => b.id === targetBasketId);
+  if (!basket || basket.status !== 'unpaid') {
+    return res.status(400).json({ error: 'Ang basket na ito ay wala na o nabayaran na.' });
+  }
+
+  // Check if basket already has an active banner
+  const existingActiveBanner = (db.vaBanners || []).find(b => b.targetBasketId === targetBasketId && b.status === 'active');
+  if (existingActiveBanner) {
+    return res.status(400).json({ error: 'May aktibong banner na ang basket na ito mula sa ibang Virtual Assistant.' });
+  }
+
+  const isPaid = bannerType === 'paid';
+  if (isPaid) {
+    const sub = user.vaStats?.vaSubscription;
+    if (!sub || sub.status !== 'active' || (sub.expiresAt && new Date(sub.expiresAt).getTime() <= Date.now())) {
+      return res.status(403).json({ error: 'Kailangan ng aktibong Paid Plan (₱100/buwan) upang makapag-place ng 7-Day 5% Commission Paid Banners.' });
+    }
+  }
+
+  const durationDays = isPaid ? 7 : 3;
+  const commissionRate = isPaid ? 5.0 : 2.5;
+  const potentialCommission = (basket.totalAmount * (commissionRate / 100));
+
+  const now = new Date();
+  const expires = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+
+  const newBanner = {
+    id: 'ban-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    vaUserId: user.id,
+    vaName: user.name,
+    vaAvatar: user.avatar || '👩‍💼',
+    bannerType: (isPaid ? 'paid' : 'free') as 'paid' | 'free',
+    title: title.trim(),
+    message: message.trim(),
+    promoCode: promoCode ? promoCode.trim().toUpperCase() : undefined,
+    discountPercent: discountPercent ? Number(discountPercent) : 10,
+    imageUrl: imageUrl || undefined,
+    targetBasketId: basket.id,
+    targetUserId: basket.userId,
+    targetCustomerName: basket.userName,
+    targetOrderAmount: basket.totalAmount,
+    commissionRate,
+    potentialCommission,
+    status: 'active' as const,
+    createdAt: now.toISOString(),
+    expiresAt: expires.toISOString()
+  };
+
+  if (!db.vaBanners) db.vaBanners = [];
+  db.vaBanners.unshift(newBanner);
+
+  basket.assignedBannerId = newBanner.id;
+  basket.vaId = user.id;
+  basket.vaName = user.name;
+
+  // Send Push Notification / Activity Log to the Customer so they immediately see the discount offer!
+  if (basket.userId) {
+    const customerUser = db.users.find(u => u.id === basket.userId);
+    if (customerUser) {
+      if (!customerUser.activityLogs) customerUser.activityLogs = [];
+      customerUser.activityLogs.unshift({
+        id: 'log-ban-' + Date.now(),
+        type: 'bonus',
+        title: `🎁 ${newBanner.discountPercent || 10}% OFF Promo mula kay VA ${user.name}!`,
+        amount: 0,
+        timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+        details: `May inilagay na special promotional discount code (${newBanner.promoCode || 'ZONESPECIAL10'}) si Virtual Assistant ${user.name} sa iyong Z-oneShop cart: "${newBanner.title}"`
+      });
+
+      sendPushNotificationToUser(customerUser.id, {
+        title: `🎁 May Promo Voucher ang Cart mo mula kay VA ${user.name}!`,
+        body: `Gamitin ang code ${newBanner.promoCode || 'ZONESPECIAL10'} para makakuha ng ${newBanner.discountPercent || 10}% OFF sa iyong checkout!`
+      }).catch(() => {});
+    }
+  }
+
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    message: `Matagumpay na nailagay ang ${isPaid ? '7-Day Paid' : '3-Day Free'} Banner sa basket ni ${basket.userName}!`,
+    banner: newBanner
+  });
+});
+
+// 8. GET /api/va/my-banners - Get all marketing banners placed by current VA
+app.get('/api/va/my-banners', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  checkAndExpireBanners(db);
+
+  const banners = (db.vaBanners || [])
+    .filter(b => b.vaUserId === token)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  return res.json({
+    success: true,
+    banners
+  });
+});
+
+// 9. POST /api/va/convert-vm - Transfer Virtual Money to Wallet Balance (Minimum ₱600)
+app.post('/api/va/convert-vm', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const currentVM = user.vaStats?.virtualMoneyBalance || 0;
+
+  if (currentVM < VA_VM_MIN_TRANSFER) {
+    return res.status(400).json({ 
+      error: `Hindi pa umaabot sa minimum limit na ₱${VA_VM_MIN_TRANSFER.toFixed(2)} ang iyong Virtual Money (Kasalukuyang VM: ₱${currentVM.toFixed(2)}).` 
+    });
+  }
+
+  const requestedAmount = req.body.amount ? Number(req.body.amount) : currentVM;
+
+  if (requestedAmount < VA_VM_MIN_TRANSFER || requestedAmount > currentVM) {
+    return res.status(400).json({ 
+      error: `Ang halagang maaaring i-transfer ay mula ₱${VA_VM_MIN_TRANSFER.toFixed(2)} hanggang ₱${currentVM.toFixed(2)}.` 
+    });
+  }
+
+  // Deduct from VM and credit to main wallet balance
+  user.vaStats!.virtualMoneyBalance -= requestedAmount;
+  user.stats.balance = (user.stats.balance || 0) + requestedAmount;
+  user.stats.lifetimeEarnings = (user.stats.lifetimeEarnings || 0) + requestedAmount;
+
+  if (!user.activityLogs) user.activityLogs = [];
+  user.activityLogs.unshift({
+    id: 'log-vm-' + Date.now(),
+    type: 'bonus',
+    title: 'Virtual Money Transferred to GCash Wallet! 💸',
+    amount: requestedAmount,
+    timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+    details: `Nai-lipat ang ₱${requestedAmount.toFixed(2)} Virtual Money Commission sa iyong regular Wallet Balance para sa GCash cashout.`
+  });
+
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    message: `Matagumpay na nailipat ang ₱${requestedAmount.toFixed(2)} sa iyong GCash Wallet Balance!`,
+    transferredAmount: requestedAmount,
+    newVMBalance: user.vaStats!.virtualMoneyBalance,
+    newWalletBalance: user.stats.balance
+  });
+});
+
+// 10. POST /api/shop/simulate-action - Customer payment & delivery or forced expiry
+app.post('/api/shop/simulate-action', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { basketId, action } = req.body;
+  const db = loadDB();
+
+  const basket = (db.shopBaskets || []).find(b => b.id === basketId);
+  if (!basket) return res.status(404).json({ error: 'Shopping basket not found' });
+
+  if (action === 'customer_pay_deliver') {
+    basket.status = 'paid_delivered';
+    basket.paidAt = new Date().toISOString();
+    basket.deliveredAt = new Date().toISOString();
+
+    let earnedComm = 0;
+    let vaName = '';
+
+    // Check banner commission
+    if (basket.assignedBannerId && db.vaBanners) {
+      const banner = db.vaBanners.find(b => b.id === basket.assignedBannerId);
+      if (banner && banner.status === 'active') {
+        banner.status = 'success_paid';
+        banner.completedAt = new Date().toISOString();
+        earnedComm = basket.totalAmount * (banner.commissionRate / 100);
+        banner.earnedCommission = earnedComm;
+
+        // Credit to VA user
+        const vaUser = db.users.find(u => u.id === banner.vaUserId);
+        if (vaUser) {
+          if (!vaUser.vaStats) {
+            vaUser.vaStats = {
+              hiredCount: 0,
+              virtualMoneyBalance: 0,
+              totalVMEarned: 0,
+              hiringRewardClaimed: false,
+              isVaRegistered: true
+            };
+          }
+          vaUser.vaStats.virtualMoneyBalance = (vaUser.vaStats.virtualMoneyBalance || 0) + earnedComm;
+          vaUser.vaStats.totalVMEarned = (vaUser.vaStats.totalVMEarned || 0) + earnedComm;
+          vaName = vaUser.name;
+
+          if (!vaUser.activityLogs) vaUser.activityLogs = [];
+          vaUser.activityLogs.unshift({
+            id: 'log-comm-' + Date.now(),
+            type: 'bonus',
+            title: `Commission Earned: ₱${earnedComm.toFixed(2)} VM! 🛍️`,
+            amount: earnedComm,
+            timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+            details: `Nabayaran at na-deliver ang order ni ${basket.userName} (₱${basket.totalAmount.toFixed(2)}). Pumasok ang ${banner.commissionRate}% commission sa iyong Virtual Money wallet.`
+          });
+
+          sendPushNotificationToUser(vaUser.id, {
+            title: '🛍️ Z-oneShop Commission Credited!',
+            body: `Kumita ka ng ₱${earnedComm.toFixed(2)} Virtual Money mula sa nabayarang cart ni ${basket.userName}!`
+          }).catch(() => {});
+        }
+      }
+    }
+
+    saveDB(db);
+
+    return res.json({
+      success: true,
+      message: `Nabayaran at nai-deliver na ang order ni ${basket.userName}!`,
+      earnedCommission: earnedComm,
+      vaName,
+      basket
+    });
+  } else if (action === 'force_expire') {
+    basket.status = 'expired_bad_order';
+
+    if (basket.assignedBannerId && db.vaBanners) {
+      const banner = db.vaBanners.find(b => b.id === basket.assignedBannerId);
+      if (banner && banner.status === 'active') {
+        banner.status = 'bad_order_expired';
+        banner.completedAt = new Date().toISOString();
+      }
+    }
+
+    saveDB(db);
+
+    return res.json({
+      success: true,
+      message: 'Na-marka bilang Bad Order / Expired Lead ang basket.',
+      basket
+    });
+  } else {
+    return res.status(400).json({ error: 'Invalid action' });
+  }
+});
+
+// 11. GET /api/shop/products - Get all shop catalogue products
+app.get('/api/shop/products', (req, res) => {
+  const db = loadDB();
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const currentUser = token ? db.users.find(u => u.id === token) : null;
+  const isAdmin = currentUser?.isAdmin || false;
+
+  let products = db.shopProducts || INITIAL_SHOP_PRODUCTS;
+  if (!isAdmin) {
+    products = products.filter(p => p.isActive !== false);
+  }
+
+  return res.json({
+    success: true,
+    products
+  });
+});
+
+// 11b. POST /api/admin/shop/products - Admin add new product to catalogue
+app.post('/api/admin/shop/products', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
+  const { name, price, originalPrice, image, category, description, stock, tags } = req.body;
+  if (!name || price === undefined || !image) {
+    return res.status(400).json({ error: 'Product name, price, and image URL are required.' });
+  }
+
+  const newProduct = {
+    id: 'prod-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    name: name.trim(),
+    price: Number(price),
+    originalPrice: originalPrice ? Number(originalPrice) : Math.round(Number(price) * 1.5),
+    image: image.trim(),
+    category: category || 'Gadgets',
+    description: (description || '').trim(),
+    stock: Number(stock) || 50,
+    rating: 5.0,
+    isActive: true,
+    salesCount: 0,
+    tags: Array.isArray(tags) ? tags : ['New Arrival'],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  if (!db.shopProducts) db.shopProducts = [];
+  db.shopProducts.unshift(newProduct);
+
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    message: `Matagumpay na naidagdag ang "${newProduct.name}" sa Z-oneShop catalogue!`,
+    product: newProduct
+  });
+});
+
+// 11c. PUT /api/admin/shop/products/:id - Admin edit product
+app.put('/api/admin/shop/products/:id', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
+  const productId = req.params.id;
+  const prodIndex = (db.shopProducts || []).findIndex(p => p.id === productId);
+  if (prodIndex === -1) return res.status(404).json({ error: 'Product not found' });
+
+  const { name, price, originalPrice, image, category, description, stock, tags, isActive } = req.body;
+
+  const existing = db.shopProducts![prodIndex];
+  db.shopProducts![prodIndex] = {
+    ...existing,
+    name: name !== undefined ? name.trim() : existing.name,
+    price: price !== undefined ? Number(price) : existing.price,
+    originalPrice: originalPrice !== undefined ? Number(originalPrice) : existing.originalPrice,
+    image: image !== undefined ? image.trim() : existing.image,
+    category: category !== undefined ? category : existing.category,
+    description: description !== undefined ? description.trim() : existing.description,
+    stock: stock !== undefined ? Number(stock) : existing.stock,
+    tags: tags !== undefined ? tags : existing.tags,
+    isActive: isActive !== undefined ? Boolean(isActive) : (existing.isActive !== false),
+    updatedAt: new Date().toISOString()
+  };
+
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    message: 'Nai-update ang impormasyon ng produkto!',
+    product: db.shopProducts![prodIndex]
+  });
+});
+
+// 11d. DELETE /api/admin/shop/products/:id - Admin delete product
+app.delete('/api/admin/shop/products/:id', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
+  const productId = req.params.id;
+  const initialLen = (db.shopProducts || []).length;
+  db.shopProducts = (db.shopProducts || []).filter(p => p.id !== productId);
+
+  if (db.shopProducts.length === initialLen) {
+    return res.status(404).json({ error: 'Product not found' });
+  }
+
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    message: 'Matagumpay na nabura ang produkto sa Z-oneShop.'
+  });
+});
+
+// 11e. PATCH /api/admin/shop/products/:id/toggle-status - Admin toggle active/deactivate
+app.patch('/api/admin/shop/products/:id/toggle-status', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
+  const productId = req.params.id;
+  const prod = (db.shopProducts || []).find(p => p.id === productId);
+  if (!prod) return res.status(404).json({ error: 'Product not found' });
+
+  prod.isActive = prod.isActive === false ? true : false;
+  prod.updatedAt = new Date().toISOString();
+
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    message: `Ang produkto ay ${prod.isActive ? 'naka-ACTIVATE na sa customer catalogue' : 'naka-DEACTIVATE na (tago)'}!`,
+    product: prod
+  });
+});
+
+// 12. GET /api/shop/cart - Get user shopping cart items and customer active marketing banner
+app.get('/api/shop/cart', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  checkAndExpireBanners(db);
+  checkAndSyncAllCartsToBaskets(db);
+
+  if (!db.shopCarts) db.shopCarts = {};
+  const userCart = db.shopCarts[user.id] || [];
+
+  // Find active marketing banner for this user
+  const userBasket = (db.shopBaskets || []).find(b => b.userId === user.id && b.status === 'unpaid');
+  let activeBanner = null;
+  if (userBasket && userBasket.assignedBannerId) {
+    activeBanner = (db.vaBanners || []).find(b => b.id === userBasket.assignedBannerId && b.status === 'active');
+  }
+  if (!activeBanner) {
+    activeBanner = (db.vaBanners || []).find(b => 
+      (b.targetUserId === user.id || (userBasket && b.targetBasketId === userBasket.id)) && 
+      b.status === 'active'
+    );
+  }
+
+  return res.json({
+    success: true,
+    cart: userCart,
+    activeBanner: activeBanner || null
+  });
+});
+
+// 12a-2. GET /api/shop/active-banner - Get active marketing banner for current user
+app.get('/api/shop/active-banner', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  checkAndExpireBanners(db);
+
+  const userBasket = (db.shopBaskets || []).find(b => b.userId === user.id && b.status === 'unpaid');
+  let activeBanner = null;
+  if (userBasket && userBasket.assignedBannerId) {
+    activeBanner = (db.vaBanners || []).find(b => b.id === userBasket.assignedBannerId && b.status === 'active');
+  }
+  if (!activeBanner) {
+    activeBanner = (db.vaBanners || []).find(b => 
+      (b.targetUserId === user.id || (userBasket && b.targetBasketId === userBasket.id)) && 
+      b.status === 'active'
+    );
+  }
+
+  return res.json({
+    success: true,
+    activeBanner: activeBanner || null
+  });
+});
+
+// 12a-3. POST /api/shop/validate-voucher - Check and validate promo code
+app.post('/api/shop/validate-voucher', (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ error: 'Maglagay ng voucher code.' });
+
+  const db = loadDB();
+  checkAndExpireBanners(db);
+
+  const cleanCode = String(code).trim().toUpperCase();
+
+  // 1. Check against active VA banners
+  const banner = (db.vaBanners || []).find(b => b.status === 'active' && b.promoCode && b.promoCode.toUpperCase() === cleanCode);
+  if (banner) {
+    return res.json({
+      success: true,
+      valid: true,
+      code: banner.promoCode,
+      discountPercent: banner.discountPercent || 10,
+      vaName: banner.vaName,
+      bannerTitle: banner.title,
+      message: `🎉 Nailapat ang ${banner.discountPercent || 10}% Discount mula sa promo banner ni VA ${banner.vaName}!`
+    });
+  }
+
+  // 2. Standard system vouchers
+  if (cleanCode === 'ZONEDISCOUNT' || cleanCode === 'WELCOME10') {
+    return res.json({
+      success: true,
+      valid: true,
+      code: cleanCode,
+      discountPercent: 10,
+      message: '🎉 10% Welcome Discount Voucher applied!'
+    });
+  }
+
+  if (cleanCode.startsWith('VA-') || cleanCode.includes('VA') || cleanCode.includes('SPECIAL')) {
+    return res.json({
+      success: true,
+      valid: true,
+      code: cleanCode,
+      discountPercent: 8,
+      message: '🎉 VA Exclusive Promo Voucher applied: 8% Discount!'
+    });
+  }
+
+  return res.status(404).json({
+    success: false,
+    valid: false,
+    error: 'Hindi matagpuan o expired na ang voucher code na ito.'
+  });
+});
+
+// 12b. POST /api/shop/cart/add - Add item to cart
+app.post('/api/shop/cart/add', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { productId, quantity = 1 } = req.body;
+  if (!productId) return res.status(400).json({ error: 'Product ID is required' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const product = (db.shopProducts || INITIAL_SHOP_PRODUCTS).find(p => p.id === productId);
+  if (!product) return res.status(404).json({ error: 'Product not found' });
+
+  if (!db.shopCarts) db.shopCarts = {};
+  if (!db.shopCarts[user.id]) db.shopCarts[user.id] = [];
+
+  const cart = db.shopCarts[user.id];
+  const existingIdx = cart.findIndex(it => it.productId === productId);
+
+  const addQty = Math.max(1, Number(quantity) || 1);
+
+  if (existingIdx !== -1) {
+    cart[existingIdx].quantity += addQty;
+    cart[existingIdx].selected = true;
+  } else {
+    cart.unshift({
+      id: 'cart-item-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5),
+      productId: product.id,
+      productName: product.name,
+      price: product.price,
+      originalPrice: product.originalPrice,
+      quantity: addQty,
+      image: product.image,
+      category: product.category,
+      stock: product.stock,
+      selected: true
+    });
+  }
+
+  syncUserCartToBasket(db, user.id);
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    message: `Naidagdag ang "${product.name}" sa iyong cart!`,
+    cart
+  });
+});
+
+// 12c. POST /api/shop/cart/update - Update cart item qty or selection
+app.post('/api/shop/cart/update', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { itemId, productId, quantity, selected } = req.body;
+  const targetId = itemId || productId;
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (!db.shopCarts) db.shopCarts = {};
+  if (!db.shopCarts[user.id]) db.shopCarts[user.id] = [];
+
+  const cart = db.shopCarts[user.id];
+  const itemIdx = cart.findIndex(it => it.id === targetId || it.productId === targetId);
+
+  if (itemIdx === -1) {
+    return res.json({ success: true, cart });
+  }
+
+  if (quantity !== undefined) {
+    const numQty = Number(quantity);
+    if (numQty <= 0) {
+      cart.splice(itemIdx, 1);
+    } else {
+      cart[itemIdx].quantity = numQty;
+    }
+  }
+
+  if (selected !== undefined && cart[itemIdx]) {
+    cart[itemIdx].selected = Boolean(selected);
+  }
+
+  syncUserCartToBasket(db, user.id);
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    cart
+  });
+});
+
+// Alias for PUT /api/shop/cart/update-quantity
+app.put('/api/shop/cart/update-quantity', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { productId, itemId, quantity } = req.body;
+  const targetId = productId || itemId;
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (!db.shopCarts) db.shopCarts = {};
+  if (!db.shopCarts[user.id]) db.shopCarts[user.id] = [];
+
+  const cart = db.shopCarts[user.id];
+  const itemIdx = cart.findIndex(it => it.id === targetId || it.productId === targetId);
+
+  if (itemIdx !== -1) {
+    const numQty = Number(quantity);
+    if (numQty <= 0) {
+      cart.splice(itemIdx, 1);
+    } else {
+      cart[itemIdx].quantity = numQty;
+    }
+    syncUserCartToBasket(db, user.id);
+    saveDB(db);
+  }
+
+  return res.json({ success: true, cart });
+});
+
+// Alias for PATCH /api/shop/cart/toggle-select
+app.patch('/api/shop/cart/toggle-select', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { productId, itemId, selected } = req.body;
+  const targetId = productId || itemId;
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (!db.shopCarts) db.shopCarts = {};
+  if (!db.shopCarts[user.id]) db.shopCarts[user.id] = [];
+
+  const cart = db.shopCarts[user.id];
+  const itemIdx = cart.findIndex(it => it.id === targetId || it.productId === targetId);
+
+  if (itemIdx !== -1) {
+    cart[itemIdx].selected = Boolean(selected);
+    syncUserCartToBasket(db, user.id);
+    saveDB(db);
+  }
+
+  return res.json({ success: true, cart });
+});
+
+// 12d. POST /api/shop/cart/select-all - Toggle select all in cart
+app.post('/api/shop/cart/select-all', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { selected } = req.body;
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (!db.shopCarts) db.shopCarts = {};
+  if (!db.shopCarts[user.id]) db.shopCarts[user.id] = [];
+
+  db.shopCarts[user.id].forEach(item => {
+    item.selected = Boolean(selected);
+  });
+
+  syncUserCartToBasket(db, user.id);
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    cart: db.shopCarts[user.id]
+  });
+});
+
+// 12e. POST /api/shop/cart/remove - Remove single item from cart
+app.post('/api/shop/cart/remove', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { itemId, productId } = req.body;
+  const targetId = itemId || productId;
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (db.shopCarts && db.shopCarts[user.id]) {
+    db.shopCarts[user.id] = db.shopCarts[user.id].filter(it => it.id !== targetId && it.productId !== targetId);
+    syncUserCartToBasket(db, user.id);
+    saveDB(db);
+  }
+
+  return res.json({
+    success: true,
+    cart: db.shopCarts ? (db.shopCarts[user.id] || []) : []
+  });
+});
+
+// Alias for DELETE /api/shop/cart/item/:productId
+app.delete('/api/shop/cart/item/:productId', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { productId } = req.params;
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (db.shopCarts && db.shopCarts[user.id]) {
+    db.shopCarts[user.id] = db.shopCarts[user.id].filter(it => it.id !== productId && it.productId !== productId);
+    syncUserCartToBasket(db, user.id);
+    saveDB(db);
+  }
+
+  return res.json({
+    success: true,
+    cart: db.shopCarts ? (db.shopCarts[user.id] || []) : []
+  });
+});
+
+// 12f. POST /api/shop/cart/clear - Clear user's cart (POST or DELETE)
+app.all('/api/shop/cart/clear', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (!db.shopCarts) db.shopCarts = {};
+  db.shopCarts[user.id] = [];
+  syncUserCartToBasket(db, user.id);
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    cart: []
+  });
+});
+
+// 12g. POST /api/shop/checkout - Shopee-style Checkout with GCash or Wallet balance
+app.post('/api/shop/checkout', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const {
+    items,
+    shippingAddress,
+    paymentMethod = 'gcash',
+    gcashSenderName,
+    gcashSenderNumber,
+    gcashRefNo,
+    receiptUrl,
+    promoCode,
+    targetBasketId
+  } = req.body;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Kailangan ng kahit isang item para mag-checkout.' });
+  }
+
+  if (!shippingAddress || !shippingAddress.recipientName || !shippingAddress.phoneNumber || !shippingAddress.streetAddress || !shippingAddress.city) {
+    return res.status(400).json({ error: 'Pakikumpleto ang lahat ng delivery address details (Pangalan, Phone, Kalye, Lungsod).' });
+  }
+
+  // Calculate order items and subtotal
+  let subtotal = 0;
+  let itemCount = 0;
+  const processedItems = items.map((item: any) => {
+    const prod = (db.shopProducts || INITIAL_SHOP_PRODUCTS).find(p => p.id === item.productId);
+    const unitPrice = prod ? prod.price : Number(item.price || 0);
+    const qty = Math.max(1, Number(item.quantity || 1));
+    subtotal += unitPrice * qty;
+    itemCount += qty;
+
+    // Decrement stock if product exists
+    if (prod) {
+      prod.stock = Math.max(0, (prod.stock || 50) - qty);
+      prod.salesCount = (prod.salesCount || 0) + qty;
+    }
+
+    return {
+      productId: item.productId,
+      productName: prod ? prod.name : item.productName,
+      price: unitPrice,
+      quantity: qty,
+      image: prod ? prod.image : item.image,
+      category: prod ? prod.category : item.category
+    };
+  });
+
+  // Calculate shipping fee and discount
+  const shippingFee = subtotal >= 1200 ? 0 : 50;
+  let discount = 0;
+  let appliedPromo = promoCode ? promoCode.trim().toUpperCase() : undefined;
+  let vaId: string | undefined = undefined;
+  let vaName: string | undefined = undefined;
+  let vaCommissionAmount = 0;
+
+  // Check if promo matches a VA Banner or general promo
+  if (appliedPromo) {
+    const activeBanner = (db.vaBanners || []).find(b => b.status === 'active' && b.promoCode && b.promoCode.toUpperCase() === appliedPromo);
+    if (activeBanner) {
+      discount = Math.round(subtotal * ((activeBanner.discountPercent || 5) / 100));
+      vaId = activeBanner.vaUserId;
+      vaName = activeBanner.vaName;
+      vaCommissionAmount = Math.round(subtotal * (activeBanner.commissionRate / 100));
+    } else if (appliedPromo === 'ZONEDISCOUNT' || appliedPromo === 'WELCOME10') {
+      discount = Math.round(subtotal * 0.10);
+    } else if (appliedPromo.startsWith('VA-')) {
+      discount = Math.round(subtotal * 0.05);
+    }
+  }
+
+  const totalAmount = Math.max(0, subtotal + shippingFee - discount);
+
+  // Validate payment method
+  if (paymentMethod === 'wallet') {
+    if ((user.stats.balance || 0) < totalAmount) {
+      return res.status(400).json({
+        error: `Kulang ang iyong Wallet Balance (₱${(user.stats.balance || 0).toFixed(2)}) para sa kabuuang bayarin na ₱${totalAmount.toFixed(2)}. Mangyaring gamitin ang GCash Payment.`
+      });
+    }
+
+    // Deduct from wallet balance
+    user.stats.balance -= totalAmount;
+    if (!user.activityLogs) user.activityLogs = [];
+    user.activityLogs.unshift({
+      id: 'log-shop-pay-' + Date.now(),
+      type: 'withdraw',
+      title: 'Z-oneShop Order Paid via Wallet Balance 🛍️',
+      amount: totalAmount,
+      timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+      details: `Nabayaran ang ₱${totalAmount.toFixed(2)} para sa Z-oneShop Order gamit ang iyong in-app earnings.`
+    });
+  } else if (paymentMethod === 'gcash') {
+    if (!gcashRefNo || String(gcashRefNo).trim().length < 4) {
+      return res.status(400).json({ error: 'Pakilagay ang valid na GCash Reference Number mula sa iyong resibo.' });
+    }
+  }
+
+  const orderNumber = 'ZONE-ORD-' + Math.floor(10000 + Math.random() * 90000);
+  const trackingNumber = 'ZEX-' + Math.floor(10000000 + Math.random() * 90000000);
+  const nowStr = new Date().toISOString();
+
+  const newOrder = {
+    id: 'ord-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    orderNumber,
+    userId: user.id,
+    userName: user.name,
+    userEmail: user.email,
+    userAvatar: user.avatar || '🛍️',
+    items: processedItems,
+    itemCount,
+    subtotal,
+    shippingFee,
+    discount,
+    promoCode: appliedPromo,
+    totalAmount,
+    paymentMethod,
+    paymentStatus: 'paid' as const,
+    gcashSenderName: gcashSenderName || user.name,
+    gcashSenderNumber: gcashSenderNumber || '',
+    gcashRefNo: gcashRefNo || '',
+    receiptUrl: receiptUrl || '',
+    shippingAddress,
+    trackingNumber,
+    courierName: 'Z-one Express',
+    riderName: 'Kuya Elmer (0918-555-1234)',
+    riderPhone: '09185551234',
+    status: 'order_placed' as const,
+    statusTimeline: [
+      {
+        status: 'order_placed',
+        title: 'Order Placed & Payment Verified',
+        description: `Matagumpay na natanggap ang order (${paymentMethod === 'wallet' ? 'Paid via Wallet' : `GCash Ref #${gcashRefNo}`}). Inihahanda na para sa packing.`,
+        timestamp: nowStr,
+        location: 'Z-oneShop Central Warehouse'
+      }
+    ],
+    createdAt: nowStr,
+    updatedAt: nowStr,
+    paidAt: nowStr,
+    vaId,
+    vaName,
+    vaCommissionAmount
+  };
+
+  if (!db.shopOrders) db.shopOrders = [];
+  db.shopOrders.unshift(newOrder);
+
+  // Clear checked-out items from user cart
+  if (db.shopCarts && db.shopCarts[user.id]) {
+    const checkedOutProductIds = new Set(processedItems.map(p => p.productId));
+    db.shopCarts[user.id] = db.shopCarts[user.id].filter(it => !checkedOutProductIds.has(it.productId) && !it.selected);
+    syncUserCartToBasket(db, user.id);
+  }
+
+  // If basket linked, update basket
+  if (targetBasketId && db.shopBaskets) {
+    const basket = db.shopBaskets.find(b => b.id === targetBasketId);
+    if (basket) {
+      basket.status = 'paid_delivered';
+      basket.paidAt = nowStr;
+    }
+  } else if (db.shopBaskets) {
+    // If no specific targetBasketId was passed but this user had an unpaid basket, mark it paid_delivered if their cart is now empty
+    const userUnpaidBasket = db.shopBaskets.find(b => b.userId === user.id && b.status === 'unpaid');
+    if (userUnpaidBasket && (!db.shopCarts[user.id] || db.shopCarts[user.id].length === 0)) {
+      userUnpaidBasket.status = 'paid_delivered';
+      userUnpaidBasket.paidAt = nowStr;
+    }
+  }
+
+  // Push notification to buyer
+  sendPushNotificationToUser(user.id, {
+    title: '🛍️ Order Confirmed! (#' + orderNumber + ')',
+    body: `Nai-proseso na ang iyong order na nagkakahalagang ₱${totalAmount.toFixed(2)}. Maaari mo nang i-track ang delivery status sa My Orders page!`
+  }).catch(() => {});
+
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    message: `Matagumpay na nailagay ang iyong order (#${orderNumber})!`,
+    order: newOrder
+  });
+});
+
+// 12h. GET /api/shop/orders & /api/shop/my-orders - Get customer orders
+app.get(['/api/shop/orders', '/api/shop/my-orders'], (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (!db.shopOrders) db.shopOrders = INITIAL_SHOP_ORDERS;
+
+  const userOrders = db.shopOrders.filter(o => 
+    o.userId === user.id || 
+    (user.email && o.userEmail === user.email) ||
+    (o.userName && o.userName.toLowerCase() === user.name.toLowerCase())
+  );
+
+  return res.json({
+    success: true,
+    orders: userOrders
+  });
+});
+
+// 12i. GET /api/shop/orders/:id & /api/shop/order/:id - Get single order tracking details
+app.get(['/api/shop/orders/:id', '/api/shop/order/:id'], (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (!db.shopOrders) db.shopOrders = INITIAL_SHOP_ORDERS;
+
+  const orderId = req.params.id;
+  const order = db.shopOrders.find(o => o.id === orderId || o.orderNumber === orderId);
+
+  if (!order) {
+    return res.status(404).json({ error: 'Order not found' });
+  }
+
+  // Check authorization (buyer or admin)
+  const isOwner = order.userId === user.id || 
+    (user.email && order.userEmail === user.email) ||
+    (order.userName && order.userName.toLowerCase() === user.name.toLowerCase());
+
+  if (!isOwner && !user.isAdmin) {
+    return res.status(403).json({ error: 'Access denied to this order' });
+  }
+
+  return res.json({
+    success: true,
+    order
+  });
+});
+
+// 12j. POST /api/shop/orders/:id/cancel & /api/shop/order/:id/cancel - Buyer cancels order before packing
+app.post(['/api/shop/orders/:id/cancel', '/api/shop/order/:id/cancel'], (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (!db.shopOrders) db.shopOrders = INITIAL_SHOP_ORDERS;
+
+  const orderId = req.params.id;
+  const order = db.shopOrders.find(o => 
+    (o.id === orderId || o.orderNumber === orderId) && 
+    (o.userId === user.id || (user.email && o.userEmail === user.email) || (o.userName && o.userName.toLowerCase() === user.name.toLowerCase()))
+  );
+
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+
+  if (order.status !== 'order_placed') {
+    return res.status(400).json({ error: 'Hindi na maaaring ikansela ang order dahil ito ay nai-pack o na-dispatch na ng warehouse.' });
+  }
+
+  const { reason = 'Customer request' } = req.body;
+  const nowStr = new Date().toISOString();
+
+  order.status = 'cancelled_by_buyer';
+  order.cancelledAt = nowStr;
+  order.cancellationReason = reason;
+  order.updatedAt = nowStr;
+
+  order.statusTimeline.push({
+    status: 'cancelled_by_buyer',
+    title: 'Order Cancelled by Customer',
+    description: `Kinansela ng customer ang order. Dahilan: ${reason}`,
+    timestamp: nowStr,
+    location: 'Z-oneShop Central Warehouse'
+  });
+
+  // Restore stock
+  if (Array.isArray(order.items) && db.shopProducts) {
+    order.items.forEach((it: any) => {
+      const prod = db.shopProducts!.find(p => p.id === it.productId);
+      if (prod) {
+        prod.stock = (prod.stock || 0) + (it.quantity || 1);
+        prod.salesCount = Math.max(0, (prod.salesCount || 0) - (it.quantity || 1));
+      }
+    });
+  }
+
+  // Refund if wallet
+  if (order.paymentMethod === 'wallet') {
+    user.stats.balance += order.totalAmount;
+    if (!user.activityLogs) user.activityLogs = [];
+    user.activityLogs.unshift({
+      id: 'log-shop-refund-' + Date.now(),
+      type: 'bonus',
+      title: 'Z-oneShop Order Refunded 🔄',
+      amount: order.totalAmount,
+      timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+      details: `Nai-balik ang ₱${order.totalAmount.toFixed(2)} sa iyong wallet balance mula sa kinanselang order #${order.orderNumber}.`
+    });
+  }
+
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    message: 'Matagumpay na nakansela ang iyong order.',
+    order
+  });
+});
+
+// 12k. GET /api/admin/shop/orders - Admin get all orders
+app.get('/api/admin/shop/orders', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
+  const orders = db.shopOrders || INITIAL_SHOP_ORDERS;
+
+  const totalRevenue = orders
+    .filter(o => o.status !== 'cancelled_by_seller' && o.status !== 'cancelled_by_buyer')
+    .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+
+  const pendingPackingCount = orders.filter(o => o.status === 'order_placed' || o.status === 'for_packing').length;
+  const toShipCount = orders.filter(o => o.status === 'sorting_hub' || o.status === 'rider_pickup' || o.status === 'to_ship').length;
+  const deliveredCount = orders.filter(o => o.status === 'shipped_success').length;
+  const cancelledCount = orders.filter(o => o.status === 'cancelled_by_seller' || o.status === 'cancelled_by_buyer').length;
+
+  return res.json({
+    success: true,
+    orders,
+    stats: {
+      totalOrders: orders.length,
+      totalRevenue,
+      pendingPackingCount,
+      toShipCount,
+      deliveredCount,
+      cancelledCount
+    }
+  });
+});
+
+// 12l. POST /api/admin/shop/order/update-status & /api/admin/shop/orders/update-status - Admin advance order tracking or cancel
+app.post(['/api/admin/shop/order/update-status', '/api/admin/shop/orders/update-status'], (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
+  const {
+    orderId,
+    newStatus,
+    trackingNumber,
+    courierName,
+    riderName,
+    riderPhone,
+    location,
+    customNote,
+    cancellationReason
+  } = req.body;
+
+  if (!db.shopOrders) db.shopOrders = INITIAL_SHOP_ORDERS;
+
+  const order = db.shopOrders.find(o => o.id === orderId || o.orderNumber === orderId);
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+
+  const nowStr = new Date().toISOString();
+  order.status = newStatus;
+  order.updatedAt = nowStr;
+
+  if (trackingNumber) order.trackingNumber = trackingNumber;
+  if (courierName) order.courierName = courierName;
+  if (riderName) order.riderName = riderName;
+  if (riderPhone) order.riderPhone = riderPhone;
+
+  let title = '';
+  let description = '';
+
+  switch (newStatus) {
+    case 'for_packing':
+      title = 'Package is Being Prepared & Packed';
+      description = customNote || 'Warehouse team is packing your items safely in bubble wrap with fragile tags.';
+      break;
+    case 'sorting_hub':
+      title = 'Arrived at Central Sorting Hub';
+      description = customNote || `Parcel arrived at Pasig/Bulacan Central Sorting Hub and scanned for dispatch route (${order.courierName || 'Z-one Express'}).`;
+      break;
+    case 'rider_pickup':
+      title = 'Picked Up by Courier Rider';
+      description = customNote || `Assigned rider ${order.riderName || 'Kuya Rider'} has picked up the package from sorting hub.`;
+      break;
+    case 'to_ship':
+      title = 'Out for Delivery (To Ship)';
+      description = customNote || `Rider ${order.riderName || 'Kuya Elmer'} is currently out for delivery to ${order.shippingAddress?.city || 'destination'}. Please keep your phone reachable!`;
+      order.shippedAt = nowStr;
+      break;
+    case 'shipped_success':
+      title = 'Parcel Delivered Successfully! 🎉';
+      description = customNote || `Package received and signed by ${order.shippingAddress?.recipientName || order.userName}. Salamat sa pagtangkilik sa Z-oneShop!`;
+      order.deliveredAt = nowStr;
+
+      // Award VA Commission if linked
+      if (order.vaId && order.vaCommissionAmount > 0) {
+        const vaUser = db.users.find(u => u.id === order.vaId);
+        if (vaUser) {
+          if (!vaUser.vaStats) {
+            vaUser.vaStats = {
+              hiredCount: 0,
+              virtualMoneyBalance: 0,
+              totalVMEarned: 0,
+              hiringRewardClaimed: false,
+              isVaRegistered: true
+            };
+          }
+          vaUser.vaStats.virtualMoneyBalance = (vaUser.vaStats.virtualMoneyBalance || 0) + order.vaCommissionAmount;
+          vaUser.vaStats.totalVMEarned = (vaUser.vaStats.totalVMEarned || 0) + order.vaCommissionAmount;
+
+          if (!vaUser.activityLogs) vaUser.activityLogs = [];
+          vaUser.activityLogs.unshift({
+            id: 'log-shop-comm-' + Date.now(),
+            type: 'bonus',
+            title: `Order Commission Credited: ₱${order.vaCommissionAmount.toFixed(2)} VM! 🛍️`,
+            amount: order.vaCommissionAmount,
+            timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+            details: `Nai-deliver na ang Order #${order.orderNumber} ni ${order.userName}. Pumasok ang ₱${order.vaCommissionAmount.toFixed(2)} commission sa iyong Virtual Money wallet!`
+          });
+
+          sendPushNotificationToUser(vaUser.id, {
+            title: '🛍️ Z-oneShop Order Delivered - Commission Credited!',
+            body: `Pumasok na ang ₱${order.vaCommissionAmount.toFixed(2)} Virtual Money commission mula sa Order #${order.orderNumber}!`
+          }).catch(() => {});
+        }
+      }
+      break;
+    case 'cancelled_by_seller':
+      title = 'Order Cancelled by Seller';
+      description = cancellationReason ? `Kinansela ng seller: ${cancellationReason}` : 'Kinansela ng pamunuan ng Z-oneShop dahil sa stock unavailability o shipping issue.';
+      order.cancelledAt = nowStr;
+      order.cancellationReason = cancellationReason || 'Cancelled by seller';
+
+      // Restore stock
+      if (Array.isArray(order.items) && db.shopProducts) {
+        order.items.forEach((it: any) => {
+          const prod = db.shopProducts!.find(p => p.id === it.productId);
+          if (prod) {
+            prod.stock = (prod.stock || 0) + (it.quantity || 1);
+            prod.salesCount = Math.max(0, (prod.salesCount || 0) - (it.quantity || 1));
+          }
+        });
+      }
+
+      // Refund if wallet
+      const targetBuyer = db.users.find(u => u.id === order.userId);
+      if (order.paymentMethod === 'wallet' && targetBuyer) {
+        targetBuyer.stats.balance += order.totalAmount;
+        if (!targetBuyer.activityLogs) targetBuyer.activityLogs = [];
+        targetBuyer.activityLogs.unshift({
+          id: 'log-seller-cancel-refund-' + Date.now(),
+          type: 'bonus',
+          title: 'Order Refunded to Wallet Balance 🔄',
+          amount: order.totalAmount,
+          timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+          details: `Nai-refund ang ₱${order.totalAmount.toFixed(2)} para sa kinanselang Order #${order.orderNumber}.`
+        });
+      }
+      break;
+    default:
+      title = `Order Status Updated: ${newStatus}`;
+      description = customNote || 'Na-update ang estado ng order sa Z-oneShop system.';
+  }
+
+  order.statusTimeline.push({
+    status: newStatus,
+    title,
+    description,
+    timestamp: nowStr,
+    location: location || (newStatus === 'shipped_success' ? `${order.shippingAddress?.city || 'Customer Delivery Address'}` : 'Z-one Hub Logistics')
+  });
+
+  // Notify buyer of status update
+  sendPushNotificationToUser(order.userId, {
+    title: `📦 Order #${order.orderNumber} Status: ${title}`,
+    body: description
+  }).catch(() => {});
+
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    message: `Matagumpay na nai-update ang status ng Order #${order.orderNumber} patungong "${title}"!`,
+    order
+  });
+});
+
+// 13. GET /api/admin/va-management - Admin control data for VA & Z-oneShop
+app.get('/api/admin/va-management', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
+
+  checkAndExpireBanners(db);
+
+  const vaUsers = db.users.filter(u => u.vaStats && u.vaStats.hiredCount > 0);
+  const pendingSubs = (db.vaSubscriptions || []).filter(s => s.status === 'pending');
+  const allBanners = db.vaBanners || [];
+  const allBaskets = db.shopBaskets || [];
+
+  return res.json({
+    success: true,
+    vaUsersCount: vaUsers.length,
+    pendingSubs,
+    allSubscriptions: db.vaSubscriptions || [],
+    bannersCount: allBanners.length,
+    activeBannersCount: allBanners.filter(b => b.status === 'active').length,
+    basketsCount: allBaskets.length,
+    unpaidBasketsCount: allBaskets.filter(b => b.status === 'unpaid').length,
+    winner: db.vaLeaderboardWinner || null,
+    banners: allBanners.slice(0, 50),
+    baskets: allBaskets.slice(0, 50)
+  });
+});
+
+// 14. POST /api/admin/approve-va-subscription - Admin approves/declines ₱100/mo sub
+app.post('/api/admin/approve-va-subscription', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { subscriptionId, decision } = req.body;
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
+
+  const sub = (db.vaSubscriptions || []).find(s => s.id === subscriptionId);
+  if (!sub) return res.status(404).json({ error: 'Subscription request not found' });
+
+  const targetUser = db.users.find(u => u.id === sub.userId);
+
+  if (decision === 'approve') {
+    const now = new Date();
+    const expires = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    sub.status = 'active';
+    sub.approvedAt = now.toISOString();
+    sub.expiresAt = expires.toISOString();
+
+    if (targetUser) {
+      if (!targetUser.vaStats) {
+        targetUser.vaStats = {
+          hiredCount: 0,
+          virtualMoneyBalance: 0,
+          totalVMEarned: 0,
+          hiringRewardClaimed: false,
+          isVaRegistered: true
+        };
+      }
+      targetUser.vaStats.vaSubscription = {
+        status: 'active',
+        subscribedAt: now.toISOString(),
+        expiresAt: expires.toISOString(),
+        paymentMethod: 'gcash'
+      };
+
+      if (!targetUser.activityLogs) targetUser.activityLogs = [];
+      targetUser.activityLogs.unshift({
+        id: 'log-vasub-appr-' + Date.now(),
+        type: 'bonus',
+        title: 'Paid VA Banner Subscription Approved! 💎',
+        amount: 0,
+        timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+        details: 'Inaprubahan ng Admin ang iyong ₱100 GCash subscription. Aktibo na ang iyong 7-Day 5% Commission Banners.'
+      });
+
+      sendPushNotificationToUser(targetUser.id, {
+        title: '💎 VA Subscription Approved!',
+        body: 'Inaprubahan na ang iyong 30-Day Paid Banner Access (7 Days Visibility, 5% Commission).'
+      }).catch(() => {});
+    }
+  } else {
+    sub.status = 'declined';
+    if (targetUser && targetUser.vaStats?.vaSubscription) {
+      targetUser.vaStats.vaSubscription.status = 'expired';
+    }
+  }
+
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    message: `Subscription ${decision === 'approve' ? 'approved' : 'declined'} successfully!`,
+    subscription: sub
+  });
+});
 
 // --- SERVE APP STORE PAGE ---
 app.get('/appstore.html', (req, res) => {

@@ -249,6 +249,228 @@ export interface ZoneStory {
   expiresAt: string;
 }
 
+// --- Z-ONESHOP & VIRTUAL ASSISTANT (VA) SYSTEM TYPES ---
+export interface HiredVADetail {
+  id: string;
+  userId: string;
+  name: string;
+  avatar: string;
+  email?: string;
+  hiredAt: string;
+  status: 'active' | 'flagged';
+}
+
+export interface VASubscriptionInfo {
+  status: 'none' | 'pending' | 'active' | 'expired';
+  subscribedAt?: string;
+  expiresAt?: string;
+  paymentMethod?: 'balance' | 'gcash';
+  gcashSenderNumber?: string;
+  gcashRefNo?: string;
+}
+
+export interface UserVAStats {
+  hiredCount: number;
+  virtualMoneyBalance: number; // in PHP (VM)
+  totalVMEarned: number;
+  hiringRewardClaimed: boolean;
+  hiringRewardClaimedAt?: string;
+  isVaRegistered?: boolean;
+  vaSubscription?: VASubscriptionInfo;
+  hiredVAs?: HiredVADetail[];
+}
+
+export interface VALeaderboardEntry {
+  userId: string;
+  name: string;
+  avatar: string;
+  hiredCount: number;
+  progressPercent: number;
+  rank: number;
+  isCurrentUser: boolean;
+  hasClaimedReward: boolean;
+}
+
+export interface VALeaderboardWinner {
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  hiredCount: number;
+  claimedAt: string;
+  rewardAmount: number;
+}
+
+export interface ShopProduct {
+  id: string;
+  name: string;
+  price: number;
+  originalPrice?: number;
+  image: string;
+  category: 'Gadgets' | 'Fashion' | 'Beauty' | 'Home' | 'Lifestyle';
+  description: string;
+  stock: number;
+  rating: number;
+  isActive?: boolean;
+  salesCount?: number;
+  tags?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ShopCartItem {
+  id: string;
+  productId: string;
+  productName: string;
+  price: number;
+  originalPrice?: number;
+  quantity: number;
+  image: string;
+  category?: string;
+  stock?: number;
+  selected?: boolean;
+}
+
+export interface ShopShippingAddress {
+  recipientName: string;
+  phoneNumber: string;
+  region: string;
+  province: string;
+  city: string;
+  barangay: string;
+  streetAddress: string;
+  postalCode?: string;
+  deliveryNotes?: string;
+  label?: 'Home' | 'Work' | 'Other';
+}
+
+export type ShopOrderStatus =
+  | 'order_placed'
+  | 'for_packing'
+  | 'sorting_hub'
+  | 'rider_pickup'
+  | 'to_ship'
+  | 'shipped_success'
+  | 'cancelled_by_seller'
+  | 'cancelled_by_buyer';
+
+export interface ShopOrderTimelineItem {
+  status: ShopOrderStatus | string;
+  title: string;
+  description: string;
+  timestamp: string;
+  location?: string;
+}
+
+export interface ShopOrderItem {
+  productId: string;
+  productName: string;
+  price: number;
+  quantity: number;
+  image: string;
+  category?: string;
+}
+
+export interface ShopOrder {
+  id: string;
+  orderNumber: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userAvatar?: string;
+  items: ShopOrderItem[];
+  itemCount: number;
+  subtotal: number;
+  shippingFee: number;
+  discount: number;
+  promoCode?: string;
+  totalAmount: number;
+  paymentMethod: 'gcash' | 'wallet';
+  paymentStatus: 'paid' | 'pending_verification';
+  gcashSenderName?: string;
+  gcashSenderNumber?: string;
+  gcashRefNo?: string;
+  receiptUrl?: string;
+  shippingAddress: ShopShippingAddress;
+  trackingNumber: string;
+  courierName: string; // e.g., 'Z-one Express', 'J&T Express', 'Flash Express'
+  riderName?: string;
+  riderPhone?: string;
+  status: ShopOrderStatus;
+  statusTimeline: ShopOrderTimelineItem[];
+  createdAt: string;
+  updatedAt: string;
+  paidAt?: string;
+  shippedAt?: string;
+  deliveredAt?: string;
+  cancelledAt?: string;
+  cancellationReason?: string;
+  vaId?: string;
+  vaName?: string;
+  vaCommissionAmount?: number;
+}
+
+export interface ShopBasketItem {
+  productId: string;
+  productName: string;
+  price: number;
+  quantity: number;
+  image: string;
+}
+
+export interface ShopBasket {
+  id: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  items: ShopBasketItem[];
+  totalAmount: number;
+  status: 'unpaid' | 'paid_delivered' | 'expired_bad_order';
+  createdAt: string;
+  paidAt?: string;
+  deliveredAt?: string;
+  assignedBannerId?: string;
+  vaId?: string;
+  vaName?: string;
+}
+
+export interface VABanner {
+  id: string;
+  vaUserId: string;
+  vaName: string;
+  vaAvatar: string;
+  bannerType: 'free' | 'paid'; // free: 3 days, 2.5% | paid: 7 days, 5.0%
+  title: string;
+  message: string;
+  promoCode?: string;
+  discountPercent?: number;
+  imageUrl?: string;
+  targetBasketId: string;
+  targetCustomerName: string;
+  targetOrderAmount: number;
+  commissionRate: number; // 2.5 or 5.0
+  potentialCommission: number;
+  status: 'active' | 'success_paid' | 'bad_order_expired';
+  createdAt: string;
+  expiresAt: string; // 3 days from creation for free, 7 days for paid
+  completedAt?: string;
+  earnedCommission?: number;
+}
+
+export interface VASubscriptionRecord {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  paymentType: 'balance' | 'gcash';
+  gcashSenderNumber?: string;
+  gcashRefNo?: string;
+  amount: number;
+  status: 'pending' | 'active' | 'declined' | 'expired';
+  createdAt: string;
+  approvedAt?: string;
+  expiresAt?: string;
+}
+
 export interface AdminUser {
   id: string;
   email: string;
@@ -263,6 +485,25 @@ export interface AdminUser {
   lastActivities: ActivityLog[];
   createdAt?: string | null;
   subscription?: Subscription | null;
+  vaStats?: UserVAStats;
+}
+
+export interface UserSession {
+  id: string;
+  email: string;
+  name: string;
+  avatar: string;
+  referralCode: string;
+  isAdmin: boolean;
+  isDemo?: boolean;
+  isBanned?: boolean;
+  reelsTokens?: number;
+  subscription?: Subscription;
+  stats: UserStats;
+  withdrawals: WithdrawalRequest[];
+  activityLogs: ActivityLog[];
+  referredFriends: ReferralFriend[];
+  vaStats?: UserVAStats;
 }
 
 

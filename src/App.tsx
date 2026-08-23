@@ -47,6 +47,7 @@ import {
   Ban,
   Upload,
   Megaphone,
+  Briefcase,
   Smartphone,
   Bell,
   QrCode,
@@ -63,6 +64,7 @@ import ReferralPanel from './components/ReferralPanel';
 import AdminPanel from './components/AdminPanel';
 import ZoneFeed from './components/ZoneFeed';
 import MerchantPortal from './components/MerchantPortal';
+import { ZoneShopVAHub } from './components/ZoneShopVAHub';
 import AICommercialPlayer from './components/AICommercialPlayer';
 import SpinWheel from './components/SpinWheel';
 import PayoutMarquee from './components/PayoutMarquee';
@@ -181,7 +183,7 @@ export default function App() {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [referredFriends, setReferredFriends] = useState<ReferralFriend[]>([]);
   
-  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo'>('zone');
+  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop'>('zone');
   const [currentViewingCampaign, setCurrentViewingCampaign] = useState<WebsiteCampaign | null>(null);
   const [activeCommercialCamp, setActiveCommercialCamp] = useState<WebsiteCampaign | null>(null);
 
@@ -2363,11 +2365,12 @@ export default function App() {
           <div id="dashboard-navigation-tabs" className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
             <div className="max-w-7xl mx-auto px-4 flex items-center justify-between gap-4">
               
-              <div className={`w-full grid py-2.5 gap-1 shrink-0 ${user.isAdmin ? 'grid-cols-6' : 'grid-cols-5'} md:flex md:w-auto md:py-3 md:gap-1`}>
+              <div className={`w-full grid py-2.5 gap-1 shrink-0 ${user.isAdmin ? 'grid-cols-7' : 'grid-cols-6'} md:flex md:w-auto md:py-3 md:gap-1`}>
                 {[
-                  { id: 'zone', textMobile: 'Z-one Social', textDesktop: ' (Community Feed)', icon: Users },
+                  { id: 'zone', textMobile: 'Z-one Social', textDesktop: ' (Feed & Community)', icon: Users },
+                  { id: 'va_shop', textMobile: 'VA & Shop', textDesktop: ' (500 Goal & Banners)', icon: Briefcase },
                   { id: 'earn', textMobile: 'Mag-ipon', textDesktop: ' (Website Lists)', icon: Globe },
-                  { id: 'cashout', textMobile: 'GCash Cash-Out', textDesktop: ' (Withdraw)', icon: Wallet },
+                  { id: 'cashout', textMobile: 'Cash-Out', textDesktop: ' (Withdraw)', icon: Wallet },
                   { id: 'negosyo', textMobile: 'Negosyo', textDesktop: ' (Promotion)', icon: Megaphone },
                   { id: 'guide', textMobile: 'Gabay', textDesktop: ' (FAQs)', icon: HelpCircle },
                   // Dynamic Admin tab if the session yields an admin role
@@ -2431,7 +2434,7 @@ export default function App() {
 
           {/* 🖥️ MAIN BODY WORKSPACE */}
           <div id="main-content-layout" className={`flex-1 w-full mx-auto ${activeTab === 'zone' ? 'max-w-7xl px-2 sm:px-4 md:px-6 py-4 md:py-6' : 'max-w-7xl px-4 py-6 md:py-8'}`}>
-            {isSubscriptionExpired() && activeTab !== 'earn' && activeTab !== 'zone' && activeTab !== 'negosyo' && activeTab !== 'guide' && activeTab !== 'admin' ? (
+            {isSubscriptionExpired() && activeTab !== 'earn' && activeTab !== 'zone' && activeTab !== 'negosyo' && activeTab !== 'guide' && activeTab !== 'admin' && activeTab !== 'va_shop' ? (
               <div id="renew-access-plan-section" className="max-w-2xl mx-auto space-y-6 animate-fadeIn py-6">
                 
                 {/* SYSTEM ALERT */}
@@ -2985,6 +2988,19 @@ export default function App() {
                       token={token}
                       language={language}
                       triggerNotification={triggerNotification}
+                    />
+                  </div>
+                )}
+
+                {/* TAB 6: VIRTUAL ASSISTANT & Z-ONESHOP MARKETING HUB */}
+                {activeTab === 'va_shop' && (
+                  <div className="animate-fadeIn">
+                    <ZoneShopVAHub
+                      token={token || ''}
+                      user={user}
+                      onRefreshProfile={() => fetchUserProfile(token)}
+                      triggerNotification={triggerNotification}
+                      language={language}
                     />
                   </div>
                 )}
