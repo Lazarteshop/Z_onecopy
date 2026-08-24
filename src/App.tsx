@@ -70,6 +70,7 @@ import SpinWheel from './components/SpinWheel';
 import PayoutMarquee from './components/PayoutMarquee';
 import ReelsFloatingWidget, { parseVideoUrl } from './components/ReelsFloatingWidget';
 import ZoneAppBanner from './components/ZoneAppBanner';
+import { SmartphoneAppLauncher } from './components/SmartphoneAppLauncher';
 import { PromoAdBannerModal } from './components/PromoAdBannerModal';
 import { DemoTestingFloatingBanner } from './components/DemoTestingFloatingBanner';
 import { WithdrawalPolicyModal } from './components/WithdrawalPolicyModal';
@@ -2167,34 +2168,57 @@ export default function App() {
       ) : (
         /* 📱 GATEWAY 2: AUTHENTICATED SYSTEM DASHBOARD */
         <>
-          {/* HEADER BAR */}
-          <header id="dashboard-header" className="bg-slate-900 border-b border-slate-800 text-white py-3 sm:py-4 shadow-md">
-            <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
+          {/* HEADER BAR (Smartphone App Header) */}
+          <header id="dashboard-header" className="bg-[#0a0f1d] border-b border-slate-800/80 text-white py-3 sm:py-3.5 shadow-md select-none">
+            <div className="max-w-7xl mx-auto px-3 sm:px-5 flex flex-col sm:flex-row items-center justify-between gap-2.5 sm:gap-4">
               
               {/* BRAND / IDENTITY */}
-              <div className="flex items-center gap-2 sm:gap-3">
-                <span className="p-2 bg-blue-600 rounded-xl sm:rounded-2xl shadow-md flex items-center justify-center animate-pulse shrink-0">
-                  <Coins className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-300" />
-                </span>
-                <div>
-                  <div className="flex items-center gap-1.5 sm:gap-2">
-                    <h1 className="font-black text-sm sm:text-lg tracking-tight">Earning Dashboard</h1>
-                    {user.isAdmin && (
-                      <span className="bg-red-500 text-white text-[8px] sm:text-[9px] font-black tracking-widest uppercase px-1.5 sm:px-2 py-0.5 rounded flex items-center gap-1">
-                        <Shield className="w-2.5 h-2.5 text-yellow-250 animate-bounce" />
-                        <span>OWNER ADMIN</span>
-                      </span>
-                    )}
+              <div className="flex items-center gap-2.5 sm:gap-3 w-full sm:w-auto justify-between sm:justify-start">
+                <div className="flex items-center gap-2 sm:gap-2.5">
+                  <span className="p-2 bg-blue-600 rounded-2xl shadow-md flex items-center justify-center animate-pulse shrink-0">
+                    <Coins className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-300" />
+                  </span>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h1 className="font-black text-base sm:text-lg tracking-tight text-white">Earning Dashboard</h1>
+                      {user.isAdmin ? (
+                        <span className="bg-red-600 text-white text-[9px] font-black tracking-wider uppercase px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+                          <Shield className="w-2.5 h-2.5 text-yellow-300" />
+                          <span>OWNER ADMIN</span>
+                        </span>
+                      ) : (
+                        <span className="bg-emerald-600 text-white text-[9px] font-black tracking-wider uppercase px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+                          <span>MEMBER</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-[10px] sm:text-[11px] text-slate-400 font-semibold hidden md:block">Explore featured websites and participate in platform activities to enjoy available PPV rewards, subject to our terms and guidelines.</p>
+                </div>
+
+                {/* Profile Pill on mobile */}
+                <div className="sm:hidden flex items-center gap-1.5 bg-slate-900 border border-slate-800 p-1 rounded-full">
+                  <button
+                    onClick={openEditProfileModal}
+                    className="flex items-center gap-1.5 focus:outline-none"
+                    title={language === 'tl' ? 'I-edit ang iyong Profile' : 'Edit Profile'}
+                  >
+                    <div className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-xs overflow-hidden">
+                      {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:') || user.avatar.startsWith('blob:') || user.avatar.startsWith('/')) ? (
+                        <img src={user.avatar} alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <span>{user.avatar && user.avatar.length <= 4 ? user.avatar : '👤'}</span>
+                      )}
+                    </div>
+                    <span className="text-[11px] font-bold text-slate-300 pr-1.5 max-w-[70px] truncate">{user.name}</span>
+                  </button>
                 </div>
               </div>
 
-              {/* USER PROFILE CARD AND METRICS (HORIZONTALLY SCROLLABLE ON MOBILE) */}
+              {/* ACTION BUTTONS & USER STATUS (HORIZONTALLY SCROLLABLE ON MOBILE) */}
               <div className="w-full sm:w-auto overflow-x-auto no-scrollbar py-0.5 overscroll-x-contain touch-pan-x">
-                <div className="flex items-center gap-2 sm:gap-3 justify-start sm:justify-end min-w-max">
+                <div className="flex items-center gap-2 sm:gap-2.5 justify-start sm:justify-end min-w-max">
 
-                  {/* 🔔 Background Push Notifications Button & Indicator */}
+                  {/* 🔔 Background Push Notifications Button */}
                   <button
                     onClick={() => {
                       if (notificationPermission === 'default') {
@@ -2205,12 +2229,12 @@ export default function App() {
                     }}
                     className={`${
                       notificationPermission === 'granted'
-                        ? 'bg-slate-800/80 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30'
-                        : 'bg-emerald-600/90 hover:bg-emerald-600 text-white'
-                    } hover:scale-[1.02] active:scale-[0.98] text-[9px] sm:text-[10px] font-black px-2 sm:px-2.5 py-1.5 rounded-lg sm:rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 shadow-md select-none`}
-                    title={language === 'tl' ? 'Background Push Notifications Settings' : 'Background Push Notifications Settings'}
+                        ? 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-400 border border-emerald-500/40'
+                        : 'bg-emerald-600/90 hover:bg-emerald-600 text-white border border-emerald-500/50'
+                    } hover:scale-[1.02] active:scale-[0.98] text-[10px] sm:text-[11px] font-black px-2.5 sm:px-3 py-1.5 rounded-full transition flex items-center gap-1.5 cursor-pointer shrink-0 shadow-sm select-none`}
+                    title="Background Push Notifications Settings"
                   >
-                    <Bell className={`w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0 ${notificationPermission === 'granted' ? 'text-emerald-400' : 'text-yellow-300 animate-pulse'}`} />
+                    <Bell className={`w-3.5 h-3.5 shrink-0 ${notificationPermission === 'granted' ? 'text-emerald-400' : 'text-yellow-300 animate-pulse'}`} />
                     <span className="whitespace-nowrap">
                       {notificationPermission === 'granted'
                         ? (language === 'tl' ? '🔔 Notif: Aktibo' : '🔔 Notif: Active')
@@ -2218,25 +2242,23 @@ export default function App() {
                     </span>
                   </button>
 
-                  {/* 📶 INTELLIGENT MOBILE DATA SAVER BUTTON */}
+                  {/* 📶 MOBILE DATA SAVER BUTTON */}
                   <button
                     onClick={() => setShowDataSaverModal(true)}
                     className={`${
                       isDataSaverActive
-                        ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40'
-                        : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700'
-                    } hover:scale-[1.02] active:scale-[0.98] text-[9px] sm:text-[10px] font-black px-2 sm:px-2.5 py-1.5 rounded-lg sm:rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 shadow-md select-none`}
-                    title={language === 'tl' ? 'Mobile Data Saver Settings' : 'Mobile Data Saver Settings'}
+                        ? 'bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-500/50'
+                        : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700'
+                    } hover:scale-[1.02] active:scale-[0.98] text-[10px] sm:text-[11px] font-black px-2.5 sm:px-3 py-1.5 rounded-full transition flex items-center gap-1.5 cursor-pointer shrink-0 shadow-sm select-none`}
+                    title="Mobile Data Saver Settings"
                   >
-                    <Smartphone className={`w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0 ${isDataSaverActive ? 'text-amber-400 animate-pulse' : 'text-slate-400'}`} />
+                    <Smartphone className={`w-3.5 h-3.5 shrink-0 ${isDataSaverActive ? 'text-amber-400 animate-pulse' : 'text-slate-400'}`} />
                     <span className="whitespace-nowrap">
-                      {isDataSaverActive
-                        ? (language === 'tl' ? '📶 Data Saver: ON' : '📶 Data Saver: ON')
-                        : (language === 'tl' ? '📶 Data Saver: OFF' : '📶 Data Saver: OFF')}
+                      {isDataSaverActive ? '📶 Data Saver: ON' : '📶 Data Saver: OFF'}
                     </span>
                   </button>
 
-                  {/* 🎬 WATCH REELS HEADER BUTTON (Smaller & Compact, next to Allow Notif) */}
+                  {/* 🎬 WATCH REELS BUTTON */}
                   <button
                     onClick={() => {
                       window.dispatchEvent(new Event('open-reels-widget'));
@@ -2245,57 +2267,51 @@ export default function App() {
                         openBtn.click();
                       }
                     }}
-                    className="bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black px-2.5 sm:px-3 py-1.5 rounded-lg sm:rounded-xl shadow-md shadow-rose-600/25 border border-white/20 flex items-center gap-1.5 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none"
-                    title={language === 'tl' ? 'Panoorin ang Reels' : 'Watch Reels'}
+                    className="bg-gradient-to-r from-pink-600 via-rose-600 to-rose-500 hover:from-pink-500 hover:to-rose-400 text-white font-black px-3 py-1.5 rounded-full shadow-md shadow-rose-600/30 border border-white/20 flex items-center gap-1.5 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none text-[10px] sm:text-[11px]"
+                    title="Watch Reels"
                   >
-                    <Tv className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-300 animate-pulse shrink-0" />
-                    <span className="text-[9px] sm:text-[10px] uppercase font-black tracking-wider whitespace-nowrap">
+                    <Tv className="w-3.5 h-3.5 text-amber-300 animate-pulse shrink-0" />
+                    <span className="uppercase font-black tracking-wider whitespace-nowrap">
                       🎬 WATCH REELS
                     </span>
                   </button>
 
-                  {/* 📢 WITHDRAWAL POLICY ANNOUNCEMENT BUTTON */}
+                  {/* 📢 PAYOUT DATES ANNOUNCEMENT BUTTON */}
                   <button
                     onClick={() => setShowWithdrawalPolicyModal(true)}
-                    className="bg-blue-600 hover:bg-blue-500 text-white font-black px-2.5 sm:px-3 py-1.5 rounded-lg sm:rounded-xl shadow-md border border-white/20 flex items-center gap-1.5 transition hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none"
+                    className="bg-blue-600 hover:bg-blue-500 text-white font-black px-2.5 sm:px-3 py-1.5 rounded-full shadow-md border border-white/20 flex items-center gap-1.5 transition hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none text-[10px] sm:text-[11px]"
                     title="Tingnan ang Withdrawal Policy Update (5th & 20th)"
                   >
                     <Megaphone className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-yellow-300 animate-bounce shrink-0" />
-                    <span className="text-[9px] sm:text-[10px] uppercase font-black tracking-wider whitespace-nowrap">
+                    <span className="uppercase font-black tracking-wider whitespace-nowrap">
                       📢 PAYOUT DATES
                     </span>
                   </button>
 
-                  <div className="bg-slate-850 border border-slate-800 p-1.5 sm:p-2 rounded-xl sm:rounded-2xl flex items-center gap-2 sm:gap-2.5 shadow-sm shrink-0">
-                    {/* Clickable Avatar to edit profile picture */}
+                  {/* Desktop Profile Card */}
+                  <div className="hidden sm:flex bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-2xl items-center gap-2 shadow-sm shrink-0">
                     <button
                       onClick={openEditProfileModal}
-                      title={language === 'tl' ? 'I-edit ang iyong Profile at Larawan' : 'Edit your Profile and Picture'}
+                      title="Edit Profile"
                       className="relative group cursor-pointer focus:outline-none shrink-0"
                     >
-                      <div className="text-xl sm:text-2xl leading-none select-none flex items-center justify-center">
+                      <div className="text-xl leading-none select-none flex items-center justify-center">
                         {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:') || user.avatar.startsWith('blob:') || user.avatar.startsWith('/')) ? (
-                          <img src={user.avatar} alt="Profile" className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover border border-slate-700 shadow-inner group-hover:opacity-85 transition" referrerPolicy="no-referrer" onError={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }} />
-                        ) : user.avatar && user.avatar.length > 30 ? (
-                          <img src={`data:image/jpeg;base64,${user.avatar}`} alt="Profile" className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover border border-slate-700 shadow-inner group-hover:opacity-85 transition" referrerPolicy="no-referrer" onError={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }} />
+                          <img src={user.avatar} alt="Profile" className="w-7 h-7 rounded-full object-cover border border-slate-700 shadow-inner group-hover:opacity-85 transition" referrerPolicy="no-referrer" onError={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }} />
                         ) : (
-                          <span className="text-lg sm:text-xl bg-slate-900 p-1 rounded-full shadow-inner group-hover:scale-105 transition block">{user.avatar && user.avatar.length <= 8 ? user.avatar : '👤'}</span>
+                          <span className="text-base bg-slate-950 p-1 rounded-full shadow-inner block">{user.avatar && user.avatar.length <= 8 ? user.avatar : '👤'}</span>
                         )}
                       </div>
-                      <span className="absolute -bottom-1 -right-1 bg-blue-600 text-[8px] text-white font-black p-0.5 rounded-full border border-slate-900 group-hover:bg-blue-500 transition scale-90">
-                        ✎
-                      </span>
                     </button>
 
                     <div className="min-w-0 pr-1">
                       <button
                         onClick={openEditProfileModal}
-                        title={language === 'tl' ? 'I-edit ang iyong Profile at Larawan' : 'Edit your Profile and Picture'}
-                        className="text-left font-black text-[10px] sm:text-xs leading-none text-white truncate max-w-[90px] sm:max-w-[130px] hover:text-blue-400 cursor-pointer transition block"
+                        className="text-left font-black text-xs leading-none text-white truncate max-w-[120px] hover:text-blue-400 cursor-pointer transition block"
                       >
-                        Mabuhay, {user.name}!
+                        {user.name}
                       </button>
-                      <p className="text-[8px] sm:text-[9px] text-slate-400 mt-0.5 font-semibold truncate max-w-[90px] sm:max-w-[130px]" title={user.email}>
+                      <p className="text-[9px] text-slate-400 mt-0.5 font-semibold truncate max-w-[120px]">
                         {user.email}
                       </p>
                     </div>
@@ -2307,111 +2323,14 @@ export default function App() {
             </div>
           </header>
 
-          {/* GIANT COLOR HERO BANNER PANEL */}
-          <div id="hero-marketing-bar" className="bg-slate-900 border-b border-slate-800 py-8 text-white relative overflow-hidden shrink-0">
-            
-            {/* Ambient colorful vector orbs */}
-            <div className="absolute top-0 right-0 h-44 w-44 rounded-full bg-indigo-500/10 blur-3xl" />
-            
-            <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-6">
-              
-              {/* DETAILS LEFT */}
-              <div className="space-y-2 text-center md:text-left">
-                <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-black tracking-widest uppercase px-2.5 py-1 rounded-full flex items-center gap-1 w-max mx-auto md:mx-0">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>₱0.01 - ₱50.00 PER SIMULATED HOME VIEW</span>
-                </span>
-                <h2 className="text-2xl md:text-3xl font-black tracking-tight leading-tight max-w-xl">
-                  Explore featured websites and discover businesses through our platform. Businesses may also partner with us for promotional exposure and increased website visits.
-                </h2>
-                <p className="text-slate-400 text-xs max-w-lg font-semibold">
-                  I-explore ang mga featured homepage sa ibaba at hintaying matapos ang automatic browser timer upang makumpleto ang iyong participation sa activity.
-                </p>
-              </div>
-
-              {/* WALLET AND REWARDS CENTER STATUS */}
-              <div className="flex items-center gap-4 self-center md:self-auto">
-                
-                {/* CURRENT BALANCE */}
-                <div className="bg-white/10 hover:bg-white/15 border border-white/15 rounded-2xl p-4 min-w-[170px] backdrop-blur-sm transition">
-                  <div className="flex items-center justify-between gap-3 text-blue-200 text-[10px] font-bold uppercase tracking-wider">
-                    <span>Kasalukuyang Balance</span>
-                    <Coins className="w-4 h-4 text-yellow-300 animate-spin-slow" />
-                  </div>
-                  <div className="text-2xl md:text-3xl font-black text-white mt-1 tracking-tight">
-                    <span className="text-yellow-300 mr-0.5">₱</span>
-                    {stats.balance.toFixed(2)}
-                  </div>
-                  <p className="text-[10px] text-emerald-300 mt-1 font-semibold flex items-center gap-1">
-                    <span>● Ligtas at Pwedeng i-GCash</span>
-                  </p>
-                </div>
-
-                {/* DAILY CHECK IN ACTION */}
-                <button
-                  id="daily-bonus-checking-btn"
-                  onClick={handleDailyCheckIn}
-                  className="bg-gradient-to-b from-yellow-300 to-amber-500 hover:from-yellow-200 hover:to-amber-450 text-slate-950 font-black px-5 py-3 rounded-2xl h-full shadow-md text-sm transition hover:scale-[1.02] active:scale-[0.98] cursor-pointer flex flex-col items-center justify-center gap-1 shrink-0"
-                >
-                  <Sparkles className="w-5 h-5 text-yellow-950 animate-pulse" />
-                  <span>₱1.00 Araw Bonus</span>
-                </button>
-
-              </div>
-
-            </div>
-
-          </div>
-
-          {/* 🧭 NAVIGATION TABS CONTROL BAR */}
-          <div id="dashboard-navigation-tabs" className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
-            <div className="max-w-7xl mx-auto px-4 flex items-center justify-between gap-4">
-              
-              <div className={`w-full grid py-2.5 gap-1 shrink-0 ${user.isAdmin ? 'grid-cols-7' : 'grid-cols-6'} md:flex md:w-auto md:py-3 md:gap-1`}>
-                {[
-                  { id: 'zone', textMobile: 'Z-one Social', textDesktop: ' (Feed & Community)', icon: Users },
-                  { id: 'va_shop', textMobile: 'VA & Shop', textDesktop: ' (500 Goal & Banners)', icon: Briefcase },
-                  { id: 'earn', textMobile: 'Mag-ipon', textDesktop: ' (Website Lists)', icon: Globe },
-                  { id: 'cashout', textMobile: 'Cash-Out', textDesktop: ' (Withdraw)', icon: Wallet },
-                  { id: 'negosyo', textMobile: 'Negosyo', textDesktop: ' (Promotion)', icon: Megaphone },
-                  { id: 'guide', textMobile: 'Gabay', textDesktop: ' (FAQs)', icon: HelpCircle },
-                  // Dynamic Admin tab if the session yields an admin role
-                  ...(user.isAdmin ? [{ id: 'admin', textMobile: 'Admin Control', textDesktop: ' Panel', icon: Shield }] : [])
-                ].map((tab) => {
-                  const IconComp = tab.icon;
-                  const isSelected = activeTab === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      id={`nav-tab-${tab.id}`}
-                      onClick={() => setActiveTab(tab.id as any)}
-                      className={`px-1 py-1.5 sm:px-2 md:px-4.5 md:py-2.5 rounded-xl font-extrabold text-[10px] sm:text-xs md:text-sm transition cursor-pointer flex flex-col md:flex-row items-center justify-center text-center md:text-left gap-1 md:gap-2 leading-tight ${
-                        isSelected
-                          ? 'bg-blue-600 text-white shadow-sm'
-                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                      }`}
-                    >
-                      <IconComp className="w-4 h-4 md:w-4.5 md:h-4.5 shrink-0" />
-                      <span className="flex flex-col md:flex-row md:items-center gap-0.5 md:gap-1">
-                        <span>{tab.textMobile}</span>
-                        {tab.textDesktop && (
-                          <span className="hidden md:inline text-[10px] md:text-[11px] font-bold opacity-80">
-                            {tab.textDesktop}
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="hidden sm:flex items-center gap-1.5 font-mono text-[11px] text-slate-500 font-bold border-l border-slate-200 pl-4 py-2">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>Server Synchronized: Real-Time</span>
-              </div>
-
-            </div>
-          </div>
+          {/* 📱 HUAWEI-INSPIRED SMARTPHONE HOME SCREEN APP LAUNCHER GRID (Single unified navigation dashboard) */}
+          <SmartphoneAppLauncher
+            activeTab={activeTab}
+            onSelectTab={(t) => setActiveTab(t)}
+            isAdmin={Boolean(user?.isAdmin)}
+            language={language}
+            balance={stats.balance}
+          />
 
           {/* 📢 HIGH HYPE PROMO AD TOP BAR FOR NON-SUBSCRIBED USERS */}
           {isSubscriptionExpired() && !user?.isAdmin && (

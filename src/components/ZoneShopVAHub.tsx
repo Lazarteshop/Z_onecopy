@@ -63,7 +63,18 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
   triggerNotification,
   language
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'hiring' | 'banners' | 'shop' | 'cart' | 'orders' | 'leaderboard'>('hiring');
+  // Detect if user is already known to be a Virtual Assistant
+  const isInitialVA = Boolean(
+    user?.isAdmin ||
+    user?.vaStats?.vaSubscription?.status === 'active' ||
+    (user?.vaStats?.hiredCount && user.vaStats.hiredCount > 0)
+  );
+
+  // Default: Non-VA sees 'shop' (Z-oneShop Catalogue) immediately; VA sees 'banners' (VA Marketing Banners & Commissions)
+  const [activeSubTab, setActiveSubTab] = useState<'hiring' | 'banners' | 'shop' | 'cart' | 'orders' | 'leaderboard'>(
+    isInitialVA ? 'banners' : 'shop'
+  );
+  const [hasUserManuallySwitchedTab, setHasUserManuallySwitchedTab] = useState<boolean>(false);
   
   // Data states
   const [loading, setLoading] = useState<boolean>(true);
@@ -219,6 +230,19 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
         }
       }
       if (ordersRes?.success) setOrders(ordersRes.orders || []);
+
+      // If user hasn't manually clicked any sub-tab yet, adjust based on confirmed VA status
+      if (!hasUserManuallySwitchedTab) {
+        const isConfirmedVA = Boolean(
+          user?.isAdmin ||
+          statusRes?.vaStats?.vaSubscription?.status === 'active' ||
+          user?.vaStats?.vaSubscription?.status === 'active' ||
+          (statusRes?.vaStats?.hiredCount && statusRes.vaStats.hiredCount > 0) ||
+          (user?.vaStats?.hiredCount && user.vaStats.hiredCount > 0) ||
+          (bannersRes?.banners && bannersRes.banners.length > 0)
+        );
+        setActiveSubTab(isConfirmedVA ? 'banners' : 'shop');
+      }
     } catch (err) {
       console.error('Failed to load VA & Shop data:', err);
     } finally {
@@ -651,6 +675,38 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
   const isPaidSubActive = vaStatus?.vaStats?.vaSubscription?.status === 'active';
   const vmBalance = vaStatus?.vaStats?.virtualMoneyBalance || 0;
 
+  const isVirtualAssistant = Boolean(
+    user?.isAdmin ||
+    user?.vaStats?.vaSubscription?.status === 'active' ||
+    vaStatus?.vaStats?.vaSubscription?.status === 'active' ||
+    (user?.vaStats?.hiredCount && user.vaStats.hiredCount > 0) ||
+    (vaStatus?.vaStats?.hiredCount && vaStatus.vaStats.hiredCount > 0) ||
+    (myBanners && myBanners.length > 0)
+  );
+
+  const handleSelectSubTab = (tabId: 'hiring' | 'banners' | 'shop' | 'cart' | 'orders' | 'leaderboard') => {
+    setHasUserManuallySwitchedTab(true);
+    setActiveSubTab(tabId);
+  };
+
+  const subTabsList = isVirtualAssistant
+    ? [
+        { id: 'banners', label: 'VA Marketing Banners & Commissions', icon: Tag, badge: `${myBanners.length}` },
+        { id: 'hiring', label: 'VA Recruitment & 500 Goal', icon: Users, badge: `${hiredCount}/500` },
+        { id: 'shop', label: 'Z-oneShop Catalogue', icon: ShoppingBag, badge: `${products.length}` },
+        { id: 'cart', label: 'Shopping Cart', icon: ShoppingCart, badge: cartItems.reduce((acc, i) => acc + i.quantity, 0) > 0 ? `${cartItems.reduce((acc, i) => acc + i.quantity, 0)}` : undefined },
+        { id: 'orders', label: 'My Orders & Real-Time Tracking', icon: Truck, badge: orders.length > 0 ? `${orders.length}` : undefined },
+        { id: 'leaderboard', label: 'Live 500 Bounty Leaderboard', icon: Trophy, badge: winner ? 'Claimed' : 'Live' }
+      ]
+    : [
+        { id: 'shop', label: 'Z-oneShop Catalogue', icon: ShoppingBag, badge: `${products.length}` },
+        { id: 'cart', label: 'Shopping Cart', icon: ShoppingCart, badge: cartItems.reduce((acc, i) => acc + i.quantity, 0) > 0 ? `${cartItems.reduce((acc, i) => acc + i.quantity, 0)}` : undefined },
+        { id: 'orders', label: 'My Orders & Real-Time Tracking', icon: Truck, badge: orders.length > 0 ? `${orders.length}` : undefined },
+        { id: 'banners', label: 'VA Marketing Banners & Commissions', icon: Tag, badge: `${myBanners.length}` },
+        { id: 'hiring', label: 'VA Recruitment & 500 Goal', icon: Users, badge: `${hiredCount}/500` },
+        { id: 'leaderboard', label: 'Live 500 Bounty Leaderboard', icon: Trophy, badge: winner ? 'Claimed' : 'Live' }
+      ];
+
   return (
     <div id="va-hiring-shop-hub" className="space-y-6 animate-fadeIn">
       
@@ -709,20 +765,13 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
 
       {/* 🧭 SUB-NAVIGATION TABS */}
       <div className="flex border-b border-slate-200 bg-white rounded-2xl p-1.5 shadow-xs overflow-x-auto no-scrollbar gap-1">
-        {[
-          { id: 'hiring', label: 'VA Recruitment & 500 Goal', icon: Users, badge: `${hiredCount}/500` },
-          { id: 'banners', label: 'VA Marketing Banners & Commissions', icon: Tag, badge: `${myBanners.length}` },
-          { id: 'shop', label: 'Z-oneShop Catalogue', icon: ShoppingBag, badge: `${products.length}` },
-          { id: 'cart', label: 'Shopping Cart', icon: ShoppingCart, badge: cartItems.reduce((acc, i) => acc + i.quantity, 0) > 0 ? `${cartItems.reduce((acc, i) => acc + i.quantity, 0)}` : undefined },
-          { id: 'orders', label: 'My Orders & Real-Time Tracking', icon: Truck, badge: orders.length > 0 ? `${orders.length}` : undefined },
-          { id: 'leaderboard', label: 'Live 500 Bounty Leaderboard', icon: Trophy, badge: winner ? 'Claimed' : 'Live' }
-        ].map((tab) => {
+        {subTabsList.map((tab) => {
           const IconComp = tab.icon;
           const isSelected = activeSubTab === tab.id;
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveSubTab(tab.id as any)}
+              onClick={() => handleSelectSubTab(tab.id as any)}
               className={`px-3.5 py-2.5 rounded-xl font-black text-xs transition cursor-pointer flex items-center gap-2 shrink-0 ${
                 isSelected
                   ? 'bg-blue-600 text-white shadow-sm'
