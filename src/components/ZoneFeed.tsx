@@ -302,10 +302,43 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   });
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [postFilter, setPostFilter] = useState<'all' | 'news' | 'community' | 'teleserye'>('all');
+  const [teleseryeStreamFilter, setTeleseryeStreamFilter] = useState<'all' | 'playable' | 'pending'>('all');
   const [selectedServerMap, setSelectedServerMap] = useState<Record<string, string>>({});
   const [teleseryeSearch, setTeleseryeSearch] = useState<string>('');
   const [isRefreshingRss, setIsRefreshingRss] = useState(false);
+  const [checkingStreamPostId, setCheckingStreamPostId] = useState<string | null>(null);
   const [visiblePostLimit, setVisiblePostLimit] = useState<number>(24);
+
+  const handleCheckVideoSource = async (postId: string) => {
+    setCheckingStreamPostId(postId);
+    try {
+      const res = await fetch(`/api/zone/posts/${postId}/check-stream`, {
+        method: 'POST',
+        headers: { 'Authorization': token }
+      });
+      const data = await res.json();
+      if (res.ok && data.post) {
+        setPosts(prev => prev.map(p => p.id === postId ? data.post : p));
+        if (data.videoSourceAvailable) {
+          triggerNotification(
+            language === 'tl' ? '✅ Nahanap ang video stream! Maaari mo nang i-play ang video.' : '✅ Video stream found! You can now play the video.',
+            'success'
+          );
+        } else {
+          triggerNotification(
+            language === 'tl' ? '⚠️ Kasalukuyang pinoproseso pa mula sa source ang direct video stream.' : '⚠️ Video stream is currently still processing from source.',
+            'info'
+          );
+        }
+      } else {
+        triggerNotification(data.error || (language === 'tl' ? 'Hindi masuri ang video stream.' : 'Failed to check video stream.'), 'error');
+      }
+    } catch (err) {
+      triggerNotification(language === 'tl' ? 'Error sa pagsusuri ng video source.' : 'Error checking video stream.', 'error');
+    } finally {
+      setCheckingStreamPostId(null);
+    }
+  };
 
   // --- PRIVATE DIRECT MESSAGE (DM) STATES & INBOX ---
   const [activeDmUser, setActiveDmUser] = useState<{ id: string; name: string; avatar: string } | null>(null);
@@ -1778,16 +1811,27 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       return visiblePosts.filter(p => p.userId === 'balita-rss-author');
     }
     if (postFilter === 'teleserye') {
-      const teleseryes = visiblePosts.filter(p => p.userId === 'teleserye-feed-author' || (p as any).category === 'Teleserye');
+      let teleseryes = visiblePosts.filter(p => p.userId === 'teleserye-feed-author' || (p as any).category === 'Teleserye');
+      
+      if (teleseryeStreamFilter === 'playable') {
+        teleseryes = teleseryes.filter(p => p.videoSourceAvailable && (p.embedUrl || (p.embedUrls && p.embedUrls.length > 0)));
+      } else if (teleseryeStreamFilter === 'pending') {
+        teleseryes = teleseryes.filter(p => !p.videoSourceAvailable || (!p.embedUrl && (!p.embedUrls || p.embedUrls.length === 0)));
+      }
+
       if (!teleseryeSearch.trim()) return teleseryes;
       const q = teleseryeSearch.toLowerCase().trim();
-      return teleseryes.filter(p => (p.text || '').toLowerCase().includes(q) || (p.userName || '').toLowerCase().includes(q));
+      return teleseryes.filter(p => 
+        (p.text || '').toLowerCase().includes(q) || 
+        (p.userName || '').toLowerCase().includes(q) ||
+        (p.episodeTitle || '').toLowerCase().includes(q)
+      );
     }
     if (postFilter === 'community') {
       return visiblePosts.filter(p => !(p as any).isRss && p.userId !== 'balita-rss-author' && p.userId !== 'teleserye-feed-author');
     }
     return visiblePosts;
-  }, [visiblePosts, postFilter, teleseryeSearch]);
+  }, [visiblePosts, postFilter, teleseryeSearch, teleseryeStreamFilter]);
 
   // Progressive posts slicing for ultra-fast 60 FPS performance (like Facebook News Feed)
   const displayedPosts = React.useMemo(() => {
@@ -3209,6 +3253,43 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                       )}
                     </div>
 
+                    {/* Stream Readiness Filter & Quick Popular Show Filter Chips */}
+                    <div className="flex items-center justify-between gap-2 flex-wrap pt-1">
+                      <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-xl border border-slate-200/60 text-[11px] font-bold">
+                        <button
+                          onClick={() => setTeleseryeStreamFilter('all')}
+                          className={`px-2.5 py-0.8 rounded-lg transition cursor-pointer ${
+                            teleseryeStreamFilter === 'all'
+                              ? 'bg-white text-slate-900 shadow-xs font-black'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          {language === 'tl' ? 'Lahat ng Episodes' : 'All Episodes'}
+                        </button>
+                        <button
+                          onClick={() => setTeleseryeStreamFilter('playable')}
+                          className={`px-2.5 py-0.8 rounded-lg transition cursor-pointer flex items-center gap-1 ${
+                            teleseryeStreamFilter === 'playable'
+                              ? 'bg-emerald-600 text-white shadow-xs font-black'
+                              : 'text-emerald-700 hover:text-emerald-900'
+                          }`}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-300"></span>
+                          <span>{language === 'tl' ? '▶ HD Stream Ready' : '▶ Playable Stream'}</span>
+                        </button>
+                        <button
+                          onClick={() => setTeleseryeStreamFilter('pending')}
+                          className={`px-2.5 py-0.8 rounded-lg transition cursor-pointer flex items-center gap-1 ${
+                            teleseryeStreamFilter === 'pending'
+                              ? 'bg-amber-600 text-white shadow-xs font-black'
+                              : 'text-amber-700 hover:text-amber-900'
+                          }`}
+                        >
+                          <span>{language === 'tl' ? '⏳ Airing / Processing' : '⏳ Processing'}</span>
+                        </button>
+                      </div>
+                    </div>
+
                     {/* Quick Popular Show Filter Chips */}
                     <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-[11px]">
                       {['Lahat', 'Someone Someday', 'The Master Cutter', 'Born to Shine', 'Magpakailanman', 'TiktoClock', 'TV Patrol', 'Wish Ko Lang'].map((show) => {
@@ -3735,7 +3816,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                 </div>
                               )}
 
-                              {(post.mediaType === 'video' || (post as any).mediaType === 'embed' || post.embedUrl) && (
+                              {(post.mediaType === 'video' || (post as any).mediaType === 'embed' || post.embedUrl || post.userId === 'teleserye-feed-author' || (post as any).category === 'Teleserye') && (
                                 <div className="rounded-2xl overflow-hidden border border-slate-800/80 relative bg-slate-950 shadow-md">
                                   {/* Pinoy Teleserye Replay Header Bar */}
                                   {(post.userId === 'teleserye-feed-author' || (post as any).category === 'Teleserye' || post.embedUrl) && (
@@ -3747,7 +3828,16 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                         </span>
                                         <Tv className="w-3.5 h-3.5 text-red-400" />
                                         <span>Pinoy Teleserye Replay</span>
-                                        <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.5 rounded tracking-wide">FULL HD</span>
+                                        {post.videoSourceAvailable ? (
+                                          <span className="text-[9px] bg-emerald-600 text-white font-black px-1.5 py-0.5 rounded tracking-wide flex items-center gap-1">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-200"></span>
+                                            <span>STREAM READY</span>
+                                          </span>
+                                        ) : (
+                                          <span className="text-[9px] bg-amber-600/90 text-amber-100 font-black px-1.5 py-0.5 rounded tracking-wide">
+                                            PROCESSING
+                                          </span>
+                                        )}
                                       </div>
 
                                       {/* Server Switchers if multiple embed servers exist */}
@@ -3777,9 +3867,13 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                   )}
 
                                   {/* Video Player or Tap-to-Play Poster */}
-                                  {post.embedUrl || (post.embedUrls && post.embedUrls.length > 0) ? (
-                                    <>
-                                      {!revealedVideos.has(post.id) ? (
+                                  {(() => {
+                                    const activeEmbed = selectedServerMap[post.id] || post.embedUrl || (post.embedUrls && post.embedUrls.length > 0 ? post.embedUrls[0] : null);
+                                    const isDirectFile = post.videoStreamType === 'direct' || post.videoStreamType === 'hls' || (activeEmbed && /\.(mp4|webm|m3u8|ogg)(\?|$)/i.test(activeEmbed)) || (post.mediaUrl && /\.(mp4|webm|m3u8|ogg)(\?|$)/i.test(post.mediaUrl));
+                                    const hasValidStream = !!activeEmbed || (post.mediaUrl && /\.(mp4|webm|m3u8|ogg)(\?|$)/i.test(post.mediaUrl));
+
+                                    if (!revealedVideos.has(post.id)) {
+                                      return (
                                         <div 
                                           onClick={() => setRevealedVideos(prev => new Set(prev).add(post.id))}
                                           className="w-full aspect-video min-h-52 sm:min-h-64 bg-slate-900 flex flex-col items-center justify-center p-4 cursor-pointer group relative overflow-hidden select-none"
@@ -3787,7 +3881,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                           {post.mediaUrl && (
                                             <img 
                                               src={post.mediaUrl} 
-                                              alt={post.text.slice(0, 40)} 
+                                              alt={post.episodeTitle || post.text.slice(0, 40)} 
                                               className="absolute inset-0 w-full h-full object-cover opacity-60 group-hover:scale-105 transition-transform duration-500 group-hover:opacity-75"
                                               loading="lazy"
                                               referrerPolicy="no-referrer"
@@ -3799,7 +3893,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                               <Play className="w-8 h-8 fill-white ml-1 text-white" />
                                             </div>
                                             <p className="text-sm font-black text-white tracking-wide text-center px-4 drop-shadow-md">
-                                              {language === 'tl' ? 'Panoorin ang Buong Episode' : 'Watch Full Episode'}
+                                              {post.episodeTitle || (language === 'tl' ? 'Panoorin ang Buong Episode' : 'Watch Full Episode')}
                                             </p>
                                             <span className="text-[11px] text-red-200 font-bold mt-1 bg-red-950/80 px-3 py-0.5 rounded-full border border-red-700/50 flex items-center gap-1.5 backdrop-blur-xs shadow-sm">
                                               <Film className="w-3 h-3 text-red-400" />
@@ -3807,22 +3901,37 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                             </span>
                                           </div>
                                         </div>
-                                      ) : (
+                                      );
+                                    }
+
+                                    // User clicked Play: Show either genuine player or clear Unavailable state
+                                    if (hasValidStream) {
+                                      return (
                                         <div className="flex flex-col bg-black">
-                                          <div className="relative w-full aspect-video bg-black">
-                                            <iframe 
-                                              src={selectedServerMap[post.id] || post.embedUrl || (post.embedUrls ? post.embedUrls[0] : '')} 
-                                              className="w-full h-full border-0"
-                                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                              allowFullScreen
-                                              title={post.text.slice(0, 50)}
-                                            />
+                                          <div className="relative w-full aspect-video bg-black flex items-center justify-center">
+                                            {isDirectFile ? (
+                                              <video 
+                                                src={activeEmbed || post.mediaUrl} 
+                                                controls 
+                                                autoPlay
+                                                playsInline
+                                                className="w-full h-full object-contain bg-black" 
+                                              />
+                                            ) : (
+                                              <iframe 
+                                                src={activeEmbed!} 
+                                                className="w-full h-full border-0 bg-black"
+                                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                                allowFullScreen
+                                                title={post.episodeTitle || post.text.slice(0, 50)}
+                                              />
+                                            )}
                                           </div>
                                           {(post.userId === 'teleserye-feed-author' || (post as any).category === 'Teleserye' || post.rssLink) && (
                                             <div className="bg-slate-900 px-3.5 py-2 border-t border-slate-800 flex items-center justify-between gap-2 text-xs">
                                               <div className="flex items-center gap-1.5 text-slate-300 font-bold truncate">
                                                 <Tv className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                                                <span className="truncate">Pinoy Tambayan Teleserye</span>
+                                                <span className="truncate">{post.episodeTitle || 'Pinoy Tambayan Teleserye'}</span>
                                               </div>
                                               {post.rssLink && (
                                                 <a
@@ -3831,43 +3940,79 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                                   rel="noopener noreferrer"
                                                   className="text-red-400 hover:text-red-300 font-extrabold flex items-center gap-1 hover:underline shrink-0 bg-red-950/60 px-2 py-0.5 rounded border border-red-800/40 text-[11px]"
                                                 >
-                                                  <span>{language === 'tl' ? 'Buksan sa Browser' : 'Open in Browser'}</span>
+                                                  <span>{language === 'tl' ? 'Source Info' : 'Source Info'}</span>
                                                   <ExternalLink className="w-3 h-3" />
                                                 </a>
                                               )}
                                             </div>
                                           )}
                                         </div>
-                                      )}
-                                    </>
-                                  ) : (
-                                    /* Standard HTML5 Video */
-                                    isBasicMode && !revealedVideos.has(post.id) ? (
-                                      <div 
-                                        onClick={() => setRevealedVideos(prev => new Set(prev).add(post.id))}
-                                        className="w-full h-52 sm:h-64 bg-gradient-to-br from-slate-900 via-slate-850 to-slate-950 flex flex-col items-center justify-center p-4 cursor-pointer group hover:bg-slate-900 transition relative"
-                                      >
-                                        <div className="w-14 h-14 rounded-full bg-rose-600 group-hover:bg-rose-500 flex items-center justify-center text-white shadow-xl transition-transform group-hover:scale-110 mb-2">
-                                          <Play className="w-6 h-6 fill-white ml-0.5" />
+                                      );
+                                    }
+
+                                    // CLEAR "Video Unavailable" State - NEVER embed full website!
+                                    return (
+                                      <div className="w-full aspect-video min-h-60 bg-gradient-to-b from-slate-900 via-slate-950 to-black p-6 flex flex-col items-center justify-center text-center relative select-none">
+                                        {post.mediaUrl && (
+                                          <img 
+                                            src={post.mediaUrl} 
+                                            alt={post.episodeTitle || 'Video'} 
+                                            className="absolute inset-0 w-full h-full object-cover opacity-15 pointer-events-none"
+                                            referrerPolicy="no-referrer"
+                                          />
+                                        )}
+                                        <div className="relative z-10 flex flex-col items-center max-w-sm space-y-3">
+                                          <div className="w-12 h-12 rounded-2xl bg-amber-950/80 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-lg">
+                                            <Tv className="w-6 h-6" />
+                                          </div>
+                                          <div>
+                                            <h4 className="text-sm font-black text-white tracking-wide">
+                                              {language === 'tl' ? 'Video Stream Unavailable' : 'Video Stream Unavailable'}
+                                            </h4>
+                                            <p className="text-[11px] text-slate-400 font-medium mt-1 leading-relaxed">
+                                              {language === 'tl'
+                                                ? 'Kasalukuyang ina-update o hindi pa accessible ang actual video stream mula sa source para sa episode na ito.'
+                                                : 'The playable video stream for this episode is currently unavailable or still processing from source.'}
+                                            </p>
+                                          </div>
+
+                                          <div className="flex items-center justify-center gap-2 flex-wrap pt-1">
+                                            <button
+                                              onClick={() => handleCheckVideoSource(post.id)}
+                                              disabled={checkingStreamPostId === post.id}
+                                              className="px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-md disabled:opacity-50"
+                                            >
+                                              <RefreshCw className={`w-3.5 h-3.5 ${checkingStreamPostId === post.id ? 'animate-spin' : ''}`} />
+                                              <span>{checkingStreamPostId === post.id ? (language === 'tl' ? 'Sinusuri...' : 'Checking...') : (language === 'tl' ? 'I-check Muli ang Stream' : 'Re-check Stream')}</span>
+                                            </button>
+
+                                            {post.rssLink && (
+                                              <a
+                                                href={post.rssLink}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer border border-slate-700"
+                                              >
+                                                <span>{language === 'tl' ? 'Source Info' : 'Source Info'}</span>
+                                                <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+                                              </a>
+                                            )}
+
+                                            <button
+                                              onClick={() => setRevealedVideos(prev => {
+                                                const next = new Set(prev);
+                                                next.delete(post.id);
+                                                return next;
+                                              })}
+                                              className="px-2.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 font-semibold text-[11px] transition cursor-pointer"
+                                            >
+                                              {language === 'tl' ? 'Bumalik' : 'Back'}
+                                            </button>
+                                          </div>
                                         </div>
-                                        <p className="text-xs font-black text-white tracking-wide">
-                                          {language === 'tl' ? 'I-tap para i-play ang video' : 'Tap to play video'}
-                                        </p>
-                                        <span className="text-[10px] text-emerald-400 font-bold mt-1 bg-emerald-950/80 px-2.5 py-0.5 rounded-full border border-emerald-700/50 flex items-center gap-1">
-                                          <Smartphone className="w-3 h-3" />
-                                          <span>{language === 'tl' ? 'Naka-pause ang auto-download' : 'Auto-download paused'}</span>
-                                        </span>
                                       </div>
-                                    ) : (
-                                      <video 
-                                        src={post.mediaUrl} 
-                                        controls 
-                                        preload="metadata"
-                                        playsInline
-                                        className="w-full max-h-80 object-cover bg-black" 
-                                      />
-                                    )
-                                  )}
+                                    );
+                                  })()}
                                 </div>
                               )}
                             </>

@@ -2084,17 +2084,13 @@ async function uploadToFirestore(data: DBStructure) {
           promises.push((async () => {
             try {
               const { id, ...pWithoutId } = p;
-              if (pWithoutId.mediaUrl && pWithoutId.mediaUrl.startsWith('data:') && pWithoutId.mediaUrl.length > 500000) {
-                if (pWithoutId.mediaType === 'video') {
-                  pWithoutId.mediaUrl = 'https://assets.mixkit.co/videos/preview/mixkit-holding-a-smartphone-with-a-green-screen-34440-large.mp4';
-                } else {
-                  pWithoutId.mediaUrl = 'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=800&auto=format&fit=crop&q=60';
-                }
+              if (pWithoutId.mediaUrl && pWithoutId.mediaUrl.startsWith('data:')) {
+                pWithoutId.mediaUrl = saveBase64ToUploadFile(pWithoutId.mediaUrl, 'post-media') || undefined;
               }
               if (pWithoutId.mediaUrls && Array.isArray(pWithoutId.mediaUrls)) {
                 pWithoutId.mediaUrls = pWithoutId.mediaUrls.map(url => {
-                  if (url.startsWith('data:') && url.length > 500000) {
-                    return 'https://images.unsplash.com/photo-1543269865-cbf427effbad?w=800&auto=format&fit=crop&q=60';
+                  if (url && url.startsWith('data:')) {
+                    return saveBase64ToUploadFile(url, 'post-media') || url;
                   }
                   return url;
                 });
@@ -2117,7 +2113,7 @@ async function uploadToFirestore(data: DBStructure) {
           promises.push((async () => {
             try {
               const { id, ...dmWithoutId } = dm;
-              if (dmWithoutId.mediaUrl && dmWithoutId.mediaUrl.startsWith('data:') && dmWithoutId.mediaUrl.length > 500000) {
+              if (dmWithoutId.mediaUrl && dmWithoutId.mediaUrl.startsWith('data:')) {
                 dmWithoutId.mediaUrl = saveBase64ToUploadFile(dmWithoutId.mediaUrl, 'dm-media') || undefined;
               }
               await cloudDb.setDoc('direct_messages', dm.id, dmWithoutId);
@@ -2192,7 +2188,7 @@ async function uploadToFirestore(data: DBStructure) {
           promises.push((async () => {
             try {
               const { id, ...sWithoutId } = s;
-              if (sWithoutId.mediaUrl && sWithoutId.mediaUrl.startsWith('data:') && sWithoutId.mediaUrl.length > 500000) {
+              if (sWithoutId.mediaUrl && sWithoutId.mediaUrl.startsWith('data:')) {
                 sWithoutId.mediaUrl = saveBase64ToUploadFile(sWithoutId.mediaUrl, 'story-media') || undefined;
               }
               await cloudDb.setDoc('stories', s.id, sWithoutId);
@@ -2231,7 +2227,7 @@ async function uploadToFirestore(data: DBStructure) {
           promises.push((async () => {
             try {
               const { id, ...gmWithoutId } = gm;
-              if (gmWithoutId.mediaUrl && gmWithoutId.mediaUrl.startsWith('data:') && gmWithoutId.mediaUrl.length > 500000) {
+              if (gmWithoutId.mediaUrl && gmWithoutId.mediaUrl.startsWith('data:')) {
                 gmWithoutId.mediaUrl = saveBase64ToUploadFile(gmWithoutId.mediaUrl, 'gc-media') || undefined;
               }
               await cloudDb.setDoc('group_messages', gm.id, gmWithoutId);
@@ -3401,7 +3397,12 @@ app.post('/api/reels', (req, res) => {
   };
 
   db.reels.unshift(newReel);
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...rWithoutId } = newReel;
+    cloudDb.setDoc('reels', newReel.id, rWithoutId).catch(() => {});
+  }
 
   res.json({ success: true, reel: newReel, reels: db.reels, message: 'Matagumpay na naidagdag ang Reel (Admin Approved)!' });
 });
@@ -3738,7 +3739,12 @@ app.delete('/api/reels/:id', (req, res) => {
   const { id } = req.params;
   const db = loadDB();
   db.reels = (db.reels || [...INITIAL_REELS]).filter(r => r.id !== id);
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    cloudDb.deleteDoc('reels', id).catch(() => {});
+  }
+
   res.json({ success: true, reels: db.reels });
 });
 
@@ -5501,31 +5507,47 @@ function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media'): stri
     const filePath = path.join(uploadDir, filename);
     fs.writeFileSync(filePath, buffer);
 
-    // Asynchronously and safely upload chunks to Cloud DB in background
+    // Concurrently upload chunks and metadata to Cloud DB (Firestore) for permanent cross-deployment durability
     if (cloudDb.isActive) {
-      const chunkSize = 750 * 1024; // 750KB chunks to safely avoid 1MB document limit
+      const chunkSize = 700 * 1024; // 700KB chunks safely within Firestore 1MB doc limit
       const totalChunks = Math.ceil(buffer.length / chunkSize);
+
       (async () => {
-        for (let i = 0; i < totalChunks; i++) {
-          try {
+        try {
+          // 1. Save metadata index doc
+          await cloudDb.setDoc('media_storage', filename, {
+            filename,
+            totalChunks,
+            size: buffer.length,
+            mimeType,
+            uploadedAt: new Date().toISOString()
+          });
+
+          // 2. Save all chunk documents in parallel
+          const chunkWrites: Promise<void>[] = [];
+          for (let i = 0; i < totalChunks; i++) {
             const start = i * chunkSize;
             const end = Math.min(start + chunkSize, buffer.length);
             const chunkBuffer = buffer.subarray(start, end);
             const chunkBase64 = chunkBuffer.toString('base64');
             const chunkDocId = `${filename}_chunk_${i}`;
-            await cloudDb.setDoc('media_storage', chunkDocId, {
-              filename,
-              chunkIndex: i,
-              totalChunks,
-              base64: chunkBase64,
-              mimeType,
-              uploadedAt: new Date().toISOString()
-            });
-          } catch (chunkErr) {
-            console.error(`❌ Error uploading chunk ${i} for ${filename}:`, chunkErr);
+            chunkWrites.push(
+              cloudDb.setDoc('media_storage', chunkDocId, {
+                filename,
+                chunkIndex: i,
+                totalChunks,
+                base64: chunkBase64,
+                mimeType,
+                uploadedAt: new Date().toISOString()
+              })
+            );
           }
+          await Promise.all(chunkWrites);
+          console.log(`☁️ Permanent media sync complete: Stored ${filename} (${totalChunks} chunks, ${buffer.length} bytes) to Cloud Firestore.`);
+        } catch (mediaErr) {
+          console.error(`❌ Error syncing media ${filename} to Cloud DB:`, mediaErr);
         }
-      })().catch(e => console.error(`Error in async Cloud DB chunk upload for ${filename}:`, e));
+      })().catch(e => console.error(`Unhandled error in Cloud DB media chunking for ${filename}:`, e));
     }
 
     return `/uploads/${filename}`;
@@ -5656,30 +5678,48 @@ app.get('/uploads/:filename', async (req, res) => {
     return res.sendFile(filePath);
   }
 
-  // 2. If physical file was wiped out by a server restart, dynamically reconstruct from Firestore
+  // 2. If physical file was wiped out by a server restart/redeploy, dynamically reconstruct from Firestore
   if (cloudDb.isActive) {
     try {
-      console.log(`🔍 Media Recovery: Recovering ${filename} from Cloud DB media_storage collection...`);
+      console.log(`🔍 Media Recovery: Checking Cloud DB media_storage for ${filename}...`);
+      
+      // Strategy A: Direct metadata lookup (Fastest & 100% reliable)
+      const metaDoc = await cloudDb.getDoc('media_storage', filename);
+      if (metaDoc && metaDoc.totalChunks) {
+        const totalChunks = Number(metaDoc.totalChunks) || 1;
+        const chunkFetchers: Promise<any>[] = [];
+        for (let i = 0; i < totalChunks; i++) {
+          chunkFetchers.push(cloudDb.getDoc('media_storage', `${filename}_chunk_${i}`));
+        }
+        const chunkDocs = await Promise.all(chunkFetchers);
+        const validChunks = chunkDocs.filter(c => c && c.base64);
+
+        if (validChunks.length === totalChunks) {
+          validChunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+          const bufferChunks = validChunks.map(c => Buffer.from(c.base64, 'base64'));
+          const fileBuffer = Buffer.concat(bufferChunks);
+
+          if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+          }
+          fs.writeFileSync(filePath, fileBuffer);
+          console.log(`✅ Media Recovery: Successfully restored ${filename} (${fileBuffer.length} bytes, ${totalChunks} chunks) from Cloud DB.`);
+          return res.sendFile(filePath);
+        }
+      }
+
+      // Strategy B: Fallback query search for older uploaded media
       const chunks = await cloudDb.queryByField('media_storage', 'filename', filename);
-
       if (chunks && chunks.length > 0) {
-        // Sort chunks sequentially by index
-        chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
-
-        // Reconstruct raw file buffer from base64 chunks
+        chunks.sort((a, b) => (a.chunkIndex || 0) - (b.chunkIndex || 0));
         const bufferChunks = chunks.map(c => Buffer.from(c.base64, 'base64'));
         const fileBuffer = Buffer.concat(bufferChunks);
 
-        // Ensure target directory exists on container disk
         if (!fs.existsSync(uploadDir)) {
           fs.mkdirSync(uploadDir, { recursive: true });
         }
-
-        // Cache file back to local storage so subsequent reads are instant
         fs.writeFileSync(filePath, fileBuffer);
-        console.log(`✅ Media Recovery: Restored ${filename} (${fileBuffer.length} bytes) to local disk cache.`);
-
-        // Serve the reconstructed file
+        console.log(`✅ Media Recovery (Fallback Query): Restored ${filename} (${fileBuffer.length} bytes) to local disk cache.`);
         return res.sendFile(filePath);
       } else {
         console.log(`⚠️ Media Recovery: No Cloud DB backup records found for filename ${filename}`);
@@ -5846,26 +5886,121 @@ async function fetchBalitaRSS(): Promise<any[]> {
   }
 }
 
-// --- PINOY TELESERYE REPLAY RSS FEED & VIDEO EMBED INTEGRATION ---
-const teleseryeImageCache = new Map<string, string>();
+// --- PINOY TELESERYE REPLAY RSS & WP-JSON VIDEO EMBED INTEGRATION ---
+const teleseryeDetailsCache = new Map<string, { poster: string | null; videoSources: string[]; videoType?: 'direct' | 'hls' | 'dailymotion' | 'youtube' | 'okru' | 'embed' }>();
 
-function setCachedTeleseryeImage(url: string, img: string) {
-  if (teleseryeImageCache.size > 150) {
-    const firstKey = teleseryeImageCache.keys().next().value;
-    if (firstKey) teleseryeImageCache.delete(firstKey);
+// Helper to test if a URL is a genuine playable video stream or player embed URL (NOT the source website or blog page)
+function isValidVideoSourceUrl(rawUrl: string): boolean {
+  if (!rawUrl || typeof rawUrl !== 'string') return false;
+  const url = rawUrl.trim();
+  if (!url.startsWith('http://') && !url.startsWith('https://')) return false;
+
+  // STRICT RULE: Never embed or treat the source website, blog article, or tag/category page as a video stream
+  if (/pinoytambayanteleserye\.com/i.test(url)) {
+    // Only allow if it's a direct binary video asset file
+    return /\.(mp4|webm|m3u8|ogg)(\?|$)/i.test(url);
   }
-  teleseryeImageCache.set(url, img);
+
+  // Check for direct video stream formats
+  if (/\.(mp4|webm|m3u8|ogg|ts)(\?|$)/i.test(url)) {
+    return true;
+  }
+
+  // Check for recognized, authentic video player embed hosts
+  const validEmbedHosts = [
+    /makkitv\.io\/(?:player|embed|e)/i,
+    /playe\.makkitv\.io/i,
+    /vkspeed\.(?:com|net|org|site)\/(?:embed-|e\/|v\/)/i,
+    /blogger\.com\/video\.g/i,
+    /dailymotion\.com\/(?:embed\/video|video)/i,
+    /dai\.ly/i,
+    /youtube\.com\/(?:embed|watch)/i,
+    /youtube-nocookie\.com\/embed/i,
+    /youtu\.be/i,
+    /ok\.ru\/(?:videoembed|video)/i,
+    /facebook\.com\/plugins\/video\.php/i,
+    /streamwish\.(?:to|top|com|site|xyz|org|online)\/e\//i,
+    /wishfast\.(?:top|net|com)\/e\//i,
+    /doodstream\.(?:com|co|so|ws|to|watch)\/e\//i,
+    /dood\.(?:to|so|ws|watch|li|la|pm|wf|re|cx)\/e\//i,
+    /ds2play\.(?:com|net)\/e\//i,
+    /filelions\.(?:to|online|site|com|co)\/v\//i,
+    /vidhide\.(?:com|to|pro|net|site|biz)\/v\//i,
+    /streamtape\.(?:com|to|net)\/e\//i,
+    /mp4upload\.com\/embed-/i,
+    /mixdrop\.(?:co|to|sx|bz|ag|is)\/e\//i,
+    /supervideo\.(?:tv|cc)\/e\//i,
+    /voe\.sx\/e\//i,
+    /vidspeeds\.(?:com|net|me)\/e\//i,
+    /embedgram\.com\/e\//i,
+    /fembed\.(?:com|net)\/v\//i,
+    /luluvdo\.(?:com|net|to)\/e\//i
+  ];
+
+  for (const hostRegex of validEmbedHosts) {
+    if (hostRegex.test(url)) return true;
+  }
+
+  // Generic check for embed players (must have /embed/, /player/, /e/, /v/ or player.php in path)
+  if (/\/(embed|player|e|v|videoembed)\//i.test(url) || /player\.php\?/i.test(url) || /embed\.php\?/i.test(url)) {
+    if (!/wordpress|theme|plugin|wp-content|wp-includes|blog|news|article/i.test(url)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
-async function fetchExactTeleseryeImage(articleUrl: string): Promise<string | null> {
-  if (!articleUrl) return null;
-  if (teleseryeImageCache.has(articleUrl)) {
-    return teleseryeImageCache.get(articleUrl) || null;
+function normalizeVideoEmbedUrl(rawUrl: string): { url: string; type: 'direct' | 'hls' | 'dailymotion' | 'youtube' | 'okru' | 'embed' } {
+  let url = rawUrl.trim();
+  if (url.startsWith('//')) url = 'https:' + url;
+
+  // Dailymotion conversion
+  const dmMatch = url.match(/dailymotion\.com\/video\/([a-zA-Z0-9]+)/i) || url.match(/dai\.ly\/([a-zA-Z0-9]+)/i);
+  if (dmMatch && dmMatch[1]) {
+    return { url: `https://www.dailymotion.com/embed/video/${dmMatch[1]}?autoplay=1&ui-logo=0`, type: 'dailymotion' };
   }
+  if (/dailymotion\.com\/embed\/video/i.test(url)) {
+    return { url, type: 'dailymotion' };
+  }
+
+  // YouTube conversion
+  const ytMatch = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+  if (ytMatch && ytMatch[1]) {
+    return { url: `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=1&rel=0`, type: 'youtube' };
+  }
+
+  // OK.ru conversion
+  const okMatch = url.match(/ok\.ru\/video\/(\d+)/i) || url.match(/ok\.ru\/videoembed\/(\d+)/i);
+  if (okMatch && okMatch[1]) {
+    return { url: `https://ok.ru/videoembed/${okMatch[1]}`, type: 'okru' };
+  }
+
+  // HLS stream
+  if (/\.m3u8(\?|$)/i.test(url)) {
+    return { url, type: 'hls' };
+  }
+
+  // Direct MP4 / WebM
+  if (/\.(mp4|webm|ogg)(\?|$)/i.test(url)) {
+    return { url, type: 'direct' };
+  }
+
+  return { url, type: 'embed' };
+}
+
+async function fetchExactTeleseryeDetails(articleUrl: string): Promise<{ poster: string | null; videoSources: string[]; videoType?: 'direct' | 'hls' | 'dailymotion' | 'youtube' | 'okru' | 'embed' }> {
+  if (!articleUrl) return { poster: null, videoSources: [] };
+  if (teleseryeDetailsCache.has(articleUrl)) {
+    return teleseryeDetailsCache.get(articleUrl)!;
+  }
+
+  let poster: string | null = null;
+  const rawSources: string[] = [];
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
 
     const res = await fetch(articleUrl, {
       signal: controller.signal,
@@ -5878,143 +6013,297 @@ async function fetchExactTeleseryeImage(articleUrl: string): Promise<string | nu
 
     if (res.ok) {
       const html = await res.text();
-      // 1. Check og:image meta tag (returns full resolution show poster)
+
+      // 1. Poster extraction
       const ogMatch = html.match(/<meta property=["']og:image["'] content=["']([^"']+)["']/i);
       if (ogMatch && ogMatch[1] && ogMatch[1].startsWith('http')) {
-        const cleanImg = ogMatch[1].trim();
-        setCachedTeleseryeImage(articleUrl, cleanImg);
-        return cleanImg;
+        poster = ogMatch[1].trim();
+      } else {
+        const layzrMatch = html.match(/data-layzr=["'](https:\/\/pinoytambayanteleserye\.com\/wp-content\/uploads\/[^\s"']+\.(?:png|jpg|jpeg|webp))["']/i);
+        if (layzrMatch && layzrMatch[1]) {
+          poster = layzrMatch[1].trim();
+        } else {
+          const wpUploadMatch = html.match(/https:\/\/pinoytambayanteleserye\.com\/wp-content\/uploads\/[^\s"']+\.(?:jpg|jpeg|png|webp)/i);
+          if (wpUploadMatch && wpUploadMatch[0]) {
+            poster = wpUploadMatch[0].trim();
+          }
+        }
       }
 
-      // 2. Check data-layzr thumbnail in article
-      const layzrMatch = html.match(/data-layzr=["'](https:\/\/pinoytambayanteleserye\.com\/wp-content\/uploads\/[^\s"']+\.(?:png|jpg|jpeg|webp))["']/i);
-      if (layzrMatch && layzrMatch[1]) {
-        const cleanImg = layzrMatch[1].trim();
-        setCachedTeleseryeImage(articleUrl, cleanImg);
-        return cleanImg;
+      // 2. Video iframe extraction
+      const iframes = [...html.matchAll(/<iframe[^>]+(?:src|data-src)=["']([^"']+)["']/gi)].map(m => m[1]);
+      for (const ifr of iframes) {
+        if (isValidVideoSourceUrl(ifr)) {
+          rawSources.push(ifr);
+        }
       }
 
-      // 3. Check wp-content/uploads match
-      const wpUploadMatch = html.match(/https:\/\/pinoytambayanteleserye\.com\/wp-content\/uploads\/[^\s"']+\.(?:jpg|jpeg|png|webp)/i);
-      if (wpUploadMatch && wpUploadMatch[0]) {
-        const cleanImg = wpUploadMatch[0].trim();
-        setCachedTeleseryeImage(articleUrl, cleanImg);
-        return cleanImg;
+      // 3. Direct HTML5 video / source extraction
+      const videoSrcs = [...html.matchAll(/<(?:video|source)[^>]+(?:src|data-src)=["']([^"']+)["']/gi)].map(m => m[1]);
+      for (const vSrc of videoSrcs) {
+        if (isValidVideoSourceUrl(vSrc)) {
+          rawSources.push(vSrc);
+        }
+      }
+
+      // 4. Embedded player scripts / regex matches (e.g. MakkiTV, VKSpeed, DailyMotion, StreamWish, OK.ru embedded in JS)
+      const scriptMatches = [...html.matchAll(/https?:\/\/[^\s"'<>]*(?:makkitv\.io\/(?:player|embed)|vkspeed\.com\/embed-|dailymotion\.com\/(?:embed\/video|video)|streamwish\.[a-z]+\/e|dood\.[a-z]+\/e|ok\.ru\/videoembed|filelions\.[a-z]+\/v|vidhide\.[a-z]+\/v)[^\s"'<>]*/gi)].map(m => m[0]);
+      for (const sm of scriptMatches) {
+        if (isValidVideoSourceUrl(sm)) {
+          rawSources.push(sm);
+        }
       }
     }
-  } catch (err: any) {
+  } catch (err) {
     // Non-blocking timeout
   }
 
-  return null;
-}
+  // Normalize and deduplicate video sources
+  const normalizedSources: string[] = [];
+  let detectedType: 'direct' | 'hls' | 'dailymotion' | 'youtube' | 'okru' | 'embed' = 'embed';
 
-async function fetchTeleseryeRSS(): Promise<any[]> {
-  try {
-    const feedUrls = [
-      'https://pinoytambayanteleserye.com/feed/',
-      'https://pinoytambayanteleserye.com/feed/?paged=2',
-      'https://pinoytambayanteleserye.com/feed/?paged=3',
-      'https://pinoytambayanteleserye.com/category/pinoy-tambayan/pinoy-teleserye/feed/'
-    ];
-
-    const formattedPosts: any[] = [];
-    const seenLinks = new Set<string>();
-
-    for (const feedUrl of feedUrls) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-        const res = await fetch(feedUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-            'Accept': 'application/rss+xml, application/xml, text/xml, */*'
-          },
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-
-        if (!res.ok) continue;
-
-        const xml = await res.text();
-        const itemMatches = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
-        if (itemMatches.length === 0) continue;
-
-        const processed = await Promise.all(
-          itemMatches.map(async (itemXml: string) => {
-            const titleMatch = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || itemXml.match(/<title>(.*?)<\/title>/);
-            const linkMatch = itemXml.match(/<link>(.*?)<\/link>/);
-            const pubDateMatch = itemXml.match(/<pubDate>(.*?)<\/pubDate>/);
-            const contentMatch = itemXml.match(/<content:encoded><!\[CDATA\[([\s\S]*?)\]\]><\/content:encoded>/) || itemXml.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>/);
-
-            const rawTitle = titleMatch ? titleMatch[1].trim() : '';
-            const link = linkMatch ? linkMatch[1].trim() : '';
-            const pubDate = pubDateMatch ? pubDateMatch[1].trim() : new Date().toISOString();
-            const content = contentMatch ? contentMatch[1] : '';
-
-            if (!rawTitle || !link || seenLinks.has(link)) return null;
-            seenLinks.add(link);
-
-            const cleanTitle = rawTitle.replace(/\s+/g, ' ');
-            // Generate distinct, human-readable slug + hash ID for every single episode
-            const slug = (link || cleanTitle).toLowerCase().replace(/https?:\/\/[^\/]+\/?/i, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-            const hash = crypto.createHash('md5').update(link || cleanTitle).digest('hex').slice(0, 12);
-            const cleanId = `post-teleserye-${slug || hash}`;
-
-            // Extract all iframes and video embed urls if present
-            const rawIframes = [...content.matchAll(/<iframe[^>]+src=["']([^"']+)["']/gi)].map(m => m[1]);
-            const normalizedIframes = rawIframes.map(url => {
-              if (url.startsWith('//')) return 'https:' + url;
-              return url;
-            }).filter(u => u.startsWith('http'));
-
-            // Identify primary embed URL and server options (falls back to direct episode video link)
-            const primaryEmbed = normalizedIframes.length > 0 ? normalizedIframes[0] : (link || undefined);
-            const allEmbeds = normalizedIframes.length > 0 ? normalizedIframes : (link ? [link] : undefined);
-
-            // Try extracting poster image from content or fetch from page
-            let posterUrl: string | null = null;
-            const inlineImg = content.match(/<img[^>]+src=["'](https:\/\/pinoytambayanteleserye\.com\/wp-content\/uploads\/[^"']+)["']/i);
-            if (inlineImg && inlineImg[1]) {
-              posterUrl = inlineImg[1];
-            } else if (link) {
-              posterUrl = await fetchExactTeleseryeImage(link);
-            }
-
-            return {
-              id: cleanId,
-              userId: 'teleserye-feed-author',
-              userName: 'Pinoy Tambayan Teleserye',
-              userAvatar: '📺',
-              text: `📺 **${cleanTitle}** (Pinoy Tambayan Teleserye Replay)\n\nPanoorin ang pinakabagong episode ng **${cleanTitle}** dito sa Z-one Social Community Feed!\n\n▶ Pindutin ang video player para panoorin ang libreng HD video stream.\n\n🔗 Source: ${link}`,
-              mediaUrl: posterUrl || undefined,
-              mediaType: 'video',
-              embedUrl: primaryEmbed,
-              embedUrls: allEmbeds,
-              likes: [],
-              comments: [],
-              createdAt: new Date(pubDate).toISOString(),
-              isRss: true,
-              rssLink: link,
-              category: 'Teleserye'
-            };
-          })
-        );
-
-        for (const post of processed) {
-          if (post) formattedPosts.push(post);
-        }
-      } catch (pageErr) {
-        console.error(`Error fetching page ${feedUrl}:`, pageErr);
+  for (const src of rawSources) {
+    const { url, type } = normalizeVideoEmbedUrl(src);
+    if (url && !normalizedSources.includes(url)) {
+      normalizedSources.push(url);
+      if (normalizedSources.length === 1) {
+        detectedType = type;
       }
     }
-
-    return formattedPosts;
-  } catch (err) {
-    console.error('Error fetching Teleserye RSS:', err);
-    return [];
   }
+
+  const result = {
+    poster,
+    videoSources: normalizedSources,
+    videoType: normalizedSources.length > 0 ? detectedType : undefined
+  };
+
+  if (teleseryeDetailsCache.size > 200) {
+    const firstKey = teleseryeDetailsCache.keys().next().value;
+    if (firstKey) teleseryeDetailsCache.delete(firstKey);
+  }
+  teleseryeDetailsCache.set(articleUrl, result);
+
+  return result;
+}
+
+// Master function to fetch Pinoy Teleserye episodes using WordPress REST API & RSS fallback
+async function fetchTeleseryePosts(): Promise<any[]> {
+  const formattedPosts: any[] = [];
+  const seenLinks = new Set<string>();
+
+  console.log('📺 [Teleserye Sync] Starting fetch from Pinoy Tambayan Teleserye WordPress REST API...');
+
+  // 1. Primary Source: WordPress REST API (Fetches up to 60 posts with full _kp_videos meta)
+  try {
+    const pagesToFetch = [1, 2]; // Pages 1 and 2 fetch ~60-80 recent episodes
+    for (const page of pagesToFetch) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+      const res = await fetch(`https://pinoytambayanteleserye.com/wp-json/wp/v2/posts?per_page=40&page=${page}&_embed`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+          'Accept': 'application/json'
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        console.warn(`[Teleserye Sync] WP REST API page ${page} returned status ${res.status}`);
+        break;
+      }
+
+      const wpPosts = await res.json();
+      if (!Array.isArray(wpPosts) || wpPosts.length === 0) break;
+
+      for (const p of wpPosts) {
+        const rawTitle = p.title?.rendered ? p.title.rendered.replace(/&#(\d+);/g, (_m: any, dec: any) => String.fromCharCode(dec)).replace(/&amp;/g, '&').replace(/&quot;/g, '"').trim() : '';
+        const link = p.link ? p.link.trim() : '';
+        const pubDate = p.date || new Date().toISOString();
+        if (!rawTitle || !link || seenLinks.has(link)) continue;
+        seenLinks.add(link);
+
+        const cleanTitle = rawTitle.replace(/\s+/g, ' ');
+        const slug = (link || cleanTitle).toLowerCase().replace(/https?:\/\/[^\/]+\/?/i, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        const hash = crypto.createHash('md5').update(link || cleanTitle).digest('hex').slice(0, 12);
+        const cleanId = `post-teleserye-${slug || hash}`;
+
+        // 1. Extract poster image from WP featured media or Yoast OG image
+        let posterUrl: string | null = null;
+        if (p._embedded && p._embedded['wp:featuredmedia'] && p._embedded['wp:featuredmedia'][0]) {
+          posterUrl = p._embedded['wp:featuredmedia'][0].source_url || p._embedded['wp:featuredmedia'][0].media_details?.sizes?.full?.source_url || null;
+        }
+        if (!posterUrl && p.yoast_head_json?.og_image && p.yoast_head_json.og_image[0]) {
+          posterUrl = p.yoast_head_json.og_image[0].url;
+        }
+
+        // 2. Extract genuine video sources from custom meta `_kp_videos`
+        const validSources: string[] = [];
+        const kpVideos = p.meta?._kp_videos || [];
+        if (Array.isArray(kpVideos)) {
+          for (const item of kpVideos) {
+            if (item && item.embed) {
+              const ifrMatches = [...item.embed.matchAll(/<iframe[^>]+src=["']([^"']+)["']/gi)].map(m => m[1]);
+              for (const ifr of ifrMatches) {
+                if (isValidVideoSourceUrl(ifr)) {
+                  const { url } = normalizeVideoEmbedUrl(ifr);
+                  if (url && !validSources.includes(url)) {
+                    validSources.push(url);
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // 3. Check content iframes
+        const contentStr = p.content?.rendered || '';
+        const contentIframes = [...contentStr.matchAll(/<iframe[^>]+src=["']([^"']+)["']/gi)].map(m => m[1]);
+        for (const ifr of contentIframes) {
+          if (isValidVideoSourceUrl(ifr)) {
+            const { url } = normalizeVideoEmbedUrl(ifr);
+            if (url && !validSources.includes(url)) {
+              validSources.push(url);
+            }
+          }
+        }
+
+        // If poster is still missing, extract from content
+        if (!posterUrl) {
+          const inlineImg = contentStr.match(/<img[^>]+src=["'](https:\/\/pinoytambayanteleserye\.com\/wp-content\/uploads\/[^"']+)["']/i);
+          if (inlineImg && inlineImg[1]) {
+            posterUrl = inlineImg[1];
+          }
+        }
+
+        const hasValidVideo = validSources.length > 0;
+        let detectedType: 'direct' | 'hls' | 'dailymotion' | 'youtube' | 'okru' | 'embed' = 'embed';
+        if (hasValidVideo) {
+          detectedType = normalizeVideoEmbedUrl(validSources[0]).type;
+        }
+
+        console.log(`📺 [Teleserye Diagnostic] "${cleanTitle}" | Video: ${hasValidVideo ? `READY (${validSources.length} server(s))` : 'PENDING AIRING / UPLOAD'} | Poster: ${posterUrl ? 'YES' : 'NO'}`);
+
+        formattedPosts.push({
+          id: cleanId,
+          userId: 'teleserye-feed-author',
+          userName: 'Pinoy Tambayan Teleserye',
+          userAvatar: '📺',
+          text: `📺 **${cleanTitle}** (Pinoy Tambayan Teleserye Replay)\n\nPanoorin ang pinakabagong episode ng **${cleanTitle}** dito sa Z-one Social Community Feed!\n\n${hasValidVideo ? '▶ Pindutin ang video player para panoorin ang libreng HD video stream.' : '⏳ Kasalukuyang pinoproseso o ina-update ang direct video stream para sa episode na ito mula sa source.'}\n\n🔗 Source: ${link}`,
+          mediaUrl: posterUrl || undefined,
+          mediaType: 'video',
+          embedUrl: hasValidVideo ? validSources[0] : undefined,
+          embedUrls: hasValidVideo ? validSources : undefined,
+          videoSourceAvailable: hasValidVideo,
+          videoStreamType: detectedType,
+          episodeTitle: cleanTitle,
+          likes: [],
+          comments: [],
+          createdAt: new Date(pubDate).toISOString(),
+          isRss: true,
+          rssLink: link,
+          category: 'Teleserye'
+        });
+      }
+    }
+  } catch (wpErr) {
+    console.error('Error fetching WP REST API:', wpErr);
+  }
+
+  // 2. Fallback to RSS Feed if WP REST API returned fewer than 5 posts
+  if (formattedPosts.length < 5) {
+    try {
+      console.log('📺 [Teleserye Sync] Falling back to RSS feed ingestion...');
+      const feedUrls = [
+        'https://pinoytambayanteleserye.com/feed/',
+        'https://pinoytambayanteleserye.com/feed/?paged=2',
+        'https://pinoytambayanteleserye.com/category/pinoy-tambayan/pinoy-teleserye/feed/'
+      ];
+
+      for (const feedUrl of feedUrls) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+          const res = await fetch(feedUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+              'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+            },
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+
+          if (!res.ok) continue;
+
+          const xml = await res.text();
+          const itemMatches = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
+          if (itemMatches.length === 0) continue;
+
+          const processed = await Promise.all(
+            itemMatches.map(async (itemXml: string) => {
+              const titleMatch = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || itemXml.match(/<title>(.*?)<\/title>/);
+              const linkMatch = itemXml.match(/<link>(.*?)<\/link>/);
+              const pubDateMatch = itemXml.match(/<pubDate>(.*?)<\/pubDate>/);
+              const contentMatch = itemXml.match(/<content:encoded><!\[CDATA\[([\s\S]*?)\]\]><\/content:encoded>/) || itemXml.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>/);
+
+              const rawTitle = titleMatch ? titleMatch[1].trim() : '';
+              const link = linkMatch ? linkMatch[1].trim() : '';
+              const pubDate = pubDateMatch ? pubDateMatch[1].trim() : new Date().toISOString();
+              const content = contentMatch ? contentMatch[1] : '';
+
+              if (!rawTitle || !link || seenLinks.has(link)) return null;
+              seenLinks.add(link);
+
+              const cleanTitle = rawTitle.replace(/\s+/g, ' ');
+              const slug = (link || cleanTitle).toLowerCase().replace(/https?:\/\/[^\/]+\/?/i, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+              const hash = crypto.createHash('md5').update(link || cleanTitle).digest('hex').slice(0, 12);
+              const cleanId = `post-teleserye-${slug || hash}`;
+
+              const { poster, videoSources, videoType } = await fetchExactTeleseryeDetails(link);
+              const hasValidVideo = videoSources.length > 0;
+
+              return {
+                id: cleanId,
+                userId: 'teleserye-feed-author',
+                userName: 'Pinoy Tambayan Teleserye',
+                userAvatar: '📺',
+                text: `📺 **${cleanTitle}** (Pinoy Tambayan Teleserye Replay)\n\nPanoorin ang pinakabagong episode ng **${cleanTitle}** dito sa Z-one Social Community Feed!\n\n${hasValidVideo ? '▶ Pindutin ang video player para panoorin ang libreng HD video stream.' : '⏳ Kasalukuyang pinoproseso o ina-update ang direct video stream para sa episode na ito mula sa source.'}\n\n🔗 Source: ${link}`,
+                mediaUrl: poster || undefined,
+                mediaType: 'video',
+                embedUrl: hasValidVideo ? videoSources[0] : undefined,
+                embedUrls: hasValidVideo ? videoSources : undefined,
+                videoSourceAvailable: hasValidVideo,
+                videoStreamType: videoType,
+                episodeTitle: cleanTitle,
+                likes: [],
+                comments: [],
+                createdAt: new Date(pubDate).toISOString(),
+                isRss: true,
+                rssLink: link,
+                category: 'Teleserye'
+              };
+            })
+          );
+
+          for (const post of processed) {
+            if (post) formattedPosts.push(post);
+          }
+        } catch (pageErr) {
+          console.error(`Error fetching RSS page ${feedUrl}:`, pageErr);
+        }
+      }
+    } catch (rssErr) {
+      console.error('Error in fallback RSS fetch:', rssErr);
+    }
+  }
+
+  const readyCount = formattedPosts.filter(p => p.videoSourceAvailable).length;
+  console.log(`📺 [Teleserye Summary] Total episodes fetched: ${formattedPosts.length} | Playable video streams ready: ${readyCount}`);
+
+  return formattedPosts;
 }
 
 let lastRssSyncTime = 0;
@@ -6026,7 +6315,7 @@ async function syncRssToDatabase() {
 
     let hasUpdates = false;
 
-    // Clean out legacy replayteleserye.su posts
+    // Clean out legacy replayteleserye.su posts & sanitize any existing posts with website embeds
     const initialCount = db.posts.length;
     db.posts = db.posts.filter(p => {
       if (p.id === 'post-teleserye-aHR0cHM6Ly9yZXBsYXl0ZWxlc2VyeWUu') return false;
@@ -6037,6 +6326,30 @@ async function syncRssToDatabase() {
     });
     if (db.posts.length !== initialCount) {
       hasUpdates = true;
+    }
+
+    // Sanitize all existing teleserye posts in DB:
+    // Never allow the source website to be stored as embedUrl
+    for (const post of db.posts) {
+      if (post.userId === 'teleserye-feed-author' || (post as any).category === 'Teleserye') {
+        if (post.embedUrl && !isValidVideoSourceUrl(post.embedUrl)) {
+          post.embedUrl = undefined;
+          hasUpdates = true;
+        }
+        if (post.embedUrls && Array.isArray(post.embedUrls)) {
+          const valid = post.embedUrls.filter(u => isValidVideoSourceUrl(u));
+          if (valid.length !== post.embedUrls.length) {
+            post.embedUrls = valid.length > 0 ? valid : undefined;
+            if (!post.embedUrl && valid.length > 0) post.embedUrl = valid[0];
+            hasUpdates = true;
+          }
+        }
+        const hasValidVideo = !!(post.embedUrl || (post.embedUrls && post.embedUrls.length > 0) || (post.mediaUrl && (post.mediaUrl.endsWith('.mp4') || post.mediaUrl.endsWith('.m3u8'))));
+        if ((post as any).videoSourceAvailable !== hasValidVideo) {
+          (post as any).videoSourceAvailable = hasValidVideo;
+          hasUpdates = true;
+        }
+      }
     }
 
     // 1. Fetch fresh Manila Bulletin News articles
@@ -6058,8 +6371,8 @@ async function syncRssToDatabase() {
       }
     }
 
-    // 2. Fetch ALL fresh Pinoy Teleserye Replay Video Episodes of the day
-    const teleseryeArticles = await fetchTeleseryeRSS();
+    // 2. Fetch ALL fresh Pinoy Teleserye Replay Video Episodes of the day via WP REST API & RSS
+    const teleseryeArticles = await fetchTeleseryePosts();
     if (teleseryeArticles.length > 0) {
       for (const ep of teleseryeArticles) {
         const existsIndex = db.posts.findIndex(p => p.id === ep.id);
@@ -6079,6 +6392,18 @@ async function syncRssToDatabase() {
           }
           if (ep.mediaUrl && db.posts[existsIndex].mediaUrl !== ep.mediaUrl) {
             db.posts[existsIndex].mediaUrl = ep.mediaUrl;
+            itemUpdated = true;
+          }
+          if (ep.videoSourceAvailable !== undefined && db.posts[existsIndex].videoSourceAvailable !== ep.videoSourceAvailable) {
+            db.posts[existsIndex].videoSourceAvailable = ep.videoSourceAvailable;
+            itemUpdated = true;
+          }
+          if (ep.videoStreamType && db.posts[existsIndex].videoStreamType !== ep.videoStreamType) {
+            db.posts[existsIndex].videoStreamType = ep.videoStreamType;
+            itemUpdated = true;
+          }
+          if (ep.episodeTitle && db.posts[existsIndex].episodeTitle !== ep.episodeTitle) {
+            db.posts[existsIndex].episodeTitle = ep.episodeTitle;
             itemUpdated = true;
           }
           if (itemUpdated) {
@@ -6152,7 +6477,79 @@ app.post('/api/zone/posts/refresh-rss', async (req, res) => {
     await syncRssToDatabase();
     const db = loadDB();
     const teleseryeCount = (db.posts || []).filter(p => p.userId === 'teleserye-feed-author' || p.category === 'Teleserye').length;
-    res.json({ success: true, teleseryeCount, totalPosts: (db.posts || []).length });
+    res.json({ success: true, teleseryeCount, totalPosts: (db.posts || []).length, posts: db.posts });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Explicit endpoint to re-check actual video stream for a specific episode post
+app.post('/api/zone/posts/:id/check-stream', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = loadDB();
+    const postIndex = (db.posts || []).findIndex(p => p.id === id);
+    if (postIndex === -1) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    const post = db.posts[postIndex];
+    if (post.rssLink) {
+      // Force bypass cache and re-fetch episode page details
+      teleseryeDetailsCache.delete(post.rssLink);
+      const { poster, videoSources, videoType } = await fetchExactTeleseryeDetails(post.rssLink);
+
+      const hasValidVideo = videoSources.length > 0;
+      post.embedUrl = hasValidVideo ? videoSources[0] : undefined;
+      post.embedUrls = hasValidVideo ? videoSources : undefined;
+      post.videoSourceAvailable = hasValidVideo;
+      post.videoStreamType = videoType;
+      if (poster && (!post.mediaUrl || post.mediaUrl.includes('picsum.photos'))) {
+        post.mediaUrl = poster;
+      }
+      post.mediaType = 'video';
+
+      saveDB(db);
+      return res.json({ success: true, post, videoSourceAvailable: hasValidVideo });
+    }
+
+    res.json({ success: true, post, videoSourceAvailable: !!post.embedUrl });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Real-time Teleserye stream diagnostic telemetry endpoint
+app.get('/api/zone/teleserye-diagnostics', (_req, res) => {
+  try {
+    const db = loadDB();
+    const teleseryePosts = (db.posts || []).filter(p => p.userId === 'teleserye-feed-author' || p.category === 'Teleserye');
+    const withVideo = teleseryePosts.filter(p => p.videoSourceAvailable && (p.embedUrl || (p.embedUrls && p.embedUrls.length > 0)));
+    const pending = teleseryePosts.filter(p => !p.videoSourceAvailable);
+
+    const diagnostics = {
+      totalEpisodes: teleseryePosts.length,
+      playableVideoReady: withVideo.length,
+      pendingUploadOrAiring: pending.length,
+      samplePlayableEpisodes: withVideo.slice(0, 10).map(p => ({
+        id: p.id,
+        title: p.episodeTitle || p.text.slice(0, 40),
+        streamType: p.videoStreamType,
+        primaryEmbed: p.embedUrl,
+        allSources: p.embedUrls,
+        hasPoster: !!p.mediaUrl,
+        date: p.createdAt
+      })),
+      samplePendingEpisodes: pending.slice(0, 5).map(p => ({
+        id: p.id,
+        title: p.episodeTitle || p.text.slice(0, 40),
+        reason: 'Episode recently created / scheduled; video stream not yet uploaded by broadcaster',
+        sourceLink: p.rssLink,
+        date: p.createdAt
+      }))
+    };
+
+    res.json({ success: true, diagnostics });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -6324,7 +6721,14 @@ app.post('/api/zone/posts', (req, res) => {
     db.posts = [];
   }
   db.posts.push(newPost);
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...pWithoutId } = newPost;
+    cloudDb.setDoc('posts', newPost.id, pWithoutId).catch(err => {
+      console.error('Direct cloud save error for Post:', err);
+    });
+  }
 
   res.json({ success: true, post: newPost, message: 'Matagumpay na na-post sa Z-one!' });
 });
@@ -6374,7 +6778,16 @@ app.post('/api/zone/posts/:postId/like', (req, res) => {
     });
   }
 
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...pWithoutId } = post;
+    cloudDb.setDoc('posts', post.id, pWithoutId).catch(() => {});
+    if (user) {
+      const { id: uid, ...uWithoutId } = user;
+      cloudDb.setDoc('users', user.id, uWithoutId).catch(() => {});
+    }
+  }
 
   // Send push notification to post author if someone else liked the post
   if (post.userId && post.userId !== userId) {
@@ -6443,7 +6856,12 @@ app.post('/api/zone/posts/:postId/comment', (req, res) => {
   };
 
   post.comments.push(newComment);
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...pWithoutId } = post;
+    cloudDb.setDoc('posts', post.id, pWithoutId).catch(() => {});
+  }
 
   // Send push notification to post author if someone else commented
   if (post.userId && post.userId !== userId) {
@@ -6516,7 +6934,13 @@ app.post('/api/zone/posts/:postId/share', (req, res) => {
   };
 
   db.posts.push(newPost);
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...pWithoutId } = newPost;
+    cloudDb.setDoc('posts', newPost.id, pWithoutId).catch(() => {});
+  }
+
   res.json({ success: true, post: newPost, message: 'Matagumpay na na-share ang post!' });
 });
 
@@ -6562,7 +6986,12 @@ app.put('/api/zone/posts/:postId', (req, res) => {
   }
 
   post.text = filterSwearWords(text);
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...pWithoutId } = post;
+    cloudDb.setDoc('posts', post.id, pWithoutId).catch(() => {});
+  }
 
   res.json({ success: true, post, message: 'Matagumpay na na-update ang post!' });
 });
@@ -6603,7 +7032,11 @@ app.delete('/api/zone/posts/:postId', (req, res) => {
   }
 
   db.posts.splice(postIndex, 1);
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    cloudDb.deleteDoc('posts', postId).catch(() => {});
+  }
 
   res.json({ success: true, message: 'Matagumpay na na-delete ang post!' });
 });
@@ -7077,6 +7510,13 @@ app.post('/api/zone/messages', (req, res) => {
   db.directMessages.push(newMsg);
   saveDB(db, true);
 
+  if (cloudDb.isActive) {
+    const { id, ...dmWithoutId } = newMsg;
+    cloudDb.setDoc('direct_messages', newMsg.id, dmWithoutId).catch(err => {
+      console.error('Direct cloud save error for Direct Message:', err);
+    });
+  }
+
   // Send background push notification to the receiver
   sendPushNotificationToUser(receiverId, {
     title: `💬 ${sender.name}`,
@@ -7131,7 +7571,12 @@ app.put('/api/zone/messages/:messageId', (req, res) => {
   }
 
   msg.text = filterSwearWords(text);
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...dmWithoutId } = msg;
+    cloudDb.setDoc('direct_messages', msg.id, dmWithoutId).catch(() => {});
+  }
 
   res.json({ success: true, message: msg, messageText: 'Matagumpay na na-edit ang mensahe!' });
 });
@@ -7164,7 +7609,13 @@ app.delete('/api/zone/messages/:messageId', (req, res) => {
   }
 
   db.directMessages.splice(msgIndex, 1);
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    cloudDb.deleteDoc('direct_messages', messageId).catch(err => {
+      console.error('Direct cloud delete error for Direct Message:', err);
+    });
+  }
 
   res.json({ success: true, message: 'Matagumpay na na-delete ang mensahe!' });
 });
@@ -7283,6 +7734,13 @@ app.post('/api/zone/groups', (req, res) => {
 
   saveDB(db, true);
 
+  if (cloudDb.isActive) {
+    const { id, ...gWithoutId } = newGroup;
+    const { id: mid, ...gmWithoutId } = initialMsg;
+    cloudDb.setDoc('group_chats', newGroup.id, gWithoutId).catch(() => {});
+    cloudDb.setDoc('group_messages', initialMsg.id, gmWithoutId).catch(() => {});
+  }
+
   const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
   const formattedGroup = {
     ...newGroup,
@@ -7388,6 +7846,13 @@ app.post('/api/zone/groups/:groupId/messages', (req, res) => {
   group.updatedAt = new Date().toISOString();
   saveDB(db, true);
 
+  if (cloudDb.isActive) {
+    const { id, ...gmWithoutId } = newMsg;
+    const { id: gid, ...gWithoutId } = group;
+    cloudDb.setDoc('group_messages', newMsg.id, gmWithoutId).catch(() => {});
+    cloudDb.setDoc('group_chats', group.id, gWithoutId).catch(() => {});
+  }
+
   // Send background push notifications to all other group members
   if (Array.isArray(group.members)) {
     for (const memberId of group.members) {
@@ -7441,7 +7906,12 @@ app.put('/api/zone/groups/:groupId/messages/:messageId', (req, res) => {
   }
 
   msg.text = filterSwearWords(text.trim());
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...gmWithoutId } = msg;
+    cloudDb.setDoc('group_messages', msg.id, gmWithoutId).catch(() => {});
+  }
 
   res.json({ success: true, message: msg });
 });
@@ -7474,7 +7944,11 @@ app.delete('/api/zone/groups/:groupId/messages/:messageId', (req, res) => {
   }
 
   db.groupMessages.splice(msgIndex, 1);
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    cloudDb.deleteDoc('group_messages', messageId).catch(() => {});
+  }
 
   res.json({ success: true, message: 'Matagumpay na na-delete ang mensahe!' });
 });
@@ -7511,7 +7985,7 @@ app.post('/api/zone/groups/:groupId/members', (req, res) => {
   const actor = db.users.find(u => u.id === userId);
   const names = addedUsers.map(u => u.name).join(', ');
   if (!db.groupMessages) db.groupMessages = [];
-  db.groupMessages.push({
+  const addSysMsg: GroupMessage = {
     id: 'gmsg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
     groupId,
     senderId: 'system',
@@ -7519,9 +7993,17 @@ app.post('/api/zone/groups/:groupId/members', (req, res) => {
     senderAvatar: '📢',
     text: `${actor ? actor.name : 'A member'} added ${names} to the group.`,
     createdAt: new Date().toISOString()
-  });
+  };
+  db.groupMessages.push(addSysMsg);
 
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...gWithoutId } = group;
+    const { id: mid, ...gmWithoutId } = addSysMsg;
+    cloudDb.setDoc('group_chats', group.id, gWithoutId).catch(() => {});
+    cloudDb.setDoc('group_messages', addSysMsg.id, gmWithoutId).catch(() => {});
+  }
 
   const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
   const updatedGroup = {
@@ -7556,7 +8038,7 @@ app.post('/api/zone/groups/:groupId/leave', (req, res) => {
 
   const leaver = db.users.find(u => u.id === userId);
   if (!db.groupMessages) db.groupMessages = [];
-  db.groupMessages.push({
+  const leaveSysMsg: GroupMessage = {
     id: 'gmsg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
     groupId,
     senderId: 'system',
@@ -7564,9 +8046,18 @@ app.post('/api/zone/groups/:groupId/leave', (req, res) => {
     senderAvatar: '📢',
     text: `${leaver ? leaver.name : 'A member'} left the group.`,
     createdAt: new Date().toISOString()
-  });
+  };
+  db.groupMessages.push(leaveSysMsg);
 
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...gWithoutId } = group;
+    const { id: mid, ...gmWithoutId } = leaveSysMsg;
+    cloudDb.setDoc('group_chats', group.id, gWithoutId).catch(() => {});
+    cloudDb.setDoc('group_messages', leaveSysMsg.id, gmWithoutId).catch(() => {});
+  }
+
   res.json({ success: true, message: 'Nakaalis ka na sa group chat.' });
 });
 
@@ -7595,7 +8086,12 @@ app.put('/api/zone/groups/:groupId', (req, res) => {
   if (description !== undefined) group.description = filterSwearWords(description.trim());
   group.updatedAt = new Date().toISOString();
 
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...gWithoutId } = group;
+    cloudDb.setDoc('group_chats', group.id, gWithoutId).catch(() => {});
+  }
 
   const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
   const updatedGroup = {
@@ -7697,6 +8193,13 @@ app.post('/api/zone/stories', (req, res) => {
   db.stories.unshift(newStory);
   saveDB(db, true);
 
+  if (cloudDb.isActive) {
+    const { id, ...sWithoutId } = newStory;
+    cloudDb.setDoc('stories', newStory.id, sWithoutId).catch(err => {
+      console.error('Direct cloud save error for Story:', err);
+    });
+  }
+
   res.json({ success: true, story: newStory, message: 'Matagumpay na na-post ang iyong My Day / Story!' });
 });
 
@@ -7726,6 +8229,12 @@ app.delete('/api/zone/stories/:storyId', (req, res) => {
 
   db.stories.splice(index, 1);
   saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    cloudDb.deleteDoc('stories', storyId).catch(err => {
+      console.error('Direct cloud delete error for Story:', err);
+    });
+  }
 
   res.json({ success: true, message: 'Na-delete na ang Story!' });
 });
@@ -7763,6 +8272,11 @@ app.post('/api/zone/stories/:storyId/view', (req, res) => {
       viewedAt: new Date().toISOString()
     });
     saveDB(db);
+
+    if (cloudDb.isActive) {
+      const { id, ...sWithoutId } = story;
+      cloudDb.setDoc('stories', story.id, sWithoutId).catch(() => {});
+    }
   }
 
   res.json({ success: true, viewersCount: story.viewers.length });
@@ -7855,7 +8369,12 @@ app.post('/api/zone/stories/:storyId/react', (req, res) => {
     }
   }
 
-  saveDB(db);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...sWithoutId } = story;
+    cloudDb.setDoc('stories', story.id, sWithoutId).catch(() => {});
+  }
 
   res.json({ success: true, reactions: story.reactions });
 });

@@ -93,6 +93,9 @@ export interface ZonePost {
   isRss?: boolean;
   rssLink?: string;
   category?: string;
+  videoSourceAvailable?: boolean;
+  videoStreamType?: 'direct' | 'hls' | 'dailymotion' | 'youtube' | 'okru' | 'embed';
+  episodeTitle?: string;
   sharedPost?: {
     id: string;
     userId: string;
