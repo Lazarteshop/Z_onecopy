@@ -54,6 +54,7 @@ import {
   Download,
   Flame,
   Rocket,
+  ArrowLeft,
   X
 } from 'lucide-react';
 import { INITIAL_CAMPAIGNS } from './data/campaigns';
@@ -184,7 +185,8 @@ export default function App() {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [referredFriends, setReferredFriends] = useState<ReferralFriend[]>([]);
   
-  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop'>('zone');
+  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop' | null>(null);
+
   const [currentViewingCampaign, setCurrentViewingCampaign] = useState<WebsiteCampaign | null>(null);
   const [activeCommercialCamp, setActiveCommercialCamp] = useState<WebsiteCampaign | null>(null);
 
@@ -780,11 +782,6 @@ export default function App() {
             completed: data.user.activityLogs.some((l: any) => l.type === 'reward' && l.title.includes(c.title))
           }));
           setCampaigns(mapped);
-        }
-
-        // Auto transition into admin panel tab only on initial login if they are logged in as admin to save steps
-        if (!silent && data.user.isAdmin && activeTab === 'earn') {
-          setActiveTab('admin');
         }
       } else if (res.status === 401) {
         // Token has explicitly expired/invalid. Try auto-restoring session from offline backup!
@@ -1478,7 +1475,7 @@ export default function App() {
     localStorage.removeItem('gcash_click_earn_token');
     setToken(null);
     setUser(null);
-    setActiveTab('zone');
+    setActiveTab(null);
     setShowExpiryWarningModal(false);
     setHasShownExpiryWarning(false);
     setShowPlansInWarning(false);
@@ -2323,38 +2320,72 @@ export default function App() {
             </div>
           </header>
 
-          {/* 📱 HUAWEI-INSPIRED SMARTPHONE HOME SCREEN APP LAUNCHER GRID (Single unified navigation dashboard) */}
-          <SmartphoneAppLauncher
-            activeTab={activeTab}
-            onSelectTab={(t) => setActiveTab(t)}
-            isAdmin={Boolean(user?.isAdmin)}
-            language={language}
-            balance={stats.balance}
-          />
+          {/* 📱 SMARTPHONE APP LAUNCHER (Default Home Screen on Login) */}
+          {activeTab === null ? (
+            <main className="w-full flex-1 flex flex-col items-center justify-start py-6 sm:py-10">
+              <SmartphoneAppLauncher
+                activeTab={null}
+                onSelectTab={(t) => setActiveTab(t)}
+                isAdmin={Boolean(user?.isAdmin)}
+                language={language}
+                balance={stats.balance}
+              />
+            </main>
+          ) : (
+            /* 📱 DEDICATED FULL-SCREEN MODULE VIEW WITH BACK TO LAUNCHER BUTTON */
+            <main className="w-full flex-1 flex flex-col">
+              {/* STICKY MODULE TOP BAR WITH BACK BUTTON */}
+              <div className="bg-[#0c1322] border-b border-slate-800 py-3 px-4 sm:px-6 sticky top-0 z-30 shadow-md flex items-center justify-between">
+                <button
+                  id="module-back-to-launcher-btn"
+                  onClick={() => {
+                    try { soundEffects.playClick(); } catch (e) {}
+                    setActiveTab(null);
+                  }}
+                  type="button"
+                  className="inline-flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-xs sm:text-sm px-4 py-2 rounded-xl transition cursor-pointer shadow-md hover:scale-[1.02] active:scale-[0.98] border border-blue-400/30 select-none"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>{language === 'tl' ? 'Bumalik sa Launcher' : 'Back to Launcher'}</span>
+                </button>
 
-          {/* 📢 HIGH HYPE PROMO AD TOP BAR FOR NON-SUBSCRIBED USERS */}
-          {isSubscriptionExpired() && !user?.isAdmin && (
-            <div 
-              onClick={() => {
-                setShowPromoAdModal(true);
-              }}
-              className="bg-gradient-to-r from-amber-500 via-orange-600 to-rose-600 text-white px-4 py-2.5 shadow-md cursor-pointer hover:opacity-95 transition flex items-center justify-between gap-3 text-xs font-black border-b border-amber-300/40"
-            >
-              <div className="max-w-7xl mx-auto w-full flex flex-col sm:flex-row items-center justify-between gap-2 text-center sm:text-left">
-                <div className="flex items-center gap-2">
-                  <Flame className="w-4 h-4 text-yellow-300 animate-bounce shrink-0" />
-                  <span>🔥 UNLOCK UNLIMITED GCASH EARNINGS: Kumita ng ₱500 - ₱1,500/day direct sa GCash!</span>
-                </div>
-                <div className="inline-flex items-center gap-1.5 bg-yellow-300 hover:bg-yellow-200 text-slate-950 font-black text-[11px] px-3 py-1 rounded-full shadow-sm shrink-0 transition">
-                  <Rocket className="w-3.5 h-3.5 text-slate-950" />
-                  <span>I-RENEW ANG ACCESS PLAN 🚀</span>
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-300">
+                  <span className="text-slate-400 font-normal">{language === 'tl' ? 'Module:' : 'Module:'}</span>
+                  <span className="font-extrabold text-white bg-slate-800 border border-slate-700 px-3 py-1 rounded-lg">
+                    {activeTab === 'zone' && 'Z-one Social'}
+                    {activeTab === 'va_shop' && 'VA & Shop'}
+                    {activeTab === 'earn' && 'Mag-ipon'}
+                    {activeTab === 'cashout' && 'GCash Cash-Out'}
+                    {activeTab === 'negosyo' && 'Negosyo'}
+                    {activeTab === 'guide' && 'Gabay'}
+                    {activeTab === 'admin' && 'Admin Control'}
+                  </span>
                 </div>
               </div>
-            </div>
-          )}
 
-          {/* 🖥️ MAIN BODY WORKSPACE */}
-          <div id="main-content-layout" className={`flex-1 w-full mx-auto ${activeTab === 'zone' ? 'max-w-7xl px-2 sm:px-4 md:px-6 py-4 md:py-6' : 'max-w-7xl px-4 py-6 md:py-8'}`}>
+              {/* 📢 HIGH HYPE PROMO AD TOP BAR FOR NON-SUBSCRIBED USERS */}
+              {isSubscriptionExpired() && !user?.isAdmin && (
+                <div 
+                  onClick={() => {
+                    setShowPromoAdModal(true);
+                  }}
+                  className="bg-gradient-to-r from-amber-500 via-orange-600 to-rose-600 text-white px-4 py-2.5 shadow-md cursor-pointer hover:opacity-95 transition flex items-center justify-between gap-3 text-xs font-black border-b border-amber-300/40"
+                >
+                  <div className="max-w-7xl mx-auto w-full flex flex-col sm:flex-row items-center justify-between gap-2 text-center sm:text-left">
+                    <div className="flex items-center gap-2">
+                      <Flame className="w-4 h-4 text-yellow-300 animate-bounce shrink-0" />
+                      <span>🔥 UNLOCK UNLIMITED GCASH EARNINGS: Kumita ng ₱500 - ₱1,500/day direct sa GCash!</span>
+                    </div>
+                    <div className="inline-flex items-center gap-1.5 bg-yellow-300 hover:bg-yellow-200 text-slate-950 font-black text-[11px] px-3 py-1 rounded-full shadow-sm shrink-0 transition">
+                      <Rocket className="w-3.5 h-3.5 text-slate-950" />
+                      <span>I-RENEW ANG ACCESS PLAN 🚀</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 🖥️ MAIN BODY WORKSPACE */}
+              <div id="main-content-layout" className={`flex-1 w-full mx-auto ${activeTab === 'zone' ? 'max-w-7xl px-2 sm:px-4 md:px-6 py-4 md:py-6' : 'max-w-7xl px-4 py-6 md:py-8'}`}>
             {isSubscriptionExpired() && activeTab !== 'earn' && activeTab !== 'zone' && activeTab !== 'negosyo' && activeTab !== 'guide' && activeTab !== 'admin' && activeTab !== 'va_shop' ? (
               <div id="renew-access-plan-section" className="max-w-2xl mx-auto space-y-6 animate-fadeIn py-6">
                 
@@ -2581,20 +2612,13 @@ export default function App() {
                 {/* TAB 1: EARN CONTENT (VISITOR AD BLOCK) */}
                 {activeTab === 'earn' && (
                   <div className="space-y-6 animate-fadeIn">
+                    {/* Withdrawal Policy Banner */}
+                    <WithdrawalPolicyBanner onOpenModal={() => setShowWithdrawalPolicyModal(true)} />
 
-                    {/* 📢 OFFICIAL Z-ONEAPP WITHDRAWAL POLICY UPDATE BANNER */}
-                    <WithdrawalPolicyBanner 
-                      onOpenModal={() => setShowWithdrawalPolicyModal(true)} 
-                    />
+                    {/* Promotional Banner */}
+                    <ZoneAppBanner language={language} referralCode={user?.referralCode} triggerNotification={triggerNotification} />
 
-                    {/* 🚀 OFFICIAL Z-ONEAPP PROMOTIONAL BANNER */}
-                    <ZoneAppBanner 
-                      language={language} 
-                      referralCode={user?.referralCode} 
-                      triggerNotification={triggerNotification} 
-                    />
-
-                    {/* Expired User Warning Banner */}
+                    {/* Expired Banner */}
                     {isSubscriptionExpired() && (
                       <div className="bg-amber-50 border border-amber-200 rounded-3xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm animate-fadeIn">
                         <div className="flex items-start gap-3.5">
@@ -2616,7 +2640,7 @@ export default function App() {
                         </button>
                       </div>
                     )}
-                    
+
                     {/* Intro Title */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                       <div>
@@ -2668,7 +2692,6 @@ export default function App() {
 
                     {/* Filter and Category toggles */}
                     <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs font-semibold">
-                      
                       <div className="flex items-center gap-2">
                         <ListFilter className="w-4 h-4 text-slate-500" />
                         <span className="text-slate-500 mr-1.5">Suriin ang Campaigns:</span>
@@ -2825,13 +2848,12 @@ export default function App() {
                         </div>
                       )}
                     </div>
-
                   </div>
                 )}
 
                 {/* TAB 2: CASHOUT (WITHDRAW GCASH INTEGRATOR) */}
                 {activeTab === 'cashout' && (
-                  <div className="animate-fadeIn">
+                  <div className="animate-fadeIn w-full">
                     <GCashCashout 
                       stats={stats} 
                       withdrawals={withdrawals} 
@@ -2840,8 +2862,6 @@ export default function App() {
                     />
                   </div>
                 )}
-
-
 
                 {/* TAB 3: FAQ GUIDE */}
                 {activeTab === 'guide' && (
@@ -2894,7 +2914,7 @@ export default function App() {
 
                 {/* TAB 4: ADVANCED SECURE ADMIN WORKSPACE */}
                 {activeTab === 'admin' && user.isAdmin && (
-                  <div className="animate-fadeIn">
+                  <div className="animate-fadeIn w-full">
                     <AdminPanel 
                       token={token} 
                       triggerNotification={triggerNotification} 
@@ -2904,7 +2924,7 @@ export default function App() {
 
                 {/* TAB 5: MERCHANT PORTAL (NEGOSYO PROMOTION HUB) */}
                 {activeTab === 'negosyo' && (
-                  <div className="animate-fadeIn">
+                  <div className="animate-fadeIn w-full">
                     <MerchantPortal
                       token={token}
                       language={language}
@@ -2915,7 +2935,7 @@ export default function App() {
 
                 {/* TAB 6: VIRTUAL ASSISTANT & Z-ONESHOP MARKETING HUB */}
                 {activeTab === 'va_shop' && (
-                  <div className="animate-fadeIn">
+                  <div className="animate-fadeIn w-full">
                     <ZoneShopVAHub
                       token={token || ''}
                       user={user}
@@ -3076,6 +3096,8 @@ export default function App() {
             </div>
             )}
           </div>
+        </main>
+      )}
 
           {/* 🌐 VIRTUAL BROWSER SIMULATOR CORE IFRAME PORTAL MODAL OVERLAY */}
           <AnimatePresence>

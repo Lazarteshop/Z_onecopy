@@ -10,8 +10,9 @@ import {
   Coins
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { soundEffects } from '../utils/audio';
 
-export type AppTabType = 'zone' | 'va_shop' | 'earn' | 'cashout' | 'negosyo' | 'guide' | 'admin';
+export type AppTabType = 'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop';
 
 export interface AppLauncherItem {
   id: AppTabType;
@@ -27,7 +28,7 @@ export interface AppLauncherItem {
 }
 
 interface SmartphoneAppLauncherProps {
-  activeTab: AppTabType;
+  activeTab?: AppTabType | null;
   onSelectTab: (tab: AppTabType) => void;
   isAdmin?: boolean;
   language?: 'tl' | 'en';
@@ -176,7 +177,10 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
               <button
                 key={item.id}
                 id={`app-tile-${item.id}`}
-                onClick={() => onSelectTab(item.id)}
+                onClick={() => {
+                  try { soundEffects.playClick(); } catch (e) {}
+                  onSelectTab(item.id);
+                }}
                 type="button"
                 className="w-full flex flex-col items-center justify-start group cursor-pointer focus:outline-none transition-all duration-200"
               >
