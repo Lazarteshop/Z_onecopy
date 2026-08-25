@@ -1,4 +1,5 @@
 // Intelligent Data Saver & Network Information Manager
+import { idbStorage } from './idbStorage';
 
 export type DataSaverMode = 'auto' | 'on' | 'off';
 
@@ -8,6 +9,14 @@ export interface NetworkInfo {
   saveData?: boolean;
   downlink?: number; // Mb/s
   rtt?: number; // ms
+  online?: boolean;
+}
+
+/**
+ * Generate unique idempotency key for transactions/actions
+ */
+export function generateIdempotencyKey(prefix: string = 'tx'): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 }
 
 class DataSaverManager {
@@ -35,21 +44,46 @@ class DataSaverManager {
   }
 
   private updateNetworkInfo() {
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
+    let netType: string | undefined = undefined;
+    let effectiveType: 'slow-2g' | '2g' | '3g' | '4g' | undefined = undefined;
+    let saveData = false;
+    let downlink: number | undefined = undefined;
+    let rtt: number | undefined = undefined;
+
     if (typeof navigator !== 'undefined' && 'connection' in navigator) {
       const conn = (navigator as any).connection;
       if (conn) {
-        this.networkInfo = {
-          type: conn.type,
-          effectiveType: conn.effectiveType,
-          saveData: conn.saveData === true,
-          downlink: conn.downlink,
-          rtt: conn.rtt
-        };
+        netType = conn.type;
+        effectiveType = conn.effectiveType;
+        saveData = conn.saveData === true;
+        downlink = conn.downlink;
+        rtt = conn.rtt;
       }
     }
+
+    this.networkInfo = {
+      type: netType,
+      effectiveType,
+      saveData,
+      downlink,
+      rtt,
+      online: isOnline
+    };
   }
 
   private initNetworkListeners() {
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', () => {
+        this.updateNetworkInfo();
+        this.notifyListeners();
+      });
+      window.addEventListener('offline', () => {
+        this.updateNetworkInfo();
+        this.notifyListeners();
+      });
+    }
+
     if (typeof navigator !== 'undefined' && 'connection' in navigator) {
       const conn = (navigator as any).connection;
       if (conn && typeof conn.addEventListener === 'function') {
@@ -69,6 +103,13 @@ class DataSaverManager {
         }
       });
     }
+  }
+
+  public isOnline(): boolean {
+    if (typeof navigator !== 'undefined') {
+      return navigator.onLine !== false;
+    }
+    return true;
   }
 
   public getMode(): DataSaverMode {
@@ -245,6 +286,48 @@ class DataSaverManager {
     }
 
     return fetchPromise;
+  }
+
+  /**
+   * Stale-While-Revalidate pattern using IndexedDB cache
+   * Immediately returns cached data if available, while seamlessly updating from network in the background
+   */
+  public async swrFetch<T = any>(
+    cacheKey: string,
+    fetcher: () => Promise<T>,
+    onBackgroundUpdate?: (freshData: T) => void
+  ): Promise<T> {
+    // 1. Try to read from IndexedDB first
+    const cachedData = await idbStorage.get<T>(cacheKey);
+
+    // 2. Trigger network fetch in background or as primary
+    const networkPromise = fetcher()
+      .then(async (freshData) => {
+        if (freshData) {
+          await idbStorage.set(cacheKey, freshData);
+          if (cachedData && onBackgroundUpdate) {
+            onBackgroundUpdate(freshData);
+          }
+        }
+        return freshData;
+      })
+      .catch((err) => {
+        if (cachedData) {
+          // Graceful fallback to cache on network failure
+          return cachedData;
+        }
+        throw err;
+      });
+
+    // If cache is immediately available, return it!
+    if (cachedData !== null && cachedData !== undefined) {
+      // Fire-and-forget background revalidation
+      networkPromise.catch(() => {});
+      return cachedData;
+    }
+
+    // If no cache, wait for network
+    return networkPromise;
   }
 
   public clearOldCache() {

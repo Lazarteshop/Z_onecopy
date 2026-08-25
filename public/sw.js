@@ -1,13 +1,14 @@
-const CACHE = "zone-v3";
-const MEDIA_CACHE = "zone-media-v1";
-const API_CACHE = "zone-api-v1";
+const CACHE = "zone-v4";
+const MEDIA_CACHE = "zone-media-v2";
+const API_CACHE = "zone-api-v2";
 
 const STATIC_ASSETS = [
   "/",
   "/index.html",
   "/manifest.json",
   "/icon-192.png",
-  "/icon-512.png"
+  "/icon-512.png",
+  "/admin_gcash_qr.png"
 ];
 
 self.addEventListener("install", event => {
@@ -16,7 +17,7 @@ self.addEventListener("install", event => {
       return Promise.allSettled(
         STATIC_ASSETS.map(url => cache.add(url))
       ).then(() => {
-        console.log("SW: Cached default assets");
+        console.log("SW: Cached default app shell assets");
       });
     }).then(() => self.skipWaiting())
   );
@@ -28,7 +29,7 @@ self.addEventListener("activate", event => {
       return Promise.all(
         keys.map(key => {
           if (key !== CACHE && key !== MEDIA_CACHE && key !== API_CACHE) {
-            console.log("SW: Removing old cache", key);
+            console.log("SW: Removing outdated cache", key);
             return caches.delete(key);
           }
         })
@@ -41,6 +42,8 @@ self.addEventListener("fetch", event => {
   if (!event.request.url.startsWith('http')) {
     return;
   }
+  
+  // Non-GET requests (mutations, financial, actions) must always go straight to network
   if (event.request.method !== 'GET') {
     return;
   }
@@ -53,20 +56,38 @@ self.addEventListener("fetch", event => {
                   url.hostname.includes('picsum.photos');
   const isApi = url.pathname.startsWith('/api/');
 
+  // Critical Financial / Auth / Live Realtime State Endpoints - ALWAYS Network Only
+  const isStrictNetworkApi = 
+    url.pathname.includes('/api/auth/') ||
+    url.pathname.includes('/api/user/withdraw') ||
+    url.pathname.includes('/api/user/task-complete') ||
+    url.pathname.includes('/api/user/daily-checkin') ||
+    url.pathname.includes('/api/user/spin-wheel') ||
+    url.pathname.includes('/api/va/') ||
+    url.pathname.includes('/api/shop/checkout') ||
+    url.pathname.includes('/api/admin/');
+
+  if (isStrictNetworkApi) {
+    // Pure network pass-through, no caching
+    return;
+  }
+
   if (isHTML) {
-    // Network-First for HTML to always get the latest bundle hash
+    // Stale-While-Revalidate for HTML App Shell: Instant load on slow networks, background cache update
     event.respondWith(
-      fetch(event.request)
-        .then(response => {
-          if (response.status === 200) {
-            const copy = response.clone();
-            caches.open(CACHE).then(cache => cache.put(event.request, copy));
-          }
-          return response;
-        })
-        .catch(() => {
-          return caches.match(event.request);
-        })
+      caches.open(CACHE).then(async (cache) => {
+        const cachedResponse = await cache.match(event.request);
+        const fetchPromise = fetch(event.request)
+          .then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              cache.put(event.request, networkResponse.clone());
+            }
+            return networkResponse;
+          })
+          .catch(() => cachedResponse);
+
+        return cachedResponse || fetchPromise;
+      })
     );
   } else if (isMedia) {
     // Cache-First for images & media to preserve mobile data bandwidth
@@ -84,37 +105,64 @@ self.addEventListener("fetch", event => {
           }
           return networkResponse;
         } catch (err) {
-          // If offline and not in cache, fallback
+          // If offline and not in cache, return empty transparent or cached
           return cached || new Response('', { status: 408 });
         }
       })
     );
   } else if (isApi) {
-    // Network-First with API cache fallback for resilient offline reading
-    event.respondWith(
-      fetch(event.request)
-        .then(response => {
-          if (response.status === 200 && (url.pathname.includes('/posts') || url.pathname.includes('/reels') || url.pathname.includes('/profile'))) {
-            const copy = response.clone();
-            caches.open(API_CACHE).then(cache => cache.put(event.request, copy));
-          }
-          return response;
+    // SWR Strategy for Read APIs (posts, stories, groups, users, reels)
+    const isSwrApi = 
+      url.pathname.includes('/posts') || 
+      url.pathname.includes('/stories') || 
+      url.pathname.includes('/groups') || 
+      url.pathname.includes('/users') || 
+      url.pathname.includes('/reels') || 
+      url.pathname.includes('/sync');
+
+    if (isSwrApi) {
+      event.respondWith(
+        caches.open(API_CACHE).then(async (cache) => {
+          const cachedResponse = await cache.match(event.request);
+          const networkPromise = fetch(event.request)
+            .then((networkResponse) => {
+              if (networkResponse && networkResponse.status === 200) {
+                cache.put(event.request, networkResponse.clone());
+              }
+              return networkResponse;
+            })
+            .catch(() => cachedResponse);
+
+          return cachedResponse || networkPromise;
         })
-        .catch(() => {
-          return caches.match(event.request);
-        })
-    );
+      );
+    } else {
+      // General Network-First for other GET APIs
+      event.respondWith(
+        fetch(event.request)
+          .then(response => {
+            if (response.status === 200) {
+              const copy = response.clone();
+              caches.open(API_CACHE).then(cache => cache.put(event.request, copy));
+            }
+            return response;
+          })
+          .catch(() => {
+            return caches.match(event.request);
+          })
+      );
+    }
   } else {
     // Cache-First with Network fallback for static JavaScript and CSS assets
     event.respondWith(
       caches.match(event.request).then(response => {
         return response || fetch(event.request).then(networkResponse => {
-          if (networkResponse.status === 200 && (url.pathname.includes('/assets/') || url.pathname.endsWith('.json'))) {
+          if (networkResponse && networkResponse.status === 200 && (url.pathname.includes('/assets/') || url.pathname.endsWith('.json') || url.pathname.endsWith('.js') || url.pathname.endsWith('.css'))) {
             const copy = networkResponse.clone();
             caches.open(CACHE).then(cache => cache.put(event.request, copy));
           }
           return networkResponse;
-        });
+        }).catch(() => response);
       })
     );
   }

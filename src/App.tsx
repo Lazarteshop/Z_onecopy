@@ -79,7 +79,8 @@ import { WithdrawalPolicyBanner } from './components/WithdrawalPolicyBanner';
 import { AddCampaignModal } from './components/AddCampaignModal';
 import { BackgroundNotificationModal } from './components/BackgroundNotificationModal';
 import { DataSaverSettingsModal } from './components/DataSaverSettingsModal';
-import { dataSaver } from './utils/dataSaver';
+import { dataSaver, generateIdempotencyKey } from './utils/dataSaver';
+import { idbStorage } from './utils/idbStorage';
 import { soundEffects } from './utils/audio';
 import { 
   subscribeUserToPush, 
@@ -154,13 +155,45 @@ const compressImage = (base64Str: string, maxWidth = 150, maxHeight = 150): Prom
 
 export default function App() {
   // --- AUTHENTICATION & SYNC STATES ---
-  const [token, setToken] = useState<string | null>(localStorage.getItem('gcash_click_earn_token'));
-  const [user, setUser] = useState<UserSession | null>(null);
+  const [token, setToken] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('gcash_click_earn_token');
+    } catch {
+      return null;
+    }
+  });
+
+  const [user, setUser] = useState<UserSession | null>(() => {
+    try {
+      const backup = localStorage.getItem('gcash_user_backup_profile');
+      if (backup) {
+        const parsed = JSON.parse(backup);
+        if (parsed && parsed.id) return parsed;
+      }
+    } catch {}
+    return null;
+  });
+
   const [showEditProfileModal, setShowEditProfileModal] = useState(false);
   const [newAvatar, setNewAvatar] = useState('👤');
   const [newName, setNewName] = useState('');
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(false);
+
+  // Load from IndexedDB on startup if memory user is empty
+  useEffect(() => {
+    if (!user && token) {
+      idbStorage.get<UserSession>('zone_cached_user_profile').then(cached => {
+        if (cached && cached.id) {
+          setUser(cached);
+          if (cached.stats) setStats(cached.stats);
+          if (cached.withdrawals) setWithdrawals(cached.withdrawals);
+          if (cached.activityLogs) setActivityLogs(cached.activityLogs);
+          if (cached.referredFriends) setReferredFriends(cached.referredFriends);
+        }
+      }).catch(() => {});
+    }
+  }, [token]);
 
   // Form states
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
@@ -173,16 +206,43 @@ export default function App() {
   const [showGoogleChooser, setShowGoogleChooser] = useState(false);
 
   // --- CORE APP STATES ---
-  const [stats, setStats] = useState<UserStats>({
-    balance: 25.00,
-    lifetimeEarnings: 25.00,
-    completedTasksCount: 0,
-    dailyCheckInDate: null
+  const [stats, setStats] = useState<UserStats>(() => {
+    try {
+      const backup = localStorage.getItem('gcash_user_backup_profile');
+      if (backup) {
+        const parsed = JSON.parse(backup);
+        if (parsed?.stats?.balance !== undefined) return parsed.stats;
+      }
+    } catch {}
+    return {
+      balance: 25.00,
+      lifetimeEarnings: 25.00,
+      completedTasksCount: 0,
+      dailyCheckInDate: null
+    };
   });
 
   const [campaigns, setCampaigns] = useState<WebsiteCampaign[]>([]);
-  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
-  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>(() => {
+    try {
+      const backup = localStorage.getItem('gcash_user_backup_profile');
+      if (backup) {
+        const parsed = JSON.parse(backup);
+        if (Array.isArray(parsed?.withdrawals)) return parsed.withdrawals;
+      }
+    } catch {}
+    return [];
+  });
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(() => {
+    try {
+      const backup = localStorage.getItem('gcash_user_backup_profile');
+      if (backup) {
+        const parsed = JSON.parse(backup);
+        if (Array.isArray(parsed?.activityLogs)) return parsed.activityLogs;
+      }
+    } catch {}
+    return [];
+  });
   const [referredFriends, setReferredFriends] = useState<ReferralFriend[]>([]);
   
   const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop' | null>(null);
@@ -762,6 +822,9 @@ export default function App() {
         setActivityLogs(data.user.activityLogs);
         setReferredFriends(data.user.referredFriends);
         
+        // Persist to async IndexedDB storage
+        idbStorage.set('zone_cached_user_profile', data.user).catch(() => {});
+        
         // Load campaigns directly from our centralized cloud backend
         try {
           const campRes = await fetch('/api/campaigns', {
@@ -772,6 +835,7 @@ export default function App() {
           if (campRes.ok) {
             const campData = await campRes.json();
             setCampaigns(campData.campaigns);
+            idbStorage.set('zone_cached_campaigns', campData.campaigns).catch(() => {});
           } else {
             throw new Error('Failed to fetch from /api/campaigns');
           }

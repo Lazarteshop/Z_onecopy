@@ -29,7 +29,9 @@ import {
   Flame,
   ShoppingCart,
   Truck,
-  Search
+  Search,
+  QrCode,
+  Download
 } from 'lucide-react';
 import { 
   UserSession, 
@@ -1857,90 +1859,137 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
       {/* 🚀 MODAL 2: SUBSCRIBE TO PAID PLAN (₱100/MO) */}
       {/* ========================================================================= */}
       {showSubModal && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5">
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fadeIn overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-5 my-8">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <Crown className="w-5 h-5 text-amber-500" />
-                <h3 className="font-extrabold text-slate-900 text-sm">
-                  Mag-subscribe sa VIP VA Paid Plan (₱100/mo)
-                </h3>
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-500/10 rounded-2xl border border-amber-200/50">
+                  <Crown className="w-5 h-5 text-amber-500" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">
+                    Mag-subscribe sa VIP VA Paid Plan (₱100/month)
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-medium">I-unlock ang 7 Days Visibility at 5.0% Virtual Money Commission</p>
+                </div>
               </div>
               <button
                 onClick={() => setShowSubModal(false)}
-                className="text-slate-400 hover:text-slate-600 font-black text-sm cursor-pointer"
+                className="text-slate-400 hover:text-slate-600 font-black text-sm cursor-pointer p-1.5 rounded-xl hover:bg-slate-100 transition"
               >
                 ✕
               </button>
             </div>
 
             <div className="space-y-2 text-xs text-slate-600">
-              <p className="font-medium">
-                I-unlock ang 7 Days Visibility at 5.0% Virtual Money Commission sa lahat ng shopping baskets na iyong ila-lockan ng banners!
+              <p className="font-medium leading-relaxed">
+                Mananatiling aktibo ang iyong marketing banners sa customer cart sa loob ng <b className="text-slate-900">7 araw</b> kasama ang pinakamataas na komisyon na <b className="text-amber-600">5.0% Virtual Money</b> sa bawat bayad na basket!
               </p>
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between text-amber-950 font-extrabold">
-                <span>Halaga ng Subscription:</span>
-                <span className="font-mono text-base">₱100.00 / Buwan</span>
+              <div className="p-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl flex items-center justify-between text-amber-950 font-extrabold shadow-xs">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-600" />
+                  <span>Halaga ng Subscription:</span>
+                </div>
+                <span className="font-mono text-base text-amber-800 bg-white px-3 py-1 rounded-xl border border-amber-200 shadow-xs">₱100.00 / Buwan</span>
               </div>
             </div>
 
             <form onSubmit={handleSubscribe} className="space-y-4 text-xs">
               <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Paraan ng Pagbabayad:</label>
+                <label className="font-bold text-slate-700">Pumili ng Paraan ng Pagbabayad:</label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => setSubMethod('balance')}
-                    className={`p-3 rounded-xl border font-black text-left cursor-pointer transition ${
-                      subMethod === 'balance' ? 'border-blue-600 bg-blue-50 text-blue-900' : 'border-slate-200 text-slate-600'
+                    onClick={() => setSubMethod('gcash')}
+                    className={`p-3 rounded-2xl border font-black text-left cursor-pointer transition relative ${
+                      subMethod === 'gcash' ? 'border-blue-600 bg-blue-50/80 text-blue-900 shadow-xs ring-2 ring-blue-500/20' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                     }`}
                   >
-                    <span className="block text-[11px]">Wallet Balance</span>
-                    <span className="block text-[9px] text-slate-500 font-normal">Kasalukuyan: ₱{(user.stats?.balance || 0).toFixed(2)}</span>
+                    <div className="flex items-center justify-between">
+                      <span className="block text-[12px] font-extrabold text-blue-700">GCash Official QR</span>
+                      <span className="text-[9px] bg-blue-600 text-white font-black px-1.5 py-0.5 rounded-md">InstaPay</span>
+                    </div>
+                    <span className="block text-[10px] text-slate-500 font-normal mt-0.5">I-scan ang opisyal na QR Code</span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => setSubMethod('gcash')}
-                    className={`p-3 rounded-xl border font-black text-left cursor-pointer transition ${
-                      subMethod === 'gcash' ? 'border-blue-600 bg-blue-50 text-blue-900' : 'border-slate-200 text-slate-600'
+                    onClick={() => setSubMethod('balance')}
+                    className={`p-3 rounded-2xl border font-black text-left cursor-pointer transition ${
+                      subMethod === 'balance' ? 'border-blue-600 bg-blue-50 text-blue-900 shadow-xs ring-2 ring-blue-500/20' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                     }`}
                   >
-                    <span className="block text-[11px]">GCash Direct</span>
-                    <span className="block text-[9px] text-slate-500 font-normal">Ipadala sa Admin QR/No.</span>
+                    <span className="block text-[12px] font-extrabold">Wallet Balance</span>
+                    <span className="block text-[10px] text-slate-500 font-normal mt-0.5">Kasalukuyan: ₱{(user.stats?.balance || 0).toFixed(2)}</span>
                   </button>
                 </div>
               </div>
 
               {subMethod === 'gcash' && (
-                <div className="space-y-3 p-3 bg-slate-50 border border-slate-200 rounded-2xl">
-                  <div className="text-[11px] text-slate-700 font-semibold space-y-0.5">
-                    <span className="block font-bold">Admin GCash Account:</span>
-                    <span className="font-mono font-black text-indigo-700 block">0917-123-4567 (Z-one Admin)</span>
+                <div className="space-y-3.5 p-4 bg-gradient-to-b from-blue-50/60 to-slate-50 border border-blue-200/80 rounded-2xl animate-fadeIn">
+                  {/* GCASH QR CODE CARD */}
+                  <div className="flex flex-col sm:flex-row items-center gap-4 bg-white p-3.5 rounded-2xl border border-blue-100 shadow-xs">
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 flex flex-col items-center shrink-0">
+                      <img
+                        src="/admin_gcash_qr.png"
+                        alt="Opisyal na Admin GCash QR Code"
+                        className="w-32 h-32 object-contain rounded-lg shadow-xs"
+                        referrerPolicy="no-referrer"
+                      />
+                      <span className="text-[9px] text-blue-700 font-black mt-1 uppercase tracking-wider">
+                        InstaPay / GCash QR
+                      </span>
+                    </div>
+                    <div className="space-y-2 text-center sm:text-left flex-1">
+                      <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1.5">
+                        <span className="text-[10px] bg-blue-100 text-blue-700 font-black px-2 py-0.5 rounded-md uppercase">
+                          Official Admin Account
+                        </span>
+                        <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-0.5 rounded-md">
+                          ₱100.00 Exact Amount
+                        </span>
+                      </div>
+                      <h4 className="text-xs font-black text-slate-900">Z-oneApp Admin VIP VA System</h4>
+                      <p className="text-[11px] text-slate-600 font-medium leading-relaxed">
+                        I-scan lamang ang opisyal na QR Code sa kaliwa gamit ang GCash app, ipadala ang eksaktong <b className="text-blue-700 font-black">₱100.00</b>, at i-save ang Reference No.
+                      </p>
+                      <div>
+                        <a
+                          href="/admin_gcash_qr.png"
+                          download="Z-oneApp_Admin_GCash_QR.png"
+                          className="inline-flex items-center gap-1.5 text-[11px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg border border-blue-200 transition cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>I-download ang QR Code</span>
+                        </a>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="font-bold text-slate-700">Iyong GCash Mobile Number:</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Hal. 09181234567"
-                      value={gcashSenderNumber}
-                      onChange={(e) => setGcashSenderNumber(e.target.value)}
-                      className="w-full p-2.5 border border-slate-200 rounded-xl outline-none font-bold text-slate-900"
-                    />
-                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div className="space-y-1">
+                      <label className="font-bold text-slate-700 text-[11px]">Iyong GCash Mobile Number:</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Hal. 09181234567"
+                        value={gcashSenderNumber}
+                        onChange={(e) => setGcashSenderNumber(e.target.value)}
+                        className="w-full p-2.5 border border-slate-200 rounded-xl outline-none font-bold text-slate-900 bg-white focus:border-blue-500 text-xs"
+                      />
+                    </div>
 
-                  <div className="space-y-1">
-                    <label className="font-bold text-slate-700">GCash Reference Number (Ref No.):</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Hal. REF123456789"
-                      value={gcashRefNo}
-                      onChange={(e) => setGcashRefNo(e.target.value)}
-                      className="w-full p-2.5 border border-slate-200 rounded-xl outline-none font-mono font-bold uppercase text-slate-900"
-                    />
+                    <div className="space-y-1">
+                      <label className="font-bold text-slate-700 text-[11px]">GCash Reference No. (Ref No.):</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Hal. REF123456789"
+                        value={gcashRefNo}
+                        onChange={(e) => setGcashRefNo(e.target.value)}
+                        className="w-full p-2.5 border border-slate-200 rounded-xl outline-none font-mono font-bold uppercase text-slate-900 bg-white focus:border-blue-500 text-xs"
+                      />
+                    </div>
                   </div>
                 </div>
               )}
@@ -1959,7 +2008,7 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
                   className="flex-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black py-2.5 rounded-xl transition cursor-pointer shadow-sm flex items-center justify-center gap-1.5"
                 >
                   {subscribing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Crown className="w-3.5 h-3.5" />}
-                  <span>Kumpirmahin (₱100)</span>
+                  <span>Kumpirmahin ang VIP Plan (₱100)</span>
                 </button>
               </div>
             </form>

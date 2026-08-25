@@ -18,6 +18,12 @@ import {
   query as webQuery,
   where as webWhere
 } from 'firebase/firestore';
+import { 
+  getStorage as getWebStorage, 
+  ref as webStorageRef, 
+  uploadBytes as webUploadBytes, 
+  getDownloadURL as webGetDownloadURL 
+} from 'firebase/storage';
 import { INITIAL_CAMPAIGNS } from './src/data/campaigns';
 import { GoogleGenAI } from '@google/genai';
 import webpush from 'web-push';
@@ -39,6 +45,44 @@ try {
 
 app.use(express.json({ limit: '200mb' }));
 app.use(express.urlencoded({ limit: '200mb', extended: true }));
+
+// --- IDEMPOTENCY KEY PROTECTION SYSTEM ---
+// Protects critical financial transactions and state mutations against duplicate packet replay on slow networks
+const idempotencyCache = new Map<string, { status: number; body: any; timestamp: number }>();
+
+// Periodic cleanup of idempotency cache (TTL: 10 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of idempotencyCache.entries()) {
+    if (now - entry.timestamp > 10 * 60 * 1000) {
+      idempotencyCache.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
+
+function checkIdempotency(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const key = (req.headers['x-idempotency-key'] as string) || req.body?.idempotencyKey || req.body?.requestId;
+  if (!key) {
+    return next();
+  }
+
+  const cached = idempotencyCache.get(key);
+  if (cached) {
+    console.log(`[Idempotency] Returning cached response for key: ${key}`);
+    return res.status(cached.status).json(cached.body);
+  }
+
+  // Intercept json response to cache it
+  const originalJson = res.json.bind(res);
+  res.json = (body: any) => {
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      idempotencyCache.set(key, { status: res.statusCode, body, timestamp: Date.now() });
+    }
+    return originalJson(body);
+  };
+
+  next();
+}
 
 // --- HIGH-QUALITY TEXT-TO-SPEECH PROXY ENDPOINT ---
 function splitTextIntoChunks(text: string, maxLength: number = 150): string[] {
@@ -878,21 +922,36 @@ if (hasServiceAccount || isOnGoogleCloud) {
   }
 }
 
-// 2. Second attempt: Firebase Web SDK (works anywhere including Render without GCP IAM setup)
-if (!cloudDb.isActive) {
-  try {
-    const fbApp = getFirebaseApps().length > 0 ? getFirebaseApp() : initFirebaseApp({
-      apiKey: firebaseConfigObj.apiKey,
-      projectId: firebaseConfigObj.projectId,
-      authDomain: firebaseConfigObj.authDomain,
-      storageBucket: firebaseConfigObj.storageBucket,
-      messagingSenderId: firebaseConfigObj.messagingSenderId,
-      appId: firebaseConfigObj.appId
-    });
+// 2. Firebase Web Client SDK and Storage initialization
+let fbAppInstance: any = null;
+let fbStorageInstance: any = null;
 
+try {
+  fbAppInstance = getFirebaseApps().length > 0 ? getFirebaseApp() : initFirebaseApp({
+    apiKey: firebaseConfigObj.apiKey,
+    projectId: firebaseConfigObj.projectId,
+    authDomain: firebaseConfigObj.authDomain,
+    storageBucket: firebaseConfigObj.storageBucket,
+    messagingSenderId: firebaseConfigObj.messagingSenderId,
+    appId: firebaseConfigObj.appId
+  });
+
+  if (fbAppInstance) {
+    const bucket = firebaseConfigObj.storageBucket
+      ? (firebaseConfigObj.storageBucket.startsWith('gs://') ? firebaseConfigObj.storageBucket : `gs://${firebaseConfigObj.storageBucket}`)
+      : undefined;
+    fbStorageInstance = getWebStorage(fbAppInstance, bucket);
+    console.log(`☁️ Firebase Storage Web SDK adapter initialized (Bucket: ${firebaseConfigObj.storageBucket || 'default'}).`);
+  }
+} catch (fbInitErr) {
+  console.warn('⚠️ Firebase Web App / Storage initialization warning:', fbInitErr);
+}
+
+if (!cloudDb.isActive && fbAppInstance) {
+  try {
     const webDbInstance = firebaseConfigObj.firestoreDatabaseId
-      ? getWebFirestore(fbApp, firebaseConfigObj.firestoreDatabaseId)
-      : getWebFirestore(fbApp);
+      ? getWebFirestore(fbAppInstance, firebaseConfigObj.firestoreDatabaseId)
+      : getWebFirestore(fbAppInstance);
 
     cloudDb = {
       isActive: true,
@@ -2085,15 +2144,17 @@ async function uploadToFirestore(data: DBStructure) {
             try {
               const { id, ...pWithoutId } = p;
               if (pWithoutId.mediaUrl && pWithoutId.mediaUrl.startsWith('data:')) {
-                pWithoutId.mediaUrl = saveBase64ToUploadFile(pWithoutId.mediaUrl, 'post-media') || undefined;
+                const up = await uploadMediaToFirebaseStorage(pWithoutId.mediaUrl, 'posts', p.userId || 'general');
+                pWithoutId.mediaUrl = up?.url || saveBase64ToUploadFile(pWithoutId.mediaUrl, 'posts', p.userId) || undefined;
               }
               if (pWithoutId.mediaUrls && Array.isArray(pWithoutId.mediaUrls)) {
-                pWithoutId.mediaUrls = pWithoutId.mediaUrls.map(url => {
+                pWithoutId.mediaUrls = await Promise.all(pWithoutId.mediaUrls.map(async url => {
                   if (url && url.startsWith('data:')) {
-                    return saveBase64ToUploadFile(url, 'post-media') || url;
+                    const up = await uploadMediaToFirebaseStorage(url, 'posts', p.userId || 'general');
+                    return up?.url || saveBase64ToUploadFile(url, 'posts', p.userId) || url;
                   }
                   return url;
-                });
+                }));
               }
               await cloudDb.setDoc('posts', p.id, pWithoutId);
               lastSyncedCache.posts.set(p.id, pStr);
@@ -2114,7 +2175,8 @@ async function uploadToFirestore(data: DBStructure) {
             try {
               const { id, ...dmWithoutId } = dm;
               if (dmWithoutId.mediaUrl && dmWithoutId.mediaUrl.startsWith('data:')) {
-                dmWithoutId.mediaUrl = saveBase64ToUploadFile(dmWithoutId.mediaUrl, 'dm-media') || undefined;
+                const up = await uploadMediaToFirebaseStorage(dmWithoutId.mediaUrl, 'direct-messages', dm.senderId || 'general');
+                dmWithoutId.mediaUrl = up?.url || saveBase64ToUploadFile(dmWithoutId.mediaUrl, 'direct-messages', dm.senderId) || undefined;
               }
               await cloudDb.setDoc('direct_messages', dm.id, dmWithoutId);
               lastSyncedCache.directMessages.set(dm.id, dmStr);
@@ -2152,6 +2214,10 @@ async function uploadToFirestore(data: DBStructure) {
           promises.push((async () => {
             try {
               const { id, ...rWithoutId } = r;
+              if (rWithoutId.url && rWithoutId.url.startsWith('data:')) {
+                const up = await uploadMediaToFirebaseStorage(rWithoutId.url, 'reels', r.id || 'general');
+                rWithoutId.url = up?.url || saveBase64ToUploadFile(rWithoutId.url, 'reels', r.id) || rWithoutId.url;
+              }
               await cloudDb.setDoc('reels', r.id, rWithoutId);
               lastSyncedCache.reels.set(r.id, rStr);
             } catch (reelErr) {
@@ -2189,7 +2255,8 @@ async function uploadToFirestore(data: DBStructure) {
             try {
               const { id, ...sWithoutId } = s;
               if (sWithoutId.mediaUrl && sWithoutId.mediaUrl.startsWith('data:')) {
-                sWithoutId.mediaUrl = saveBase64ToUploadFile(sWithoutId.mediaUrl, 'story-media') || undefined;
+                const up = await uploadMediaToFirebaseStorage(sWithoutId.mediaUrl, 'stories', s.userId || 'general');
+                sWithoutId.mediaUrl = up?.url || saveBase64ToUploadFile(sWithoutId.mediaUrl, 'stories', s.userId) || undefined;
               }
               await cloudDb.setDoc('stories', s.id, sWithoutId);
               lastSyncedCache.stories.set(s.id, sStr);
@@ -2228,7 +2295,8 @@ async function uploadToFirestore(data: DBStructure) {
             try {
               const { id, ...gmWithoutId } = gm;
               if (gmWithoutId.mediaUrl && gmWithoutId.mediaUrl.startsWith('data:')) {
-                gmWithoutId.mediaUrl = saveBase64ToUploadFile(gmWithoutId.mediaUrl, 'gc-media') || undefined;
+                const up = await uploadMediaToFirebaseStorage(gmWithoutId.mediaUrl, 'group-chats', gm.senderId || 'general');
+                gmWithoutId.mediaUrl = up?.url || saveBase64ToUploadFile(gmWithoutId.mediaUrl, 'group-chats', gm.senderId) || undefined;
               }
               await cloudDb.setDoc('group_messages', gm.id, gmWithoutId);
               lastSyncedCache.groupMessages.set(gm.id, gmStr);
@@ -2400,6 +2468,17 @@ async function syncFromFirestore() {
 
     console.log('☁️ Initiating cloud synchronization from Firestore database...');
 
+    let fetchErrors = 0;
+    const safeGetCollection = async (name: string) => {
+      try {
+        return await cloudDb.getCollection(name);
+      } catch (err) {
+        fetchErrors++;
+        console.warn(`⚠️ Could not fetch collection "${name}" from Cloud DB:`, err);
+        return [];
+      }
+    };
+
     // Load all collections concurrently
     const [
       dbUsers,
@@ -2417,20 +2496,20 @@ async function syncFromFirestore() {
       dbShopOrders,
       dbVaBanners
     ] = await Promise.all([
-      cloudDb.getCollection('users').catch(() => []),
-      cloudDb.getCollection('campaigns').catch(() => []),
-      cloudDb.getCollection('posts').catch(() => []),
-      cloudDb.getCollection('direct_messages').catch(() => []),
-      cloudDb.getCollection('merchant_ads').catch(() => []),
-      cloudDb.getCollection('reels').catch(() => []),
-      cloudDb.getCollection('reel_subscriptions').catch(() => []),
-      cloudDb.getCollection('stories').catch(() => []),
-      cloudDb.getCollection('group_chats').catch(() => []),
-      cloudDb.getCollection('group_messages').catch(() => []),
-      cloudDb.getCollection('shop_products').catch(() => []),
-      cloudDb.getCollection('shop_baskets').catch(() => []),
-      cloudDb.getCollection('shop_orders').catch(() => []),
-      cloudDb.getCollection('va_banners').catch(() => [])
+      safeGetCollection('users'),
+      safeGetCollection('campaigns'),
+      safeGetCollection('posts'),
+      safeGetCollection('direct_messages'),
+      safeGetCollection('merchant_ads'),
+      safeGetCollection('reels'),
+      safeGetCollection('reel_subscriptions'),
+      safeGetCollection('stories'),
+      safeGetCollection('group_chats'),
+      safeGetCollection('group_messages'),
+      safeGetCollection('shop_products'),
+      safeGetCollection('shop_baskets'),
+      safeGetCollection('shop_orders'),
+      safeGetCollection('va_banners')
     ]);
 
     const hasAnyCloudData = dbUsers.length > 0 || dbStories.length > 0 || dbGroupChats.length > 0 || 
@@ -2518,8 +2597,10 @@ async function syncFromFirestore() {
       uploadToFirestore(mergedDB).catch(err => {
         console.error('Error in initial post-merge upload to Cloud DB:', err);
       });
+    } else if (fetchErrors > 0) {
+      console.warn(`⚠️ Cloud Firestore sync encountered ${fetchErrors} errors during initial query. Retaining existing in-memory/local state to protect cloud data from baseline overwrite.`);
     } else {
-      console.log('🌱 Cloud Firestore has no records yet. Seeding all local baseline records to Cloud...');
+      console.log('🌱 Cloud Firestore confirmed empty. Seeding all local baseline records to Cloud...');
       const seedDB = localDB;
       initLastSyncedCache(seedDB);
       await uploadToFirestore(seedDB);
@@ -4465,7 +4546,7 @@ app.post('/api/admin/merchant/ads/:id/action', async (req, res) => {
 });
 
 // COMPLETED TASK REWARD SYNC
-app.post('/api/user/task-complete', (req, res) => {
+app.post('/api/user/task-complete', checkIdempotency, (req, res) => {
   const userId = req.headers.authorization;
   const { campaignId, rewardAmount, title, details } = req.body;
 
@@ -4649,7 +4730,7 @@ app.get('/api/payouts/recent', (req, res) => {
 });
 
 // SUBMIT WITHDRAWAL REQUEST
-app.post('/api/user/withdraw', (req, res) => {
+app.post('/api/user/withdraw', checkIdempotency, (req, res) => {
   const userId = req.headers.authorization;
   const { accountName, gcashNumber, amount } = req.body;
 
@@ -4708,7 +4789,7 @@ app.post('/api/user/withdraw', (req, res) => {
 });
 
 // DAILY CHECKIN SYNC
-app.post('/api/user/daily-checkin', (req, res) => {
+app.post('/api/user/daily-checkin', checkIdempotency, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) return res.status(401).json({ error: 'Access Denied.' });
 
@@ -4783,7 +4864,7 @@ app.get('/api/user/spin-status', (req, res) => {
   });
 });
 
-app.post('/api/user/spin-wheel', (req, res) => {
+app.post('/api/user/spin-wheel', checkIdempotency, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) return res.status(401).json({ error: 'Access Denied.' });
 
@@ -5467,13 +5548,179 @@ app.get('/api/zone/online', (req, res) => {
   res.json({ onlineUserIds: onlineIds });
 });
 
-// --- REUSABLE HELPER: Save base64 media to disk and chunked Firestore ---
-function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media'): string | null {
+// --- PERMANENT FIREBASE STORAGE MEDIA ENGINE ---
+interface UploadResult {
+  url: string;
+  path: string;
+  size: number;
+  mimeType: string;
+  filename: string;
+}
+
+async function uploadMediaToFirebaseStorage(
+  dataUrlOrBuffer: string | Buffer,
+  category: 'stories' | 'posts' | 'group-chats' | 'direct-messages' | 'reels' | 'media' | 'va-banners' | string = 'media',
+  entityId: string = 'general',
+  customMimeType?: string
+): Promise<UploadResult | null> {
+  if (!dataUrlOrBuffer) return null;
+
+  try {
+    let buffer: Buffer;
+    let mimeType = customMimeType || 'application/octet-stream';
+
+    if (typeof dataUrlOrBuffer === 'string') {
+      if (!dataUrlOrBuffer.startsWith('data:')) {
+        // If it's already an external or cloud URL, return it directly
+        return {
+          url: dataUrlOrBuffer,
+          path: '',
+          size: 0,
+          mimeType: 'application/octet-stream',
+          filename: path.basename(dataUrlOrBuffer)
+        };
+      }
+
+      const commaIndex = dataUrlOrBuffer.indexOf(',');
+      if (commaIndex === -1) return null;
+
+      const metaPart = dataUrlOrBuffer.substring(0, commaIndex);
+      const base64Data = dataUrlOrBuffer.substring(commaIndex + 1);
+      const mimeMatch = metaPart.match(/data:([^;]+)/);
+      if (mimeMatch) {
+        mimeType = mimeMatch[1];
+      }
+      buffer = Buffer.from(base64Data, 'base64');
+    } else {
+      buffer = dataUrlOrBuffer;
+    }
+
+    // Determine clean file extension
+    let extension = 'bin';
+    if (mimeType.includes('/')) {
+      extension = mimeType.split('/')[1];
+    }
+    if (extension.includes('+')) extension = extension.split('+')[0];
+    if (extension.includes(';')) extension = extension.split(';')[0];
+    if (extension === 'jpeg') extension = 'jpg';
+    if (extension === 'quicktime') extension = 'mov';
+    if (extension === 'x-matroska') extension = 'mkv';
+
+    // Unique file identifier to prevent overwriting
+    const uniqueFileId = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${extension}`;
+    const safeEntityId = (entityId || 'general').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeCategory = (category || 'media').replace(/[^a-zA-Z0-9_-]/g, '-');
+    
+    // Deterministic cloud storage path: stories/{userId}/{uniqueFileId}, posts/{userId}/{uniqueFileId}, etc.
+    const storagePath = `${safeCategory}/${safeEntityId}/${uniqueFileId}`;
+    const localFilename = `${safeCategory}-${safeEntityId}-${uniqueFileId}`;
+
+    // Cache locally to disk for instant serving if needed
+    const uploadDir = path.join(process.cwd(), 'uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    const localFilePath = path.join(uploadDir, localFilename);
+    try {
+      fs.writeFileSync(localFilePath, buffer);
+    } catch (fsErr) {
+      console.warn('Local disk write warning:', fsErr);
+    }
+
+    let downloadUrl: string | null = null;
+
+    // Strategy 1: Firebase Storage Web SDK (Direct tokenized URL generation)
+    if (fbStorageInstance) {
+      try {
+        const fileRef = webStorageRef(fbStorageInstance, storagePath);
+        const snapshot = await webUploadBytes(fileRef, buffer, {
+          contentType: mimeType,
+          customMetadata: {
+            uploadedAt: new Date().toISOString(),
+            category: safeCategory,
+            entityId: safeEntityId,
+            size: String(buffer.length)
+          }
+        });
+        downloadUrl = await webGetDownloadURL(snapshot.ref);
+        console.log(`☁️ Firebase Storage Web SDK Upload Success: ${storagePath} -> ${downloadUrl}`);
+      } catch (sdkErr) {
+        console.warn(`⚠️ Firebase Storage Web SDK upload error for ${storagePath}:`, sdkErr);
+      }
+    }
+
+    // Strategy 2: Firebase Storage REST API fallback
+    if (!downloadUrl && firebaseConfigObj.storageBucket) {
+      try {
+        const bucket = firebaseConfigObj.storageBucket;
+        const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(storagePath)}`;
+        const res = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': mimeType
+          },
+          body: buffer
+        });
+
+        if (res.ok) {
+          const resData: any = await res.json();
+          const token = resData.downloadTokens;
+          if (token) {
+            downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(storagePath)}?alt=media&token=${token}`;
+          } else {
+            downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(storagePath)}?alt=media`;
+          }
+          console.log(`☁️ Firebase Storage REST API Upload Success: ${storagePath} -> ${downloadUrl}`);
+        } else {
+          const errText = await res.text();
+          console.warn(`⚠️ Firebase Storage REST API returned status ${res.status}:`, errText);
+        }
+      } catch (restErr) {
+        console.warn(`⚠️ Firebase Storage REST API error for ${storagePath}:`, restErr);
+      }
+    }
+
+    // Final permanent URL (or local fallback if cloud is completely unreachable)
+    const finalUrl = downloadUrl || `/uploads/${localFilename}`;
+
+    // Index metadata document in Cloud Firestore
+    if (cloudDb.isActive) {
+      try {
+        await cloudDb.setDoc('media_storage', localFilename, {
+          filename: localFilename,
+          storagePath,
+          downloadUrl: downloadUrl || null,
+          category: safeCategory,
+          entityId: safeEntityId,
+          size: buffer.length,
+          mimeType,
+          uploadedAt: new Date().toISOString()
+        });
+      } catch (idxErr) {
+        console.error(`Error saving media metadata to Cloud DB for ${localFilename}:`, idxErr);
+      }
+    }
+
+    return {
+      url: finalUrl,
+      path: storagePath,
+      size: buffer.length,
+      mimeType,
+      filename: localFilename
+    };
+  } catch (err) {
+    console.error('Error in uploadMediaToFirebaseStorage:', err);
+    return null;
+  }
+}
+
+// --- REUSABLE HELPER: Save base64 media to disk and asynchronously to Firebase Storage ---
+function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media', entityId: string = 'general'): string | null {
   if (!dataUrl || typeof dataUrl !== 'string') {
     return null;
   }
   if (!dataUrl.startsWith('data:')) {
-    return dataUrl; // Already a clean static URL (/uploads/... or https://...)
+    return dataUrl; // Already a clean static or cloud URL
   }
   try {
     const commaIndex = dataUrl.indexOf(',');
@@ -5507,48 +5754,14 @@ function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media'): stri
     const filePath = path.join(uploadDir, filename);
     fs.writeFileSync(filePath, buffer);
 
-    // Concurrently upload chunks and metadata to Cloud DB (Firestore) for permanent cross-deployment durability
-    if (cloudDb.isActive) {
-      const chunkSize = 700 * 1024; // 700KB chunks safely within Firestore 1MB doc limit
-      const totalChunks = Math.ceil(buffer.length / chunkSize);
-
-      (async () => {
-        try {
-          // 1. Save metadata index doc
-          await cloudDb.setDoc('media_storage', filename, {
-            filename,
-            totalChunks,
-            size: buffer.length,
-            mimeType,
-            uploadedAt: new Date().toISOString()
-          });
-
-          // 2. Save all chunk documents in parallel
-          const chunkWrites: Promise<void>[] = [];
-          for (let i = 0; i < totalChunks; i++) {
-            const start = i * chunkSize;
-            const end = Math.min(start + chunkSize, buffer.length);
-            const chunkBuffer = buffer.subarray(start, end);
-            const chunkBase64 = chunkBuffer.toString('base64');
-            const chunkDocId = `${filename}_chunk_${i}`;
-            chunkWrites.push(
-              cloudDb.setDoc('media_storage', chunkDocId, {
-                filename,
-                chunkIndex: i,
-                totalChunks,
-                base64: chunkBase64,
-                mimeType,
-                uploadedAt: new Date().toISOString()
-              })
-            );
-          }
-          await Promise.all(chunkWrites);
-          console.log(`☁️ Permanent media sync complete: Stored ${filename} (${totalChunks} chunks, ${buffer.length} bytes) to Cloud Firestore.`);
-        } catch (mediaErr) {
-          console.error(`❌ Error syncing media ${filename} to Cloud DB:`, mediaErr);
-        }
-      })().catch(e => console.error(`Unhandled error in Cloud DB media chunking for ${filename}:`, e));
-    }
+    // Asynchronously push to Firebase Storage for permanent cloud persistence
+    (async () => {
+      try {
+        await uploadMediaToFirebaseStorage(buffer, prefix, entityId, mimeType);
+      } catch (bgErr) {
+        console.error(`Background Firebase Storage upload error for ${filename}:`, bgErr);
+      }
+    })().catch(() => {});
 
     return `/uploads/${filename}`;
   } catch (err) {
@@ -5557,24 +5770,41 @@ function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media'): stri
   }
 }
 
-// --- MEDIA UPLOAD ENDPOINT (Saves base64 media to server disk, keeping database small) ---
-app.post('/api/zone/upload', (req, res) => {
-  const userId = req.headers.authorization;
-  if (!userId) {
-    return res.status(401).json({ error: 'Mag-login muna.' });
-  }
+// --- MEDIA UPLOAD ENDPOINT (Uploads directly to Firebase Storage with permanent download URL) ---
+app.post('/api/zone/upload', async (req, res) => {
+  const userId = req.headers.authorization || 'user-anonymous';
+  const { dataUrl, category = 'media', entityId } = req.body;
 
-  const { dataUrl } = req.body;
-  if (!dataUrl || !dataUrl.startsWith('data:')) {
+  if (!dataUrl || typeof dataUrl !== 'string') {
     return res.status(400).json({ error: 'Walang valid media data na natanggap.' });
   }
 
-  const uploadedUrl = saveBase64ToUploadFile(dataUrl, 'media');
-  if (!uploadedUrl) {
-    return res.status(500).json({ error: 'Hindi naisulat ang media file sa server.' });
+  if (!dataUrl.startsWith('data:')) {
+    // Already a remote/cloud URL
+    return res.json({ success: true, url: dataUrl });
   }
 
-  res.json({ success: true, url: uploadedUrl });
+  try {
+    const uploadRes = await uploadMediaToFirebaseStorage(dataUrl, category, entityId || userId);
+    if (!uploadRes || !uploadRes.url) {
+      throw new Error('Hindi matagumpay ang upload sa Firebase Storage.');
+    }
+
+    res.json({
+      success: true,
+      url: uploadRes.url,
+      storagePath: uploadRes.path,
+      size: uploadRes.size,
+      mimeType: uploadRes.mimeType
+    });
+  } catch (err: any) {
+    console.error('Error in /api/zone/upload:', err);
+    const fallbackUrl = saveBase64ToUploadFile(dataUrl, category, entityId || userId);
+    if (fallbackUrl) {
+      return res.json({ success: true, url: fallbackUrl });
+    }
+    res.status(500).json({ error: 'Hindi naisulat ang media file sa server.' });
+  }
 });
 
 // --- DYNAMIC GCASH QR CODE SERVICE WITH CLOUD FIRESTORE DURA-BACKUP ---
@@ -5649,6 +5879,9 @@ app.post('/api/admin/update-qr', async (req, res) => {
       fs.writeFileSync(path.join(distDir, 'admin_gcash_qr.png'), buffer);
     }
 
+    // Save persistently to Firebase Storage
+    uploadMediaToFirebaseStorage(buffer, 'app-settings', 'admin_gcash_qr', mimeType).catch(() => {});
+
     // Save persistently to Firestore
     if (cloudDb.isActive) {
       await cloudDb.setDoc('app_settings', 'gcash_qr', {
@@ -5667,7 +5900,7 @@ app.post('/api/admin/update-qr', async (req, res) => {
   }
 });
 
-// Dynamic Interceptor for serving uploads with transparent Firestore Chunk recovery
+// Dynamic Interceptor for serving uploads with transparent Firebase Storage & Firestore recovery
 app.get('/uploads/:filename', async (req, res) => {
   const filename = req.params.filename;
   const uploadDir = path.join(process.cwd(), 'uploads');
@@ -5678,33 +5911,59 @@ app.get('/uploads/:filename', async (req, res) => {
     return res.sendFile(filePath);
   }
 
-  // 2. If physical file was wiped out by a server restart/redeploy, dynamically reconstruct from Firestore
+  // 2. If physical file was wiped by a server restart/redeploy, dynamically recover from Firebase Storage / Firestore
   if (cloudDb.isActive) {
     try {
-      console.log(`🔍 Media Recovery: Checking Cloud DB media_storage for ${filename}...`);
+      console.log(`🔍 Media Recovery: Checking Cloud Storage / Firestore for ${filename}...`);
       
-      // Strategy A: Direct metadata lookup (Fastest & 100% reliable)
       const metaDoc = await cloudDb.getDoc('media_storage', filename);
-      if (metaDoc && metaDoc.totalChunks) {
-        const totalChunks = Number(metaDoc.totalChunks) || 1;
-        const chunkFetchers: Promise<any>[] = [];
-        for (let i = 0; i < totalChunks; i++) {
-          chunkFetchers.push(cloudDb.getDoc('media_storage', `${filename}_chunk_${i}`));
+      if (metaDoc) {
+        // Direct Firebase Storage URL redirect
+        if (metaDoc.downloadUrl && metaDoc.downloadUrl.startsWith('http')) {
+          console.log(`✅ Media Recovery: Redirecting to permanent Firebase Storage URL for ${filename}`);
+          return res.redirect(metaDoc.downloadUrl);
         }
-        const chunkDocs = await Promise.all(chunkFetchers);
-        const validChunks = chunkDocs.filter(c => c && c.base64);
 
-        if (validChunks.length === totalChunks) {
-          validChunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
-          const bufferChunks = validChunks.map(c => Buffer.from(c.base64, 'base64'));
-          const fileBuffer = Buffer.concat(bufferChunks);
-
-          if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
+        // Firebase Storage storagePath check
+        if (metaDoc.storagePath && fbStorageInstance) {
+          try {
+            const fileRef = webStorageRef(fbStorageInstance, metaDoc.storagePath);
+            const freshUrl = await webGetDownloadURL(fileRef);
+            if (freshUrl) {
+              console.log(`✅ Media Recovery: Fresh Firebase Storage URL retrieved for ${filename}`);
+              return res.redirect(freshUrl);
+            }
+          } catch (stErr) {
+            console.warn(`Firebase Storage fetch attempt for ${metaDoc.storagePath} warning:`, stErr);
           }
-          fs.writeFileSync(filePath, fileBuffer);
-          console.log(`✅ Media Recovery: Successfully restored ${filename} (${fileBuffer.length} bytes, ${totalChunks} chunks) from Cloud DB.`);
-          return res.sendFile(filePath);
+        }
+
+        // Chunk document recovery
+        if (metaDoc.totalChunks) {
+          const totalChunks = Number(metaDoc.totalChunks) || 1;
+          const chunkFetchers: Promise<any>[] = [];
+          for (let i = 0; i < totalChunks; i++) {
+            chunkFetchers.push(cloudDb.getDoc('media_storage', `${filename}_chunk_${i}`));
+          }
+          const chunkDocs = await Promise.all(chunkFetchers);
+          const validChunks = chunkDocs.filter(c => c && c.base64);
+
+          if (validChunks.length === totalChunks) {
+            validChunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+            const bufferChunks = validChunks.map(c => Buffer.from(c.base64, 'base64'));
+            const fileBuffer = Buffer.concat(bufferChunks);
+
+            if (!fs.existsSync(uploadDir)) {
+              fs.mkdirSync(uploadDir, { recursive: true });
+            }
+            fs.writeFileSync(filePath, fileBuffer);
+            console.log(`✅ Media Recovery: Successfully restored ${filename} (${fileBuffer.length} bytes, ${totalChunks} chunks) from Cloud DB.`);
+            
+            // Migrate to Firebase Storage for permanent future access
+            uploadMediaToFirebaseStorage(fileBuffer, 'media', 'migrated', metaDoc.mimeType).catch(() => {});
+
+            return res.sendFile(filePath);
+          }
         }
       }
 
@@ -5730,7 +5989,7 @@ app.get('/uploads/:filename', async (req, res) => {
   }
 
   // Fallback if not found on disk or Firestore
-  res.status(404).send('Not Found');
+  res.status(404).send('Media Not Found');
 });
 
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
@@ -9014,7 +9273,7 @@ app.post('/api/va/claim-500-reward', (req, res) => {
 });
 
 // 5. POST /api/va/subscribe - Subscribe to ₱100/mo Paid Banner Plan
-app.post('/api/va/subscribe', (req, res) => {
+app.post('/api/va/subscribe', checkIdempotency, (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -9932,7 +10191,7 @@ app.all('/api/shop/cart/clear', (req, res) => {
 });
 
 // 12g. POST /api/shop/checkout - Shopee-style Checkout with GCash or Wallet balance
-app.post('/api/shop/checkout', (req, res) => {
+app.post('/api/shop/checkout', checkIdempotency, (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
