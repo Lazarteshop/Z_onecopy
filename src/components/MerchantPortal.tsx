@@ -15,7 +15,9 @@ import {
   Sparkles,
   ArrowRight,
   RefreshCw,
-  Award
+  Award,
+  QrCode,
+  Download
 } from 'lucide-react';
 import { MerchantAd } from '../types';
 import AICommercialPlayer from './AICommercialPlayer';
@@ -513,49 +515,93 @@ export default function MerchantPortal({
                 </div>
               </div>
 
-              {/* GCASH PAYMENT GUIDE */}
-              <div className="bg-indigo-50/70 border border-indigo-150 rounded-2xl p-4.5 space-y-3">
-                <h4 className="font-extrabold text-xs text-indigo-950 flex items-center gap-1.5 uppercase tracking-wide">
-                  <Wallet className="w-4 h-4 text-indigo-600" />
-                  <span>Gabay sa Pagbabayad (GCash)</span>
-                </h4>
-                <div className="text-[11px] text-indigo-900 font-semibold leading-relaxed space-y-2">
+              {/* GCASH PAYMENT GUIDE WITH OFFICIAL QR CODE */}
+              <div className="bg-indigo-50/70 border border-indigo-150 rounded-2xl p-4.5 space-y-4">
+                <div className="flex items-center justify-between border-b border-indigo-100 pb-2.5">
+                  <h4 className="font-extrabold text-xs text-indigo-950 flex items-center gap-1.5 uppercase tracking-wide">
+                    <Wallet className="w-4 h-4 text-indigo-600" />
+                    <span>{language === 'tl' ? 'Opisyal na GCash QR Payment' : 'Official GCash QR Payment'}</span>
+                  </h4>
+                  <span className="bg-indigo-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                    INSTAPAY / GCASH
+                  </span>
+                </div>
+
+                <div className="text-[11px] text-indigo-900 font-semibold leading-relaxed space-y-1.5">
                   <p>
-                    1. Magpadala ng <span className="font-black text-indigo-950">₱{PLANS.find(p => p.id === planId)?.price}</span> sa opisyal na GCash number ng admin:
+                    {language === 'tl' ? 'Bayaran ang halagang' : 'Pay the exact amount of'}{' '}
+                    <span className="font-black text-indigo-950 text-xs">₱{PLANS.find(p => p.id === planId)?.price}</span>{' '}
+                    {language === 'tl' ? 'gamit ang opisyal na QR Code sa ibaba:' : 'using the official QR Code below:'}
                   </p>
-                  <div className="bg-white border border-indigo-100 rounded-xl px-3 py-2 text-center text-xs font-black tracking-wider text-indigo-750">
-                    📱 0991-408-9646 (System Admin)
+                </div>
+
+                {/* QR Code Card Display */}
+                <div className="bg-white border border-indigo-150 rounded-2xl p-4 flex flex-col items-center justify-center text-center space-y-3 shadow-xs">
+                  <div className="relative p-2 bg-white rounded-xl border border-slate-200 shadow-sm group">
+                    <img 
+                      src="/admin_gcash_qr.png" 
+                      alt="Admin GCash QR Code" 
+                      className="w-48 h-48 object-contain rounded-lg mx-auto"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="absolute top-2 right-2 bg-emerald-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded-md shadow-xs">
+                      VERIFIED
+                    </div>
                   </div>
-                  <p>
-                    2. Piliin ang <span className="font-black">"Send Money"</span> o <span className="font-black">"Express Send"</span>.
-                  </p>
-                  <p>
-                    3. Matapos maproseso ang bayad, ilagay ang saktong detalye sa ibaba upang ma-verify ang transaksyon.
-                  </p>
+
+                  <div className="space-y-1 w-full max-w-xs">
+                    <span className="text-slate-500 font-bold text-[10px] block">
+                      {language === 'tl' ? 'I-scan sa GCash App (Scan QR)' : 'Scan in GCash App (Scan QR)'}
+                    </span>
+                    <a 
+                      href="/admin_gcash_qr.png" 
+                      download="Z-oneApp_Admin_GCash_QR.png"
+                      className="inline-flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 transition px-3.5 py-1.5 rounded-xl text-indigo-700 font-extrabold text-[10px] cursor-pointer shadow-2xs border border-indigo-200"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>{language === 'tl' ? 'I-download ang QR Code' : 'Download QR Code'}</span>
+                    </a>
+                  </div>
+                </div>
+
+                <div className="bg-white/80 border border-indigo-100 rounded-xl p-3 text-[10px] text-indigo-900 font-semibold space-y-1 leading-relaxed">
+                  <div className="flex items-center gap-1 font-bold text-indigo-950">
+                    <QrCode className="w-3 h-3 text-indigo-600" />
+                    <span>{language === 'tl' ? 'Mga Hakbang sa Pagbabayad:' : 'Steps to Complete Payment:'}</span>
+                  </div>
+                  <ol className="list-decimal pl-4 space-y-0.5 text-slate-600">
+                    <li>{language === 'tl' ? 'I-save o i-screenshot ang QR code sa itaas.' : 'Save or screenshot the QR code above.'}</li>
+                    <li>{language === 'tl' ? 'Buksan ang GCash > I-tap ang "QR" > Piliin ang "Upload QR".' : 'Open GCash > Tap "QR" > Select "Upload QR".'}</li>
+                    <li>{language === 'tl' ? 'Isumite ang bayad at kopyahin ang 13-digit Reference No.' : 'Send payment and copy the 13-digit Reference No.'}</li>
+                  </ol>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 pt-1">
                   <div className="space-y-1">
-                    <label className="text-[9px] font-black text-indigo-950 uppercase tracking-wide">Iyong GCash Mobile No.</label>
+                    <label className="text-[9px] font-black text-indigo-950 uppercase tracking-wide">
+                      {language === 'tl' ? 'Iyong GCash Mobile No.' : 'Your GCash Mobile No.'}
+                    </label>
                     <input
                       type="text"
                       required
                       placeholder="Hal: 09171234567"
                       value={gcashSenderNumber}
                       onChange={(e) => setGcashSenderNumber(e.target.value)}
-                      className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2.5 text-[11px] font-bold tracking-wider"
+                      className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2.5 text-[11px] font-bold tracking-wider focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[9px] font-black text-indigo-950 uppercase tracking-wide">GCash Reference Number</label>
+                    <label className="text-[9px] font-black text-indigo-950 uppercase tracking-wide">
+                      {language === 'tl' ? 'GCash Reference Number' : 'GCash Reference Number'}
+                    </label>
                     <input
                       type="text"
                       required
                       placeholder="13-digit code"
                       value={gcashReferenceNo}
                       onChange={(e) => setGcashReferenceNo(e.target.value)}
-                      className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2.5 text-[11px] font-bold tracking-wider"
+                      className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2.5 text-[11px] font-bold tracking-wider focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                     />
                   </div>
                 </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Briefcase,
   Users,
@@ -77,6 +77,7 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
     isInitialVA ? 'banners' : 'shop'
   );
   const [hasUserManuallySwitchedTab, setHasUserManuallySwitchedTab] = useState<boolean>(false);
+  const initialTabEvaluatedRef = useRef<boolean>(false);
   
   // Data states
   const [loading, setLoading] = useState<boolean>(true);
@@ -199,9 +200,11 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
   };
 
   // Fetch all data
-  const fetchData = async () => {
+  const fetchData = async (isSilent = false) => {
     try {
-      setLoading(true);
+      if (!isSilent) {
+        setLoading(true);
+      }
       const headers = { Authorization: `Bearer ${token}` };
 
       const [statusRes, leadRes, basketsRes, bannersRes, prodsRes, cartRes, ordersRes] = await Promise.all([
@@ -233,28 +236,35 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
       }
       if (ordersRes?.success) setOrders(ordersRes.orders || []);
 
-      // If user hasn't manually clicked any sub-tab yet, adjust based on confirmed VA status
-      if (!hasUserManuallySwitchedTab) {
-        const isConfirmedVA = Boolean(
-          user?.isAdmin ||
-          statusRes?.vaStats?.vaSubscription?.status === 'active' ||
-          user?.vaStats?.vaSubscription?.status === 'active' ||
-          (statusRes?.vaStats?.hiredCount && statusRes.vaStats.hiredCount > 0) ||
-          (user?.vaStats?.hiredCount && user.vaStats.hiredCount > 0) ||
-          (bannersRes?.banners && bannersRes.banners.length > 0)
-        );
-        setActiveSubTab(isConfirmedVA ? 'banners' : 'shop');
+      // Only set initial subtab once on first load if user has not manually switched
+      if (!initialTabEvaluatedRef.current) {
+        initialTabEvaluatedRef.current = true;
+        if (!hasUserManuallySwitchedTab) {
+          const isConfirmedVA = Boolean(
+            user?.isAdmin ||
+            statusRes?.vaStats?.vaSubscription?.status === 'active' ||
+            user?.vaStats?.vaSubscription?.status === 'active' ||
+            (statusRes?.vaStats?.hiredCount && statusRes.vaStats.hiredCount > 0) ||
+            (user?.vaStats?.hiredCount && user.vaStats.hiredCount > 0) ||
+            (bannersRes?.banners && bannersRes.banners.length > 0)
+          );
+          setActiveSubTab(isConfirmedVA ? 'banners' : 'shop');
+        }
       }
     } catch (err) {
       console.error('Failed to load VA & Shop data:', err);
     } finally {
-      setLoading(false);
+      if (!isSilent) {
+        setLoading(false);
+      }
     }
   };
 
-  const fetchOrdersOnly = async () => {
+  const fetchOrdersOnly = async (isSilent = false) => {
     try {
-      setOrdersLoading(true);
+      if (!isSilent) {
+        setOrdersLoading(true);
+      }
       const res = await fetch('/api/shop/orders', {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -265,21 +275,25 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
     } catch (err) {
       console.error('Failed to fetch orders:', err);
     } finally {
-      setOrdersLoading(false);
+      if (!isSilent) {
+        setOrdersLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 15000);
+    fetchData(false);
+    const interval = setInterval(() => {
+      fetchData(true);
+    }, 20000);
     return () => clearInterval(interval);
   }, [token]);
 
   useEffect(() => {
     if (activeSubTab === 'orders') {
-      fetchOrdersOnly();
+      fetchOrdersOnly(true);
     } else if (activeSubTab === 'banners') {
-      fetchData();
+      fetchData(true);
     }
   }, [activeSubTab]);
 

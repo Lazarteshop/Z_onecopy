@@ -2279,6 +2279,40 @@ export default function App() {
               <div className="w-full sm:w-auto overflow-x-auto no-scrollbar py-0.5 overscroll-x-contain touch-pan-x">
                 <div className="flex items-center gap-2 sm:gap-2.5 justify-start sm:justify-end min-w-max">
 
+                  {/* 🎬 WATCH REELS BUTTON */}
+                  <button
+                    onClick={() => {
+                      window.dispatchEvent(new Event('open-reels-widget'));
+                      const openBtn = document.getElementById('reels-widget-open-btn');
+                      if (openBtn) {
+                        openBtn.click();
+                      }
+                    }}
+                    className="bg-gradient-to-r from-pink-600 via-rose-600 to-rose-500 hover:from-pink-500 hover:to-rose-400 text-white font-black px-3 py-1.5 rounded-full shadow-md shadow-rose-600/30 border border-white/20 flex items-center gap-1.5 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none text-[10px] sm:text-[11px]"
+                    title="Watch Reels"
+                  >
+                    <Tv className="w-3.5 h-3.5 text-amber-300 animate-pulse shrink-0" />
+                    <span className="uppercase font-black tracking-wider whitespace-nowrap">
+                      🎬 WATCH REELS
+                    </span>
+                  </button>
+
+                  {/* 📶 MOBILE DATA SAVER BUTTON */}
+                  <button
+                    onClick={() => setShowDataSaverModal(true)}
+                    className={`${
+                      isDataSaverActive
+                        ? 'bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-500/50'
+                        : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700'
+                    } hover:scale-[1.02] active:scale-[0.98] text-[10px] sm:text-[11px] font-black px-2.5 sm:px-3 py-1.5 rounded-full transition flex items-center gap-1.5 cursor-pointer shrink-0 shadow-sm select-none`}
+                    title="Mobile Data Saver Settings"
+                  >
+                    <Smartphone className={`w-3.5 h-3.5 shrink-0 ${isDataSaverActive ? 'text-amber-400 animate-pulse' : 'text-slate-400'}`} />
+                    <span className="whitespace-nowrap">
+                      {isDataSaverActive ? '📶 Data Saver: ON' : '📶 Data Saver: OFF'}
+                    </span>
+                  </button>
+
                   {/* 🔔 Background Push Notifications Button */}
                   <button
                     onClick={() => {
@@ -2300,40 +2334,6 @@ export default function App() {
                       {notificationPermission === 'granted'
                         ? (language === 'tl' ? '🔔 Notif: Aktibo' : '🔔 Notif: Active')
                         : (language === 'tl' ? '🔔 I-on ang Notif' : '🔔 Enable Notif')}
-                    </span>
-                  </button>
-
-                  {/* 📶 MOBILE DATA SAVER BUTTON */}
-                  <button
-                    onClick={() => setShowDataSaverModal(true)}
-                    className={`${
-                      isDataSaverActive
-                        ? 'bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-500/50'
-                        : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700'
-                    } hover:scale-[1.02] active:scale-[0.98] text-[10px] sm:text-[11px] font-black px-2.5 sm:px-3 py-1.5 rounded-full transition flex items-center gap-1.5 cursor-pointer shrink-0 shadow-sm select-none`}
-                    title="Mobile Data Saver Settings"
-                  >
-                    <Smartphone className={`w-3.5 h-3.5 shrink-0 ${isDataSaverActive ? 'text-amber-400 animate-pulse' : 'text-slate-400'}`} />
-                    <span className="whitespace-nowrap">
-                      {isDataSaverActive ? '📶 Data Saver: ON' : '📶 Data Saver: OFF'}
-                    </span>
-                  </button>
-
-                  {/* 🎬 WATCH REELS BUTTON */}
-                  <button
-                    onClick={() => {
-                      window.dispatchEvent(new Event('open-reels-widget'));
-                      const openBtn = document.getElementById('reels-widget-open-btn');
-                      if (openBtn) {
-                        openBtn.click();
-                      }
-                    }}
-                    className="bg-gradient-to-r from-pink-600 via-rose-600 to-rose-500 hover:from-pink-500 hover:to-rose-400 text-white font-black px-3 py-1.5 rounded-full shadow-md shadow-rose-600/30 border border-white/20 flex items-center gap-1.5 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none text-[10px] sm:text-[11px]"
-                    title="Watch Reels"
-                  >
-                    <Tv className="w-3.5 h-3.5 text-amber-300 animate-pulse shrink-0" />
-                    <span className="uppercase font-black tracking-wider whitespace-nowrap">
-                      🎬 WATCH REELS
                     </span>
                   </button>
 
