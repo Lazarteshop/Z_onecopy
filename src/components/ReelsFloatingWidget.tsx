@@ -37,6 +37,7 @@ import {
   Info
 } from 'lucide-react';
 import { ReelVideo, ReelRedemption } from '../types';
+import { idbStorage } from '../utils/idbStorage';
 
 interface ReelsFloatingWidgetProps {
   reels: ReelVideo[];
@@ -166,6 +167,26 @@ export default function ReelsFloatingWidget({
   useEffect(() => {
     setLocalTokens(userTokens);
   }, [userTokens]);
+
+  // Cache only lightweight reels metadata, thumbnails, IDs and safe references (no raw video binaries)
+  useEffect(() => {
+    if (reels && reels.length > 0) {
+      const metadataOnly = reels.map(r => ({
+        id: r.id,
+        title: r.title,
+        platform: r.platform,
+        embedUrl: r.embedUrl,
+        url: r.url,
+        likes: r.likes,
+        views: r.views,
+        likedBy: r.likedBy,
+        watchedBy: r.watchedBy,
+        addedBy: r.addedBy,
+        createdAt: r.createdAt
+      }));
+      idbStorage.set('reels_metadata_cache', metadataOnly);
+    }
+  }, [reels]);
 
   const fetchUserReelsActivity = async () => {
     if (!currentUserId) return;

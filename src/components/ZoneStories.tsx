@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { ZoneStory, StoryViewerDetail } from '../types';
 import { dataSaver } from '../utils/dataSaver';
+import { idbStorage } from '../utils/idbStorage';
 
 interface ZoneStoriesProps {
   user: {
@@ -83,6 +84,13 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
   const [replyText, setReplyText] = useState('');
   const [isSendingReply, setIsSendingReply] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Cache stories in IndexedDB
+  useEffect(() => {
+    if (stories && stories.length > 0) {
+      idbStorage.set('zone_stories_cache', stories);
+    }
+  }, [stories]);
 
   // Helper to check if logged-in user has viewed a specific story
   const isStoryViewedByMe = (story: ZoneStory) => {

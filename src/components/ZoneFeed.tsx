@@ -49,9 +49,10 @@ import {
   Smartphone,
   ExternalLink
 } from 'lucide-react';
-import { ZonePost, GroupChat, GroupMessage, ZoneStory } from '../types';
+import { ZonePost, GroupChat, GroupMessage, ZoneStory, DirectMessage } from '../types';
 import { ZoneStories } from './ZoneStories';
 import { dataSaver } from '../utils/dataSaver';
+import { idbStorage } from '../utils/idbStorage';
 import { DataSaverSettingsModal } from './DataSaverSettingsModal';
 
 interface ZoneFeedProps {
@@ -739,27 +740,90 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     fetchStories();
   }, [token]);
 
-  // Poll for incoming Direct Messages and Call invitations in real-time (Unified fast call)
+  // Last sync timestamp tracker for Delta Synchronization
+  const lastSyncTimeRef = React.useRef<string>('');
+
+  // Initial load from IndexedDB cache for instant zero-wait rendering
+  useEffect(() => {
+    idbStorage.get<ZonePost[]>('zone_posts_cache').then(cached => {
+      if (cached && cached.length > 0) {
+        setPosts(cached);
+      }
+    });
+
+    idbStorage.get<any[]>(`zone_dms_${user.id}`).then(cached => {
+      if (cached && cached.length > 0) {
+        setDmMessages(cached);
+      }
+    });
+
+    idbStorage.get<GroupMessage[]>(`zone_group_msgs_${user.id}`).then(cached => {
+      if (cached && cached.length > 0) {
+        setGroupMessages(cached);
+      }
+    });
+  }, [user.id]);
+
+  // Poll for incoming Direct Messages, Groups, and Calls with Delta Synchronization
   useEffect(() => {
     if (!token) return;
     let active = true;
 
     const pollDmsAndCalls = async () => {
-      // Don't waste CPU or network when tab is hidden or user minimized browser
-      if (document.hidden) return;
+      // Don't waste CPU or network when tab is hidden or user minimized browser unless in active call
+      if (document.hidden && !activeCallSession) return;
 
       try {
-        const syncRes = await fetch('/api/zone/sync', {
+        const syncUrl = lastSyncTimeRef.current 
+          ? `/api/zone/sync?since=${encodeURIComponent(lastSyncTimeRef.current)}` 
+          : '/api/zone/sync';
+
+        const syncRes = await fetch(syncUrl, {
           headers: { 'Authorization': token }
         });
         if (syncRes.ok && active) {
           const syncData = await syncRes.json();
-          setDmMessages(syncData.messages || []);
+          
+          if (syncData.serverTime) {
+            lastSyncTimeRef.current = syncData.serverTime;
+          }
+
+          if (syncData.isDelta) {
+            // Delta update: merge newly received messages efficiently
+            if (Array.isArray(syncData.messages) && syncData.messages.length > 0) {
+              setDmMessages(prev => {
+                const map = new Map(prev.map(m => [m.id, m]));
+                syncData.messages.forEach((m: any) => map.set(m.id, m));
+                const merged = Array.from(map.values());
+                idbStorage.set(`zone_dms_${user.id}`, merged);
+                return merged;
+              });
+            }
+
+            if (Array.isArray(syncData.groupMessages) && syncData.groupMessages.length > 0) {
+              setGroupMessages(prev => {
+                const map = new Map(prev.map(m => [m.id, m]));
+                syncData.groupMessages.forEach((m: any) => map.set(m.id, m));
+                const merged = Array.from(map.values());
+                idbStorage.set(`zone_group_msgs_${user.id}`, merged);
+                return merged;
+              });
+            }
+          } else {
+            // Full snapshot update
+            const msgs = syncData.messages || [];
+            const gmsgs = syncData.groupMessages || [];
+            setDmMessages(msgs);
+            setGroupMessages(gmsgs);
+            idbStorage.set(`zone_dms_${user.id}`, msgs);
+            idbStorage.set(`zone_group_msgs_${user.id}`, gmsgs);
+          }
+
           setGroupChats(syncData.groups || []);
-          setGroupMessages(syncData.groupMessages || []);
           setOnlineUserIds(syncData.onlineUserIds || []);
           if (syncData.stories) {
             setStories(syncData.stories);
+            idbStorage.set('zone_stories_cache', syncData.stories);
           }
 
           // Sync active group chat data if open
@@ -1093,7 +1157,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     }
   };
 
-  // Handler to send message
+  // Handler to send message (Optimistic local rendering + IndexedDB Outbox + Auto-retry)
   const handleSendDm = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!activeDmUser || (!newDmText.trim() && !dmMediaPreview)) return;
@@ -1103,8 +1167,9 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     const mediaToSend = dmMediaPreview;
     const mediaTypeToSend = dmMediaType;
 
-    const optimisticMsg = {
+    const optimisticMsg: DirectMessage = {
       id: tempId,
+      clientMessageId: tempId,
       senderId: user.id,
       senderName: user.name,
       senderAvatar: user.avatar || '👤',
@@ -1117,17 +1182,37 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       createdAt: new Date().toISOString()
     };
 
-    // Optimistically update messages list immediately (0ms delay)
+    // Immediate optimistic local rendering
     setDmMessages(prev => [...prev, optimisticMsg]);
     setNewDmText('');
     setDmMediaPreview(null);
     if (dmFileInputRef.current) dmFileInputRef.current.value = '';
 
-    // Instantly scroll to bottom for maximum responsive feeling
+    // Scroll to bottom
     setTimeout(() => {
       const chatContainer = document.getElementById('dm-chat-scroll');
       if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
     }, 20);
+
+    // Save to IndexedDB Outbox for safe background persistence
+    let outboxId = '';
+    try {
+      outboxId = await idbStorage.addToOutbox({
+        type: 'message',
+        url: '/api/zone/messages',
+        method: 'POST',
+        payload: {
+          clientMessageId: tempId,
+          tempId,
+          receiverId: activeDmUser.id,
+          text: originalText,
+          mediaUrl: mediaToSend || undefined,
+          mediaType: mediaToSend ? mediaTypeToSend : undefined
+        }
+      });
+    } catch (e) {
+      console.warn('Could not add to IDB outbox:', e);
+    }
 
     try {
       let finalMediaUrl = mediaToSend;
@@ -1156,6 +1241,8 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           'Authorization': token
         },
         body: JSON.stringify({
+          clientMessageId: tempId,
+          tempId,
           receiverId: activeDmUser.id,
           text: originalText,
           mediaUrl: finalMediaUrl || undefined,
@@ -1165,23 +1252,24 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
       if (res.ok) {
         const data = await res.json();
-        // Replace temp message with server version
-        setDmMessages(prev => prev.map(msg => msg.id === tempId ? data.message : msg));
+        // Replace temp message with server version and remove from outbox
+        setDmMessages(prev => prev.map(msg => (msg.id === tempId || msg.clientMessageId === tempId) ? data.message : msg));
+        if (outboxId) {
+          await idbStorage.removeOutboxItem(outboxId);
+        }
       } else {
         const errData = await res.json();
-        // Remove temp message and restore text
-        setDmMessages(prev => prev.filter(msg => msg.id !== tempId));
-        setNewDmText(originalText);
-        setDmMediaPreview(mediaToSend);
-        triggerNotification(errData.error || 'Failed to send message', 'error');
+        // Keep in state and outbox for auto-retry if network, or notify if validation error
+        if (res.status === 400 || res.status === 403) {
+          setDmMessages(prev => prev.filter(msg => msg.id !== tempId && msg.clientMessageId !== tempId));
+          setNewDmText(originalText);
+          setDmMediaPreview(mediaToSend);
+          if (outboxId) await idbStorage.removeOutboxItem(outboxId);
+          triggerNotification(errData.error || 'Failed to send message', 'error');
+        }
       }
     } catch (err) {
-      console.error('Error sending DM:', err);
-      // Remove temp message and restore text
-      setDmMessages(prev => prev.filter(msg => msg.id !== tempId));
-      setNewDmText(originalText);
-      setDmMediaPreview(mediaToSend);
-      triggerNotification(language === 'tl' ? 'Koneksyon error sa pagpapadala ng mensahe.' : 'Network error sending message.', 'error');
+      console.warn('Network issue sending DM. Message preserved in outbox for retry:', err);
     }
   };
 
@@ -1517,16 +1605,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const fetchPosts = async (silent: boolean = false) => {
     if (!silent) setLoadingPosts(true);
     try {
-      const res = await fetch('/api/zone/posts', {
-        headers: {
-          'Authorization': token
-        }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const loadedPosts = data.posts || [];
-        
-        // Optimize re-renders: Only update React state if the posts or their interactions actually changed!
+      const applyLoadedPosts = (loadedPosts: ZonePost[]) => {
         setPosts(prev => {
           const isSame = prev.length === loadedPosts.length &&
             prev.every((post, idx) => {
@@ -1543,15 +1622,34 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           }
           return loadedPosts;
         });
+      };
 
-        try {
-          localStorage.setItem('zone_posts_cache', JSON.stringify(loadedPosts.slice(0, 40)));
-        } catch (cacheErr) {
-          console.error('Failed to write posts to localStorage cache:', cacheErr);
+      const result = await dataSaver.swrFetch<ZonePost[]>(
+        'zone_posts_cache',
+        async () => {
+          const res = await fetch('/api/zone/posts', {
+            headers: {
+              'Authorization': token
+            }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            return data.posts || [];
+          }
+          throw new Error(`Failed to fetch posts: ${res.status}`);
+        },
+        (freshPosts) => {
+          if (freshPosts && Array.isArray(freshPosts)) {
+            applyLoadedPosts(freshPosts);
+          }
         }
+      );
+
+      if (result && Array.isArray(result)) {
+        applyLoadedPosts(result);
       }
     } catch (err) {
-      console.error('Failed to load posts', err);
+      console.error('Failed to load posts via swrFetch', err);
     } finally {
       if (!silent) setLoadingPosts(false);
     }
@@ -1743,9 +1841,74 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     );
   };
 
+  // General Background Outbox Sync Engine for Direct Messages & Group Messages
+  const isSyncingIdbOutboxRef = React.useRef(false);
+
+  const processPendingIdbOutboxItems = React.useCallback(async () => {
+    if (isSyncingIdbOutboxRef.current || !navigator.onLine || !token) return;
+    isSyncingIdbOutboxRef.current = true;
+
+    try {
+      const items = await idbStorage.getOutboxItems();
+      for (const item of items) {
+        try {
+          if (item.type === 'message') {
+            let finalMediaUrl = item.payload.mediaUrl;
+            if (finalMediaUrl && finalMediaUrl.startsWith('data:')) {
+              const uploadRes = await fetch('/api/zone/upload', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': token
+                },
+                body: JSON.stringify({ dataUrl: finalMediaUrl })
+              });
+              if (uploadRes.ok) {
+                const uploadData = await uploadRes.json();
+                finalMediaUrl = uploadData.url;
+              } else {
+                continue;
+              }
+            }
+
+            const res = await fetch(item.url, {
+              method: item.method || 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': token
+              },
+              body: JSON.stringify({
+                ...item.payload,
+                clientMessageId: item.payload.clientMessageId || item.payload.tempId,
+                mediaUrl: finalMediaUrl || undefined
+              })
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              await idbStorage.removeOutboxItem(item.id);
+              const matchingTempId = item.payload.clientMessageId || item.payload.tempId;
+              if (data.message && matchingTempId) {
+                setDmMessages(prev => prev.map(m => (m.id === matchingTempId || m.clientMessageId === matchingTempId) ? data.message : m));
+                setGroupMessages(prev => prev.map(m => (m.id === matchingTempId || m.clientMessageId === matchingTempId) ? data.message : m));
+              }
+            }
+          }
+        } catch (itemErr) {
+          console.warn('Outbox retry note:', itemErr);
+        }
+      }
+    } catch (e) {
+      console.error('Error syncing IDB outbox:', e);
+    } finally {
+      isSyncingIdbOutboxRef.current = false;
+    }
+  }, [token]);
+
   // Auto-retry all failed posts on network state change to online
   useEffect(() => {
     const handleOnline = () => {
+      processPendingIdbOutboxItems();
       const failedItems = outbox.filter(x => x.isFailed);
       if (failedItems.length > 0) {
         triggerNotification(
@@ -1761,11 +1924,12 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     };
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
-  }, [outbox, token]);
+  }, [outbox, token, processPendingIdbOutboxItems]);
 
   // Periodic automatic retry handler for transient poor network cases
   useEffect(() => {
     const interval = setInterval(() => {
+      processPendingIdbOutboxItems();
       const failedItems = outbox.filter(x => x.isFailed);
       if (failedItems.length > 0 && navigator.onLine) {
         failedItems.forEach(item => {
@@ -1775,9 +1939,9 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           }
         });
       }
-    }, 25000);
+    }, 20000);
     return () => clearInterval(interval);
-  }, [outbox, token]);
+  }, [outbox, token, processPendingIdbOutboxItems]);
 
   // Memoized visible posts list (merges server posts and outbox items)
   const visiblePosts = React.useMemo(() => {
@@ -2372,6 +2536,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
     const optimisticMsg: GroupMessage = {
       id: tempId,
+      clientMessageId: tempId,
       groupId: activeGroupChat.id,
       senderId: user.id,
       senderName: user.name,
@@ -2382,6 +2547,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       createdAt: new Date().toISOString()
     };
 
+    // Immediate optimistic local rendering
     setGroupMessages(prev => [...prev, optimisticMsg]);
     setNewGroupMessageText('');
     setGcMediaPreview(null);
@@ -2391,6 +2557,25 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       const chatContainer = document.getElementById('gc-chat-scroll');
       if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
     }, 20);
+
+    // Save to IndexedDB Outbox for safe background persistence & retry
+    let outboxId = '';
+    try {
+      outboxId = await idbStorage.addToOutbox({
+        type: 'message',
+        url: `/api/zone/groups/${activeGroupChat.id}/messages`,
+        method: 'POST',
+        payload: {
+          clientMessageId: tempId,
+          tempId,
+          text: originalText,
+          mediaUrl: mediaToSend || undefined,
+          mediaType: mediaToSend ? mediaTypeToSend : undefined
+        }
+      });
+    } catch (e) {
+      console.warn('Could not add group message to outbox:', e);
+    }
 
     try {
       let finalMediaUrl = mediaToSend;
@@ -2419,6 +2604,8 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           'Authorization': token
         },
         body: JSON.stringify({
+          clientMessageId: tempId,
+          tempId,
           text: originalText,
           mediaUrl: finalMediaUrl || undefined,
           mediaType: finalMediaUrl ? mediaTypeToSend : undefined
@@ -2427,19 +2614,22 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
       if (res.ok) {
         const data = await res.json();
-        setGroupMessages(prev => prev.map(msg => msg.id === tempId ? data.message : msg));
+        setGroupMessages(prev => prev.map(msg => (msg.id === tempId || msg.clientMessageId === tempId) ? data.message : msg));
+        if (outboxId) {
+          await idbStorage.removeOutboxItem(outboxId);
+        }
       } else {
         const errData = await res.json();
-        setGroupMessages(prev => prev.filter(msg => msg.id !== tempId));
-        setNewGroupMessageText(originalText);
-        setGcMediaPreview(mediaToSend);
-        triggerNotification(errData.error || 'Failed to send group message', 'error');
+        if (res.status === 400 || res.status === 403) {
+          setGroupMessages(prev => prev.filter(msg => msg.id !== tempId && msg.clientMessageId !== tempId));
+          setNewGroupMessageText(originalText);
+          setGcMediaPreview(mediaToSend);
+          if (outboxId) await idbStorage.removeOutboxItem(outboxId);
+          triggerNotification(errData.error || 'Failed to send group message', 'error');
+        }
       }
     } catch (err) {
-      setGroupMessages(prev => prev.filter(msg => msg.id !== tempId));
-      setNewGroupMessageText(originalText);
-      setGcMediaPreview(mediaToSend);
-      triggerNotification(language === 'tl' ? 'Koneksyon error sa pagpapadala.' : 'Connection error.', 'error');
+      console.warn('Network issue sending group message. Kept in outbox for auto-retry:', err);
     }
   };
 

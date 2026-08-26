@@ -179,6 +179,7 @@ export interface ReelTokenSubscription {
 
 export interface DirectMessage {
   id: string;
+  clientMessageId?: string;
   senderId: string;
   senderName: string;
   senderAvatar: string;
@@ -209,6 +210,7 @@ export interface GroupChat {
 
 export interface GroupMessage {
   id: string;
+  clientMessageId?: string;
   groupId: string;
   senderId: string;
   senderName: string;

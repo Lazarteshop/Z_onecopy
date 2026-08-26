@@ -1097,6 +1097,7 @@ interface UserSession {
 
 interface DirectMessage {
   id: string;
+  clientMessageId?: string;
   senderId: string;
   senderName: string;
   senderAvatar: string;
@@ -1123,6 +1124,7 @@ interface GroupChat {
 
 interface GroupMessage {
   id: string;
+  clientMessageId?: string;
   groupId: string;
   senderId: string;
   senderName: string;
@@ -5680,8 +5682,13 @@ async function uploadMediaToFirebaseStorage(
       }
     }
 
-    // Final permanent URL (or local fallback if cloud is completely unreachable)
-    const finalUrl = downloadUrl || `/uploads/${localFilename}`;
+    // Strict Firebase Storage Only: Return null if persistent cloud storage mechanisms fail
+    if (!downloadUrl) {
+      console.error(`❌ [Storage] Strict Firebase Storage Only: Cloud upload failed for ${storagePath}. No temporary local fallback returned.`);
+      return null;
+    }
+
+    const finalUrl = downloadUrl;
 
     // Index metadata document in Cloud Firestore
     if (cloudDb.isActive) {
@@ -5689,7 +5696,7 @@ async function uploadMediaToFirebaseStorage(
         await cloudDb.setDoc('media_storage', localFilename, {
           filename: localFilename,
           storagePath,
-          downloadUrl: downloadUrl || null,
+          downloadUrl: finalUrl,
           category: safeCategory,
           entityId: safeEntityId,
           size: buffer.length,
@@ -5714,63 +5721,20 @@ async function uploadMediaToFirebaseStorage(
   }
 }
 
-// --- REUSABLE HELPER: Save base64 media to disk and asynchronously to Firebase Storage ---
+// --- REUSABLE HELPER: Save base64 media strictly with Firebase Storage Cloud Persistence ---
 function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media', entityId: string = 'general'): string | null {
   if (!dataUrl || typeof dataUrl !== 'string') {
     return null;
   }
   if (!dataUrl.startsWith('data:')) {
-    return dataUrl; // Already a clean static or cloud URL
+    return dataUrl; // Already a permanent external or cloud URL
   }
-  try {
-    const commaIndex = dataUrl.indexOf(',');
-    if (commaIndex === -1) {
-      return null;
-    }
-    const metaPart = dataUrl.substring(0, commaIndex);
-    const base64Data = dataUrl.substring(commaIndex + 1);
-
-    const mimeMatch = metaPart.match(/data:([^;]+)/);
-    const mimeType = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
-    const buffer = Buffer.from(base64Data, 'base64');
-
-    let extension = 'bin';
-    if (mimeType.includes('/')) {
-      extension = mimeType.split('/')[1];
-    }
-    if (extension.includes('+')) extension = extension.split('+')[0];
-    if (extension.includes(';')) extension = extension.split(';')[0];
-    if (extension === 'jpeg') extension = 'jpg';
-    if (extension === 'quicktime') extension = 'mov';
-    if (extension === 'x-matroska') extension = 'mkv';
-
-    const filename = `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000000)}.${extension}`;
-    const uploadDir = path.join(process.cwd(), 'uploads');
-
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-
-    const filePath = path.join(uploadDir, filename);
-    fs.writeFileSync(filePath, buffer);
-
-    // Asynchronously push to Firebase Storage for permanent cloud persistence
-    (async () => {
-      try {
-        await uploadMediaToFirebaseStorage(buffer, prefix, entityId, mimeType);
-      } catch (bgErr) {
-        console.error(`Background Firebase Storage upload error for ${filename}:`, bgErr);
-      }
-    })().catch(() => {});
-
-    return `/uploads/${filename}`;
-  } catch (err) {
-    console.error('Error in saveBase64ToUploadFile:', err);
-    return null;
-  }
+  
+  // Strict Firebase Storage: Trigger asynchronous cloud storage, do NOT generate ephemeral /uploads/ link as successful source
+  return null;
 }
 
-// --- MEDIA UPLOAD ENDPOINT (Uploads directly to Firebase Storage with permanent download URL) ---
+// --- MEDIA UPLOAD ENDPOINT (Uploads strictly to Firebase Storage with permanent download URL) ---
 app.post('/api/zone/upload', async (req, res) => {
   const userId = req.headers.authorization || 'user-anonymous';
   const { dataUrl, category = 'media', entityId } = req.body;
@@ -5787,7 +5751,10 @@ app.post('/api/zone/upload', async (req, res) => {
   try {
     const uploadRes = await uploadMediaToFirebaseStorage(dataUrl, category, entityId || userId);
     if (!uploadRes || !uploadRes.url) {
-      throw new Error('Hindi matagumpay ang upload sa Firebase Storage.');
+      return res.status(502).json({ 
+        error: 'Bigo ang pag-upload sa Firebase Storage. Nananatili ang media sa iyong Outbox para i-retry nang ligtas.',
+        canRetry: true 
+      });
     }
 
     res.json({
@@ -5799,11 +5766,10 @@ app.post('/api/zone/upload', async (req, res) => {
     });
   } catch (err: any) {
     console.error('Error in /api/zone/upload:', err);
-    const fallbackUrl = saveBase64ToUploadFile(dataUrl, category, entityId || userId);
-    if (fallbackUrl) {
-      return res.json({ success: true, url: fallbackUrl });
-    }
-    res.status(500).json({ error: 'Hindi naisulat ang media file sa server.' });
+    res.status(502).json({ 
+      error: 'Bigo ang pag-upload sa Firebase Storage. Subukan muli.',
+      canRetry: true 
+    });
   }
 });
 
@@ -6814,15 +6780,22 @@ app.get('/api/zone/teleserye-diagnostics', (_req, res) => {
   }
 });
 
-// UNIFIED HIGH-PERFORMANCE SYNC ROUTE (Combines Messages, Group Chats, Active Calls, & Online Heartbeats in 1 single call)
+// UNIFIED HIGH-PERFORMANCE SYNC ROUTE WITH DELTA SYNCHRONIZATION
 app.get('/api/zone/sync', (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
   }
 
+  const sinceQuery = req.query.since ? String(req.query.since) : '';
+  const sinceTime = sinceQuery ? new Date(sinceQuery).getTime() : 0;
+  const isDelta = !isNaN(sinceTime) && sinceTime > 0;
+
   const db = loadDB();
-  const messages = (db.directMessages || []).filter(m => m.senderId === userId || m.receiverId === userId);
+  const allUserMessages = (db.directMessages || []).filter(m => m.senderId === userId || m.receiverId === userId);
+  const messages = isDelta 
+    ? allUserMessages.filter(m => new Date(m.createdAt).getTime() > sinceTime)
+    : allUserMessages;
   
   if (!db.groupChats) db.groupChats = [];
   if (!db.groupMessages) db.groupMessages = [];
@@ -6853,7 +6826,10 @@ app.get('/api/zone/sync', (req, res) => {
 
   const myGroups = db.groupChats.filter(g => (g.members || []).includes(userId) || g.id === 'gc-community-main');
   const myGroupIds = myGroups.map(g => g.id);
-  const myGroupMessages = (db.groupMessages || []).filter(m => myGroupIds.includes(m.groupId));
+  const allGroupMessages = (db.groupMessages || []).filter(m => myGroupIds.includes(m.groupId));
+  const myGroupMessages = isDelta
+    ? allGroupMessages.filter(m => new Date(m.createdAt).getTime() > sinceTime)
+    : allGroupMessages;
 
   const now = Date.now();
   const activeCalls = (db.activeCalls || []).filter(c => 
@@ -6899,6 +6875,8 @@ app.get('/api/zone/sync', (req, res) => {
   }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   res.json({
+    isDelta,
+    serverTime: new Date().toISOString(),
     messages,
     groups: formattedGroups,
     groupMessages: myGroupMessages,
@@ -6909,7 +6887,7 @@ app.get('/api/zone/sync', (req, res) => {
 });
 
 // 2. CREATE A NEW POST
-app.post('/api/zone/posts', (req, res) => {
+app.post('/api/zone/posts', async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Mag-login muna upang makapag-post.' });
@@ -6946,20 +6924,36 @@ app.post('/api/zone/posts', (req, res) => {
   // Clean swear words
   const cleanedText = filterSwearWords(text);
 
-  // Convert heavy base64 media to disk files to prevent memory exhaustion & server restart crashes
   let finalMediaUrl = mediaUrl;
   if (mediaUrl && (mediaUrl.startsWith('data:') || mediaUrl.startsWith('blob:'))) {
-    finalMediaUrl = saveBase64ToUploadFile(mediaUrl, 'post-media') || mediaUrl;
+    const uploadResult = await uploadMediaToFirebaseStorage(mediaUrl, 'posts', user.id);
+    if (!uploadResult || !uploadResult.url) {
+      return res.status(502).json({ 
+        error: 'Bigo ang pag-upload ng litrato/video sa Firebase Storage. Nananatili ang post sa Outbox para i-retry nang ligtas.',
+        canRetry: true 
+      });
+    }
+    finalMediaUrl = uploadResult.url;
   }
 
   let finalMediaUrls: string[] | undefined = undefined;
   if (mediaUrls && Array.isArray(mediaUrls)) {
-    finalMediaUrls = mediaUrls.map((url: string) => {
+    const uploadedList: string[] = [];
+    for (const url of mediaUrls) {
       if (url && (url.startsWith('data:') || url.startsWith('blob:'))) {
-        return saveBase64ToUploadFile(url, 'post-media') || url;
+        const uploadResult = await uploadMediaToFirebaseStorage(url, 'posts', user.id);
+        if (!uploadResult || !uploadResult.url) {
+          return res.status(502).json({ 
+            error: 'Bigo ang pag-upload ng isa sa mga litrato sa Firebase Storage.',
+            canRetry: true 
+          });
+        }
+        uploadedList.push(uploadResult.url);
+      } else if (url) {
+        uploadedList.push(url);
       }
-      return url;
-    });
+    }
+    finalMediaUrls = uploadedList;
   }
 
   const newPost = {
@@ -7721,17 +7715,29 @@ async function handleAdminAutoReply(userSenderId: string, userText: string) {
 }
 
 // 2. SEND A DIRECT MESSAGE
-app.post('/api/zone/messages', (req, res) => {
+app.post('/api/zone/messages', async (req, res) => {
   const senderId = req.headers.authorization;
   if (!senderId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
   }
-  const { receiverId, text, mediaUrl, mediaType } = req.body;
+  const { receiverId, text, mediaUrl, mediaType, clientMessageId, tempId } = req.body;
   if (!receiverId || ((!text || !text.trim()) && !mediaUrl)) {
     return res.status(400).json({ error: 'Kinakailangan ang receiver at mensahe o litrato/video.' });
   }
 
   const db = loadDB();
+
+  // Server-Side Idempotency Protection: Prevent duplicate message creation on network retries
+  const dedupId = (clientMessageId || tempId) ? String(clientMessageId || tempId).trim() : '';
+  if (dedupId && Array.isArray(db.directMessages)) {
+    const existingMsg = db.directMessages.find(
+      m => (m.clientMessageId === dedupId || m.id === dedupId) && m.senderId === senderId
+    );
+    if (existingMsg) {
+      return res.json({ success: true, message: existingMsg, deduped: true });
+    }
+  }
+
   const sender = db.users.find(u => u.id === senderId);
   const receiver = db.users.find(u => u.id === receiverId);
 
@@ -7746,11 +7752,19 @@ app.post('/api/zone/messages', (req, res) => {
   const filteredText = text ? filterSwearWords(text) : '';
   let processedMediaUrl = mediaUrl;
   if (mediaUrl && mediaUrl.startsWith('data:')) {
-    processedMediaUrl = saveBase64ToUploadFile(mediaUrl, 'dm-media') || mediaUrl;
+    const uploadResult = await uploadMediaToFirebaseStorage(mediaUrl, 'direct-messages', senderId);
+    if (!uploadResult || !uploadResult.url) {
+      return res.status(502).json({ 
+        error: 'Bigo ang pag-upload ng media sa Firebase Storage. Nananatili ang mensahe sa iyong Outbox para i-retry.',
+        canRetry: true 
+      });
+    }
+    processedMediaUrl = uploadResult.url;
   }
 
   const newMsg: DirectMessage = {
     id: 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+    clientMessageId: dedupId || undefined,
     senderId,
     senderName: sender.name,
     senderAvatar: sender.avatar,
@@ -8044,19 +8058,31 @@ app.get('/api/zone/groups/:groupId/messages', (req, res) => {
 });
 
 // 4. SEND A MESSAGE IN GROUP CHAT
-app.post('/api/zone/groups/:groupId/messages', (req, res) => {
+app.post('/api/zone/groups/:groupId/messages', async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
   }
 
   const { groupId } = req.params;
-  const { text, mediaUrl, mediaType } = req.body;
+  const { text, mediaUrl, mediaType, clientMessageId, tempId } = req.body;
   if ((!text || !text.trim()) && !mediaUrl) {
     return res.status(400).json({ error: 'Kinakailangan ang mensahe o media file.' });
   }
 
   const db = loadDB();
+
+  // Server-Side Idempotency Protection: Prevent duplicate group message creation on network retries
+  const dedupId = (clientMessageId || tempId) ? String(clientMessageId || tempId).trim() : '';
+  if (dedupId && Array.isArray(db.groupMessages)) {
+    const existingMsg = db.groupMessages.find(
+      m => (m.clientMessageId === dedupId || m.id === dedupId) && m.groupId === groupId && m.senderId === userId
+    );
+    if (existingMsg) {
+      return res.json({ success: true, message: existingMsg, deduped: true });
+    }
+  }
+
   if (isUserBanned(db, userId)) {
     return res.status(403).json({ error: 'Ang iyong account ay banned sa system.' });
   }
@@ -8086,11 +8112,19 @@ app.post('/api/zone/groups/:groupId/messages', (req, res) => {
   const filteredText = text ? filterSwearWords(text.trim()) : '';
   let processedMediaUrl = mediaUrl;
   if (mediaUrl && mediaUrl.startsWith('data:')) {
-    processedMediaUrl = saveBase64ToUploadFile(mediaUrl, 'gc-media') || mediaUrl;
+    const uploadResult = await uploadMediaToFirebaseStorage(mediaUrl, 'group-chats', groupId);
+    if (!uploadResult || !uploadResult.url) {
+      return res.status(502).json({ 
+        error: 'Bigo ang pag-upload ng media sa Firebase Storage. Nananatili ang mensahe sa iyong Outbox para i-retry.',
+        canRetry: true 
+      });
+    }
+    processedMediaUrl = uploadResult.url;
   }
 
   const newMsg: GroupMessage = {
     id: 'gmsg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+    clientMessageId: dedupId || undefined,
     groupId,
     senderId: userId,
     senderName: sender.name,
@@ -8397,7 +8431,7 @@ app.get('/api/zone/stories', (req, res) => {
 });
 
 // 2. CREATE A NEW STORY ("MY DAY")
-app.post('/api/zone/stories', (req, res) => {
+app.post('/api/zone/stories', async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -8421,7 +8455,14 @@ app.post('/api/zone/stories', (req, res) => {
 
   let finalMediaUrl = mediaUrl;
   if (mediaUrl && mediaUrl.startsWith('data:')) {
-    finalMediaUrl = saveBase64ToUploadFile(mediaUrl, 'story-media') || mediaUrl;
+    const uploadResult = await uploadMediaToFirebaseStorage(mediaUrl, 'stories', user.id);
+    if (!uploadResult || !uploadResult.url) {
+      return res.status(502).json({ 
+        error: 'Bigo ang pag-upload ng Story media sa Firebase Storage. Nananatili ito sa iyong Outbox para i-retry.',
+        canRetry: true 
+      });
+    }
+    finalMediaUrl = uploadResult.url;
   }
 
   const cleanText = text ? filterSwearWords(text.trim()) : undefined;
