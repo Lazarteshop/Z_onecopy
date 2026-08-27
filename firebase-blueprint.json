@@ -103,6 +103,21 @@
         "comments": { "type": "array" },
         "createdAt": { "type": "string" }
       }
+    },
+    "MediaStorage": {
+      "title": "MediaStorage",
+      "description": "Metadata-only index of permanent media files stored in Cloud Storage.",
+      "type": "object",
+      "properties": {
+        "filename": { "type": "string" },
+        "storagePath": { "type": "string" },
+        "downloadUrl": { "type": "string" },
+        "category": { "type": "string" },
+        "entityId": { "type": "string" },
+        "size": { "type": "number" },
+        "mimeType": { "type": "string" },
+        "uploadedAt": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -129,6 +144,10 @@
     "posts/{postId}": {
       "schema": "Post",
       "description": "Collection of community feed posts."
+    },
+    "media_storage/{filename}": {
+      "schema": "MediaStorage",
+      "description": "Metadata index for permanent cloud storage media files."
     }
   }
 }

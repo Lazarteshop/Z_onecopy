@@ -18,12 +18,7 @@ import {
   query as webQuery,
   where as webWhere
 } from 'firebase/firestore';
-import { 
-  getStorage as getWebStorage, 
-  ref as webStorageRef, 
-  uploadBytes as webUploadBytes, 
-  getDownloadURL as webGetDownloadURL 
-} from 'firebase/storage';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { INITIAL_CAMPAIGNS } from './src/data/campaigns';
 import { GoogleGenAI } from '@google/genai';
 import webpush from 'web-push';
@@ -836,34 +831,77 @@ let cloudDb: CloudDBAdapter = {
 let isFirestoreActive = false;
 let firestore: any = null;
 
-const rawServiceAccountValue = process.env.FIREBASE_SERVICE_ACCOUNT?.trim();
-let serviceAccountData: any = null;
+// --- SECURE GOOGLE CLOUD / FIREBASE SERVICE ACCOUNT CREDENTIALS ENGINE ---
+function resolveServiceAccountCredentials(): { data: any | null; source: string | null } {
+  const envCandidates = [
+    { name: 'FIREBASE_SERVICE_ACCOUNT', value: process.env.FIREBASE_SERVICE_ACCOUNT },
+    { name: 'GOOGLE_APPLICATION_CREDENTIALS', value: process.env.GOOGLE_APPLICATION_CREDENTIALS },
+    { name: 'FIREBASE_SERVICE_ACCOUNT_KEY', value: process.env.FIREBASE_SERVICE_ACCOUNT_KEY },
+    { name: 'SERVICE_ACCOUNT_KEY', value: process.env.SERVICE_ACCOUNT_KEY },
+    { name: 'GCS_KEY', value: process.env.GCS_KEY }
+  ];
 
-if (rawServiceAccountValue) {
-  if (rawServiceAccountValue.startsWith('{')) {
-    try {
-      serviceAccountData = JSON.parse(rawServiceAccountValue);
-      console.log('🗝️ GCP: Na-parse ang raw JSON credentials mula sa FIREBASE_SERVICE_ACCOUNT environment variable.');
-    } catch (err) {
-      console.error('⚠️ GCP: Failed parsing inline JSON from FIREBASE_SERVICE_ACCOUNT. Susubukan nating basahin bilang file path...', err);
-    }
-  }
-  
-  if (!serviceAccountData) {
-    try {
-      if (fs.existsSync(rawServiceAccountValue)) {
-        const fileContent = fs.readFileSync(rawServiceAccountValue, 'utf-8');
-        serviceAccountData = JSON.parse(fileContent);
-        console.log('🗝️ GCP: Matagumpay na nabasa ang credentials mula sa tinuturong file path sa FIREBASE_SERVICE_ACCOUNT:', rawServiceAccountValue);
+  for (const candidate of envCandidates) {
+    const raw = candidate.value?.trim();
+    if (!raw) continue;
+
+    // 1. Raw inline JSON string
+    if (raw.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed.client_email || parsed.project_id) {
+          return { data: parsed, source: `${candidate.name} (inline JSON)` };
+        }
+      } catch (err: any) {
+        console.error(`⚠️ [Auth][WARN] Failed to parse inline JSON from ${candidate.name}:`, err.message);
       }
-    } catch (err) {
-      console.error('⚠️ GCP: Failed reading service account file from specfied path:', err);
+    }
+
+    // 2. Base64-encoded JSON string
+    try {
+      const decoded = Buffer.from(raw, 'base64').toString('utf-8').trim();
+      if (decoded.startsWith('{')) {
+        const parsed = JSON.parse(decoded);
+        if (parsed.client_email || parsed.project_id) {
+          return { data: parsed, source: `${candidate.name} (base64 decoded)` };
+        }
+      }
+    } catch (_) {}
+
+    // 3. File path on container/filesystem
+    try {
+      if (fs.existsSync(raw)) {
+        const fileContent = fs.readFileSync(raw, 'utf-8').trim();
+        if (fileContent.startsWith('{')) {
+          const parsed = JSON.parse(fileContent);
+          if (parsed.client_email || parsed.project_id) {
+            return { data: parsed, source: `${candidate.name} (file: ${raw})` };
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error(`⚠️ [Auth][WARN] Failed reading credentials file from ${raw}:`, err.message);
     }
   }
+
+  return { data: null, source: null };
 }
 
+const { data: serviceAccountData, source: credentialSource } = resolveServiceAccountCredentials();
 const hasServiceAccount = !!serviceAccountData;
 const isOnGoogleCloud = !!process.env.K_SERVICE || !!process.env.GOOGLE_APPLICATION_CREDENTIALS;
+
+// Sanitized Startup Verification Log (Strictly NO private keys or tokens logged)
+if (hasServiceAccount) {
+  const maskedEmail = serviceAccountData.client_email 
+    ? `${serviceAccountData.client_email.split('@')[0].substring(0, 8)}...` 
+    : 'service-account';
+  console.log(`🗝️ [Storage][AUTH_CONFIG] Secure Service Account credentials loaded from ${credentialSource}. Project: ${serviceAccountData.project_id || 'default'}, Client: ${maskedEmail}, HasPrivateKey: ${!!serviceAccountData.private_key}`);
+} else if (isOnGoogleCloud) {
+  console.log('☁️ [Storage][AUTH_CONFIG] Google Cloud Run container detected (Metadata Server IAM authentication available).');
+} else {
+  console.log('ℹ️ [Storage][AUTH_CONFIG] No explicit Service Account found in environment variables. Will attempt Metadata server fallback if running in GCP.');
+}
 
 // 1. First attempt: @google-cloud/firestore (GCP IAM / Service Account)
 if (hasServiceAccount || isOnGoogleCloud) {
@@ -922,9 +960,8 @@ if (hasServiceAccount || isOnGoogleCloud) {
   }
 }
 
-// 2. Firebase Web Client SDK and Storage initialization
+// 2. Firebase Web Client SDK initialization
 let fbAppInstance: any = null;
-let fbStorageInstance: any = null;
 
 try {
   fbAppInstance = getFirebaseApps().length > 0 ? getFirebaseApp() : initFirebaseApp({
@@ -935,16 +972,8 @@ try {
     messagingSenderId: firebaseConfigObj.messagingSenderId,
     appId: firebaseConfigObj.appId
   });
-
-  if (fbAppInstance) {
-    const bucket = firebaseConfigObj.storageBucket
-      ? (firebaseConfigObj.storageBucket.startsWith('gs://') ? firebaseConfigObj.storageBucket : `gs://${firebaseConfigObj.storageBucket}`)
-      : undefined;
-    fbStorageInstance = getWebStorage(fbAppInstance, bucket);
-    console.log(`☁️ Firebase Storage Web SDK adapter initialized (Bucket: ${firebaseConfigObj.storageBucket || 'default'}).`);
-  }
 } catch (fbInitErr) {
-  console.warn('⚠️ Firebase Web App / Storage initialization warning:', fbInitErr);
+  console.warn('⚠️ Firebase Web App initialization warning:', fbInitErr);
 }
 
 if (!cloudDb.isActive && fbAppInstance) {
@@ -5550,7 +5579,7 @@ app.get('/api/zone/online', (req, res) => {
   res.json({ onlineUserIds: onlineIds });
 });
 
-// --- PERMANENT FIREBASE STORAGE MEDIA ENGINE ---
+// --- PERMANENT CLOUDFLARE R2 S3-COMPATIBLE OBJECT STORAGE MEDIA ENGINE ---
 interface UploadResult {
   url: string;
   path: string;
@@ -5559,13 +5588,79 @@ interface UploadResult {
   filename: string;
 }
 
-async function uploadMediaToFirebaseStorage(
+interface StorageDetailedResult {
+  result: UploadResult | null;
+  status: number;
+  errorCode: string;
+  errorMessage: string;
+}
+
+let r2ClientInstance: S3Client | null = null;
+
+/**
+ * Initializes and returns a cached S3Client instance configured strictly for Cloudflare R2.
+ * Uses official Cloudflare S3 endpoint: https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com
+ * Credentials remain server-side only and are never exposed to the frontend.
+ */
+function getR2Client(): S3Client | null {
+  if (r2ClientInstance) return r2ClientInstance;
+
+  const accountId = (process.env.R2_ACCOUNT_ID || '').trim();
+  const accessKeyId = (process.env.R2_ACCESS_KEY_ID || '').trim();
+  const secretAccessKey = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
+
+  if (!accountId || !accessKeyId || !secretAccessKey) {
+    return null;
+  }
+
+  try {
+    r2ClientInstance = new S3Client({
+      region: 'auto',
+      endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+      credentials: {
+        accessKeyId,
+        secretAccessKey
+      }
+    });
+    console.log('⚡ [R2][AUTH] S3Client initialized successfully for Cloudflare R2 permanent media engine.');
+    return r2ClientInstance;
+  } catch (err: any) {
+    console.error('❌ [R2][AUTH_ERROR] Failed to initialize Cloudflare R2 S3Client:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Resolves the public/production media domain (e.g. https://media.z-oneapp.ph or configured custom domain).
+ */
+function getR2PublicDomain(): string {
+  const customDomain = (process.env.R2_PUBLIC_DOMAIN || '').trim();
+  if (customDomain) {
+    return customDomain.replace(/\/+$/, '');
+  }
+  return 'https://media.z-oneapp.ph';
+}
+
+/**
+ * Resolves the target Cloudflare R2 bucket name.
+ */
+function getR2BucketName(): string {
+  return (process.env.R2_BUCKET_NAME || 'z-oneapp-media').trim();
+}
+
+/**
+ * Uploads media strictly to authenticated Cloudflare R2 Object Storage.
+ * Saves ONLY metadata in Firestore (no binary). Never falls back to local disk /uploads/.
+ */
+async function uploadMediaToCloudflareR2Detailed(
   dataUrlOrBuffer: string | Buffer,
   category: 'stories' | 'posts' | 'group-chats' | 'direct-messages' | 'reels' | 'media' | 'va-banners' | string = 'media',
   entityId: string = 'general',
   customMimeType?: string
-): Promise<UploadResult | null> {
-  if (!dataUrlOrBuffer) return null;
+): Promise<StorageDetailedResult> {
+  if (!dataUrlOrBuffer) {
+    return { result: null, status: 400, errorCode: 'INVALID_DATA', errorMessage: 'No media data provided.' };
+  }
 
   try {
     let buffer: Buffer;
@@ -5575,29 +5670,36 @@ async function uploadMediaToFirebaseStorage(
       if (!dataUrlOrBuffer.startsWith('data:')) {
         // If it's already an external or cloud URL, return it directly
         return {
-          url: dataUrlOrBuffer,
-          path: '',
-          size: 0,
-          mimeType: 'application/octet-stream',
-          filename: path.basename(dataUrlOrBuffer)
+          result: {
+            url: dataUrlOrBuffer,
+            path: '',
+            size: 0,
+            mimeType: 'application/octet-stream',
+            filename: path.basename(dataUrlOrBuffer)
+          },
+          status: 200,
+          errorCode: '',
+          errorMessage: ''
         };
       }
 
       const commaIndex = dataUrlOrBuffer.indexOf(',');
-      if (commaIndex === -1) return null;
+      if (commaIndex === -1) {
+        return { result: null, status: 400, errorCode: 'INVALID_BASE64', errorMessage: 'Malformed base64 data URL.' };
+      }
 
       const metaPart = dataUrlOrBuffer.substring(0, commaIndex);
       const base64Data = dataUrlOrBuffer.substring(commaIndex + 1);
       const mimeMatch = metaPart.match(/data:([^;]+)/);
       if (mimeMatch) {
-        mimeType = mimeMatch[1];
+        mimeType = mimeMatch[1].toLowerCase();
       }
       buffer = Buffer.from(base64Data, 'base64');
     } else {
       buffer = dataUrlOrBuffer;
     }
 
-    // Determine clean file extension
+    // Determine clean file extension for JPG, PNG, MP4, WEBP, GIF, MOV, etc.
     let extension = 'bin';
     if (mimeType.includes('/')) {
       extension = mimeType.split('/')[1];
@@ -5613,113 +5715,112 @@ async function uploadMediaToFirebaseStorage(
     const safeEntityId = (entityId || 'general').replace(/[^a-zA-Z0-9_-]/g, '_');
     const safeCategory = (category || 'media').replace(/[^a-zA-Z0-9_-]/g, '-');
     
-    // Deterministic cloud storage path: stories/{userId}/{uniqueFileId}, posts/{userId}/{uniqueFileId}, etc.
-    const storagePath = `${safeCategory}/${safeEntityId}/${uniqueFileId}`;
+    // Deterministic permanent storage key in R2
+    const storageKey = `${safeCategory}/${safeEntityId}/${uniqueFileId}`;
     const localFilename = `${safeCategory}-${safeEntityId}-${uniqueFileId}`;
 
-    // Cache locally to disk for instant serving if needed
-    const uploadDir = path.join(process.cwd(), 'uploads');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
+    const sizeBytes = buffer.length;
+    const sizeKB = (sizeBytes / 1024).toFixed(1);
+
+    const s3Client = getR2Client();
+    if (!s3Client) {
+      const errMsg = 'Cloudflare R2 credentials are not configured in server environment. Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.';
+      console.error(`❌ [R2][AUTH_ERROR] Cannot upload ${storageKey}. Missing R2 credentials.`);
+      return { result: null, status: 401, errorCode: 'R2_CONFIG_MISSING', errorMessage: errMsg };
     }
-    const localFilePath = path.join(uploadDir, localFilename);
+
+    const bucketName = getR2BucketName();
+    const publicDomain = getR2PublicDomain();
+
+    // Perform PutObjectCommand to Cloudflare R2
     try {
-      fs.writeFileSync(localFilePath, buffer);
-    } catch (fsErr) {
-      console.warn('Local disk write warning:', fsErr);
-    }
-
-    let downloadUrl: string | null = null;
-
-    // Strategy 1: Firebase Storage Web SDK (Direct tokenized URL generation)
-    if (fbStorageInstance) {
-      try {
-        const fileRef = webStorageRef(fbStorageInstance, storagePath);
-        const snapshot = await webUploadBytes(fileRef, buffer, {
-          contentType: mimeType,
-          customMetadata: {
-            uploadedAt: new Date().toISOString(),
-            category: safeCategory,
-            entityId: safeEntityId,
-            size: String(buffer.length)
-          }
-        });
-        downloadUrl = await webGetDownloadURL(snapshot.ref);
-        console.log(`☁️ Firebase Storage Web SDK Upload Success: ${storagePath} -> ${downloadUrl}`);
-      } catch (sdkErr) {
-        console.warn(`⚠️ Firebase Storage Web SDK upload error for ${storagePath}:`, sdkErr);
-      }
-    }
-
-    // Strategy 2: Firebase Storage REST API fallback
-    if (!downloadUrl && firebaseConfigObj.storageBucket) {
-      try {
-        const bucket = firebaseConfigObj.storageBucket;
-        const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(storagePath)}`;
-        const res = await fetch(uploadUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': mimeType
-          },
-          body: buffer
-        });
-
-        if (res.ok) {
-          const resData: any = await res.json();
-          const token = resData.downloadTokens;
-          if (token) {
-            downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(storagePath)}?alt=media&token=${token}`;
-          } else {
-            downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(storagePath)}?alt=media`;
-          }
-          console.log(`☁️ Firebase Storage REST API Upload Success: ${storagePath} -> ${downloadUrl}`);
-        } else {
-          const errText = await res.text();
-          console.warn(`⚠️ Firebase Storage REST API returned status ${res.status}:`, errText);
-        }
-      } catch (restErr) {
-        console.warn(`⚠️ Firebase Storage REST API error for ${storagePath}:`, restErr);
-      }
-    }
-
-    // Strict Firebase Storage Only: Return null if persistent cloud storage mechanisms fail
-    if (!downloadUrl) {
-      console.error(`❌ [Storage] Strict Firebase Storage Only: Cloud upload failed for ${storagePath}. No temporary local fallback returned.`);
-      return null;
-    }
-
-    const finalUrl = downloadUrl;
-
-    // Index metadata document in Cloud Firestore
-    if (cloudDb.isActive) {
-      try {
-        await cloudDb.setDoc('media_storage', localFilename, {
-          filename: localFilename,
-          storagePath,
-          downloadUrl: finalUrl,
+      const putCommand = new PutObjectCommand({
+        Bucket: bucketName,
+        Key: storageKey,
+        Body: buffer,
+        ContentType: mimeType,
+        Metadata: {
           category: safeCategory,
           entityId: safeEntityId,
+          uploadedAt: new Date().toISOString()
+        }
+      });
+
+      const putRes = await s3Client.send(putCommand);
+      const isSuccess = !!putRes;
+
+      if (!isSuccess) {
+        console.error(`❌ [R2][UPLOAD_FAILED] PutObject returned empty response for ${storageKey}`);
+        return { result: null, status: 502, errorCode: 'R2_UPLOAD_EMPTY', errorMessage: 'Cloudflare R2 returned empty response.' };
+      }
+
+      const permanentMediaUrl = `${publicDomain}/${storageKey}`;
+      console.log(`✅ [R2][SUCCESS] Permanent Media Upload: ${storageKey} -> ${permanentMediaUrl} (${sizeKB} KB, MIME: ${mimeType})`);
+
+      // Index metadata-only document in Cloud Firestore (URL / metadata only, strictly NO binary data)
+      if (cloudDb.isActive) {
+        try {
+          await cloudDb.setDoc('media_storage', localFilename, {
+            filename: localFilename,
+            storageKey,
+            storagePath: storageKey,
+            downloadUrl: permanentMediaUrl,
+            category: safeCategory,
+            entityId: safeEntityId,
+            size: buffer.length,
+            mimeType,
+            storageEngine: 'cloudflare-r2',
+            uploadedAt: new Date().toISOString()
+          });
+        } catch (idxErr: any) {
+          console.error(`⚠️ [R2][METADATA_WARNING] Error indexing media metadata in Cloud Firestore for ${localFilename}:`, idxErr.message);
+        }
+      }
+
+      return {
+        result: {
+          url: permanentMediaUrl,
+          path: storageKey,
           size: buffer.length,
           mimeType,
-          uploadedAt: new Date().toISOString()
-        });
-      } catch (idxErr) {
-        console.error(`Error saving media metadata to Cloud DB for ${localFilename}:`, idxErr);
-      }
+          filename: localFilename
+        },
+        status: 200,
+        errorCode: '',
+        errorMessage: ''
+      };
+    } catch (s3Err: any) {
+      const httpStatus = s3Err.$metadata?.httpStatusCode || 502;
+      const errorCode = s3Err.name || s3Err.Code || 'R2_S3_ERROR';
+      const errorMsg = s3Err.message || 'Error communicating with Cloudflare R2 storage.';
+      
+      console.error(`❌ [R2][ERROR] S3 PutObject failed for ${storageKey}. Status: ${httpStatus}, Code: ${errorCode}, Message: ${errorMsg}`);
+      return {
+        result: null,
+        status: httpStatus >= 400 && httpStatus <= 599 ? httpStatus : 502,
+        errorCode,
+        errorMessage: errorMsg
+      };
     }
-
-    return {
-      url: finalUrl,
-      path: storagePath,
-      size: buffer.length,
-      mimeType,
-      filename: localFilename
-    };
-  } catch (err) {
-    console.error('Error in uploadMediaToFirebaseStorage:', err);
-    return null;
+  } catch (err: any) {
+    console.error('❌ [R2][FATAL_ERROR] Unexpected error in uploadMediaToCloudflareR2Detailed:', err.message);
+    return { result: null, status: 500, errorCode: 'FATAL_ERROR', errorMessage: err.message };
   }
 }
+
+async function uploadMediaToCloudflareR2(
+  dataUrlOrBuffer: string | Buffer,
+  category: 'stories' | 'posts' | 'group-chats' | 'direct-messages' | 'reels' | 'media' | 'va-banners' | string = 'media',
+  entityId: string = 'general',
+  customMimeType?: string
+): Promise<UploadResult | null> {
+  const res = await uploadMediaToCloudflareR2Detailed(dataUrlOrBuffer, category, entityId, customMimeType);
+  return res.result;
+}
+
+// Backward-compatible alias for existing sync/utility callers
+const uploadMediaToFirebaseStorage = uploadMediaToCloudflareR2;
+const uploadMediaToFirebaseStorageDetailed = uploadMediaToCloudflareR2Detailed;
 
 // --- REUSABLE HELPER: Save base64 media strictly with Firebase Storage Cloud Persistence ---
 function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media', entityId: string = 'general'): string | null {
@@ -5730,13 +5831,27 @@ function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media', entit
     return dataUrl; // Already a permanent external or cloud URL
   }
   
-  // Strict Firebase Storage: Trigger asynchronous cloud storage, do NOT generate ephemeral /uploads/ link as successful source
+  // Strict Cloud Storage: Do NOT generate ephemeral /uploads/ link as successful source
   return null;
 }
 
-// --- MEDIA UPLOAD ENDPOINT (Uploads strictly to Firebase Storage with permanent download URL) ---
+// --- MEDIA UPLOAD ENDPOINT (Uploads strictly to authenticated Cloud Storage with permanent download URL) ---
 app.post('/api/zone/upload', async (req, res) => {
-  const userId = req.headers.authorization || 'user-anonymous';
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ error: 'Kailangan ng login upang mag-upload ng media.' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === authHeader);
+  const adminId = authHeader;
+  const isAdmin = adminId === 'admin-id' || adminId === 'admin_secret_danilo_2026' || (user && user.isAdmin);
+
+  if (!user && !isAdmin) {
+    return res.status(401).json({ error: 'Unauthorized: Hindi nahanap ang authenticated user.' });
+  }
+
+  const userId = user ? user.id : 'admin';
   const { dataUrl, category = 'media', entityId } = req.body;
 
   if (!dataUrl || typeof dataUrl !== 'string') {
@@ -5749,25 +5864,30 @@ app.post('/api/zone/upload', async (req, res) => {
   }
 
   try {
-    const uploadRes = await uploadMediaToFirebaseStorage(dataUrl, category, entityId || userId);
-    if (!uploadRes || !uploadRes.url) {
-      return res.status(502).json({ 
-        error: 'Bigo ang pag-upload sa Firebase Storage. Nananatili ang media sa iyong Outbox para i-retry nang ligtas.',
+    const uploadDetail = await uploadMediaToCloudflareR2Detailed(dataUrl, category, entityId || userId);
+    
+    if (!uploadDetail.result || !uploadDetail.result.url) {
+      const sanitizedStatus = uploadDetail.status || 502;
+      return res.status(sanitizedStatus).json({ 
+        error: 'Bigo ang pag-upload sa Cloudflare R2 Storage. Nananatili ang media sa iyong Outbox para i-retry nang ligtas.',
+        cloudStatus: uploadDetail.status,
+        cloudCode: uploadDetail.errorCode,
+        cloudError: uploadDetail.errorMessage,
         canRetry: true 
       });
     }
 
     res.json({
       success: true,
-      url: uploadRes.url,
-      storagePath: uploadRes.path,
-      size: uploadRes.size,
-      mimeType: uploadRes.mimeType
+      url: uploadDetail.result.url,
+      storagePath: uploadDetail.result.path,
+      size: uploadDetail.result.size,
+      mimeType: uploadDetail.result.mimeType
     });
   } catch (err: any) {
-    console.error('Error in /api/zone/upload:', err);
+    console.error('❌ [R2][ROUTE_ERROR] Error in /api/zone/upload:', err.message);
     res.status(502).json({ 
-      error: 'Bigo ang pag-upload sa Firebase Storage. Subukan muli.',
+      error: 'Bigo ang pag-upload sa Cloudflare R2 Storage. Subukan muli.',
       canRetry: true 
     });
   }
@@ -5884,24 +6004,10 @@ app.get('/uploads/:filename', async (req, res) => {
       
       const metaDoc = await cloudDb.getDoc('media_storage', filename);
       if (metaDoc) {
-        // Direct Firebase Storage URL redirect
+        // Direct permanent R2 / Cloud Storage URL redirect
         if (metaDoc.downloadUrl && metaDoc.downloadUrl.startsWith('http')) {
-          console.log(`✅ Media Recovery: Redirecting to permanent Firebase Storage URL for ${filename}`);
+          console.log(`✅ Media Recovery: Redirecting to permanent Cloud URL for ${filename}`);
           return res.redirect(metaDoc.downloadUrl);
-        }
-
-        // Firebase Storage storagePath check
-        if (metaDoc.storagePath && fbStorageInstance) {
-          try {
-            const fileRef = webStorageRef(fbStorageInstance, metaDoc.storagePath);
-            const freshUrl = await webGetDownloadURL(fileRef);
-            if (freshUrl) {
-              console.log(`✅ Media Recovery: Fresh Firebase Storage URL retrieved for ${filename}`);
-              return res.redirect(freshUrl);
-            }
-          } catch (stErr) {
-            console.warn(`Firebase Storage fetch attempt for ${metaDoc.storagePath} warning:`, stErr);
-          }
         }
 
         // Chunk document recovery
