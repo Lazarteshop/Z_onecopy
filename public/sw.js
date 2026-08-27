@@ -1,4 +1,4 @@
-const CACHE = "zone-v4";
+const CACHE = "zone-v5-instant";
 const MEDIA_CACHE = "zone-media-v2";
 const API_CACHE = "zone-api-v2";
 
@@ -12,6 +12,8 @@ const STATIC_ASSETS = [
 ];
 
 self.addEventListener("install", event => {
+  // Activate new SW immediately without waiting for user to close all tabs
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE).then(cache => {
       return Promise.allSettled(
@@ -19,7 +21,7 @@ self.addEventListener("install", event => {
       ).then(() => {
         console.log("SW: Cached default app shell assets");
       });
-    }).then(() => self.skipWaiting())
+    })
   );
 });
 
@@ -38,6 +40,12 @@ self.addEventListener("activate", event => {
   );
 });
 
+self.addEventListener("message", event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener("fetch", event => {
   if (!event.request.url.startsWith('http')) {
     return;
@@ -49,7 +57,10 @@ self.addEventListener("fetch", event => {
   }
 
   const url = new URL(event.request.url);
-  const isHTML = url.pathname === '/' || url.pathname.endsWith('.html');
+  const isNavigate = event.request.mode === 'navigate' || 
+                     url.pathname === '/' || 
+                     url.pathname.endsWith('.html') || 
+                     (event.request.headers.get('accept') && event.request.headers.get('accept').includes('text/html'));
   const isMedia = url.pathname.startsWith('/uploads/') || 
                   url.pathname.match(/\.(png|jpg|jpeg|webp|gif|svg|ico)$/i) || 
                   url.hostname.includes('unsplash.com') || 
@@ -72,22 +83,28 @@ self.addEventListener("fetch", event => {
     return;
   }
 
-  if (isHTML) {
-    // Stale-While-Revalidate for HTML App Shell: Instant load on slow networks, background cache update
+  if (isNavigate) {
+    // Network-First for HTML/Navigations: Always fetch the latest fresh version when online.
+    // Fallback to cache ONLY if network fails (offline).
     event.respondWith(
-      caches.open(CACHE).then(async (cache) => {
-        const cachedResponse = await cache.match(event.request);
-        const fetchPromise = fetch(event.request)
-          .then((networkResponse) => {
-            if (networkResponse && networkResponse.status === 200) {
-              cache.put(event.request, networkResponse.clone());
-            }
-            return networkResponse;
-          })
-          .catch(() => cachedResponse);
-
-        return cachedResponse || fetchPromise;
-      })
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const responseClone = networkResponse.clone();
+            caches.open(CACHE).then((cache) => {
+              cache.put(event.request, responseClone);
+            });
+          }
+          return networkResponse;
+        })
+        .catch(async () => {
+          const cachedResponse = await caches.match(event.request);
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+          const fallback = await caches.match('/index.html');
+          return fallback || Response.error();
+        })
     );
   } else if (isMedia) {
     // Cache-First for images & media to preserve mobile data bandwidth
