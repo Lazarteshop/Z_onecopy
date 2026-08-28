@@ -6199,12 +6199,12 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       </AnimatePresence>
 
       {/* 📥 FLOATING MESSAGES INBOX SHORTCUT (PERSISTENT ON ALL TABS) */}
-      <div className="fixed bottom-6 right-6 z-40">
+      <div className="fixed bottom-20 sm:bottom-6 right-4 sm:right-6 z-40">
         <motion.button
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           onClick={handleOpenInbox}
-          className="relative flex items-center justify-center w-14 h-14 rounded-full bg-gradient-to-r from-indigo-600 via-indigo-700 to-indigo-800 text-white shadow-2xl hover:from-indigo-700 hover:to-indigo-900 cursor-pointer border border-indigo-500 transition-colors"
+          className="relative flex items-center justify-center w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-gradient-to-r from-indigo-600 via-indigo-700 to-indigo-800 text-white shadow-2xl hover:from-indigo-700 hover:to-indigo-900 cursor-pointer border-2 border-white/80 transition-all"
           style={{
             background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 50%, #312e81 100%)',
             backgroundColor: '#4338ca',
@@ -6214,7 +6214,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         >
           <MessageSquare className="w-6 h-6 animate-pulse" />
           {totalUnreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-[11px] font-black text-white ring-3 ring-slate-900 animate-bounce">
+            <span className="absolute -top-1 -right-1 flex h-5 w-5 sm:h-6 sm:w-6 items-center justify-center rounded-full bg-red-500 text-[10px] sm:text-[11px] font-black text-white ring-2 ring-white animate-bounce">
               {totalUnreadCount}
             </span>
           )}

@@ -2206,6 +2206,8 @@ export default function App() {
                 isDataSaverActive={isDataSaverActive}
                 user={user}
                 stats={stats}
+                activityLogs={activityLogs}
+                withdrawals={withdrawals}
                 onOpenSpinWheel={() => setShowSpinModal(true)}
                 onOpenReferral={() => setActiveTab('earn')}
                 onOpenCommercials={() => setActiveCommercialCamp(campaigns.find(c => Boolean(c.aiCommercial)) || campaigns[0] || null)}

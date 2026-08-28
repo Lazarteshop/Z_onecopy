@@ -28,6 +28,8 @@ import {
 import { motion } from 'motion/react';
 import { soundEffects } from '../utils/audio';
 
+import { WithdrawalRequest, ActivityLog } from '../types';
+
 export type AppTabType = 'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop';
 
 export interface AppLauncherItem {
@@ -62,6 +64,8 @@ interface SmartphoneAppLauncherProps {
     totalTasksCompleted?: number;
     referralCount?: number;
   } | null;
+  activityLogs?: ActivityLog[];
+  withdrawals?: WithdrawalRequest[];
   onOpenSpinWheel?: () => void;
   onOpenReferral?: () => void;
   onOpenCommercials?: () => void;
@@ -81,6 +85,8 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
   isDataSaverActive = false,
   user,
   stats,
+  activityLogs = [],
+  withdrawals = [],
   onOpenSpinWheel,
   onOpenReferral,
   onOpenCommercials,
@@ -470,46 +476,123 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
             </button>
           </div>
 
-          <div className="divide-y divide-slate-100">
-            <div className="py-2 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
-                  <Globe className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                </div>
-                <div>
-                  <p className="text-[11px] sm:text-xs font-bold text-slate-800">{isTl ? 'Website Viewed (PPV Task)' : 'Website Viewed'}</p>
-                  <p className="text-[9px] sm:text-[10px] text-slate-400">Website Viewer Reward</p>
-                </div>
-              </div>
-              <span className="text-[11px] sm:text-xs font-black text-emerald-600 font-mono">+ ₱10.00</span>
-            </div>
+          {(() => {
+            // Real recent logs from user's actual account activity
+            const recentLogs = Array.isArray(activityLogs) && activityLogs.length > 0
+              ? activityLogs.slice(0, 4)
+              : [];
 
-            <div className="py-2 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
-                  <CalendarCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                </div>
-                <div>
-                  <p className="text-[11px] sm:text-xs font-bold text-slate-800">{isTl ? 'Daily Check-in Bonus' : 'Daily Check-in'}</p>
-                  <p className="text-[9px] sm:text-[10px] text-slate-400">Daily Login Reward</p>
-                </div>
-              </div>
-              <span className="text-[11px] sm:text-xs font-black text-emerald-600 font-mono">+ ₱5.00</span>
-            </div>
+            const getActivityLogVisual = (log: ActivityLog) => {
+              const titleLower = (log.title || '').toLowerCase();
+              const type = log.type;
 
-            <div className="py-2 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-sky-50 flex items-center justify-center text-sky-600 shrink-0">
-                  <Share2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              if (type === 'withdraw' || titleLower.includes('withdraw') || titleLower.includes('cashout') || titleLower.includes('cash-out')) {
+                return {
+                  icon: Wallet,
+                  iconBg: 'bg-rose-50 text-rose-600',
+                  amountClass: 'text-rose-600',
+                  isNegative: true,
+                  badge: isTl ? 'GCash Cash-Out' : 'Cashout'
+                };
+              }
+              if (titleLower.includes('daily') || titleLower.includes('check-in') || titleLower.includes('login') || titleLower.includes('araw')) {
+                return {
+                  icon: CalendarCheck,
+                  iconBg: 'bg-indigo-50 text-indigo-600',
+                  amountClass: 'text-emerald-600',
+                  isNegative: false,
+                  badge: isTl ? 'Daily Login Reward' : 'Daily Check-in'
+                };
+              }
+              if (titleLower.includes('referral') || titleLower.includes('invite') || titleLower.includes('ref') || titleLower.includes('sumali')) {
+                return {
+                  icon: Share2,
+                  iconBg: 'bg-sky-50 text-sky-600',
+                  amountClass: 'text-emerald-600',
+                  isNegative: false,
+                  badge: isTl ? 'Affiliate Referral' : 'Referral Bonus'
+                };
+              }
+              if (titleLower.includes('spin') || titleLower.includes('wheel') || titleLower.includes('gulong') || titleLower.includes('jackpot')) {
+                return {
+                  icon: Gift,
+                  iconBg: 'bg-amber-50 text-amber-600',
+                  amountClass: 'text-emerald-600',
+                  isNegative: false,
+                  badge: isTl ? 'Lucky Spin Wheel' : 'Spin Reward'
+                };
+              }
+              if (titleLower.includes('reel') || titleLower.includes('pocket') || titleLower.includes('video') || titleLower.includes('commercial') || titleLower.includes('reels')) {
+                return {
+                  icon: Tv,
+                  iconBg: 'bg-purple-50 text-purple-600',
+                  amountClass: 'text-emerald-600',
+                  isNegative: false,
+                  badge: isTl ? 'Watch & Earn Video' : 'Reels Reward'
+                };
+              }
+              if (titleLower.includes('welcome') || titleLower.includes('bonus') || titleLower.includes('sign-up') || titleLower.includes('regalo')) {
+                return {
+                  icon: Sparkles,
+                  iconBg: 'bg-amber-50 text-amber-600',
+                  amountClass: 'text-emerald-600',
+                  isNegative: false,
+                  badge: isTl ? 'Welcome Bonus' : 'Welcome Bonus'
+                };
+              }
+              // Default Website viewer reward
+              return {
+                icon: Globe,
+                iconBg: 'bg-blue-50 text-blue-600',
+                amountClass: 'text-emerald-600',
+                isNegative: false,
+                badge: isTl ? 'Website Viewer Reward' : 'Website Viewer Reward'
+              };
+            };
+
+            if (recentLogs.length === 0) {
+              return (
+                <div className="py-3 text-center space-y-1.5">
+                  <div className="w-8 h-8 rounded-full bg-slate-50 text-slate-400 flex items-center justify-center mx-auto border border-slate-100">
+                    <Receipt className="w-4 h-4" />
+                  </div>
+                  <p className="text-[11px] font-bold text-slate-700">
+                    {isTl ? 'Wala pang kamakailang transaksyon' : 'No recent transactions yet'}
+                  </p>
+                  <p className="text-[9px] text-slate-400 max-w-[240px] mx-auto leading-tight">
+                    {isTl ? 'Magsimulang mag-view ng website o mag-check-in para maitala ang iyong tunay na kita!' : 'Start viewing websites or check in daily to record your real earnings!'}
+                  </p>
                 </div>
-                <div>
-                  <p className="text-[11px] sm:text-xs font-bold text-slate-800">{isTl ? 'Referral Bonus' : 'Referral Bonus'}</p>
-                  <p className="text-[9px] sm:text-[10px] text-slate-400">Affiliate Direct Invite</p>
-                </div>
+              );
+            }
+
+            return (
+              <div className="divide-y divide-slate-100">
+                {recentLogs.map((log) => {
+                  const visual = getActivityLogVisual(log);
+                  const IconComp = visual.icon;
+                  return (
+                    <div key={log.id} className="py-2 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl ${visual.iconBg} flex items-center justify-center shrink-0`}>
+                          <IconComp className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] sm:text-xs font-bold text-slate-800 truncate">{log.title}</p>
+                          <p className="text-[9px] sm:text-[10px] text-slate-400 truncate">
+                            {log.timestamp || log.details || visual.badge}
+                          </p>
+                        </div>
+                      </div>
+                      <span className={`text-[11px] sm:text-xs font-black font-mono shrink-0 ${visual.amountClass}`}>
+                        {visual.isNegative ? '-' : '+'} ₱{Math.abs(Number(log.amount) || 0).toFixed(2)}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
-              <span className="text-[11px] sm:text-xs font-black text-emerald-600 font-mono">+ ₱20.00</span>
-            </div>
-          </div>
+            );
+          })()}
         </div>
 
       </main>

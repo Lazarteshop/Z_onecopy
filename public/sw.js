@@ -1,6 +1,6 @@
-const CACHE = "zone-v8-perfect-mobile";
-const MEDIA_CACHE = "zone-media-v4";
-const API_CACHE = "zone-api-v4";
+const CACHE = "zone-v10-floating-messenger-pos";
+const MEDIA_CACHE = "zone-media-v6";
+const API_CACHE = "zone-api-v6";
 
 const STATIC_ASSETS = [
   "/",
