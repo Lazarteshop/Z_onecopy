@@ -1,6 +1,6 @@
-const CACHE = "zone-v11-monetag-hourly-schedule";
-const MEDIA_CACHE = "zone-media-v7";
-const API_CACHE = "zone-api-v7";
+const CACHE = "zone-v12-monetag-zone-11201519";
+const MEDIA_CACHE = "zone-media-v8";
+const API_CACHE = "zone-api-v8";
 
 const STATIC_ASSETS = [
   "/",

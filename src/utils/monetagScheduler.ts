@@ -23,6 +23,8 @@ export interface ManilaTimeStatus {
 }
 
 export const MONETAG_VERIFICATION_TAG = '11e081287c25e53b58eb8233ab78e674';
+export const MONETAG_ZONE_ID = '11201519';
+export const MONETAG_SCRIPT_SRC = 'https://al5sm.com/tag.min.js';
 
 // Check if a given Date (or current time) is within the exact HH:00:00 - HH:00:59 window in Asia/Manila
 export function getManilaTimeStatus(customDate?: Date): ManilaTimeStatus {
@@ -147,6 +149,7 @@ class MonetagSchedulerController {
     this.isCurrentlyActive = true;
     if (typeof window !== 'undefined') {
       (window as any).__MONETAG_WINDOW_ACTIVE__ = true;
+      (window as any).__MONETAG_BLOCKED__ = false;
     }
 
     try {
@@ -156,10 +159,24 @@ class MonetagSchedulerController {
         meta = document.createElement('meta');
         meta.name = 'monetag';
         meta.content = MONETAG_VERIFICATION_TAG;
-        meta.setAttribute('data-monetag-element', 'true');
+        meta.setAttribute('data-monetag-element', 'meta');
         document.head.appendChild(meta);
       } else {
-        meta.setAttribute('data-monetag-element', 'true');
+        meta.setAttribute('data-monetag-element', 'meta');
+      }
+
+      // 2. Inject official Monetag Zone Ad Script (Zone: 11201519, al5sm.com)
+      const existingScript = document.querySelector(`script[data-zone="${MONETAG_ZONE_ID}"], script[src*="al5sm.com"]`);
+      if (!existingScript) {
+        const script = document.createElement('script');
+        script.dataset.zone = MONETAG_ZONE_ID;
+        script.src = MONETAG_SCRIPT_SRC;
+        script.async = true;
+        script.setAttribute('data-monetag-element', 'ad-script');
+        
+        const targetParent = [document.documentElement, document.body].filter(Boolean).pop() || document.head;
+        targetParent.appendChild(script);
+        console.log(`[MonetagScheduler] 🟢 Ad Script Injected for Zone: ${MONETAG_ZONE_ID} (${status.formattedTime})`);
       }
 
       console.log(`[MonetagScheduler] 🟢 Monetag Hourly Window ACTIVE (${status.formattedTime}). Window ends in ${status.secondsRemainingInWindow}s.`);
@@ -191,7 +208,14 @@ class MonetagSchedulerController {
 
     try {
       // Remove all elements managed or injected for Monetag
-      const elements = document.querySelectorAll('[data-monetag-element], script[src*="monetag"], iframe[src*="monetag"], div[id*="monetag"]');
+      const elements = document.querySelectorAll(
+        `[data-monetag-element], ` +
+        `script[data-zone="${MONETAG_ZONE_ID}"], ` +
+        `script[src*="al5sm.com"], ` +
+        `iframe[src*="al5sm"], ` +
+        `iframe[src*="monetag"], ` +
+        `div[id*="monetag"], div[class*="monetag"], div[id*="al5sm"]`
+      );
       elements.forEach(el => {
         try {
           el.remove();
