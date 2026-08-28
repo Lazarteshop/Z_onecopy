@@ -2196,7 +2196,7 @@ export default function App() {
         <>
           {/* 📱 SMARTPHONE APP LAUNCHER (Default Home Screen on Login) */}
           {activeTab === null ? (
-            <main className="w-full flex-1 flex flex-col items-center justify-start py-2 sm:py-6">
+            <main className="w-full flex-1 flex flex-col items-center justify-start p-0 sm:py-6">
               <SmartphoneAppLauncher
                 activeTab={null}
                 onSelectTab={(t) => setActiveTab(t)}
@@ -3036,7 +3036,7 @@ export default function App() {
           {/* 📱 MODERN 5-TAB BOTTOM NAVIGATION BAR (Matching Reference Image) */}
           <nav 
             id="mobile-bottom-navigation-bar" 
-            className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 py-1.5 px-3 flex items-center justify-around shadow-[0_-4px_16px_rgba(0,0,0,0.06)]"
+            className="fixed bottom-0 left-0 right-0 max-w-md mx-auto z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 py-1.5 px-3 flex items-center justify-around shadow-[0_-4px_16px_rgba(0,0,0,0.06)] sm:rounded-t-2xl"
           >
             {/* Home */}
             <button

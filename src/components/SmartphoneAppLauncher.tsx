@@ -282,16 +282,16 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
   };
 
   return (
-    <div id="z-one-mobile-dashboard-container" className="w-full max-w-lg mx-auto bg-slate-100 min-h-screen text-slate-900 pb-20 shadow-2xl rounded-3xl overflow-hidden border border-slate-200 select-none">
+    <div id="z-one-mobile-dashboard-container" className="w-full max-w-md mx-auto bg-slate-100 min-h-screen text-slate-900 pb-24 shadow-2xl sm:rounded-3xl overflow-hidden sm:border sm:border-slate-200 select-none">
       
       {/* 👑 ROYAL BLUE HEADER (Matching Reference Image - Phone 1) */}
-      <header className="bg-gradient-to-b from-[#0b3b7c] via-[#0d4a9b] to-[#0f54b0] text-white pt-6 pb-6 px-5 rounded-b-[32px] shadow-lg relative overflow-hidden">
+      <header className="bg-gradient-to-b from-[#0b3b7c] via-[#0d4a9b] to-[#0f54b0] text-white pt-6 pb-6 px-4 sm:px-5 rounded-b-[28px] sm:rounded-b-[32px] shadow-lg relative overflow-hidden">
         {/* Subtle background ambient rings */}
         <div className="absolute -top-12 -right-12 w-48 h-48 bg-white/10 rounded-full blur-2xl pointer-events-none" />
         <div className="absolute top-1/2 -left-12 w-40 h-40 bg-blue-400/15 rounded-full blur-2xl pointer-events-none" />
 
         {/* Top Brand Bar */}
-        <div className="flex items-center justify-between relative z-10 mb-5">
+        <div className="flex items-center justify-between relative z-10 mb-4 sm:mb-5">
           <div className="flex items-center gap-1.5">
             <span className="font-black text-2xl tracking-tight text-white">
               <span className="text-white">Z</span>
@@ -315,11 +315,11 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
 
         {/* User Greeting & Profile Row */}
         <div className="flex items-center justify-between gap-3 relative z-10">
-          <div className="flex items-center gap-3.5">
+          <div className="flex items-center gap-3">
             {/* User Avatar */}
             <div 
               onClick={onOpenProfile}
-              className="relative w-13 h-13 rounded-full bg-white/20 p-0.5 ring-2 ring-white/40 overflow-hidden cursor-pointer hover:scale-105 transition shrink-0"
+              className="relative w-12 h-12 sm:w-13 sm:h-13 rounded-full bg-white/20 p-0.5 ring-2 ring-white/40 overflow-hidden cursor-pointer hover:scale-105 transition shrink-0"
             >
               {user?.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:') || user.avatar.startsWith('blob:')) ? (
                 <img 
@@ -336,8 +336,8 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
             </div>
 
             <div className="space-y-0.5">
-              <p className="text-xs text-blue-100 font-medium">{isTl ? 'Magandang araw!' : 'Good day!'}</p>
-              <h2 className="text-sm sm:text-base font-extrabold text-white leading-tight truncate max-w-[190px]">
+              <p className="text-[11px] sm:text-xs text-blue-100 font-medium">{isTl ? 'Magandang araw!' : 'Good day!'}</p>
+              <h2 className="text-sm sm:text-base font-extrabold text-white leading-tight truncate max-w-[170px] sm:max-w-[200px]">
                 {user?.name ? `${isTl ? 'Maligayang pagbalik,' : 'Welcome back,'} ${user.name}` : (isTl ? 'Maligayang Pagdating!' : 'Welcome back!')}
               </h2>
               <div className="inline-flex items-center gap-1 bg-white/20 backdrop-blur-xs text-blue-50 text-[10px] font-bold px-2 py-0.5 rounded-full border border-white/20">
@@ -349,9 +349,9 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
         </div>
 
         {/* 💳 AVAILABLE BALANCE CARD (Inside Header) */}
-        <div className="mt-5 bg-gradient-to-r from-[#082958] via-[#093574] to-[#0a408e] border border-white/20 rounded-2xl p-4 shadow-xl flex items-center justify-between gap-3 relative z-10">
+        <div className="mt-4 sm:mt-5 bg-gradient-to-r from-[#082958] via-[#093574] to-[#0a408e] border border-white/20 rounded-2xl p-3.5 sm:p-4 shadow-xl flex items-center justify-between gap-3 relative z-10">
           <div>
-            <span className="text-[11px] font-bold text-blue-200 uppercase tracking-wider block">
+            <span className="text-[10px] sm:text-[11px] font-bold text-blue-200 uppercase tracking-wider block">
               {isTl ? 'Kasalukuyang Pondo (Available Balance)' : 'Available Balance'}
             </span>
             <div className="flex items-baseline gap-1 mt-0.5">
@@ -367,7 +367,7 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
               onSelectTab('cashout');
             }}
             type="button"
-            className="bg-blue-500 hover:bg-blue-400 active:scale-95 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl shadow-md flex items-center gap-1.5 transition cursor-pointer border border-blue-300/30 shrink-0"
+            className="bg-blue-500 hover:bg-blue-400 active:scale-95 text-white font-extrabold text-xs px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl shadow-md flex items-center gap-1.5 transition cursor-pointer border border-blue-300/30 shrink-0"
           >
             <Wallet className="w-4 h-4 text-white" />
             <span>{isTl ? 'Wallet' : 'Wallet'}</span>
@@ -376,9 +376,9 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
       </header>
 
       {/* 📱 4-COLUMN FEATURE GRID (White Rounded Cards) */}
-      <main className="px-4 pt-5 space-y-5">
+      <main className="px-3 sm:px-4 pt-4 sm:pt-5 space-y-4 sm:space-y-5">
         
-        <div className="grid grid-cols-4 gap-2.5 sm:gap-3">
+        <div className="grid grid-cols-4 gap-2 sm:gap-2.5">
           {coreLauncherGrid.map((item) => {
             const Icon = item.icon;
             return (
@@ -390,21 +390,21 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
                 whileTap={{ scale: 0.94 }}
                 transition={{ type: 'spring', stiffness: 450, damping: 25 }}
                 type="button"
-                className="bg-white rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-xs hover:shadow-md border border-slate-100 hover:border-blue-100 transition cursor-pointer relative group min-h-[96px]"
+                className="bg-white rounded-2xl p-2 sm:p-3 flex flex-col items-center justify-center text-center shadow-xs hover:shadow-md border border-slate-100 hover:border-blue-100 transition cursor-pointer relative group min-h-[90px] sm:min-h-[96px]"
               >
                 {/* Icon Container */}
-                <div className={`w-11 h-11 rounded-2xl flex items-center justify-center ${item.iconBg} mb-1.5 shadow-xs transition group-hover:scale-110`}>
-                  <Icon className="w-5 h-5 stroke-[2.2]" />
+                <div className={`w-10 h-10 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center ${item.iconBg} mb-1 sm:mb-1.5 shadow-xs transition group-hover:scale-110`}>
+                  <Icon className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.2]" />
                 </div>
 
                 {/* Title */}
-                <span className="text-[11px] font-bold text-slate-800 leading-tight line-clamp-2 px-0.5">
+                <span className="text-[10px] sm:text-[11px] font-bold text-slate-800 leading-tight line-clamp-2 px-0.5">
                   {item.title}
                 </span>
 
                 {/* Tiny Badge */}
                 {item.badge && (
-                  <span className={`absolute top-1 right-1 ${item.badgeBg} ${item.badgeTextColor} text-[8px] font-black px-1.5 py-0.2 rounded-full shadow-xs`}>
+                  <span className={`absolute top-1 right-1 ${item.badgeBg} ${item.badgeTextColor} text-[7px] sm:text-[8px] font-black px-1.5 py-0.2 rounded-full shadow-xs`}>
                     {item.badge}
                   </span>
                 )}
