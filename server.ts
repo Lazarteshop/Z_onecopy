@@ -2206,14 +2206,14 @@ async function uploadToFirestore(data: DBStructure) {
             try {
               const { id, ...pWithoutId } = p;
               if (pWithoutId.mediaUrl && pWithoutId.mediaUrl.startsWith('data:')) {
-                const up = await uploadMediaToFirebaseStorage(pWithoutId.mediaUrl, 'posts', p.userId || 'general');
-                pWithoutId.mediaUrl = up?.url || saveBase64ToUploadFile(pWithoutId.mediaUrl, 'posts', p.userId) || undefined;
+                const up = await uploadMediaToCloudflareR2(pWithoutId.mediaUrl, 'posts', p.userId || 'general');
+                pWithoutId.mediaUrl = up?.url || undefined;
               }
               if (pWithoutId.mediaUrls && Array.isArray(pWithoutId.mediaUrls)) {
                 pWithoutId.mediaUrls = await Promise.all(pWithoutId.mediaUrls.map(async url => {
                   if (url && url.startsWith('data:')) {
-                    const up = await uploadMediaToFirebaseStorage(url, 'posts', p.userId || 'general');
-                    return up?.url || saveBase64ToUploadFile(url, 'posts', p.userId) || url;
+                    const up = await uploadMediaToCloudflareR2(url, 'posts', p.userId || 'general');
+                    return up?.url || url;
                   }
                   return url;
                 }));
@@ -2237,8 +2237,8 @@ async function uploadToFirestore(data: DBStructure) {
             try {
               const { id, ...dmWithoutId } = dm;
               if (dmWithoutId.mediaUrl && dmWithoutId.mediaUrl.startsWith('data:')) {
-                const up = await uploadMediaToFirebaseStorage(dmWithoutId.mediaUrl, 'direct-messages', dm.senderId || 'general');
-                dmWithoutId.mediaUrl = up?.url || saveBase64ToUploadFile(dmWithoutId.mediaUrl, 'direct-messages', dm.senderId) || undefined;
+                const up = await uploadMediaToCloudflareR2(dmWithoutId.mediaUrl, 'direct-messages', dm.senderId || 'general');
+                dmWithoutId.mediaUrl = up?.url || undefined;
               }
               await cloudDb.setDoc('direct_messages', dm.id, dmWithoutId);
               lastSyncedCache.directMessages.set(dm.id, dmStr);
@@ -2277,8 +2277,8 @@ async function uploadToFirestore(data: DBStructure) {
             try {
               const { id, ...rWithoutId } = r;
               if (rWithoutId.url && rWithoutId.url.startsWith('data:')) {
-                const up = await uploadMediaToFirebaseStorage(rWithoutId.url, 'reels', r.id || 'general');
-                rWithoutId.url = up?.url || saveBase64ToUploadFile(rWithoutId.url, 'reels', r.id) || rWithoutId.url;
+                const up = await uploadMediaToCloudflareR2(rWithoutId.url, 'reels', r.id || 'general');
+                rWithoutId.url = up?.url || rWithoutId.url;
               }
               await cloudDb.setDoc('reels', r.id, rWithoutId);
               lastSyncedCache.reels.set(r.id, rStr);
@@ -2317,8 +2317,8 @@ async function uploadToFirestore(data: DBStructure) {
             try {
               const { id, ...sWithoutId } = s;
               if (sWithoutId.mediaUrl && sWithoutId.mediaUrl.startsWith('data:')) {
-                const up = await uploadMediaToFirebaseStorage(sWithoutId.mediaUrl, 'stories', s.userId || 'general');
-                sWithoutId.mediaUrl = up?.url || saveBase64ToUploadFile(sWithoutId.mediaUrl, 'stories', s.userId) || undefined;
+                const up = await uploadMediaToCloudflareR2(sWithoutId.mediaUrl, 'stories', s.userId || 'general');
+                sWithoutId.mediaUrl = up?.url || undefined;
               }
               await cloudDb.setDoc('stories', s.id, sWithoutId);
               lastSyncedCache.stories.set(s.id, sStr);
@@ -2375,8 +2375,8 @@ async function uploadToFirestore(data: DBStructure) {
             try {
               const { id, ...gmWithoutId } = gm;
               if (gmWithoutId.mediaUrl && gmWithoutId.mediaUrl.startsWith('data:')) {
-                const up = await uploadMediaToFirebaseStorage(gmWithoutId.mediaUrl, 'group-chats', gm.senderId || 'general');
-                gmWithoutId.mediaUrl = up?.url || saveBase64ToUploadFile(gmWithoutId.mediaUrl, 'group-chats', gm.senderId) || undefined;
+                const up = await uploadMediaToCloudflareR2(gmWithoutId.mediaUrl, 'group-chats', gm.senderId || 'general');
+                gmWithoutId.mediaUrl = up?.url || undefined;
               }
               await cloudDb.setDoc('group_messages', gm.id, gmWithoutId);
               lastSyncedCache.groupMessages.set(gm.id, gmStr);
@@ -2573,7 +2573,7 @@ async function syncFromFirestore() {
       }
     };
 
-    // Load all collections concurrently
+    // Load all collections concurrently with individual try-catch tracking
     const [
       dbUsers,
       dbCampaigns,
@@ -2610,12 +2610,13 @@ async function syncFromFirestore() {
 
     const hasAnyCloudData = dbUsers.length > 0 || dbStories.length > 0 || dbAlbums.length > 0 || dbGroupChats.length > 0 || 
                             dbGroupMessages.length > 0 || dbDMs.length > 0 || dbPosts.length > 0 || 
-                            dbReels.length > 0 || dbShopOrders.length > 0;
+                            dbReels.length > 0 || dbShopOrders.length > 0 || dbCampaigns.length > 0 || 
+                            dbMerchantAds.length > 0 || dbShopProducts.length > 0;
 
     const localDB = loadDB(); // Read current local records
 
     if (hasAnyCloudData) {
-      console.log(`📱 Found Cloud Firestore records: ${dbUsers.length} users, ${dbReels.length} reels, ${dbStories.length} stories, ${dbGroupChats.length} group chats, ${dbGroupMessages.length} group msgs, ${dbDMs.length} DMs, ${dbPosts.length} posts. Merging with local storage...`);
+      console.log(`📱 Found Cloud Firestore records: ${dbUsers.length} users, ${dbReels.length} reels, ${dbStories.length} stories, ${dbGroupChats.length} group chats, ${dbGroupMessages.length} group msgs, ${dbDMs.length} DMs, ${dbPosts.length} posts. Applying Cloud-First authoritative merge...`);
 
       // 1. Clean withdrawals
       for (const u of dbUsers) {
@@ -2632,29 +2633,32 @@ async function syncFromFirestore() {
         }
       }
 
-      // 2. Safe merge of all collections so NO local or cloud record is lost
-      const mergeById = (localArr: any[] = [], cloudArr: any[] = []) => {
+      // 2. Cloud-First authoritative merge of all collections:
+      // Cloud Firestore records always take precedence over stale container local defaults.
+      const mergeCloudFirst = (localArr: any[] = [], cloudArr: any[] = []) => {
         const map = new Map<string, any>();
+        // First put local items as baseline
         localArr.forEach(it => { if (it && it.id) map.set(it.id, it); });
+        // Then overwrite with authoritative Cloud records
         cloudArr.forEach(it => { if (it && it.id) map.set(it.id, it); });
         return Array.from(map.values());
       };
 
-      const finalUsers = mergeById(localDB.users, dbUsers);
-      const finalPosts = mergeById(localDB.posts, dbPosts);
-      const finalDMs = mergeById(localDB.directMessages, dbDMs);
-      const finalMerchantAds = mergeById(localDB.merchantAds, dbMerchantAds);
-      const finalReels = mergeById(localDB.reels, dbReels);
-      const finalReelSubs = mergeById(localDB.reelSubscriptions, dbReelSubs);
-      const finalStories = mergeById(localDB.stories, dbStories);
-      const finalAlbums = mergeById(localDB.albums || [], dbAlbums);
-      const finalGroupChats = mergeById(localDB.groupChats, dbGroupChats);
-      const finalGroupMessages = mergeById(localDB.groupMessages, dbGroupMessages);
+      const finalUsers = mergeCloudFirst(localDB.users, dbUsers);
+      const finalPosts = mergeCloudFirst(localDB.posts, dbPosts);
+      const finalDMs = mergeCloudFirst(localDB.directMessages, dbDMs);
+      const finalMerchantAds = mergeCloudFirst(localDB.merchantAds, dbMerchantAds);
+      const finalReels = mergeCloudFirst(localDB.reels, dbReels);
+      const finalReelSubs = mergeCloudFirst(localDB.reelSubscriptions, dbReelSubs);
+      const finalStories = mergeCloudFirst(localDB.stories, dbStories);
+      const finalAlbums = mergeCloudFirst(localDB.albums || [], dbAlbums);
+      const finalGroupChats = mergeCloudFirst(localDB.groupChats, dbGroupChats);
+      const finalGroupMessages = mergeCloudFirst(localDB.groupMessages, dbGroupMessages);
       const finalCampaigns = dbCampaigns.length > 0 ? dbCampaigns : (localDB.campaigns || INITIAL_CAMPAIGNS);
-      const finalShopProducts = mergeById(localDB.shopProducts || INITIAL_SHOP_PRODUCTS, dbShopProducts);
-      const finalShopBaskets = mergeById(localDB.shopBaskets || INITIAL_SHOP_BASKETS, dbShopBaskets);
-      const finalShopOrders = mergeById(localDB.shopOrders || INITIAL_SHOP_ORDERS, dbShopOrders);
-      const finalVaBanners = mergeById(localDB.vaBanners || [], dbVaBanners);
+      const finalShopProducts = mergeCloudFirst(localDB.shopProducts || INITIAL_SHOP_PRODUCTS, dbShopProducts);
+      const finalShopBaskets = mergeCloudFirst(localDB.shopBaskets || INITIAL_SHOP_BASKETS, dbShopBaskets);
+      const finalShopOrders = mergeCloudFirst(localDB.shopOrders || INITIAL_SHOP_ORDERS, dbShopOrders);
+      const finalVaBanners = mergeCloudFirst(localDB.vaBanners || [], dbVaBanners);
 
       const mergedDB: DBStructure = {
         users: finalUsers.length > 0 ? finalUsers : localDB.users,
@@ -2676,7 +2680,7 @@ async function syncFromFirestore() {
         vaSubscriptions: localDB.vaSubscriptions || []
       };
 
-      // Admin verification
+      // Admin credential verification
       const admin = mergedDB.users.find(u => u.isAdmin);
       if (admin) {
         admin.email = envAdminEmail;
@@ -2689,16 +2693,17 @@ async function syncFromFirestore() {
       fs.writeFileSync(DB_BACKUP_PATH, JSON.stringify(mergedDB, null, 2), 'utf-8');
       initLastSyncedCache(mergedDB);
       lastCloudSyncTimestamp = new Date().toISOString();
-      console.log(`✅ Merged state saved: ${mergedDB.users.length} users, ${mergedDB.reels?.length} reels, ${mergedDB.stories?.length} stories, ${mergedDB.groupChats?.length} group chats, ${mergedDB.groupMessages?.length} group msgs.`);
+      console.log(`✅ [Cloud-First] Merged state saved safely: ${mergedDB.users.length} users, ${mergedDB.reels?.length} reels, ${mergedDB.stories?.length} stories, ${mergedDB.groupChats?.length} group chats, ${mergedDB.groupMessages?.length} group msgs.`);
 
-      // Push any local items not yet in Cloud to Firestore
+      // Sync forward any non-conflicting new items
       uploadToFirestore(mergedDB).catch(err => {
         console.error('Error in initial post-merge upload to Cloud DB:', err);
       });
     } else if (fetchErrors > 0) {
-      console.warn(`⚠️ Cloud Firestore sync encountered ${fetchErrors} errors during initial query. Retaining existing in-memory/local state to protect cloud data from baseline overwrite.`);
+      // STRICT CLOUD-FIRST GUARD: If there were errors reaching Firestore, NEVER overwrite cloud data with baseline seed!
+      console.warn(`🛡️ [Cloud-First Guard] Firestore fetch encountered ${fetchErrors} error(s). Retaining current state to prevent destructive cloud overwrite on restart/redeploy.`);
     } else {
-      console.log('🌱 Cloud Firestore confirmed empty. Seeding all local baseline records to Cloud...');
+      console.log('🌱 Cloud Firestore confirmed empty. Seeding baseline records to Cloud...');
       const seedDB = localDB;
       initLastSyncedCache(seedDB);
       await uploadToFirestore(seedDB);
@@ -6053,81 +6058,30 @@ app.post('/api/admin/update-qr', async (req, res) => {
   }
 });
 
-// Dynamic Interceptor for serving uploads with transparent Firebase Storage & Firestore recovery
+// Dynamic Interceptor for serving legacy /uploads/ requests with transparent permanent Cloudflare R2 redirect
 app.get('/uploads/:filename', async (req, res) => {
   const filename = req.params.filename;
   const uploadDir = path.join(process.cwd(), 'uploads');
   const filePath = path.join(uploadDir, filename);
 
-  // 1. If physical file exists locally on disk, serve it immediately (super fast)
+  // 1. If physical file exists locally on disk, serve it immediately
   if (fs.existsSync(filePath)) {
     return res.sendFile(filePath);
   }
 
-  // 2. If physical file was wiped by a server restart/redeploy, dynamically recover from Firebase Storage / Firestore
+  // 2. Query Cloud Storage metadata for permanent Cloudflare R2 / Cloud Storage redirect
   if (cloudDb.isActive) {
     try {
-      console.log(`🔍 Media Recovery: Checking Cloud Storage / Firestore for ${filename}...`);
-      
       const metaDoc = await cloudDb.getDoc('media_storage', filename);
-      if (metaDoc) {
-        // Direct permanent R2 / Cloud Storage URL redirect
-        if (metaDoc.downloadUrl && metaDoc.downloadUrl.startsWith('http')) {
-          console.log(`✅ Media Recovery: Redirecting to permanent Cloud URL for ${filename}`);
-          return res.redirect(metaDoc.downloadUrl);
-        }
-
-        // Chunk document recovery
-        if (metaDoc.totalChunks) {
-          const totalChunks = Number(metaDoc.totalChunks) || 1;
-          const chunkFetchers: Promise<any>[] = [];
-          for (let i = 0; i < totalChunks; i++) {
-            chunkFetchers.push(cloudDb.getDoc('media_storage', `${filename}_chunk_${i}`));
-          }
-          const chunkDocs = await Promise.all(chunkFetchers);
-          const validChunks = chunkDocs.filter(c => c && c.base64);
-
-          if (validChunks.length === totalChunks) {
-            validChunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
-            const bufferChunks = validChunks.map(c => Buffer.from(c.base64, 'base64'));
-            const fileBuffer = Buffer.concat(bufferChunks);
-
-            if (!fs.existsSync(uploadDir)) {
-              fs.mkdirSync(uploadDir, { recursive: true });
-            }
-            fs.writeFileSync(filePath, fileBuffer);
-            console.log(`✅ Media Recovery: Successfully restored ${filename} (${fileBuffer.length} bytes, ${totalChunks} chunks) from Cloud DB.`);
-            
-            // Migrate to Firebase Storage for permanent future access
-            uploadMediaToFirebaseStorage(fileBuffer, 'media', 'migrated', metaDoc.mimeType).catch(() => {});
-
-            return res.sendFile(filePath);
-          }
-        }
-      }
-
-      // Strategy B: Fallback query search for older uploaded media
-      const chunks = await cloudDb.queryByField('media_storage', 'filename', filename);
-      if (chunks && chunks.length > 0) {
-        chunks.sort((a, b) => (a.chunkIndex || 0) - (b.chunkIndex || 0));
-        const bufferChunks = chunks.map(c => Buffer.from(c.base64, 'base64'));
-        const fileBuffer = Buffer.concat(bufferChunks);
-
-        if (!fs.existsSync(uploadDir)) {
-          fs.mkdirSync(uploadDir, { recursive: true });
-        }
-        fs.writeFileSync(filePath, fileBuffer);
-        console.log(`✅ Media Recovery (Fallback Query): Restored ${filename} (${fileBuffer.length} bytes) to local disk cache.`);
-        return res.sendFile(filePath);
-      } else {
-        console.log(`⚠️ Media Recovery: No Cloud DB backup records found for filename ${filename}`);
+      if (metaDoc && metaDoc.downloadUrl && metaDoc.downloadUrl.startsWith('http')) {
+        return res.redirect(301, metaDoc.downloadUrl);
       }
     } catch (err) {
-      console.error(`❌ Media Recovery Error for filename ${filename}:`, err);
+      console.error(`❌ Media redirect lookup error for filename ${filename}:`, err);
     }
   }
 
-  // Fallback if not found on disk or Firestore
+  // Fallback if not found
   res.status(404).send('Media Not Found');
 });
 
