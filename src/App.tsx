@@ -2209,6 +2209,13 @@ export default function App() {
                 onOpenSpinWheel={() => setShowSpinModal(true)}
                 onOpenReferral={() => setActiveTab('earn')}
                 onOpenCommercials={() => setActiveCommercialCamp(campaigns.find(c => Boolean(c.aiCommercial)) || campaigns[0] || null)}
+                onOpenReels={() => {
+                  window.dispatchEvent(new Event('open-reels-widget'));
+                  const openBtn = document.getElementById('reels-widget-open-btn');
+                  if (openBtn) {
+                    openBtn.click();
+                  }
+                }}
                 onOpenPolicy={() => setShowWithdrawalPolicyModal(true)}
                 onOpenProfile={openEditProfileModal}
                 onOpenDataSaver={() => setShowDataSaverModal(true)}
@@ -3054,7 +3061,7 @@ export default function App() {
               }`}
             >
               <Home className={`w-5 h-5 ${activeTab === null ? 'stroke-[2.5]' : ''}`} />
-              <span className="text-[10px] mt-0.5">{language === 'tl' ? 'Home' : 'Home'}</span>
+              <span className="text-[10px] mt-0.5">Home</span>
             </button>
 
             {/* Campaigns / Earn */}
@@ -3073,7 +3080,7 @@ export default function App() {
               }`}
             >
               <Globe className={`w-5 h-5 ${activeTab === 'earn' ? 'stroke-[2.5]' : ''}`} />
-              <span className="text-[10px] mt-0.5">{language === 'tl' ? 'Mag-ipon' : 'Campaigns'}</span>
+              <span className="text-[10px] mt-0.5">Campaigns</span>
             </button>
 
             {/* Rewards / Spin */}
@@ -3089,7 +3096,7 @@ export default function App() {
               <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-yellow-400 to-amber-500 text-slate-950 flex items-center justify-center shadow-xs -mt-2 group-hover:scale-110 transition">
                 <Gift className="w-4 h-4 text-slate-950 stroke-[2.5]" />
               </div>
-              <span className="text-[10px] mt-0.5 text-slate-700 font-bold">{language === 'tl' ? 'Rewards' : 'Rewards'}</span>
+              <span className="text-[10px] mt-0.5 text-slate-700 font-bold">Rewards</span>
             </button>
 
             {/* Transactions / Wallet */}
@@ -3108,7 +3115,7 @@ export default function App() {
               }`}
             >
               <Receipt className={`w-5 h-5 ${activeTab === 'cashout' ? 'stroke-[2.5]' : ''}`} />
-              <span className="text-[10px] mt-0.5">{language === 'tl' ? 'Cash-Out' : 'Transactions'}</span>
+              <span className="text-[10px] mt-0.5">Transactions</span>
             </button>
 
             {/* Account / Profile */}
@@ -3122,7 +3129,7 @@ export default function App() {
               className="flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer text-slate-400 hover:text-slate-600 font-semibold"
             >
               <User className="w-5 h-5" />
-              <span className="text-[10px] mt-0.5">{language === 'tl' ? 'Account' : 'Account'}</span>
+              <span className="text-[10px] mt-0.5">Account</span>
             </button>
           </nav>
 
