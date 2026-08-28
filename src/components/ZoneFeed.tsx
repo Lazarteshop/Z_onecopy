@@ -47,13 +47,15 @@ import {
   Paperclip,
   Wifi,
   Smartphone,
-  ExternalLink
+  ExternalLink,
+  User
 } from 'lucide-react';
 import { ZonePost, GroupChat, GroupMessage, ZoneStory, DirectMessage } from '../types';
 import { ZoneStories } from './ZoneStories';
 import { dataSaver } from '../utils/dataSaver';
 import { idbStorage } from '../utils/idbStorage';
 import { DataSaverSettingsModal } from './DataSaverSettingsModal';
+import { UserProfileModal } from './UserProfileModal';
 
 interface ZoneFeedProps {
   token: string;

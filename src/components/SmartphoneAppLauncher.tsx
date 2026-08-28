@@ -7,7 +7,23 @@ import {
   Megaphone, 
   HelpCircle, 
   Shield, 
-  Coins
+  Gift,
+  Share2,
+  Tv,
+  Camera,
+  PlayCircle,
+  CheckCircle2,
+  ArrowRight,
+  Sparkles,
+  Coins,
+  Receipt,
+  Eye,
+  CalendarCheck,
+  TrendingUp,
+  CreditCard,
+  Building2,
+  Bell,
+  Smartphone
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { soundEffects } from '../utils/audio';
@@ -15,16 +31,17 @@ import { soundEffects } from '../utils/audio';
 export type AppTabType = 'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop';
 
 export interface AppLauncherItem {
-  id: AppTabType;
+  id: AppTabType | 'spin' | 'referral' | 'myday' | 'commercials' | 'policy' | 'data_saver';
   title: string;
   subtitle?: string;
   badge?: string;
   badgeBg?: string;
   badgeTextColor?: string;
   icon: React.ComponentType<{ className?: string }>;
-  gradient: string;
-  shadowColor: string;
-  glowColor: string;
+  iconBg: string;
+  iconColor: string;
+  actionType: 'tab' | 'handler';
+  tabTarget?: AppTabType;
 }
 
 interface SmartphoneAppLauncherProps {
@@ -33,224 +50,460 @@ interface SmartphoneAppLauncherProps {
   isAdmin?: boolean;
   language?: 'tl' | 'en';
   balance?: number;
+  isDataSaverActive?: boolean;
+  user?: {
+    name?: string;
+    avatar?: string;
+    email?: string;
+    isVerified?: boolean;
+  } | null;
+  stats?: {
+    totalEarned?: number;
+    totalTasksCompleted?: number;
+    referralCount?: number;
+  } | null;
+  onOpenSpinWheel?: () => void;
+  onOpenReferral?: () => void;
+  onOpenCommercials?: () => void;
+  onOpenPolicy?: () => void;
+  onOpenProfile?: () => void;
+  onOpenNotifications?: () => void;
+  onOpenDataSaver?: () => void;
 }
-
-export const APP_LAUNCHER_ITEMS: AppLauncherItem[] = [
-  {
-    id: 'zone',
-    title: 'Z-one Social',
-    subtitle: 'Community Feed',
-    icon: Users,
-    gradient: 'from-[#3b82f6] via-[#2563eb] to-[#1d4ed8]',
-    shadowColor: 'shadow-blue-600/40',
-    glowColor: 'bg-blue-500/20',
-    badge: 'Feed',
-    badgeBg: 'bg-white',
-    badgeTextColor: 'text-slate-950'
-  },
-  {
-    id: 'va_shop',
-    title: 'VA & Shop',
-    subtitle: '500 Goal & Shop',
-    icon: ShoppingBag,
-    gradient: 'from-[#ec4899] via-[#f43f5e] to-[#c026d3]',
-    shadowColor: 'shadow-pink-600/40',
-    glowColor: 'bg-pink-500/20',
-    badge: '₱500',
-    badgeBg: 'bg-white',
-    badgeTextColor: 'text-slate-950'
-  },
-  {
-    id: 'earn',
-    title: 'Mag-ipon',
-    subtitle: 'Web Traffic Lists',
-    icon: Globe,
-    gradient: 'from-[#34d399] via-[#10b981] to-[#059669]',
-    shadowColor: 'shadow-emerald-600/40',
-    glowColor: 'bg-emerald-500/20',
-    badge: '₱0.75+',
-    badgeBg: 'bg-white',
-    badgeTextColor: 'text-slate-950'
-  },
-  {
-    id: 'cashout',
-    title: 'Cash-Out',
-    subtitle: 'GCash Payouts',
-    icon: Wallet,
-    gradient: 'from-[#38bdf8] via-[#0284c7] to-[#1d4ed8]',
-    shadowColor: 'shadow-sky-600/40',
-    glowColor: 'bg-sky-500/20',
-    badge: 'GCash',
-    badgeBg: 'bg-white',
-    badgeTextColor: 'text-slate-950'
-  },
-  {
-    id: 'negosyo',
-    title: 'Negosyo',
-    subtitle: 'Promote Ads',
-    icon: Megaphone,
-    gradient: 'from-[#fbbf24] via-[#f97316] to-[#e11d48]',
-    shadowColor: 'shadow-orange-600/40',
-    glowColor: 'bg-orange-500/20',
-    badge: 'Promote',
-    badgeBg: 'bg-white',
-    badgeTextColor: 'text-slate-950'
-  },
-  {
-    id: 'guide',
-    title: 'Gabay',
-    subtitle: 'FAQs & Help',
-    icon: HelpCircle,
-    gradient: 'from-[#a855f7] via-[#8b5cf6] to-[#6d28d9]',
-    shadowColor: 'shadow-purple-600/40',
-    glowColor: 'bg-purple-500/20',
-    badge: 'Help',
-    badgeBg: 'bg-white',
-    badgeTextColor: 'text-slate-950'
-  }
-];
-
-const ADMIN_LAUNCHER_ITEM: AppLauncherItem = {
-  id: 'admin',
-  title: 'Admin Control',
-  subtitle: 'Management Panel',
-  icon: Shield,
-  gradient: 'from-[#f43f5e] via-[#dc2626] to-[#881337]',
-  shadowColor: 'shadow-red-600/40',
-  glowColor: 'bg-red-500/20',
-  badge: 'Root',
-  badgeBg: 'bg-white',
-  badgeTextColor: 'text-slate-950'
-};
 
 export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
   activeTab,
   onSelectTab,
   isAdmin = false,
   language = 'tl',
-  balance
+  balance = 0,
+  isDataSaverActive = false,
+  user,
+  stats,
+  onOpenSpinWheel,
+  onOpenReferral,
+  onOpenCommercials,
+  onOpenPolicy,
+  onOpenProfile,
+  onOpenNotifications,
+  onOpenDataSaver
 }) => {
-  const items = isAdmin ? [...APP_LAUNCHER_ITEMS, ADMIN_LAUNCHER_ITEM] : APP_LAUNCHER_ITEMS;
+  const isTl = language === 'tl';
+
+  // Real existing features mapped to clean 4-column modern cards
+  const coreLauncherGrid: AppLauncherItem[] = [
+    {
+      id: 'earn',
+      title: isTl ? 'Website Viewer' : 'Website Viewer',
+      subtitle: 'Browse & Earn',
+      icon: Globe,
+      iconBg: 'bg-blue-50 text-blue-600',
+      iconColor: 'text-blue-600',
+      badge: '₱0.75+',
+      badgeBg: 'bg-emerald-100',
+      badgeTextColor: 'text-emerald-800',
+      actionType: 'tab',
+      tabTarget: 'earn'
+    },
+    {
+      id: 'spin',
+      title: isTl ? 'Daily Rewards' : 'Daily Rewards',
+      subtitle: 'Spin & Win',
+      icon: CalendarCheck,
+      iconBg: 'bg-indigo-50 text-indigo-600',
+      iconColor: 'text-indigo-600',
+      badge: 'Daily',
+      badgeBg: 'bg-indigo-100',
+      badgeTextColor: 'text-indigo-800',
+      actionType: 'handler'
+    },
+    {
+      id: 'referral',
+      title: isTl ? 'Referral' : 'Referral',
+      subtitle: 'Invite Friends',
+      icon: Share2,
+      iconBg: 'bg-sky-50 text-sky-600',
+      iconColor: 'text-sky-600',
+      badge: '+₱20',
+      badgeBg: 'bg-sky-100',
+      badgeTextColor: 'text-sky-800',
+      actionType: 'handler'
+    },
+    {
+      id: 'cashout',
+      title: isTl ? 'Cash-Out' : 'Withdraw',
+      subtitle: 'GCash Payout',
+      icon: Wallet,
+      iconBg: 'bg-blue-50 text-blue-600',
+      iconColor: 'text-blue-600',
+      badge: 'GCash',
+      badgeBg: 'bg-blue-100',
+      badgeTextColor: 'text-blue-800',
+      actionType: 'tab',
+      tabTarget: 'cashout'
+    },
+    {
+      id: 'zone',
+      title: isTl ? 'Z-one Social' : 'Z-one Social',
+      subtitle: 'Community Feed',
+      icon: Users,
+      iconBg: 'bg-blue-50 text-blue-600',
+      iconColor: 'text-blue-600',
+      badge: 'Feed',
+      badgeBg: 'bg-blue-100',
+      badgeTextColor: 'text-blue-800',
+      actionType: 'tab',
+      tabTarget: 'zone'
+    },
+    {
+      id: 'va_shop',
+      title: isTl ? 'VA & Store' : 'VA & Store',
+      subtitle: '₱500 Goal & Shop',
+      icon: ShoppingBag,
+      iconBg: 'bg-pink-50 text-pink-600',
+      iconColor: 'text-pink-600',
+      badge: 'Store',
+      badgeBg: 'bg-pink-100',
+      badgeTextColor: 'text-pink-800',
+      actionType: 'tab',
+      tabTarget: 'va_shop'
+    },
+    {
+      id: 'negosyo',
+      title: isTl ? 'Negosyo' : 'Business Ads',
+      subtitle: 'Promote Traffic',
+      icon: Megaphone,
+      iconBg: 'bg-amber-50 text-amber-600',
+      iconColor: 'text-amber-600',
+      badge: 'Ads',
+      badgeBg: 'bg-amber-100',
+      badgeTextColor: 'text-amber-800',
+      actionType: 'tab',
+      tabTarget: 'negosyo'
+    },
+    {
+      id: 'guide',
+      title: isTl ? 'Support & Help' : 'Support & Help',
+      subtitle: 'FAQs & Guide',
+      icon: HelpCircle,
+      iconBg: 'bg-purple-50 text-purple-600',
+      iconColor: 'text-purple-600',
+      badge: 'Help',
+      badgeBg: 'bg-purple-100',
+      badgeTextColor: 'text-purple-800',
+      actionType: 'tab',
+      tabTarget: 'guide'
+    },
+    {
+      id: 'commercials',
+      title: isTl ? 'Commercials' : 'Commercials',
+      subtitle: 'Watch Videos',
+      icon: PlayCircle,
+      iconBg: 'bg-rose-50 text-rose-600',
+      iconColor: 'text-rose-600',
+      badge: 'Earn',
+      badgeBg: 'bg-rose-100',
+      badgeTextColor: 'text-rose-800',
+      actionType: 'handler'
+    },
+    {
+      id: 'myday',
+      title: isTl ? 'My Day' : 'My Day',
+      subtitle: 'Stories & Moments',
+      icon: Camera,
+      iconBg: 'bg-emerald-50 text-emerald-600',
+      iconColor: 'text-emerald-600',
+      badge: 'Live',
+      badgeBg: 'bg-emerald-100',
+      badgeTextColor: 'text-emerald-800',
+      actionType: 'tab',
+      tabTarget: 'zone'
+    },
+    {
+      id: 'policy',
+      title: isTl ? 'Payout Policy' : 'Payout Policy',
+      subtitle: 'Rules & Schedule',
+      icon: Receipt,
+      iconBg: 'bg-slate-100 text-slate-700',
+      iconColor: 'text-slate-700',
+      badge: '5th & 20th',
+      badgeBg: 'bg-slate-200',
+      badgeTextColor: 'text-slate-800',
+      actionType: 'handler'
+    },
+    {
+      id: 'data_saver',
+      title: isTl ? 'Data Saver' : 'Data Saver',
+      subtitle: isDataSaverActive ? 'Active' : 'Off',
+      icon: Smartphone,
+      iconBg: isDataSaverActive ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-700',
+      iconColor: isDataSaverActive ? 'text-amber-700' : 'text-slate-700',
+      badge: isDataSaverActive ? 'ON' : 'OFF',
+      badgeBg: isDataSaverActive ? 'bg-amber-200' : 'bg-slate-200',
+      badgeTextColor: isDataSaverActive ? 'text-amber-900' : 'text-slate-700',
+      actionType: 'handler'
+    }
+  ];
+
+  if (isAdmin) {
+    coreLauncherGrid.push({
+      id: 'admin',
+      title: isTl ? 'Admin Control' : 'Admin Control',
+      subtitle: 'Management Panel',
+      icon: Shield,
+      iconBg: 'bg-red-50 text-red-600',
+      iconColor: 'text-red-600',
+      badge: 'Root',
+      badgeBg: 'bg-red-100',
+      badgeTextColor: 'text-red-800',
+      actionType: 'tab',
+      tabTarget: 'admin'
+    });
+  }
+
+  const handleTileClick = (item: AppLauncherItem) => {
+    try { soundEffects.playClick(); } catch (e) {}
+
+    if (item.actionType === 'tab' && item.tabTarget) {
+      onSelectTab(item.tabTarget);
+    } else if (item.id === 'spin' && onOpenSpinWheel) {
+      onOpenSpinWheel();
+    } else if (item.id === 'referral' && onOpenReferral) {
+      onOpenReferral();
+    } else if (item.id === 'commercials' && onOpenCommercials) {
+      onOpenCommercials();
+    } else if (item.id === 'policy' && onOpenPolicy) {
+      onOpenPolicy();
+    } else if (item.id === 'data_saver' && onOpenDataSaver) {
+      onOpenDataSaver();
+    } else if (item.id === 'myday') {
+      onSelectTab('zone');
+    }
+  };
 
   return (
-    <section 
-      id="huawei-smartphone-launcher-section"
-      className="w-full bg-[#0c1322] border-b border-slate-800/80 text-white relative overflow-hidden select-none"
-    >
-      {/* Background ambient circular glow orbs matching screenshot */}
-      <div className="absolute -top-16 -left-16 w-80 h-80 bg-blue-600/15 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute top-1/2 left-1/3 -translate-y-1/2 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-16 right-0 w-80 h-80 bg-pink-600/10 rounded-full blur-3xl pointer-events-none" />
+    <div id="z-one-mobile-dashboard-container" className="w-full max-w-lg mx-auto bg-slate-100 min-h-screen text-slate-900 pb-20 shadow-2xl rounded-3xl overflow-hidden border border-slate-200 select-none">
+      
+      {/* 👑 ROYAL BLUE HEADER (Matching Reference Image - Phone 1) */}
+      <header className="bg-gradient-to-b from-[#0b3b7c] via-[#0d4a9b] to-[#0f54b0] text-white pt-6 pb-6 px-5 rounded-b-[32px] shadow-lg relative overflow-hidden">
+        {/* Subtle background ambient rings */}
+        <div className="absolute -top-12 -right-12 w-48 h-48 bg-white/10 rounded-full blur-2xl pointer-events-none" />
+        <div className="absolute top-1/2 -left-12 w-40 h-40 bg-blue-400/15 rounded-full blur-2xl pointer-events-none" />
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-5 pb-6 relative z-10">
-        
-        {/* Section Header: MAIN APP LAUNCHER & FEATURES + Balance Chip */}
-        <div className="flex items-center justify-between gap-3 mb-5 px-1">
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+        {/* Top Brand Bar */}
+        <div className="flex items-center justify-between relative z-10 mb-5">
+          <div className="flex items-center gap-1.5">
+            <span className="font-black text-2xl tracking-tight text-white">
+              <span className="text-white">Z</span>
+              <span className="text-yellow-400">-one</span>
+              <span className="text-white">App</span>
             </span>
-            <h2 className="text-xs sm:text-sm font-black uppercase tracking-wider text-slate-200">
-              MAIN APP LAUNCHER & FEATURES
-            </h2>
           </div>
 
-          {balance !== undefined && (
-            <div className="flex items-center gap-1.5 bg-[#141d33] border border-slate-700/80 px-3 py-1 rounded-full text-xs font-black text-amber-300 shadow-md">
-              <Coins className="w-4 h-4 text-yellow-400" />
-              <span className="font-mono tracking-tight">₱{balance.toFixed(2)}</span>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onOpenNotifications}
+              type="button"
+              className="relative p-2.5 rounded-full bg-white/15 hover:bg-white/25 active:scale-95 transition text-white cursor-pointer"
+              title="Notifications"
+            >
+              <Bell className="w-5 h-5 text-white" />
+              <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-yellow-400 rounded-full ring-2 ring-[#0d4a9b]" />
+            </button>
+          </div>
         </div>
 
-        {/* 📱 Smartphone 3-Column App Launcher Grid (Mobile: 3 cols, Tablet/Desktop: responsive) */}
-        <div 
-          id="huawei-app-grid-container"
-          className="grid grid-cols-3 sm:grid-cols-6 lg:grid-cols-7 gap-y-7 gap-x-3 sm:gap-x-4 md:gap-x-6 justify-items-center"
-        >
-          {items.map((item) => {
+        {/* User Greeting & Profile Row */}
+        <div className="flex items-center justify-between gap-3 relative z-10">
+          <div className="flex items-center gap-3.5">
+            {/* User Avatar */}
+            <div 
+              onClick={onOpenProfile}
+              className="relative w-13 h-13 rounded-full bg-white/20 p-0.5 ring-2 ring-white/40 overflow-hidden cursor-pointer hover:scale-105 transition shrink-0"
+            >
+              {user?.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:') || user.avatar.startsWith('blob:')) ? (
+                <img 
+                  src={user.avatar} 
+                  alt={user.name || 'User'} 
+                  className="w-full h-full rounded-full object-cover" 
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div className="w-full h-full rounded-full bg-gradient-to-tr from-yellow-400 to-amber-500 flex items-center justify-center text-slate-950 font-black text-lg">
+                  {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-0.5">
+              <p className="text-xs text-blue-100 font-medium">{isTl ? 'Magandang araw!' : 'Good day!'}</p>
+              <h2 className="text-sm sm:text-base font-extrabold text-white leading-tight truncate max-w-[190px]">
+                {user?.name ? `${isTl ? 'Maligayang pagbalik,' : 'Welcome back,'} ${user.name}` : (isTl ? 'Maligayang Pagdating!' : 'Welcome back!')}
+              </h2>
+              <div className="inline-flex items-center gap-1 bg-white/20 backdrop-blur-xs text-blue-50 text-[10px] font-bold px-2 py-0.5 rounded-full border border-white/20">
+                <CheckCircle2 className="w-3 h-3 text-yellow-300" />
+                <span>{isTl ? 'Beripikadong Clicker' : 'Verified User'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 💳 AVAILABLE BALANCE CARD (Inside Header) */}
+        <div className="mt-5 bg-gradient-to-r from-[#082958] via-[#093574] to-[#0a408e] border border-white/20 rounded-2xl p-4 shadow-xl flex items-center justify-between gap-3 relative z-10">
+          <div>
+            <span className="text-[11px] font-bold text-blue-200 uppercase tracking-wider block">
+              {isTl ? 'Kasalukuyang Pondo (Available Balance)' : 'Available Balance'}
+            </span>
+            <div className="flex items-baseline gap-1 mt-0.5">
+              <span className="text-2xl sm:text-3xl font-black text-white tracking-tight font-mono">
+                ₱ {balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          </div>
+
+          <button
+            onClick={() => {
+              try { soundEffects.playClick(); } catch (e) {}
+              onSelectTab('cashout');
+            }}
+            type="button"
+            className="bg-blue-500 hover:bg-blue-400 active:scale-95 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl shadow-md flex items-center gap-1.5 transition cursor-pointer border border-blue-300/30 shrink-0"
+          >
+            <Wallet className="w-4 h-4 text-white" />
+            <span>{isTl ? 'Wallet' : 'Wallet'}</span>
+          </button>
+        </div>
+      </header>
+
+      {/* 📱 4-COLUMN FEATURE GRID (White Rounded Cards) */}
+      <main className="px-4 pt-5 space-y-5">
+        
+        <div className="grid grid-cols-4 gap-2.5 sm:gap-3">
+          {coreLauncherGrid.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.id;
-
             return (
-              <button
+              <motion.button
                 key={item.id}
-                id={`app-tile-${item.id}`}
-                onClick={() => {
-                  try { soundEffects.playClick(); } catch (e) {}
-                  onSelectTab(item.id);
-                }}
+                id={`feature-tile-${item.id}`}
+                onClick={() => handleTileClick(item)}
+                whileHover={{ scale: 1.04, y: -2 }}
+                whileTap={{ scale: 0.94 }}
+                transition={{ type: 'spring', stiffness: 450, damping: 25 }}
                 type="button"
-                className="w-full flex flex-col items-center justify-start group cursor-pointer focus:outline-none transition-all duration-200"
+                className="bg-white rounded-2xl p-3 flex flex-col items-center justify-center text-center shadow-xs hover:shadow-md border border-slate-100 hover:border-blue-100 transition cursor-pointer relative group min-h-[96px]"
               >
-                {/* Smartphone Squircle App Tile (Huawei EMUI / HarmonyOS Icon Style) */}
-                <div className="relative flex flex-col items-center">
-                  <motion.div
-                    whileHover={{ scale: 1.07, y: -3 }}
-                    whileTap={{ scale: 0.93 }}
-                    transition={{ type: 'spring', stiffness: 450, damping: 25 }}
-                    className={`
-                      w-[68px] h-[68px] sm:w-20 sm:h-20 md:w-[84px] md:h-[84px]
-                      rounded-[22px] sm:rounded-[26px] md:rounded-[28px]
-                      bg-gradient-to-br ${item.gradient}
-                      flex items-center justify-center 
-                      shadow-xl ${item.shadowColor}
-                      relative overflow-hidden
-                      transition-all duration-200
-                      ${isActive ? 'ring-2 ring-white ring-offset-2 ring-offset-[#0c1322]' : 'opacity-95 group-hover:opacity-100'}
-                    `}
-                  >
-                    {/* Glossy top-light sheen (Huawei signature icon glass finish) */}
-                    <div className="absolute inset-0 bg-gradient-to-b from-white/35 via-white/10 to-transparent rounded-[inherit] pointer-events-none" />
-                    <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/25 to-transparent rounded-[inherit] pointer-events-none" />
-                    <div className="absolute inset-0 ring-1 ring-inset ring-white/35 rounded-[inherit] pointer-events-none" />
-
-                    {/* App Icon */}
-                    <Icon className="w-9 h-9 sm:w-10 sm:h-10 md:w-11 md:h-11 text-white drop-shadow-md transition-transform duration-200 group-hover:scale-110" />
-
-                    {/* Status Badge on Upper Right */}
-                    {item.badge && (
-                      <span 
-                        className={`
-                          absolute top-1.5 right-1.5 
-                          ${item.badgeBg || 'bg-white'} 
-                          ${item.badgeTextColor || 'text-slate-950'} 
-                          font-black text-[9px] sm:text-[10px] 
-                          px-1.5 py-0.2 rounded-full 
-                          shadow-sm tracking-tight
-                        `}
-                      >
-                        {item.badge}
-                      </span>
-                    )}
-                  </motion.div>
-
-                  {/* Active Home-Screen Indicator Pill */}
-                  {isActive ? (
-                    <motion.div 
-                      layoutId="active-launcher-indicator"
-                      className="h-1.5 w-7 bg-white rounded-full mt-2 shadow-sm shadow-white/80"
-                    />
-                  ) : (
-                    <div className="h-1.5 w-7 bg-transparent mt-2" />
-                  )}
+                {/* Icon Container */}
+                <div className={`w-11 h-11 rounded-2xl flex items-center justify-center ${item.iconBg} mb-1.5 shadow-xs transition group-hover:scale-110`}>
+                  <Icon className="w-5 h-5 stroke-[2.2]" />
                 </div>
 
-                {/* Feature Label Underneath the App Icon */}
-                <span 
-                  className={`
-                    text-xs sm:text-[13px] md:text-sm font-extrabold text-center tracking-tight mt-0.5 leading-tight max-w-[95px] sm:max-w-[110px] line-clamp-2 transition-colors
-                    ${isActive ? 'text-white font-black' : 'text-slate-200 group-hover:text-white'}
-                  `}
-                >
+                {/* Title */}
+                <span className="text-[11px] font-bold text-slate-800 leading-tight line-clamp-2 px-0.5">
                   {item.title}
                 </span>
-              </button>
+
+                {/* Tiny Badge */}
+                {item.badge && (
+                  <span className={`absolute top-1 right-1 ${item.badgeBg} ${item.badgeTextColor} text-[8px] font-black px-1.5 py-0.2 rounded-full shadow-xs`}>
+                    {item.badge}
+                  </span>
+                )}
+              </motion.button>
             );
           })}
         </div>
-      </div>
-    </section>
+
+        {/* 📢 PROMOTIONAL BANNER CARD (Website Viewer CTA) */}
+        <div 
+          onClick={() => {
+            try { soundEffects.playClick(); } catch (e) {}
+            onSelectTab('earn');
+          }}
+          className="bg-gradient-to-r from-[#0b284e] via-[#0d3b6f] to-[#124b8d] rounded-2xl p-4 text-white shadow-md flex items-center justify-between gap-4 cursor-pointer hover:opacity-95 active:scale-[0.99] transition border border-blue-900/40 relative overflow-hidden"
+        >
+          <div className="space-y-2 relative z-10">
+            <h3 className="text-xs sm:text-sm font-black text-white leading-tight max-w-[200px]">
+              {isTl ? 'Kumita nang higit pa sa panonood ng websites at pag-click!' : 'Earn more by viewing websites and completing tasks!'}
+            </h3>
+            <button
+              type="button"
+              className="bg-blue-500 hover:bg-blue-400 text-white font-extrabold text-[11px] px-3.5 py-1.5 rounded-lg shadow-sm inline-flex items-center gap-1 cursor-pointer transition"
+            >
+              <span>{isTl ? 'Tingnan Ngayon' : 'View Now'}</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="relative shrink-0 pr-2">
+            <div className="w-16 h-14 bg-blue-400/20 rounded-xl flex items-center justify-center border border-blue-300/30">
+              <Globe className="w-8 h-8 text-yellow-300 animate-pulse" />
+            </div>
+          </div>
+        </div>
+
+        {/* 📋 RECENT TRANSACTIONS / ACTIVITY CARD */}
+        <div className="bg-white rounded-2xl p-4 shadow-xs border border-slate-200 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+              <Receipt className="w-4 h-4 text-blue-600" />
+              <span>{isTl ? 'Kamakailang Transaksyon' : 'Recent Transactions'}</span>
+            </h4>
+            <button
+              onClick={() => {
+                try { soundEffects.playClick(); } catch (e) {}
+                onSelectTab('cashout');
+              }}
+              type="button"
+              className="text-[11px] font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
+            >
+              {isTl ? 'Tingnan lahat' : 'View all'}
+            </button>
+          </div>
+
+          <div className="divide-y divide-slate-100">
+            <div className="py-2.5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
+                  <Globe className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-800">{isTl ? 'Website Viewed (PPV Task)' : 'Website Viewed'}</p>
+                  <p className="text-[10px] text-slate-400">Website Viewer Reward</p>
+                </div>
+              </div>
+              <span className="text-xs font-black text-emerald-600 font-mono">+ ₱10.00</span>
+            </div>
+
+            <div className="py-2.5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
+                  <CalendarCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-800">{isTl ? 'Daily Check-in Bonus' : 'Daily Check-in'}</p>
+                  <p className="text-[10px] text-slate-400">Daily Login Reward</p>
+                </div>
+              </div>
+              <span className="text-xs font-black text-emerald-600 font-mono">+ ₱5.00</span>
+            </div>
+
+            <div className="py-2.5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-sky-50 flex items-center justify-center text-sky-600 shrink-0">
+                  <Share2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-800">{isTl ? 'Referral Bonus' : 'Referral Bonus'}</p>
+                  <p className="text-[10px] text-slate-400">Affiliate Direct Invite</p>
+                </div>
+              </div>
+              <span className="text-xs font-black text-emerald-600 font-mono">+ ₱20.00</span>
+            </div>
+          </div>
+        </div>
+
+      </main>
+
+    </div>
   );
 };

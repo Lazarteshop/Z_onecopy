@@ -55,7 +55,10 @@ import {
   Flame,
   Rocket,
   ArrowLeft,
-  X
+  X,
+  Home,
+  Gift,
+  Receipt
 } from 'lucide-react';
 import { INITIAL_CAMPAIGNS } from './data/campaigns';
 import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend, ReelVideo } from './types';
@@ -293,6 +296,7 @@ export default function App() {
   // Animation states
   const [floatingCoinReward, setFloatingCoinReward] = useState<number | null>(null);
   const [showConfetti, setShowConfetti] = useState(false);
+  const [showSpinModal, setShowSpinModal] = useState(false);
   
   // Floating Reels & Shorts State
   const [reels, setReels] = useState<ReelVideo[]>(() => {
@@ -751,45 +755,6 @@ export default function App() {
     }
   }, []);
 
-  // Monetag script integration for the login/register screen only
-  useEffect(() => {
-    // 🚫 DEMO MODE CHECK: IF TESTING CLONE MODE IS ACTIVE, DO NOT LOAD MONETAG ADS
-    if (isDemoMode) {
-      const el = document.getElementById('monetag-login-ads-script');
-      if (el) {
-        el.remove();
-      }
-      return;
-    }
-
-    // If the user is definitely not logged in (no token, no user, and not loading), load the Monetag ads script
-    if (!token && !user && !loadingProfile) {
-      if (!document.getElementById('monetag-login-ads-script')) {
-        const script = document.createElement('script');
-        script.dataset.zone = '11201519';
-        script.src = 'https://al5sm.com/tag.min.js';
-        script.id = 'monetag-login-ads-script';
-        
-        const parent = [document.documentElement, document.body].filter(Boolean).pop();
-        if (parent) {
-          parent.appendChild(script);
-        }
-      }
-    } else {
-      // Remove the script when logged in or loading the profile
-      const el = document.getElementById('monetag-login-ads-script');
-      if (el) {
-        el.remove();
-      }
-    }
-
-    return () => {
-      const el = document.getElementById('monetag-login-ads-script');
-      if (el) {
-        el.remove();
-      }
-    };
-  }, [token, user, loadingProfile, isDemoMode]);
 
   // Hide Install App button when user is logged in
   useEffect(() => {
@@ -2229,170 +2194,31 @@ export default function App() {
       ) : (
         /* 📱 GATEWAY 2: AUTHENTICATED SYSTEM DASHBOARD */
         <>
-          {/* HEADER BAR (Smartphone App Header) */}
-          <header id="dashboard-header" className="bg-[#0a0f1d] border-b border-slate-800/80 text-white py-3 sm:py-3.5 shadow-md select-none">
-            <div className="max-w-7xl mx-auto px-3 sm:px-5 flex flex-col sm:flex-row items-center justify-between gap-2.5 sm:gap-4">
-              
-              {/* BRAND / IDENTITY */}
-              <div className="flex items-center gap-2.5 sm:gap-3 w-full sm:w-auto justify-between sm:justify-start">
-                <div className="flex items-center gap-2 sm:gap-2.5">
-                  <span className="p-2 bg-blue-600 rounded-2xl shadow-md flex items-center justify-center animate-pulse shrink-0">
-                    <Coins className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-300" />
-                  </span>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h1 className="font-black text-base sm:text-lg tracking-tight text-white">Earning Dashboard</h1>
-                      {user.isAdmin ? (
-                        <span className="bg-red-600 text-white text-[9px] font-black tracking-wider uppercase px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
-                          <Shield className="w-2.5 h-2.5 text-yellow-300" />
-                          <span>OWNER ADMIN</span>
-                        </span>
-                      ) : (
-                        <span className="bg-emerald-600 text-white text-[9px] font-black tracking-wider uppercase px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
-                          <span>MEMBER</span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Profile Pill on mobile */}
-                <div className="sm:hidden flex items-center gap-1.5 bg-slate-900 border border-slate-800 p-1 rounded-full">
-                  <button
-                    onClick={openEditProfileModal}
-                    className="flex items-center gap-1.5 focus:outline-none"
-                    title={language === 'tl' ? 'I-edit ang iyong Profile' : 'Edit Profile'}
-                  >
-                    <div className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-xs overflow-hidden">
-                      {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:') || user.avatar.startsWith('blob:') || user.avatar.startsWith('/')) ? (
-                        <img src={user.avatar} alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                      ) : (
-                        <span>{user.avatar && user.avatar.length <= 4 ? user.avatar : '👤'}</span>
-                      )}
-                    </div>
-                    <span className="text-[11px] font-bold text-slate-300 pr-1.5 max-w-[70px] truncate">{user.name}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* ACTION BUTTONS & USER STATUS (HORIZONTALLY SCROLLABLE ON MOBILE) */}
-              <div className="w-full sm:w-auto overflow-x-auto no-scrollbar py-0.5 overscroll-x-contain touch-pan-x">
-                <div className="flex items-center gap-2 sm:gap-2.5 justify-start sm:justify-end min-w-max">
-
-                  {/* 🎬 WATCH REELS BUTTON */}
-                  <button
-                    onClick={() => {
-                      window.dispatchEvent(new Event('open-reels-widget'));
-                      const openBtn = document.getElementById('reels-widget-open-btn');
-                      if (openBtn) {
-                        openBtn.click();
-                      }
-                    }}
-                    className="bg-gradient-to-r from-pink-600 via-rose-600 to-rose-500 hover:from-pink-500 hover:to-rose-400 text-white font-black px-3 py-1.5 rounded-full shadow-md shadow-rose-600/30 border border-white/20 flex items-center gap-1.5 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none text-[10px] sm:text-[11px]"
-                    title="Watch Reels"
-                  >
-                    <Tv className="w-3.5 h-3.5 text-amber-300 animate-pulse shrink-0" />
-                    <span className="uppercase font-black tracking-wider whitespace-nowrap">
-                      🎬 WATCH REELS
-                    </span>
-                  </button>
-
-                  {/* 📶 MOBILE DATA SAVER BUTTON */}
-                  <button
-                    onClick={() => setShowDataSaverModal(true)}
-                    className={`${
-                      isDataSaverActive
-                        ? 'bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-500/50'
-                        : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700'
-                    } hover:scale-[1.02] active:scale-[0.98] text-[10px] sm:text-[11px] font-black px-2.5 sm:px-3 py-1.5 rounded-full transition flex items-center gap-1.5 cursor-pointer shrink-0 shadow-sm select-none`}
-                    title="Mobile Data Saver Settings"
-                  >
-                    <Smartphone className={`w-3.5 h-3.5 shrink-0 ${isDataSaverActive ? 'text-amber-400 animate-pulse' : 'text-slate-400'}`} />
-                    <span className="whitespace-nowrap">
-                      {isDataSaverActive ? '📶 Data Saver: ON' : '📶 Data Saver: OFF'}
-                    </span>
-                  </button>
-
-                  {/* 🔔 Background Push Notifications Button */}
-                  <button
-                    onClick={() => {
-                      if (notificationPermission === 'default') {
-                        requestNotificationPermission();
-                      } else {
-                        setShowPushNotifModal(true);
-                      }
-                    }}
-                    className={`${
-                      notificationPermission === 'granted'
-                        ? 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-400 border border-emerald-500/40'
-                        : 'bg-emerald-600/90 hover:bg-emerald-600 text-white border border-emerald-500/50'
-                    } hover:scale-[1.02] active:scale-[0.98] text-[10px] sm:text-[11px] font-black px-2.5 sm:px-3 py-1.5 rounded-full transition flex items-center gap-1.5 cursor-pointer shrink-0 shadow-sm select-none`}
-                    title="Background Push Notifications Settings"
-                  >
-                    <Bell className={`w-3.5 h-3.5 shrink-0 ${notificationPermission === 'granted' ? 'text-emerald-400' : 'text-yellow-300 animate-pulse'}`} />
-                    <span className="whitespace-nowrap">
-                      {notificationPermission === 'granted'
-                        ? (language === 'tl' ? '🔔 Notif: Aktibo' : '🔔 Notif: Active')
-                        : (language === 'tl' ? '🔔 I-on ang Notif' : '🔔 Enable Notif')}
-                    </span>
-                  </button>
-
-                  {/* 📢 PAYOUT DATES ANNOUNCEMENT BUTTON */}
-                  <button
-                    onClick={() => setShowWithdrawalPolicyModal(true)}
-                    className="bg-blue-600 hover:bg-blue-500 text-white font-black px-2.5 sm:px-3 py-1.5 rounded-full shadow-md border border-white/20 flex items-center gap-1.5 transition hover:scale-105 active:scale-95 cursor-pointer shrink-0 select-none text-[10px] sm:text-[11px]"
-                    title="Tingnan ang Withdrawal Policy Update (5th & 20th)"
-                  >
-                    <Megaphone className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-yellow-300 animate-bounce shrink-0" />
-                    <span className="uppercase font-black tracking-wider whitespace-nowrap">
-                      📢 PAYOUT DATES
-                    </span>
-                  </button>
-
-                  {/* Desktop Profile Card */}
-                  <div className="hidden sm:flex bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-2xl items-center gap-2 shadow-sm shrink-0">
-                    <button
-                      onClick={openEditProfileModal}
-                      title="Edit Profile"
-                      className="relative group cursor-pointer focus:outline-none shrink-0"
-                    >
-                      <div className="text-xl leading-none select-none flex items-center justify-center">
-                        {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:') || user.avatar.startsWith('blob:') || user.avatar.startsWith('/')) ? (
-                          <img src={user.avatar} alt="Profile" className="w-7 h-7 rounded-full object-cover border border-slate-700 shadow-inner group-hover:opacity-85 transition" referrerPolicy="no-referrer" onError={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }} />
-                        ) : (
-                          <span className="text-base bg-slate-950 p-1 rounded-full shadow-inner block">{user.avatar && user.avatar.length <= 8 ? user.avatar : '👤'}</span>
-                        )}
-                      </div>
-                    </button>
-
-                    <div className="min-w-0 pr-1">
-                      <button
-                        onClick={openEditProfileModal}
-                        className="text-left font-black text-xs leading-none text-white truncate max-w-[120px] hover:text-blue-400 cursor-pointer transition block"
-                      >
-                        {user.name}
-                      </button>
-                      <p className="text-[9px] text-slate-400 mt-0.5 font-semibold truncate max-w-[120px]">
-                        {user.email}
-                      </p>
-                    </div>
-                  </div>
-
-                </div>
-              </div>
-
-            </div>
-          </header>
-
           {/* 📱 SMARTPHONE APP LAUNCHER (Default Home Screen on Login) */}
           {activeTab === null ? (
-            <main className="w-full flex-1 flex flex-col items-center justify-start py-6 sm:py-10">
+            <main className="w-full flex-1 flex flex-col items-center justify-start py-2 sm:py-6">
               <SmartphoneAppLauncher
                 activeTab={null}
                 onSelectTab={(t) => setActiveTab(t)}
                 isAdmin={Boolean(user?.isAdmin)}
                 language={language}
                 balance={stats.balance}
+                isDataSaverActive={isDataSaverActive}
+                user={user}
+                stats={stats}
+                onOpenSpinWheel={() => setShowSpinModal(true)}
+                onOpenReferral={() => setActiveTab('earn')}
+                onOpenCommercials={() => setActiveCommercialCamp(campaigns.find(c => Boolean(c.aiCommercial)) || campaigns[0] || null)}
+                onOpenPolicy={() => setShowWithdrawalPolicyModal(true)}
+                onOpenProfile={openEditProfileModal}
+                onOpenDataSaver={() => setShowDataSaverModal(true)}
+                onOpenNotifications={() => {
+                  if (notificationPermission === 'default') {
+                    requestNotificationPermission();
+                  } else {
+                    setShowPushNotifModal(true);
+                  }
+                }}
               />
             </main>
           ) : (
@@ -3207,8 +3033,127 @@ export default function App() {
             </div>
           )}
 
+          {/* 📱 MODERN 5-TAB BOTTOM NAVIGATION BAR (Matching Reference Image) */}
+          <nav 
+            id="mobile-bottom-navigation-bar" 
+            className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 py-1.5 px-3 flex items-center justify-around shadow-[0_-4px_16px_rgba(0,0,0,0.06)]"
+          >
+            {/* Home */}
+            <button
+              type="button"
+              id="bottom-nav-home"
+              onClick={() => {
+                try { soundEffects.playClick(); } catch (e) {}
+                setActiveTab(null);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer ${
+                activeTab === null
+                  ? 'text-blue-600 font-black'
+                  : 'text-slate-400 hover:text-slate-600 font-semibold'
+              }`}
+            >
+              <Home className={`w-5 h-5 ${activeTab === null ? 'stroke-[2.5]' : ''}`} />
+              <span className="text-[10px] mt-0.5">{language === 'tl' ? 'Home' : 'Home'}</span>
+            </button>
+
+            {/* Campaigns / Earn */}
+            <button
+              type="button"
+              id="bottom-nav-campaigns"
+              onClick={() => {
+                try { soundEffects.playClick(); } catch (e) {}
+                setActiveTab('earn');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer ${
+                activeTab === 'earn'
+                  ? 'text-blue-600 font-black'
+                  : 'text-slate-400 hover:text-slate-600 font-semibold'
+              }`}
+            >
+              <Globe className={`w-5 h-5 ${activeTab === 'earn' ? 'stroke-[2.5]' : ''}`} />
+              <span className="text-[10px] mt-0.5">{language === 'tl' ? 'Mag-ipon' : 'Campaigns'}</span>
+            </button>
+
+            {/* Rewards / Spin */}
+            <button
+              type="button"
+              id="bottom-nav-rewards"
+              onClick={() => {
+                try { soundEffects.playClick(); } catch (e) {}
+                setShowSpinModal(true);
+              }}
+              className="flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer text-slate-400 hover:text-indigo-600 font-semibold relative group"
+            >
+              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-yellow-400 to-amber-500 text-slate-950 flex items-center justify-center shadow-xs -mt-2 group-hover:scale-110 transition">
+                <Gift className="w-4 h-4 text-slate-950 stroke-[2.5]" />
+              </div>
+              <span className="text-[10px] mt-0.5 text-slate-700 font-bold">{language === 'tl' ? 'Rewards' : 'Rewards'}</span>
+            </button>
+
+            {/* Transactions / Wallet */}
+            <button
+              type="button"
+              id="bottom-nav-transactions"
+              onClick={() => {
+                try { soundEffects.playClick(); } catch (e) {}
+                setActiveTab('cashout');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer ${
+                activeTab === 'cashout'
+                  ? 'text-blue-600 font-black'
+                  : 'text-slate-400 hover:text-slate-600 font-semibold'
+              }`}
+            >
+              <Receipt className={`w-5 h-5 ${activeTab === 'cashout' ? 'stroke-[2.5]' : ''}`} />
+              <span className="text-[10px] mt-0.5">{language === 'tl' ? 'Cash-Out' : 'Transactions'}</span>
+            </button>
+
+            {/* Account / Profile */}
+            <button
+              type="button"
+              id="bottom-nav-account"
+              onClick={() => {
+                try { soundEffects.playClick(); } catch (e) {}
+                openEditProfileModal();
+              }}
+              className="flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer text-slate-400 hover:text-slate-600 font-semibold"
+            >
+              <User className="w-5 h-5" />
+              <span className="text-[10px] mt-0.5">{language === 'tl' ? 'Account' : 'Account'}</span>
+            </button>
+          </nav>
+
+          {/* 🎡 LUCKY SPIN WHEEL MODAL */}
+          {showSpinModal && (
+            <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 relative">
+                <button
+                  type="button"
+                  onClick={() => setShowSpinModal(false)}
+                  className="absolute top-4 right-4 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white p-2 rounded-full cursor-pointer transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+                <div className="text-center pt-2">
+                  <h3 className="text-lg font-black text-white">{language === 'tl' ? 'Araw-araw na Pa-Premyo' : 'Daily Lucky Spin'}</h3>
+                  <p className="text-xs text-slate-400 mt-1">{language === 'tl' ? 'Mag-spin para manalo ng libreng access at dagdag na pondo!' : 'Spin the wheel to earn daily rewards and instant access!'}</p>
+                </div>
+                <SpinWheel 
+                  token={token} 
+                  onAccessGranted={() => {
+                    fetchUserProfile(token);
+                    setShowSpinModal(false);
+                  }} 
+                />
+              </div>
+            </div>
+          )}
+
           {/* FOOTER */}
-          <footer id="dashboard-footer" className="bg-white border-t border-slate-200 mt-12 py-6">
+          <footer id="dashboard-footer" className="bg-white border-t border-slate-200 mt-12 py-6 pb-20">
             <div className="max-w-7xl mx-auto px-4 text-center space-y-2 text-xs">
               <p className="font-bold text-slate-500">
                 © 2026 Website Visitor and GCash Rewards Simulation.

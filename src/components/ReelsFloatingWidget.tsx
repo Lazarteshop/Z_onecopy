@@ -440,17 +440,11 @@ export default function ReelsFloatingWidget({
     dragStartRef.current = null;
   };
 
-  // COMPLETELY BLOCK ALL MONETAG ADS & POPUNDERS WHEN REELS WIDGET IS OPEN
+  // BLOCK POPUNDERS WHEN REELS WIDGET IS OPEN
   useEffect(() => {
     if (!isOpen) return;
 
-    // 1. Immediately remove Monetag ad script tag if present
-    const monetagScript = document.getElementById('monetag-login-ads-script');
-    if (monetagScript) {
-      monetagScript.remove();
-    }
-
-    // 2. Safely override window.open to permanently block ad popunders while Reels Widget is active
+    // Safely override window.open to permanently block ad popunders while Reels Widget is active
     const originalWindowOpen = window.open;
     window.open = function (url?: string | URL, target?: string, features?: string) {
       const activeEl = document.activeElement as HTMLElement | null;

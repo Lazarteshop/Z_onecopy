@@ -1040,6 +1040,8 @@ interface UserSession {
   password?: string;
   name: string;
   avatar: string;
+  coverPhoto?: string;
+  bio?: string;
   referralCode: string;
   invitedBy?: string; // referralCode of referrer
   isAdmin: boolean;
@@ -1300,6 +1302,28 @@ const INITIAL_REELS: ReelVideo[] = [
   }
 ];
 
+interface UserPhoto {
+  id: string;
+  url: string;
+  caption?: string;
+  privacy: 'public' | 'only_me';
+  uploadedAt: string;
+}
+
+interface UserAlbum {
+  id: string;
+  userId: string;
+  userName?: string;
+  userAvatar?: string;
+  title: string;
+  description?: string;
+  privacy: 'public' | 'only_me';
+  coverPhoto?: string;
+  photos: UserPhoto[];
+  createdAt: string;
+  updatedAt?: string;
+}
+
 interface DBStructure {
   users: UserSession[];
   campaigns?: any[];
@@ -1313,6 +1337,7 @@ interface DBStructure {
   reelSubscriptions?: ReelTokenSubscription[];
   reelRedemptions?: any[];
   stories?: ZoneStory[];
+  albums?: UserAlbum[];
   vaLeaderboardWinner?: any;
   shopProducts?: any[];
   shopBaskets?: any[];
@@ -1986,6 +2011,7 @@ const lastSyncedCache = {
   reels: new Map<string, string>(),
   reelSubscriptions: new Map<string, string>(),
   stories: new Map<string, string>(),
+  albums: new Map<string, string>(),
   groupChats: new Map<string, string>(),
   groupMessages: new Map<string, string>(),
   shopProducts: new Map<string, string>(),
@@ -2034,6 +2060,11 @@ function initLastSyncedCache(data: DBStructure) {
   if (lastSyncedCache.stories.size === 0 && data.stories && data.stories.length > 0) {
     for (const s of data.stories) {
       lastSyncedCache.stories.set(s.id, JSON.stringify(s));
+    }
+  }
+  if (lastSyncedCache.albums.size === 0 && data.albums && data.albums.length > 0) {
+    for (const a of data.albums) {
+      lastSyncedCache.albums.set(a.id, JSON.stringify(a));
     }
   }
   if (lastSyncedCache.groupChats.size === 0 && data.groupChats && data.groupChats.length > 0) {
@@ -2299,6 +2330,24 @@ async function uploadToFirestore(data: DBStructure) {
       }
     }
 
+    // 8b. Photo Albums
+    if (data.albums) {
+      for (const a of data.albums) {
+        const aStr = JSON.stringify(a);
+        if (lastSyncedCache.albums.get(a.id) !== aStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...aWithoutId } = a;
+              await cloudDb.setDoc('albums', a.id, aWithoutId);
+              lastSyncedCache.albums.set(a.id, aStr);
+            } catch (aErr) {
+              console.error(`Error saving Album ${a.id} to Cloud DB:`, aErr);
+            }
+          })());
+        }
+      }
+    }
+
     // 9. Group Chats
     if (data.groupChats) {
       for (const g of data.groupChats) {
@@ -2401,6 +2450,20 @@ async function uploadToFirestore(data: DBStructure) {
             lastSyncedCache.stories.delete(cachedId);
           } catch (delErr) {
             console.error(`Error deleting Story ${cachedId} from Cloud DB:`, delErr);
+          }
+        })());
+      }
+    }
+
+    const currentAlbumIds = new Set(data.albums ? data.albums.map(a => a.id) : []);
+    for (const cachedId of lastSyncedCache.albums.keys()) {
+      if (!currentAlbumIds.has(cachedId)) {
+        promises.push((async () => {
+          try {
+            await cloudDb.deleteDoc('albums', cachedId);
+            lastSyncedCache.albums.delete(cachedId);
+          } catch (delErr) {
+            console.error(`Error deleting Album ${cachedId} from Cloud DB:`, delErr);
           }
         })());
       }
@@ -2520,6 +2583,7 @@ async function syncFromFirestore() {
       dbReels,
       dbReelSubs,
       dbStories,
+      dbAlbums,
       dbGroupChats,
       dbGroupMessages,
       dbShopProducts,
@@ -2535,6 +2599,7 @@ async function syncFromFirestore() {
       safeGetCollection('reels'),
       safeGetCollection('reel_subscriptions'),
       safeGetCollection('stories'),
+      safeGetCollection('albums'),
       safeGetCollection('group_chats'),
       safeGetCollection('group_messages'),
       safeGetCollection('shop_products'),
@@ -2543,7 +2608,7 @@ async function syncFromFirestore() {
       safeGetCollection('va_banners')
     ]);
 
-    const hasAnyCloudData = dbUsers.length > 0 || dbStories.length > 0 || dbGroupChats.length > 0 || 
+    const hasAnyCloudData = dbUsers.length > 0 || dbStories.length > 0 || dbAlbums.length > 0 || dbGroupChats.length > 0 || 
                             dbGroupMessages.length > 0 || dbDMs.length > 0 || dbPosts.length > 0 || 
                             dbReels.length > 0 || dbShopOrders.length > 0;
 
@@ -2582,6 +2647,7 @@ async function syncFromFirestore() {
       const finalReels = mergeById(localDB.reels, dbReels);
       const finalReelSubs = mergeById(localDB.reelSubscriptions, dbReelSubs);
       const finalStories = mergeById(localDB.stories, dbStories);
+      const finalAlbums = mergeById(localDB.albums || [], dbAlbums);
       const finalGroupChats = mergeById(localDB.groupChats, dbGroupChats);
       const finalGroupMessages = mergeById(localDB.groupMessages, dbGroupMessages);
       const finalCampaigns = dbCampaigns.length > 0 ? dbCampaigns : (localDB.campaigns || INITIAL_CAMPAIGNS);
@@ -2599,6 +2665,7 @@ async function syncFromFirestore() {
         reels: finalReels.length > 0 ? finalReels : INITIAL_REELS,
         reelSubscriptions: finalReelSubs,
         stories: finalStories,
+        albums: finalAlbums,
         groupChats: finalGroupChats.length > 0 ? finalGroupChats : localDB.groupChats,
         groupMessages: finalGroupMessages.length > 0 ? finalGroupMessages : localDB.groupMessages,
         shopProducts: finalShopProducts,
@@ -6992,6 +7059,30 @@ app.get('/api/zone/sync', (req, res) => {
   });
 });
 
+function extractMentionedUsers(text: string, users: UserSession[], authorId: string): UserSession[] {
+  if (!text || typeof text !== 'string') return [];
+  const mentioned: UserSession[] = [];
+  const lowerText = text.toLowerCase();
+  
+  for (const u of users) {
+    if (!u || u.id === authorId || !u.name) continue;
+    const nameLower = u.name.toLowerCase().trim();
+    const nameNoSpaces = nameLower.replace(/\s+/g, '');
+    
+    // Check if "@name" or "@namespaces" or "@username" is mentioned
+    if (
+      lowerText.includes(`@${nameLower}`) ||
+      lowerText.includes(`@${nameNoSpaces}`) ||
+      (u.email && lowerText.includes(`@${u.email.split('@')[0].toLowerCase()}`))
+    ) {
+      if (!mentioned.some(m => m.id === u.id)) {
+        mentioned.push(u);
+      }
+    }
+  }
+  return mentioned;
+}
+
 // 2. CREATE A NEW POST
 app.post('/api/zone/posts', async (req, res) => {
   const userId = req.headers.authorization;
@@ -7087,6 +7178,17 @@ app.post('/api/zone/posts', async (req, res) => {
     cloudDb.setDoc('posts', newPost.id, pWithoutId).catch(err => {
       console.error('Direct cloud save error for Post:', err);
     });
+  }
+
+  // Push notifications for mentions in post
+  const mentionedInPost = extractMentionedUsers(cleanedText, db.users, user.id);
+  for (const mUser of mentionedInPost) {
+    sendPushNotificationToUser(mUser.id, {
+      title: `📢 Na-mention ka ni ${user.name}!`,
+      body: `"${cleanedText.slice(0, 75)}"`,
+      url: '/?tab=zone',
+      tag: `post-mention-${newPost.id}`
+    }).catch(() => {});
   }
 
   res.json({ success: true, post: newPost, message: 'Matagumpay na na-post sa Z-one!' });
@@ -7230,6 +7332,19 @@ app.post('/api/zone/posts/:postId/comment', (req, res) => {
       url: '/?tab=zone',
       tag: `post-comment-${postId}`
     }).catch(() => {});
+  }
+
+  // Push notifications for mentions in comment
+  const mentionedInComment = extractMentionedUsers(cleanedComment, db.users, user.id);
+  for (const mUser of mentionedInComment) {
+    if (mUser.id !== post.userId) {
+      sendPushNotificationToUser(mUser.id, {
+        title: `💬 Na-mention ka ni ${user.name} sa isang komento!`,
+        body: `"${cleanedComment.slice(0, 75)}"`,
+        url: '/?tab=zone',
+        tag: `comment-mention-${postId}-${newComment.id}`
+      }).catch(() => {});
+    }
   }
 
   res.json({ success: true, comments: post.comments });
@@ -8883,6 +8998,427 @@ app.post('/api/zone/calls/end', (req, res) => {
     }
   }
   res.json({ success: false, message: 'Wala nang active call session.' });
+});
+
+// ==========================================
+// USER PROFILE & ALBUM / PHOTO PRIVACY APIS
+// ==========================================
+
+// 1. GET USER PROFILE & STALK DETAILS
+app.get('/api/zone/profile/:targetUserId', (req, res) => {
+  const requesterId = req.headers.authorization;
+  const { targetUserId } = req.params;
+  const db = loadDB();
+
+  const targetUser = db.users.find(u => u.id === targetUserId);
+  if (!targetUser) {
+    return res.status(404).json({ error: 'Hindi mahanap ang profile ng user.' });
+  }
+
+  const isOwner = requesterId === targetUserId;
+  const allPosts = db.posts || [];
+  const userPosts = allPosts.filter(p => p.userId === targetUserId);
+  
+  const allAlbums = db.albums || [];
+  const userAlbums = allAlbums.filter(a => a.userId === targetUserId);
+
+  // Filter albums according to privacy: only owner can see "only_me" albums and photos
+  const filteredAlbums = userAlbums
+    .filter(a => isOwner || a.privacy === 'public' || !a.privacy)
+    .map(a => ({
+      ...a,
+      photos: (a.photos || []).filter(ph => isOwner || ph.privacy === 'public' || !ph.privacy)
+    }));
+
+  const totalPhotosCount = filteredAlbums.reduce((sum, a) => sum + (a.photos ? a.photos.length : 0), 0);
+
+  // Online check
+  const isOnline = Boolean(activeUsersMap[targetUserId]) || (targetUser.stats && targetUser.stats.balance !== undefined);
+
+  res.json({
+    success: true,
+    profile: {
+      id: targetUser.id,
+      name: targetUser.name,
+      avatar: targetUser.avatar || '👤',
+      coverPhoto: targetUser.coverPhoto || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80',
+      bio: targetUser.bio || 'Mabuhay! Malugod na pagdating sa aking Z-one profile ✨',
+      isAdmin: !!targetUser.isAdmin,
+      createdAt: targetUser.createdAt || new Date().toISOString(),
+      isOnline,
+      isOwner,
+      postCount: userPosts.length,
+      albumCount: filteredAlbums.length,
+      photoCount: totalPhotosCount,
+      albums: filteredAlbums,
+      posts: userPosts
+    }
+  });
+});
+
+// 2. UPDATE PROFILE (BIO, COVER PHOTO, AVATAR)
+app.put('/api/zone/profile', async (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang i-edit ang profile.' });
+  }
+
+  const { bio, coverPhoto, avatar } = req.body;
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  if (typeof bio === 'string') {
+    user.bio = filterSwearWords(bio.trim().slice(0, 300));
+  }
+
+  if (typeof avatar === 'string' && avatar.trim()) {
+    if (avatar.startsWith('data:')) {
+      const up = await uploadMediaToFirebaseStorage(avatar, 'avatars', user.id);
+      if (up && up.url) {
+        user.avatar = up.url;
+      }
+    } else {
+      user.avatar = avatar.trim();
+    }
+  }
+
+  if (typeof coverPhoto === 'string' && coverPhoto.trim()) {
+    if (coverPhoto.startsWith('data:')) {
+      const up = await uploadMediaToFirebaseStorage(coverPhoto, 'covers', user.id);
+      if (up && up.url) {
+        user.coverPhoto = up.url;
+      }
+    } else {
+      user.coverPhoto = coverPhoto.trim();
+    }
+  }
+
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    cloudDb.updateDoc('users', user.id, {
+      bio: user.bio,
+      avatar: user.avatar,
+      coverPhoto: user.coverPhoto
+    }).catch(err => console.error('Cloud DB user profile update error:', err));
+  }
+
+  res.json({
+    success: true,
+    message: 'Matagumpay na na-update ang iyong profile!',
+    user: {
+      id: user.id,
+      name: user.name,
+      avatar: user.avatar,
+      coverPhoto: user.coverPhoto,
+      bio: user.bio
+    }
+  });
+});
+
+// 3. GET ALBUMS FOR A USER
+app.get('/api/zone/albums', (req, res) => {
+  const requesterId = req.headers.authorization;
+  const targetUserId = (req.query.userId as string) || requesterId;
+
+  if (!targetUserId) {
+    return res.status(400).json({ error: 'Kinakailangan ang userId.' });
+  }
+
+  const db = loadDB();
+  const isOwner = requesterId === targetUserId;
+  const allAlbums = db.albums || [];
+  const userAlbums = allAlbums.filter(a => a.userId === targetUserId);
+
+  const filteredAlbums = userAlbums
+    .filter(a => isOwner || a.privacy === 'public' || !a.privacy)
+    .map(a => ({
+      ...a,
+      photos: (a.photos || []).filter(ph => isOwner || ph.privacy === 'public' || !ph.privacy)
+    }));
+
+  res.json({ success: true, albums: filteredAlbums });
+});
+
+// 4. CREATE ALBUM
+app.post('/api/zone/albums', async (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang gumawa ng album.' });
+  }
+
+  const { title, description, privacy, coverPhoto } = req.body;
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'Pakilagay ang pamagat (title) ng album.' });
+  }
+
+  let finalCover = coverPhoto;
+  if (coverPhoto && coverPhoto.startsWith('data:')) {
+    const up = await uploadMediaToFirebaseStorage(coverPhoto, 'album_covers', user.id);
+    if (up && up.url) {
+      finalCover = up.url;
+    }
+  }
+
+  const newAlbum: UserAlbum = {
+    id: 'album-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+    userId: user.id,
+    userName: user.name,
+    userAvatar: user.avatar,
+    title: filterSwearWords(title.trim().slice(0, 100)),
+    description: description ? filterSwearWords(description.trim().slice(0, 300)) : undefined,
+    privacy: privacy === 'only_me' ? 'only_me' : 'public',
+    coverPhoto: finalCover,
+    photos: [],
+    createdAt: new Date().toISOString()
+  };
+
+  if (!db.albums) db.albums = [];
+  db.albums.push(newAlbum);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...aWithoutId } = newAlbum;
+    cloudDb.setDoc('albums', newAlbum.id, aWithoutId).catch(err => {
+      console.error('Cloud DB album create error:', err);
+    });
+  }
+
+  res.json({ success: true, album: newAlbum, message: 'Matagumpay na nagawa ang album!' });
+});
+
+// 5. UPDATE ALBUM (TITLE, DESC, PRIVACY, COVER)
+app.put('/api/zone/albums/:albumId', async (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { albumId } = req.params;
+  const { title, description, privacy, coverPhoto } = req.body;
+  const db = loadDB();
+
+  if (!db.albums) db.albums = [];
+  const album = db.albums.find(a => a.id === albumId);
+  if (!album) {
+    return res.status(404).json({ error: 'Hindi mahanap ang album.' });
+  }
+
+  if (album.userId !== userId) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na i-edit ang album na ito.' });
+  }
+
+  if (title && title.trim()) album.title = filterSwearWords(title.trim().slice(0, 100));
+  if (description !== undefined) album.description = description ? filterSwearWords(description.trim().slice(0, 300)) : '';
+  if (privacy === 'public' || privacy === 'only_me') album.privacy = privacy;
+
+  if (coverPhoto) {
+    if (coverPhoto.startsWith('data:')) {
+      const up = await uploadMediaToFirebaseStorage(coverPhoto, 'album_covers', userId);
+      if (up && up.url) {
+        album.coverPhoto = up.url;
+      }
+    } else {
+      album.coverPhoto = coverPhoto;
+    }
+  }
+
+  album.updatedAt = new Date().toISOString();
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...aWithoutId } = album;
+    cloudDb.setDoc('albums', album.id, aWithoutId).catch(err => {
+      console.error('Cloud DB album update error:', err);
+    });
+  }
+
+  res.json({ success: true, album, message: 'Na-update ang album!' });
+});
+
+// 6. DELETE ALBUM
+app.delete('/api/zone/albums/:albumId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { albumId } = req.params;
+  const db = loadDB();
+
+  if (!db.albums) db.albums = [];
+  const index = db.albums.findIndex(a => a.id === albumId);
+  if (index === -1) {
+    return res.status(404).json({ error: 'Hindi mahanap ang album.' });
+  }
+
+  if (db.albums[index].userId !== userId) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na burahin ang album na ito.' });
+  }
+
+  db.albums.splice(index, 1);
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    cloudDb.deleteDoc('albums', albumId).catch(err => {
+      console.error('Cloud DB album delete error:', err);
+    });
+  }
+
+  res.json({ success: true, message: 'Matagumpay na nabura ang album.' });
+});
+
+// 7. ADD PHOTO TO ALBUM
+app.post('/api/zone/albums/:albumId/photos', async (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { albumId } = req.params;
+  const { url, caption, privacy } = req.body;
+  const db = loadDB();
+
+  if (!db.albums) db.albums = [];
+  const album = db.albums.find(a => a.id === albumId);
+  if (!album) {
+    return res.status(404).json({ error: 'Hindi mahanap ang album.' });
+  }
+
+  if (album.userId !== userId) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na magdagdag ng photo sa album na ito.' });
+  }
+
+  if (!url) {
+    return res.status(400).json({ error: 'Kinakailangan ang photo image/url.' });
+  }
+
+  let finalUrl = url;
+  if (url.startsWith('data:')) {
+    const up = await uploadMediaToFirebaseStorage(url, 'album_photos', userId);
+    if (!up || !up.url) {
+      return res.status(500).json({ error: 'Bigo ang pag-save ng photo sa cloud storage.' });
+    }
+    finalUrl = up.url;
+  }
+
+  const newPhoto: UserPhoto = {
+    id: 'photo-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+    url: finalUrl,
+    caption: caption ? filterSwearWords(caption.trim().slice(0, 200)) : undefined,
+    privacy: privacy === 'only_me' ? 'only_me' : 'public',
+    uploadedAt: new Date().toISOString()
+  };
+
+  if (!album.photos) album.photos = [];
+  album.photos.unshift(newPhoto);
+
+  // If album has no cover photo, set this as cover
+  if (!album.coverPhoto) {
+    album.coverPhoto = finalUrl;
+  }
+
+  album.updatedAt = new Date().toISOString();
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...aWithoutId } = album;
+    cloudDb.setDoc('albums', album.id, aWithoutId).catch(err => {
+      console.error('Cloud DB album photo add error:', err);
+    });
+  }
+
+  res.json({ success: true, photo: newPhoto, album, message: 'Matagumpay na naidagdag ang photo!' });
+});
+
+// 8. DELETE PHOTO FROM ALBUM
+app.delete('/api/zone/albums/:albumId/photos/:photoId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { albumId, photoId } = req.params;
+  const db = loadDB();
+
+  if (!db.albums) db.albums = [];
+  const album = db.albums.find(a => a.id === albumId);
+  if (!album) {
+    return res.status(404).json({ error: 'Hindi mahanap ang album.' });
+  }
+
+  if (album.userId !== userId) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na magbura sa album na ito.' });
+  }
+
+  if (!album.photos) album.photos = [];
+  const photoIndex = album.photos.findIndex(p => p.id === photoId);
+  if (photoIndex === -1) {
+    return res.status(404).json({ error: 'Hindi mahanap ang litrato.' });
+  }
+
+  album.photos.splice(photoIndex, 1);
+  album.updatedAt = new Date().toISOString();
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...aWithoutId } = album;
+    cloudDb.setDoc('albums', album.id, aWithoutId).catch(err => {
+      console.error('Cloud DB album photo delete error:', err);
+    });
+  }
+
+  res.json({ success: true, message: 'Matagumpay na nabura ang photo.' });
+});
+
+// 9. TOGGLE PHOTO PRIVACY (PUBLIC VS ONLY_ME)
+app.put('/api/zone/albums/:albumId/photos/:photoId/privacy', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { albumId, photoId } = req.params;
+  const { privacy } = req.body;
+  const db = loadDB();
+
+  if (!db.albums) db.albums = [];
+  const album = db.albums.find(a => a.id === albumId);
+  if (!album) {
+    return res.status(404).json({ error: 'Hindi mahanap ang album.' });
+  }
+
+  if (album.userId !== userId) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na baguhin ang photo na ito.' });
+  }
+
+  if (!album.photos) album.photos = [];
+  const photo = album.photos.find(p => p.id === photoId);
+  if (!photo) {
+    return res.status(404).json({ error: 'Hindi mahanap ang litrato.' });
+  }
+
+  photo.privacy = privacy === 'only_me' ? 'only_me' : 'public';
+  album.updatedAt = new Date().toISOString();
+  saveDB(db, true);
+
+  if (cloudDb.isActive) {
+    const { id, ...aWithoutId } = album;
+    cloudDb.setDoc('albums', album.id, aWithoutId).catch(err => {
+      console.error('Cloud DB photo privacy update error:', err);
+    });
+  }
+
+  res.json({ success: true, photo, message: `Naitakda ang photo privacy sa ${photo.privacy === 'only_me' ? 'Only Me (Pribado)' : 'Public (Lahat makakakita)'}!` });
 });
 
 // --- PROMPT-BASED VIDEO TOUR GENERATOR ENDPOINT ---

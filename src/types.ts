@@ -476,11 +476,49 @@ export interface VASubscriptionRecord {
   expiresAt?: string;
 }
 
+export interface UserPhoto {
+  id: string;
+  url: string;
+  caption?: string;
+  privacy: 'public' | 'only_me';
+  uploadedAt: string;
+}
+
+export interface UserAlbum {
+  id: string;
+  userId: string;
+  userName?: string;
+  userAvatar?: string;
+  title: string;
+  description?: string;
+  privacy: 'public' | 'only_me';
+  coverPhoto?: string;
+  photos: UserPhoto[];
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface UserProfileInfo {
+  id: string;
+  name: string;
+  avatar: string;
+  coverPhoto?: string;
+  bio?: string;
+  isAdmin?: boolean;
+  createdAt?: string;
+  postCount?: number;
+  publicPhotoCount?: number;
+  albumCount?: number;
+  isOnline?: boolean;
+}
+
 export interface AdminUser {
   id: string;
   email: string;
   name: string;
   avatar: string;
+  coverPhoto?: string;
+  bio?: string;
   isAdmin: boolean;
   stats: UserStats;
   withdrawalsCount: number;
@@ -498,6 +536,8 @@ export interface UserSession {
   email: string;
   name: string;
   avatar: string;
+  coverPhoto?: string;
+  bio?: string;
   referralCode: string;
   isAdmin: boolean;
   isDemo?: boolean;

@@ -16,7 +16,15 @@ import {
   Coins,
   DollarSign,
   Download,
-  Trophy
+  Trophy,
+  ArrowLeft,
+  PlusCircle,
+  ArrowUpRight,
+  ArrowRight,
+  Landmark,
+  MoreHorizontal,
+  ChevronRight,
+  ShieldCheck
 } from 'lucide-react';
 import { WithdrawalRequest, UserStats } from '../types';
 import { RedemptionBannerModal, RedemptionRecordItem } from './RedemptionBannerModal';
@@ -41,10 +49,19 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
   const [activeBanner, setActiveBanner] = useState<RedemptionRecordItem | null>(null);
   const [showBannerModal, setShowBannerModal] = useState(false);
   const [showPolicyModal, setShowPolicyModal] = useState(false);
+  const [selectedMethod, setSelectedMethod] = useState<'gcash' | 'bank' | 'other'>('gcash');
+
+  // Compute total successfully withdrawn from the existing withdrawals list
+  const totalWithdrawn = withdrawals
+    .filter(w => w.status === 'success')
+    .reduce((acc, curr) => acc + curr.amount, 0);
+
+  const totalPending = withdrawals
+    .filter(w => w.status === 'pending' || w.status === 'processing')
+    .reduce((acc, curr) => acc + curr.amount, 0);
 
   // Simple format validation helpers
   const validateGcashNumber = (num: string) => {
-    // Standard PH number 09XXXXXXXXX (11 digits starting with 09)
     const cleaned = num.replace(/\D/g, '');
     return cleaned.length === 11 && cleaned.startsWith('09');
   };
@@ -89,7 +106,6 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
     // Pass verification and trigger withdrawal flow
     setIsSubmitting(true);
     
-    // Simulate real database and secure API payout transfer delay
     setTimeout(async () => {
       try {
         const res = await onWithdrawSubmit(accountName.trim(), gcashNumber.trim(), value);
@@ -97,7 +113,6 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
         
         if (res.success) {
           setSuccessMsg(res.message);
-          // Reset inputs
           setAccountName('');
           setGcashNumber('');
           setAmountStr('');
@@ -111,7 +126,6 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
     }, 1200);
   };
 
-  // Safe preset amount values
   const applyPresetAmount = (preset: number) => {
     if (preset <= stats.balance) {
       setAmountStr(preset.toString());
@@ -122,51 +136,215 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
   };
 
   return (
-    <div className="space-y-6">
+    <div id="modern-wallet-cashout-view" className="max-w-2xl mx-auto space-y-5">
+      
       {/* 📢 OFFICIAL WITHDRAWAL POLICY ANNOUNCEMENT BANNER */}
       <WithdrawalPolicyBanner onOpenModal={() => setShowPolicyModal(true)} />
 
-      <div id="gcash-cashout-container" className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      
-      {/* LEFT FORM COLUMN */}
-      <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 shadow-sm p-6 relative overflow-hidden">
+      {/* 👑 ROYAL BLUE WALLET HEADER CARD (Matching Reference Image - Phone 2) */}
+      <div className="bg-gradient-to-br from-[#0a356e] via-[#0d4a9b] to-[#1258b5] rounded-3xl p-6 text-white shadow-xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl pointer-events-none" />
         
-        {/* Subtle GCash Blue branding header overlay */}
-        <div className="absolute top-0 left-0 right-0 h-2 bg-blue-600"></div>
-
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
-            <Wallet className="w-6 h-6" />
+        <div className="relative z-10 space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-blue-200">
+              {isTl ? 'Pondo sa Wallet' : 'My Wallet Balance'}
+            </span>
+            <span className="bg-white/20 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full border border-white/20">
+              GCash Verified
+            </span>
           </div>
-          <div>
-            <h3 className="font-extrabold text-slate-900 text-lg">{isTl ? "GCash Cash-Out Request" : "GCash Cash-Out Request"}</h3>
-            <p className="text-xs text-slate-500">{isTl ? "I-withdraw ang iyong napanalunang totoong premyo rekta sa iyong GCash wallet." : "Withdraw your earned simulated rewards directly to your GCash wallet."}</p>
+
+          <div className="flex items-baseline gap-1">
+            <span className="text-3xl sm:text-4xl font-black tracking-tight font-mono text-white">
+              ₱ {stats.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          {/* 🔘 4-ACTION QUICK BAR */}
+          <div className="grid grid-cols-4 gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                const formEl = document.getElementById('cashout-form-section');
+                if (formEl) formEl.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="bg-white/15 hover:bg-white/25 active:scale-95 transition rounded-2xl py-2.5 flex flex-col items-center justify-center gap-1 cursor-pointer"
+            >
+              <PlusCircle className="w-4 h-4 text-blue-200" />
+              <span className="text-[10px] font-bold">{isTl ? 'Mag-ipon' : 'Add Funds'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const formEl = document.getElementById('cashout-form-section');
+                if (formEl) formEl.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="bg-white/20 hover:bg-white/30 active:scale-95 transition rounded-2xl py-2.5 flex flex-col items-center justify-center gap-1 cursor-pointer border border-white/30"
+            >
+              <Wallet className="w-4 h-4 text-yellow-300" />
+              <span className="text-[10px] font-black">{isTl ? 'Withdraw' : 'Withdraw'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowPolicyModal(true)}
+              className="bg-white/15 hover:bg-white/25 active:scale-95 transition rounded-2xl py-2.5 flex flex-col items-center justify-center gap-1 cursor-pointer"
+            >
+              <ArrowUpRight className="w-4 h-4 text-blue-200" />
+              <span className="text-[10px] font-bold">{isTl ? 'Transfer' : 'Transfer'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const histEl = document.getElementById('cashout-history-section');
+                if (histEl) histEl.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="bg-white/15 hover:bg-white/25 active:scale-95 transition rounded-2xl py-2.5 flex flex-col items-center justify-center gap-1 cursor-pointer"
+            >
+              <History className="w-4 h-4 text-blue-200" />
+              <span className="text-[10px] font-bold">{isTl ? 'History' : 'History'}</span>
+            </button>
           </div>
         </div>
+      </div>
 
-        {/* Available Wallet Status widget inside form */}
-        <div className="bg-slate-50 border border-slate-100 rounded-xl p-4.5 mb-6 flex justify-between items-center sm:grid sm:grid-cols-2 sm:gap-4">
-          <div>
-            <p className="text-[10px] uppercase tracking-wider font-bold text-slate-400">{isTl ? "Kasunod na Maibubulsa" : "Withdrawable Balance"}</p>
-            <p className="text-2xl font-black text-slate-900 tracking-tight mt-0.5">
-              ₱{stats.balance.toFixed(2)}
-            </p>
+      {/* 📊 WALLET OVERVIEW STATS CARD */}
+      <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-3">
+        <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
+          {isTl ? 'Buod ng Wallet' : 'Wallet Overview'}
+        </h3>
+
+        <div className="space-y-2.5 divide-y divide-slate-100">
+          <div className="flex items-center justify-between pt-1">
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+              <Coins className="w-4 h-4 text-emerald-600" />
+              <span>{isTl ? 'Kabuuang Kinita (Total Earnings)' : 'Total Earnings'}</span>
+            </div>
+            <span className="text-xs font-black text-emerald-600 font-mono">
+              ₱ {(stats.lifetimeEarnings || (stats.balance + totalWithdrawn)).toFixed(2)}
+            </span>
           </div>
-          <div>
-            <p className="text-[10px] uppercase tracking-wider font-bold text-slate-400 sm:text-right">{isTl ? "Minimum na Widthrawal" : "Minimum Withdrawal"}</p>
-            <p className="text-sm font-extrabold text-blue-600 mt-0.5 sm:text-right">
-              ₱100.00 PHP
-            </p>
+
+          <div className="flex items-center justify-between pt-2.5">
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+              <Wallet className="w-4 h-4 text-blue-600" />
+              <span>{isTl ? 'Kabuuang Na-withdraw (Total Withdrawn)' : 'Total Withdrawn'}</span>
+            </div>
+            <span className="text-xs font-black text-blue-600 font-mono">
+              ₱ {totalWithdrawn.toFixed(2)}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between pt-2.5">
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+              <Clock className="w-4 h-4 text-slate-400" />
+              <span>{isTl ? 'Nakabinbing Halaga (Pending Balance)' : 'Pending Balance'}</span>
+            </div>
+            <span className="text-xs font-black text-slate-700 font-mono">
+              ₱ {totalPending.toFixed(2)}
+            </span>
           </div>
         </div>
+      </div>
 
-        {/* Withdrawal Form */}
+      {/* ⚡ QUICK CASHOUT METHOD SELECTION CARDS */}
+      <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-3">
+        <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
+          {isTl ? 'Mabilisang Cashout (Quick Cashout)' : 'Quick Cashout'}
+        </h3>
+
+        <div className="space-y-2">
+          {/* GCash Option */}
+          <button
+            type="button"
+            onClick={() => setSelectedMethod('gcash')}
+            className={`w-full p-3.5 rounded-xl border transition flex items-center justify-between cursor-pointer ${
+              selectedMethod === 'gcash'
+                ? 'bg-blue-50/80 border-blue-500 ring-2 ring-blue-500/20'
+                : 'bg-slate-50 hover:bg-slate-100 border-slate-200'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-600 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                G
+              </div>
+              <div className="text-left">
+                <p className="text-xs font-black text-slate-900">GCash</p>
+                <p className="text-[11px] text-slate-500">{isTl ? 'Mag-cash out diretso sa GCash wallet' : 'Cash out via GCash'}</p>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-400" />
+          </button>
+
+          {/* Bank Transfer Option */}
+          <button
+            type="button"
+            onClick={() => setSelectedMethod('bank')}
+            className={`w-full p-3.5 rounded-xl border transition flex items-center justify-between cursor-pointer ${
+              selectedMethod === 'bank'
+                ? 'bg-blue-50/80 border-blue-500 ring-2 ring-blue-500/20'
+                : 'bg-slate-50 hover:bg-slate-100 border-slate-200'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-700 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                <Landmark className="w-5 h-5" />
+              </div>
+              <div className="text-left">
+                <p className="text-xs font-black text-slate-900">{isTl ? 'Bank Transfer' : 'Bank Transfer'}</p>
+                <p className="text-[11px] text-slate-500">{isTl ? 'BDO, BPI, UnionBank at iba pa' : 'Cash out via Bank'}</p>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-400" />
+          </button>
+
+          {/* Other Options */}
+          <button
+            type="button"
+            onClick={() => setSelectedMethod('other')}
+            className={`w-full p-3.5 rounded-xl border transition flex items-center justify-between cursor-pointer ${
+              selectedMethod === 'other'
+                ? 'bg-blue-50/80 border-blue-500 ring-2 ring-blue-500/20'
+                : 'bg-slate-50 hover:bg-slate-100 border-slate-200'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-slate-800 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                <MoreHorizontal className="w-5 h-5" />
+              </div>
+              <div className="text-left">
+                <p className="text-xs font-black text-slate-900">{isTl ? 'Iba pang Opsyon' : 'Other Options'}</p>
+                <p className="text-[11px] text-slate-500">{isTl ? 'Maya, Coins.ph, Padala' : 'More cashout methods'}</p>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-400" />
+          </button>
+        </div>
+      </div>
+
+      {/* 📝 CASHOUT FORM SECTION */}
+      <div id="cashout-form-section" className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2">
+            <Wallet className="w-4 h-4 text-blue-600" />
+            <h3 className="font-extrabold text-slate-900 text-sm">
+              {selectedMethod === 'gcash' ? 'GCash Cash-Out Form' : selectedMethod === 'bank' ? 'Bank Transfer Details' : 'Payment Method Details'}
+            </h3>
+          </div>
+          <span className="text-[11px] font-bold text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-full">
+            Min: ₱100.00
+          </span>
+        </div>
+
         <form onSubmit={handleWithdrawClick} className="space-y-4">
           
           {/* Account Name input */}
           <div className="space-y-1.5">
             <label htmlFor="withdraw-name" className="text-xs font-bold text-slate-700 block">
-              {isTl ? "GCash Full Name (Pangalan sa GCash)" : "GCash Registered Full Name"} <span className="text-red-500">*</span>
+              {isTl ? "Pangalan sa GCash / Account (Full Name)" : "Registered Full Name"} <span className="text-red-500">*</span>
             </label>
             <input
               id="withdraw-name"
@@ -177,13 +355,13 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
               onChange={(e) => setAccountName(e.target.value.toUpperCase())}
               className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:bg-white rounded-xl px-4 py-3 text-sm transition outline-none font-semibold uppercase placeholder:normal-case placeholder:font-normal"
             />
-            <p className="text-[10px] text-slate-400">{isTl ? "Siguraduhing tugma sa GCash registered name upang maiwasan ang delay sa pagpapadala." : "Please ensure this matches your registered GCash name to prevent delay."}</p>
+            <p className="text-[10px] text-slate-400">{isTl ? "Siguraduhing tugma sa registered name upang maiwasan ang delay." : "Please ensure this matches your registered name to prevent delay."}</p>
           </div>
 
-          {/* GCash number input */}
+          {/* Mobile / Account Number input */}
           <div className="space-y-1.5">
             <label htmlFor="withdraw-phone" className="text-xs font-bold text-slate-700 block">
-              {isTl ? "GCash Mobile Number (Numero sa GCash)" : "GCash Mobile Number"} <span className="text-red-500">*</span>
+              {isTl ? "GCash Mobile Number (11-digits)" : "GCash Mobile Number"} <span className="text-red-500">*</span>
             </label>
             <div className="relative">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400 font-mono">
@@ -200,7 +378,6 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
                 className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:bg-white rounded-xl pl-11 pr-4 py-3 text-sm transition outline-none font-mono font-bold tracking-wider"
               />
             </div>
-            <p className="text-[10px] text-slate-400">{isTl ? "Magsimula sa \"09\" at pormat na may eksaktong 11-digits." : "Start with \"09\" and enter exactly 11 digits."}</p>
           </div>
 
           {/* Amount selection group */}
@@ -218,7 +395,7 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
                 required
                 min="100"
                 step="1"
-                placeholder={isTl ? "Minimum 100" : "Minimum 100"}
+                placeholder="Minimum 100"
                 value={amountStr}
                 onChange={(e) => setAmountStr(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:bg-white rounded-xl pl-8 pr-12 py-3 text-sm font-black text-slate-900 outline-none"
@@ -263,7 +440,7 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
             </div>
           </div>
 
-          {/* Form Actions feedback */}
+          {/* Feedback messages */}
           <AnimatePresence mode="wait">
             {errorMsg && (
               <motion.div 
@@ -319,123 +496,83 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
               </>
             )}
           </button>
-
-          <p className="text-center text-[11px] text-slate-400">
-            {isTl ? "Ang pag-withdraw ay instant simulated transfer. Karaniwang pumapasok sa loob ng 10-30 segundo sa listahan." : "Withdrawals are processed as simulated real-time transfers within 10-30 seconds."}
-          </p>
-
         </form>
-
       </div>
 
-      {/* RIGHT SIDE DETAILS AND SIMULATED TX LIST */}
-      <div className="lg:col-span-5 flex flex-col gap-6">
-        
-        {/* GCash Information Note */}
-        <div className="bg-gradient-to-br from-blue-700 to-blue-800 rounded-2xl p-5 text-white shadow-sm font-sans">
-          <div className="flex justify-between items-start mb-4">
-            <span className="font-black tracking-widest text-lg font-mono">G) GCash</span>
-            <span className="bg-white/20 text-[9px] font-bold uppercase rounded px-1.5 py-0.5">{isTl ? "Verified Partner" : "Verified Partner"}</span>
+      {/* 📜 WITHDRAWAL HISTORY LEDGER */}
+      <div id="cashout-history-section" className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <History className="w-4 h-4 text-slate-600" />
+            <h4 className="font-bold text-slate-900 text-sm">{isTl ? "Kasaysayan ng Withdrawal" : "Withdrawal History"}</h4>
           </div>
-
-          <h4 className="font-extrabold text-sm mb-1.5">{isTl ? "Paano maging mabilis ang Transaksyon?" : "How to expedite processing?"}</h4>
-          <ul className="space-y-2.5 text-xs text-blue-100 leading-normal">
-            <li className="flex gap-2">
-              <span className="bg-white/20 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0">1</span>
-              <span>{isTl ? "Gamitin ang iyong certified o verified GCash Account upang maiwasan ang anti-spam at bot checks ng aming automatic system." : "Use your registered, certified GCash details to automatically pass the simulated spam filters."}</span>
-            </li>
-            <li className="flex gap-2">
-              <span className="bg-white/20 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0">2</span>
-              <span>{isTl ? "Siguraduhing buhay ang inyong telecom signal (Globe/TM/Smart/TNT) sapagkat maaari kayong makatanggap ng simulated SMS confirmation alert." : "Keep your cellular notifications on to receive instant simulated network SMS alerts."}</span>
-            </li>
-            <li className="flex gap-2">
-              <span className="bg-white/20 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0">3</span>
-              <span>{isTl ? "Abangan ang reference number na makikita sa listahan para sa kumpirmasyon." : "Confirm matching reference numbers listed in the transaction ledger logs."}</span>
-            </li>
-          </ul>
+          <span className="text-xs text-slate-400 font-mono font-bold">
+            Total ({withdrawals.length})
+          </span>
         </div>
 
-        {/* Withdrawal History Logs Feed */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 flex-1 flex flex-col min-h-[280px]">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <History className="w-4 h-4 text-slate-500" />
-              <h4 className="font-bold text-slate-900 text-sm">{isTl ? "Kasaysayan ng Withdrawal" : "Withdrawal History"}</h4>
+        <div className="divide-y divide-slate-100 overflow-y-auto max-h-[300px] pr-1">
+          {withdrawals.length === 0 ? (
+            <div className="flex flex-col items-center justify-center text-center py-8 text-slate-400">
+              <FileSpreadsheet className="w-10 h-10 stroke-1 mb-2 text-slate-300" />
+              <p className="text-xs font-semibold">{isTl ? "Wala pang naitatalang Withdrawal." : "No withdrawals logged yet."}</p>
             </div>
-            <span className="text-[10px] text-slate-400 font-mono font-bold">
-              Total ({withdrawals.length})
-            </span>
-          </div>
+          ) : (
+            [...withdrawals].reverse().map((req) => (
+              <div 
+                key={req.id}
+                id={`withdraw-item-${req.id}`}
+                className="py-3 flex items-center justify-between gap-3"
+              >
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-slate-900 truncate uppercase">{req.accountName}</p>
+                  <p className="text-[10px] text-slate-500 font-mono mt-0.5">{req.gcashNumber}</p>
+                  <p className="text-[9px] text-slate-400 font-mono mt-0.5">Ref: {req.referenceNo}</p>
+                </div>
 
-          {/* List area */}
-          <div className="flex-1 overflow-y-auto space-y-3 pr-1 max-h-[250px]">
-            {withdrawals.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center py-10 text-slate-400">
-                <FileSpreadsheet className="w-10 h-10 stroke-1 mb-2 text-slate-350" />
-                <p className="text-xs font-semibold">{isTl ? "Wala pang naitatalang Withdrawal." : "No withdrawals logged yet."}</p>
-                <p className="text-[10px] text-slate-400 mt-0.5">{isTl ? "Magsimula ng pagbisita sa homepage ng mga website upang makatipon ng pondo!" : "Start visiting website homepages to accumulate withdrawable balance!"}</p>
-              </div>
-            ) : (
-              [...withdrawals].reverse().map((req) => (
-                <div 
-                  key={req.id}
-                  id={`withdraw-item-${req.id}`}
-                  className="p-3 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-100 transition flex items-center justify-between gap-3"
-                >
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-slate-900 truncate uppercase">{req.accountName}</p>
-                    <p className="text-[10px] text-slate-500 font-mono mt-0.5">{req.gcashNumber}</p>
-                    <p className="text-[9px] text-slate-400 font-mono mt-1">Ref: {req.referenceNo}</p>
-                  </div>
-
-                  <div className="text-right shrink-0">
-                    <p className="text-xs font-black text-slate-900">-₱{req.amount.toFixed(2)}</p>
-                    <div className="mt-1 flex items-center justify-end">
-                      {req.status === 'success' ? (
-                        <div className="flex flex-col items-end gap-1">
-                          <span className="bg-emerald-100 text-emerald-800 text-[9px] font-bold rounded px-1.5 py-0.5 flex items-center gap-0.5">
-                            <Check className="w-2.5 h-2.5" />
-                            <span>{isTl ? "Success" : "Success"}</span>
-                          </span>
-                          <button
-                            onClick={() => {
-                              setActiveBanner({
-                                userName: req.accountName || 'User',
-                                gcashNumber: req.gcashNumber,
-                                amount: req.amount,
-                                createdAt: req.createdAt,
-                                referenceNo: req.referenceNo
-                              });
-                              setShowBannerModal(true);
-                            }}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-black px-2 py-0.5 rounded transition shadow-xs flex items-center gap-0.5 cursor-pointer"
-                          >
-                            <Download className="w-2.5 h-2.5" />
-                            <span>Download Banner</span>
-                          </button>
-                        </div>
-                      ) : req.status === 'processing' || req.status === 'pending' ? (
-                        <span className="bg-amber-100 text-amber-800 text-[9px] font-bold rounded px-1.5 py-0.5 flex items-center gap-1 animate-pulse">
-                          <Clock className="w-2.5 h-2.5" />
-                          <span>{isTl ? "Pinoproseso" : "Processing"}</span>
+                <div className="text-right shrink-0">
+                  <p className="text-xs font-black text-slate-900">-₱{req.amount.toFixed(2)}</p>
+                  <div className="mt-1 flex items-center justify-end">
+                    {req.status === 'success' ? (
+                      <div className="flex flex-col items-end gap-1">
+                        <span className="bg-emerald-100 text-emerald-800 text-[9px] font-bold rounded px-1.5 py-0.5 flex items-center gap-0.5">
+                          <Check className="w-2.5 h-2.5" />
+                          <span>Success</span>
                         </span>
-                      ) : (
-                        <span className="bg-red-100 text-red-800 text-[9px] font-bold rounded px-1.5 py-0.5 flex items-center gap-0.5">
-                          <XIcon className="w-2.5 h-2.5" />
-                          <span>{isTl ? "Bigo" : "Failed"}</span>
-                        </span>
-                      )}
-                    </div>
+                        <button
+                          onClick={() => {
+                            setActiveBanner({
+                              userName: req.accountName || 'User',
+                              gcashNumber: req.gcashNumber,
+                              amount: req.amount,
+                              createdAt: req.createdAt,
+                              referenceNo: req.referenceNo
+                            });
+                            setShowBannerModal(true);
+                          }}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-black px-2 py-0.5 rounded transition shadow-xs flex items-center gap-0.5 cursor-pointer"
+                        >
+                          <Download className="w-2.5 h-2.5" />
+                          <span>Banner</span>
+                        </button>
+                      </div>
+                    ) : req.status === 'processing' || req.status === 'pending' ? (
+                      <span className="bg-amber-100 text-amber-800 text-[9px] font-bold rounded px-1.5 py-0.5 flex items-center gap-1 animate-pulse">
+                        <Clock className="w-2.5 h-2.5" />
+                        <span>Processing</span>
+                      </span>
+                    ) : (
+                      <span className="bg-red-100 text-red-800 text-[9px] font-bold rounded px-1.5 py-0.5 flex items-center gap-0.5">
+                        <XIcon className="w-2.5 h-2.5" />
+                        <span>Failed</span>
+                      </span>
+                    )}
                   </div>
                 </div>
-              ))
-            )}
-          </div>
-
+              </div>
+            ))
+          )}
         </div>
-
-      </div>
-
       </div>
 
       <RedemptionBannerModal
@@ -453,7 +590,6 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
   );
 }
 
-// Handcrafted quick helper icon for failure to pass ESLint safely
 function XIcon({ className }: { className?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
