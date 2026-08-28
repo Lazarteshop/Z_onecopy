@@ -91,6 +91,10 @@ import {
   isPushNotificationSupported, 
   getNotificationPermissionState 
 } from './utils/pushManager';
+import { 
+  monetagScheduler, 
+  runMonetagBoundaryTests 
+} from './utils/monetagScheduler';
 
 interface UserSession {
   id: string;
@@ -755,6 +759,20 @@ export default function App() {
     }
   }, []);
 
+
+  // Central Asia/Manila Monetag Ad Scheduler Controller
+  useEffect(() => {
+    // Run automated boundary checks
+    const testSuite = runMonetagBoundaryTests();
+    console.log(`[MonetagScheduler] Boundary verification complete: ${testSuite.allPassed ? '✅ ALL PASSED' : '❌ FAILED'}`, testSuite.results);
+    
+    // Initialize central live scheduler
+    monetagScheduler.init();
+
+    return () => {
+      monetagScheduler.destroy();
+    };
+  }, []);
 
   // Hide Install App button when user is logged in
   useEffect(() => {

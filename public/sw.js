@@ -1,6 +1,6 @@
-const CACHE = "zone-v10-floating-messenger-pos";
-const MEDIA_CACHE = "zone-media-v6";
-const API_CACHE = "zone-api-v6";
+const CACHE = "zone-v11-monetag-hourly-schedule";
+const MEDIA_CACHE = "zone-media-v7";
+const API_CACHE = "zone-api-v7";
 
 const STATIC_ASSETS = [
   "/",
