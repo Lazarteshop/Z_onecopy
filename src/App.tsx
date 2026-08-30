@@ -2580,6 +2580,8 @@ export default function App() {
               <div className="animate-fadeIn w-full">
                 <KiddiePortal
                   user={user}
+                  currentUser={user}
+                  onLogout={handleLogout}
                   onBackToLauncher={() => setActiveTab(null)}
                 />
               </div>

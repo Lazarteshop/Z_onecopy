@@ -10,6 +10,7 @@ interface KiddiePortalProps {
 }
 
 export const KiddiePortal: React.FC<KiddiePortalProps> = ({ currentUser, user, onLogout, onBackToLauncher }) => {
+  const activeUser = currentUser || user || null;
   const [contentList, setContentList] = useState<KiddieContentItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [activeVideo, setActiveVideo] = useState<KiddieContentItem | null>(null);
@@ -63,6 +64,18 @@ export const KiddiePortal: React.FC<KiddiePortalProps> = ({ currentUser, user, o
       <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-amber-500/20 px-4 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
+            {onBackToLauncher && (
+              <button
+                type="button"
+                onClick={onBackToLauncher}
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition flex items-center gap-1.5 text-xs font-bold"
+                title="Bumalik sa Home / Launcher"
+              >
+                <ArrowLeft className="w-4 h-4 text-amber-400" />
+                <span className="hidden sm:inline">Bumalik</span>
+              </button>
+            )}
+
             <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-amber-400 via-pink-500 to-purple-600 p-0.5 shadow-lg shadow-amber-500/10">
               <div className="w-full h-full bg-slate-900 rounded-[14px] flex items-center justify-center">
                 <Sparkles className="w-6 h-6 text-amber-400 animate-pulse" />
@@ -77,19 +90,22 @@ export const KiddiePortal: React.FC<KiddiePortalProps> = ({ currentUser, user, o
                   <ShieldCheck className="w-3 h-3" /> Child Safe
                 </span>
               </div>
-              <p className="text-xs text-slate-400 font-medium">Hello, {currentUser.name} 🎈</p>
+              <p className="text-xs text-slate-400 font-medium">Hello, {activeUser?.name || 'Explorer'} 🎈</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={onLogout}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition"
-              title="Mag-logout"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Logout</span>
-            </button>
+            {onLogout && (
+              <button
+                type="button"
+                onClick={onLogout}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition"
+                title="Mag-logout"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Logout</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
