@@ -79,11 +79,15 @@ export const VerificationFlowModal: React.FC<VerificationFlowModalProps> = ({
       const deviceHeaders = await getDeviceAuthHeaders();
 
       // 1. Request cryptographic verification session challenge token from server
+      const authHeader = token 
+        ? (token.startsWith('Bearer ') ? token : `Bearer ${token}`) 
+        : (resolvedUserId ? `Bearer ${resolvedUserId}` : '');
+
       const sessionRes = await fetch('/api/verification/start-session', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          ...(authHeader ? { 'Authorization': authHeader } : {}),
           ...deviceHeaders,
         },
         body: JSON.stringify({
@@ -101,7 +105,7 @@ export const VerificationFlowModal: React.FC<VerificationFlowModalProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          ...(authHeader ? { 'Authorization': authHeader } : {}),
           ...deviceHeaders,
         },
         body: JSON.stringify({

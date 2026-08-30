@@ -3162,11 +3162,26 @@ app.post('/api/push/test', async (req, res) => {
 const demoUsers: UserSession[] = [];
 
 // Helper to look up a user in demoUsers (RAM) first, then db.users (Production DB)
-function findUserInSystem(userId: string, db: DBStructure): UserSession | undefined {
-  if (!userId) return undefined;
-  const demoUser = demoUsers.find(u => u.id === userId);
+function findUserInSystem(rawUserId: string, db: DBStructure): UserSession | undefined {
+  if (!rawUserId) return undefined;
+  const cleanId = typeof rawUserId === 'string' && rawUserId.startsWith('Bearer ') 
+    ? rawUserId.slice(7).trim() 
+    : String(rawUserId).trim();
+    
+  if (!cleanId) return undefined;
+
+  const demoUser = demoUsers.find(u => 
+    u.id === cleanId || 
+    u.id === rawUserId || 
+    (u.email && u.email.toLowerCase() === cleanId.toLowerCase())
+  );
   if (demoUser) return demoUser;
-  return db.users.find(u => u.id === userId);
+
+  return db.users.find(u => 
+    u.id === cleanId || 
+    u.id === rawUserId || 
+    (u.email && u.email.toLowerCase() === cleanId.toLowerCase())
+  );
 }
 
 // ENDPOINT TO AUTOMATICALLY PURGE DEMO USER DATA FROM RAM MEMORY WHEN USER LEAVES DEMO MODE/PAGE
