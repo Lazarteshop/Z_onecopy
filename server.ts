@@ -1378,12 +1378,17 @@ interface KiddieContentItem {
   id: string;
   title: string;
   description: string;
-  category: 'cartoon' | 'educational' | 'story' | 'kiddie_movie';
+  category: 'cartoon' | 'educational' | 'story' | 'kiddie_movie' | 'live_tv';
   videoUrl: string;
   thumbnailUrl: string;
   durationSeconds?: number;
   ageRating: 'all_ages' | 'kids_7plus';
   tags: string[];
+  viewsCount?: number;
+  featured?: boolean;
+  isLive?: boolean;
+  streamType?: 'hls' | 'mp4' | 'youtube' | 'direct';
+  channelName?: string;
   createdAt: string;
 }
 
@@ -1416,51 +1421,129 @@ interface DBStructure {
 
 const INITIAL_KIDDIE_CONTENT: KiddieContentItem[] = [
   {
-    id: 'kiddie-1',
-    title: 'Alamat ng Pinya - Kwentong Pambata na may Magandang Aral',
-    description: 'Panoorin ang sikat na alamat ng pinya at matuto tungkol sa kahalagahan ng pagsunod at pagiging masipag.',
-    category: 'story',
-    videoUrl: 'https://www.youtube.com/embed/n33Z9K_bKxM',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60',
-    durationSeconds: 480,
-    ageRating: 'all_ages',
-    tags: ['Kwentong Pambata', 'Alamat', 'Aral sa Buhay'],
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'kiddie-2',
-    title: 'Mga Hugis at Kulay - Masayang Kantang Pambata (Educational Song)',
-    description: 'Matutunan ang ibat ibang hugis (bilog, parisukat, tatsulok) at makukulay na bagay sa pamamagitan ng masiglang awitin!',
-    category: 'educational',
-    videoUrl: 'https://www.youtube.com/embed/kJQP7kiw5Fk',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?w=600&auto=format&fit=crop&q=60',
-    durationSeconds: 320,
-    ageRating: 'all_ages',
-    tags: ['Edukasyon', 'Kantang Pambata', 'Kulay at Hugis'],
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'kiddie-3',
-    title: 'Si Pagong at si Matsing - Animated Classic Fable',
-    description: 'Ang klasikong kwento nina Pagong at Matsing tungkol sa pagtatanim ng saging at pagiging tapat sa kapwa.',
-    category: 'cartoon',
-    videoUrl: 'https://www.youtube.com/embed/L_LUpnjgPso',
+    id: 'kiddie-live-1',
+    title: 'Cartoon Classics & 90s Toons (24/7 Live Animation Channel)',
+    description: 'Panoorin ang 24/7 live stream ng mga paboritong classic cartoons, animated adventures, at nakakaaliw na kwento para sa mga bata.',
+    category: 'live_tv',
+    videoUrl: 'https://jmp2.uk/plu-6452c814939a590008567a3b.m3u8',
     thumbnailUrl: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=60',
-    durationSeconds: 600,
+    durationSeconds: 0,
     ageRating: 'all_ages',
-    tags: ['Animation', 'Pagong at Matsing', 'Pambata'],
+    isLive: true,
+    streamType: 'hls',
+    channelName: 'Cartoon Classics Live TV',
+    tags: ['Live TV', 'Cartoon Network', 'Classic Cartoons', '24/7 Live'],
+    featured: true,
     createdAt: new Date().toISOString()
   },
   {
-    id: 'kiddie-4',
-    title: 'Ang Munting Bayani - Pambatang Pelikula at Pakikipagsapalaran',
-    description: 'Isang nakaka-inspire na animated movie para sa buong pamilya na nagpapakita ng katapangan, malasakit, at kabayanihan ng isang bata.',
-    category: 'kiddie_movie',
-    videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=60',
-    durationSeconds: 1420,
-    ageRating: 'kids_7plus',
-    tags: ['Pelikula', 'Inspirational', 'Pakikipagsapalaran'],
+    id: 'kiddie-live-2',
+    title: 'Mr. Bean The Animated Series (24/7 Live Stream Channel)',
+    description: 'Walang tigil na tawanan kasama si Mr. Bean at Teddy sa kanyang mga nakakatawang animated adventures at misadventures!',
+    category: 'cartoon',
+    videoUrl: 'https://amg00627-amg00627c31-rakuten-fr-3991.playouts.now.amagi.tv/playlist/amg00627-banijayfast-mrbeanfrcc-rakutenfr/playlist.m3u8',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1563089145-599997674d42?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 0,
+    ageRating: 'all_ages',
+    isLive: true,
+    streamType: 'hls',
+    channelName: 'Mr Bean Animation 24/7',
+    tags: ['Mr Bean', 'Animation', 'Comedy', '24/7 Live'],
+    featured: true,
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'kiddie-live-3',
+    title: 'ABC Kids Live TV (24/7 Educational & Nursery Channel)',
+    description: 'Opisyal na live broadcast para sa mga bata na nagtatampok ng educational cartoons, nursery rhymes, at masayang pag-aaral.',
+    category: 'live_tv',
+    videoUrl: 'https://c.mjh.nz/abc-kids.m3u8',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 0,
+    ageRating: 'all_ages',
+    isLive: true,
+    streamType: 'hls',
+    channelName: 'ABC Kids TV Live',
+    tags: ['Live TV', 'Edukasyon', 'Nursery', 'Kids TV', '24/7 Live'],
+    featured: true,
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'kiddie-live-4',
+    title: 'Baby Shark & Friends Live 24/7 (Sing-Along & Rhymes)',
+    description: 'Kantahan, sayawan, at aral sa 24/7 stream ng Baby Shark, Pinkfong, at iba pang masayang pambatang awitin.',
+    category: 'educational',
+    videoUrl: 'https://c0c65b821b3542c3a4dca92702f59944.mediatailor.us-east-1.amazonaws.com/v1/master/04fd913bb278d8775298c26fdca9d9841f37601f/RakutenTV-eu_BabySharkTV/playlist.m3u8',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 0,
+    ageRating: 'all_ages',
+    isLive: true,
+    streamType: 'hls',
+    channelName: 'Baby Shark TV Live',
+    tags: ['Baby Shark', 'Pinkfong', 'Sing-Along', '24/7 Live'],
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'kiddie-live-5',
+    title: 'Akili Kids Learning & Science TV (24/7 Educational Live)',
+    description: 'Palabas tungkol sa agham, kalikasan, alpabeto, numero, at pagtuklas ng mga kamangha-manghang bagay sa paligid.',
+    category: 'educational',
+    videoUrl: 'https://m6.livecdn.io/akilikids.co.ke/akilikids.smil/playlist.m3u8',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 0,
+    ageRating: 'all_ages',
+    isLive: true,
+    streamType: 'hls',
+    channelName: 'Akili Kids TV Live',
+    tags: ['Science', 'Discovery', 'Education', '24/7 Live'],
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'kiddie-live-6',
+    title: 'Duck TV Kids Live (24/7 Animation & Toddler Development)',
+    description: 'Masayang pambatang channel na may makukulay na animation, musika, at visual storytelling na nakakatulong sa cognitive development ng bata.',
+    category: 'cartoon',
+    videoUrl: 'https://tvduck.akamaized.net/hls/live/2043681/ducktv/master.m3u8',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1513151233558-d860c5398176?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 0,
+    ageRating: 'all_ages',
+    isLive: true,
+    streamType: 'hls',
+    channelName: 'Duck TV Live 24/7',
+    tags: ['Duck TV', 'Toddlers', 'Animation', '24/7 Live'],
+    featured: true,
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'kiddie-live-7',
+    title: 'Moonbug Kids TV Live (CoComelon, Blippi & Morphle 24/7)',
+    description: '24/7 non-stop broadcast ng mga paboritong pambatang palabas tulad ng CoComelon, Blippi, Gecko\'s Garage, at Morphle!',
+    category: 'educational',
+    videoUrl: 'https://d39g1vx53pxw41.cloudfront.net/v1/master/9d07b713292415174151121d582f3ef8/Moonbug-RakutenFR/playlist.m3u8',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 0,
+    ageRating: 'all_ages',
+    isLive: true,
+    streamType: 'hls',
+    channelName: 'Moonbug Kids TV Live',
+    tags: ['CoComelon', 'Blippi', 'Moonbug', '24/7 Live'],
+    featured: true,
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'kiddie-live-8',
+    title: 'PBS Kids Live TV (24/7 Learning & Discovery Channel)',
+    description: 'Award-winning educational broadcast para sa mga bata na nagtuturo ng science, reading, math, and social-emotional learning.',
+    category: 'educational',
+    videoUrl: 'https://c.mjh.nz/pbs-kids.m3u8',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 0,
+    ageRating: 'all_ages',
+    isLive: true,
+    streamType: 'hls',
+    channelName: 'PBS Kids TV Live',
+    tags: ['PBS Kids', 'Discovery', 'Education', '24/7 Live'],
+    featured: true,
     createdAt: new Date().toISOString()
   }
 ];
@@ -3746,10 +3829,24 @@ app.post('/api/device/transfer-confirm', (req, res) => {
   });
 });
 
-// Z-ONE KIDDIE PORTAL CONTENT ENDPOINTS
+// Z-ONE KIDDIE PORTAL CONTENT ENDPOINTS (Strictly 24/7 Live Streams Only)
 app.get('/api/kiddie/feed', (req, res) => {
   const db = loadDB();
-  const items = (db.kiddieContent && db.kiddieContent.length > 0) ? db.kiddieContent : INITIAL_KIDDIE_CONTENT;
+  const existingMap = new Map<string, KiddieContentItem>();
+  // Prepopulate with verified 24/7 Live channels
+  for (const item of INITIAL_KIDDIE_CONTENT) {
+    if (item.isLive) {
+      existingMap.set(item.id, item);
+    }
+  }
+  if (db.kiddieContent && Array.isArray(db.kiddieContent)) {
+    for (const item of db.kiddieContent) {
+      if (item && item.id && (item.isLive || item.category === 'live_tv' || (item.videoUrl && item.videoUrl.includes('.m3u8')))) {
+        existingMap.set(item.id, { ...existingMap.get(item.id), ...item, isLive: true });
+      }
+    }
+  }
+  const items = Array.from(existingMap.values()).filter(item => item.isLive);
   res.json({
     success: true,
     items,
@@ -3760,11 +3857,11 @@ app.get('/api/kiddie/feed', (req, res) => {
 app.get('/api/kiddie/movies', (req, res) => {
   const db = loadDB();
   const allItems = (db.kiddieContent && db.kiddieContent.length > 0) ? db.kiddieContent : INITIAL_KIDDIE_CONTENT;
-  const movies = allItems.filter(it => it.category === 'kiddie_movie' || it.category === 'cartoon');
+  const liveItems = allItems.filter(it => it.isLive);
   res.json({
     success: true,
-    movies,
-    total: movies.length
+    movies: liveItems,
+    total: liveItems.length
   });
 });
 

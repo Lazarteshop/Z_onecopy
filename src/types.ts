@@ -616,7 +616,7 @@ export interface KiddieContentItem {
   id: string;
   title: string;
   description: string;
-  category: 'educational' | 'cartoon' | 'story' | 'kiddie_movie';
+  category: 'educational' | 'cartoon' | 'story' | 'kiddie_movie' | 'live_tv';
   videoUrl: string;
   thumbnailUrl: string;
   durationSeconds: number;
@@ -624,6 +624,9 @@ export interface KiddieContentItem {
   tags: string[];
   viewsCount?: number;
   featured?: boolean;
+  isLive?: boolean;
+  streamType?: 'hls' | 'mp4' | 'youtube' | 'direct';
+  channelName?: string;
   createdAt: string;
 }
 
