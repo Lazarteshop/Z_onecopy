@@ -2074,6 +2074,8 @@ export default function App() {
         <VerificationFlowModal
           isOpen={showVerificationModal}
           onClose={() => setShowVerificationModal(false)}
+          user={user}
+          currentUser={user}
           token={token || ''}
           currentSafetyStatus={user.accountSafetyStatus || (user.isMinor ? 'minor_restricted' : 'pending_verification')}
           onVerified={(updatedSafetyStatus, isMinor) => {
@@ -2084,6 +2086,11 @@ export default function App() {
             });
             fetchUserProfile(token || '');
           }}
+          onVerificationComplete={(updatedUser) => {
+            setUser(updatedUser);
+            fetchUserProfile(token || '');
+          }}
+          onLogout={handleLogout}
           triggerNotification={triggerNotification}
         />
       )}

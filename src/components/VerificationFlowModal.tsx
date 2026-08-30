@@ -70,20 +70,46 @@ export const VerificationFlowModal: React.FC<VerificationFlowModalProps> = ({
       setIsLivenessSimulating(true);
       setVerificationError('');
 
+      const resolvedUserId = activeUser?.id || currentUser?.id || user?.id;
+      if (!resolvedUserId) {
+        throw new Error('Hindi matukoy ang user session. Pakisubukang mag-login muli.');
+      }
+
       // Get device headers
       const deviceHeaders = await getDeviceAuthHeaders();
 
-      // Submit to server-side privacy-preserving verification endpoint
+      // 1. Request cryptographic verification session challenge token from server
+      const sessionRes = await fetch('/api/verification/start-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          ...deviceHeaders,
+        },
+        body: JSON.stringify({
+          userId: resolvedUserId,
+        }),
+      });
+
+      const sessionData = await sessionRes.json();
+      if (!sessionRes.ok || !sessionData.sessionId || !sessionData.sessionToken) {
+        throw new Error(sessionData.error || 'Nabigong simulan ang verification session.');
+      }
+
+      // 2. Submit to server-side privacy-preserving verification endpoint with challenge token
       const response = await fetch('/api/verification/submit', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
           ...deviceHeaders,
         },
         body: JSON.stringify({
-          userId: currentUser.id,
+          userId: resolvedUserId,
           dateOfBirth: dob,
           method: 'face_liveness_id',
+          sessionId: sessionData.sessionId,
+          sessionToken: sessionData.sessionToken,
         }),
       });
 
@@ -97,7 +123,13 @@ export const VerificationFlowModal: React.FC<VerificationFlowModalProps> = ({
       setStep('result');
 
       if (data.user) {
-        onVerificationComplete(data.user);
+        onVerificationComplete?.(data.user);
+      }
+      if (onVerified) {
+        onVerified(data.status, data.isMinor);
+      }
+      if (triggerNotification) {
+        triggerNotification(data.message || 'Matagumpay na na-verify ang iyong account!', 'success');
       }
     } catch (err: any) {
       setVerificationError(err.message || 'Nagka-problema sa verification. Subukang muli.');
@@ -282,8 +314,11 @@ export const VerificationFlowModal: React.FC<VerificationFlowModalProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    // Close modal and let state update
-                    window.location.reload();
+                    if (onClose) {
+                      onClose();
+                    } else {
+                      window.location.reload();
+                    }
                   }}
                   className="w-full py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-lg shadow-blue-500/20 transition"
                 >
