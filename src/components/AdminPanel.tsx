@@ -55,6 +55,7 @@ interface AdminDashboardData {
     name: string;
     avatar: string;
     isAdmin: boolean;
+    isBanned?: boolean;
     stats: UserStats;
     withdrawalsCount: number;
     withdrawals?: WithdrawalRequest[];
@@ -1857,7 +1858,7 @@ export default function AdminPanel({
                             <span className="font-mono text-slate-500 font-bold">{w.createdAt}</span>
                             <span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${
                               w.status === 'success' ? 'bg-emerald-100 text-emerald-800' :
-                              w.status === 'failed' || w.status === 'declined' ? 'bg-rose-100 text-rose-800' :
+                              w.status === 'failed' || (w.status as any) === 'declined' ? 'bg-rose-100 text-rose-800' :
                               'bg-amber-100 text-amber-800 animate-pulse'
                             }`}>
                               {w.status.toUpperCase()}

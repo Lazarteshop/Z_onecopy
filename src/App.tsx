@@ -82,6 +82,10 @@ import { WithdrawalPolicyBanner } from './components/WithdrawalPolicyBanner';
 import { AddCampaignModal } from './components/AddCampaignModal';
 import { BackgroundNotificationModal } from './components/BackgroundNotificationModal';
 import { DataSaverSettingsModal } from './components/DataSaverSettingsModal';
+import { KiddiePortal } from './components/KiddiePortal';
+import { VerificationFlowModal } from './components/VerificationFlowModal';
+import { DeviceTransferModal } from './components/DeviceTransferModal';
+import { getOrCreateDeviceKeyId, getDeviceSecurityHeaders } from './utils/deviceSecurity';
 import { dataSaver, generateIdempotencyKey } from './utils/dataSaver';
 import { idbStorage } from './utils/idbStorage';
 import { soundEffects } from './utils/audio';
@@ -109,6 +113,16 @@ interface UserSession {
   withdrawals: WithdrawalRequest[];
   activityLogs: ActivityLog[];
   referredFriends: ReferralFriend[];
+  accountSafetyStatus?: 'pending_verification' | 'verified_adult' | 'minor_restricted' | 'reverification_required' | 'under_review';
+  isMinor?: boolean;
+  dateOfBirth?: string;
+  boundDeviceId?: string;
+  verificationAudit?: any;
+  freeAccessExpiresAt?: string;
+  reelsTokens?: number;
+  isDemo?: boolean;
+  createdAt?: string;
+  subscription?: any;
 }
 
 const compressImage = (base64Str: string, maxWidth = 150, maxHeight = 150): Promise<string> => {
@@ -252,7 +266,10 @@ export default function App() {
   });
   const [referredFriends, setReferredFriends] = useState<ReferralFriend[]>([]);
   
-  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop' | null>(null);
+  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop' | 'kiddie' | null>(null);
+
+  const [showVerificationModal, setShowVerificationModal] = useState<boolean>(false);
+  const [showDeviceTransferModal, setShowDeviceTransferModal] = useState<boolean>(false);
 
   const [currentViewingCampaign, setCurrentViewingCampaign] = useState<WebsiteCampaign | null>(null);
   const [activeCommercialCamp, setActiveCommercialCamp] = useState<WebsiteCampaign | null>(null);
@@ -1442,7 +1459,8 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-demo-mode': isDemoMode ? 'true' : 'false'
+          'x-demo-mode': isDemoMode ? 'true' : 'false',
+          ...getDeviceSecurityHeaders()
         },
         body: JSON.stringify(payload)
       });
@@ -1455,7 +1473,11 @@ export default function App() {
           window.location.reload();
         }, 1000);
       } else {
-        setAuthError(result.error || 'May error sa authentication.');
+        if (result.deviceBindingBlocked) {
+          setAuthError(result.error || 'Naka-bind na ang device na ito sa ibang account.');
+        } else {
+          setAuthError(result.error || 'May error sa authentication.');
+        }
       }
     } catch (err) {
       console.error(err);
@@ -1473,7 +1495,8 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-demo-mode': isDemoMode ? 'true' : 'false'
+          'x-demo-mode': isDemoMode ? 'true' : 'false',
+          ...getDeviceSecurityHeaders()
         },
         body: JSON.stringify({
           name: selectedName,
@@ -2046,6 +2069,40 @@ export default function App() {
         triggerNotification={triggerNotification}
       />
 
+      {/* 🛡️ PRIVACY-PRESERVING AGE & IDENTITY VERIFICATION MODAL */}
+      {user && (
+        <VerificationFlowModal
+          isOpen={showVerificationModal}
+          onClose={() => setShowVerificationModal(false)}
+          token={token || ''}
+          currentSafetyStatus={user.accountSafetyStatus || (user.isMinor ? 'minor_restricted' : 'pending_verification')}
+          onVerified={(updatedSafetyStatus, isMinor) => {
+            setUser({
+              ...user,
+              accountSafetyStatus: updatedSafetyStatus,
+              isMinor: Boolean(isMinor)
+            });
+            fetchUserProfile(token || '');
+          }}
+          triggerNotification={triggerNotification}
+        />
+      )}
+
+      {/* 📱 SECURE DEVICE RECOVERY & TRANSFER MODAL */}
+      <DeviceTransferModal
+        isOpen={showDeviceTransferModal}
+        onClose={() => setShowDeviceTransferModal(false)}
+        userEmail={user?.email}
+        token={token || undefined}
+        onSuccess={() => {
+          triggerNotification('🎉 Tagumpay na nailipat ang iyong account sa bagong device!', 'success');
+          if (token) {
+            fetchUserProfile(token);
+          }
+        }}
+        triggerNotification={triggerNotification}
+      />
+
       {/* 🚀 SCREEN GATEWAY 1: NOT AUTHENTICATED SCREEN */}
       {!token || !user ? (
         <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 py-12 relative overflow-hidden">
@@ -2239,6 +2296,8 @@ export default function App() {
                 onOpenPolicy={() => setShowWithdrawalPolicyModal(true)}
                 onOpenProfile={openEditProfileModal}
                 onOpenDataSaver={() => setShowDataSaverModal(true)}
+                onOpenVerification={() => setShowVerificationModal(true)}
+                onOpenDeviceTransfer={() => setShowDeviceTransferModal(true)}
                 onOpenNotifications={() => {
                   if (notificationPermission === 'default') {
                     requestNotificationPermission();
@@ -2270,6 +2329,7 @@ export default function App() {
                   <span className="text-slate-400 font-normal">{language === 'tl' ? 'Module:' : 'Module:'}</span>
                   <span className="font-extrabold text-white bg-slate-800 border border-slate-700 px-3 py-1 rounded-lg">
                     {activeTab === 'zone' && 'Z-one Social'}
+                    {activeTab === 'kiddie' && 'Z-oneKiddie 🌟'}
                     {activeTab === 'va_shop' && 'VA & Shop'}
                     {activeTab === 'earn' && 'Mag-ipon'}
                     {activeTab === 'cashout' && 'GCash Cash-Out'}
@@ -2509,16 +2569,46 @@ export default function App() {
                 )}
 
               </div>
+            ) : activeTab === 'kiddie' ? (
+              <div className="animate-fadeIn w-full">
+                <KiddiePortal
+                  user={user}
+                  onBackToLauncher={() => setActiveTab(null)}
+                />
+              </div>
             ) : activeTab === 'zone' && user ? (
               <div className="animate-fadeIn w-full">
-                <ZoneFeed
-                  token={token || ''}
-                  user={user}
-                  setUser={setUser}
-                  triggerNotification={triggerNotification}
-                  onRefreshProfile={() => fetchUserProfile(token || '')}
-                  language={language}
-                />
+                {user.accountSafetyStatus === 'minor_restricted' || user.isMinor ? (
+                  <div className="max-w-md mx-auto my-8 bg-white p-6 rounded-3xl border-2 border-purple-300 shadow-xl text-center space-y-4">
+                    <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto text-3xl">
+                      🧒
+                    </div>
+                    <h3 className="text-lg font-black text-slate-900">
+                      {language === 'tl' ? 'Protektadong Kiddie Account' : 'Child Safety Protected Account'}
+                    </h3>
+                    <p className="text-xs text-slate-600 font-semibold leading-relaxed">
+                      {language === 'tl'
+                        ? 'Ang Z-one Social (Feed, DMs, Adult Reels) ay limitado para sa 18+ verified members. Panoorin ang mga pambatang cartoons, aral, at awitin sa Z-oneKiddie!'
+                        : 'Z-one Social is restricted to verified 18+ users. Enjoy our safe curated cartoons, rhymes, and educational lessons in Z-oneKiddie!'}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('kiddie')}
+                      className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black py-3 rounded-2xl text-xs cursor-pointer shadow-md flex items-center justify-center gap-2"
+                    >
+                      <span>{language === 'tl' ? 'Pumunta sa Z-oneKiddie Portal 🌟' : 'Open Z-oneKiddie Portal 🌟'}</span>
+                    </button>
+                  </div>
+                ) : (
+                  <ZoneFeed
+                    token={token || ''}
+                    user={user}
+                    setUser={setUser}
+                    triggerNotification={triggerNotification}
+                    onRefreshProfile={() => fetchUserProfile(token || '')}
+                    language={language}
+                  />
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">

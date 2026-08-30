@@ -498,7 +498,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     <span className="text-xs text-slate-400 font-medium">Mga Album</span>
                   </div>
                   <div>
-                    <span className="block text-lg font-black text-indigo-400">{profile.photoCount || 0}</span>
+                    <span className="block text-lg font-black text-indigo-400">{(profile as any).photoCount || 0}</span>
                     <span className="text-xs text-slate-400 font-medium">Mga Litrato</span>
                   </div>
                 </div>

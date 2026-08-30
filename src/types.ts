@@ -346,6 +346,7 @@ export interface ShopShippingAddress {
   postalCode?: string;
   deliveryNotes?: string;
   label?: 'Home' | 'Work' | 'Other';
+  addressLabel?: string;
 }
 
 export type ShopOrderStatus =
@@ -426,6 +427,7 @@ export interface ShopBasket {
   id: string;
   userId: string;
   userName: string;
+  userEmail?: string;
   userAvatar: string;
   items: ShopBasketItem[];
   totalAmount: number;
@@ -549,6 +551,80 @@ export interface UserSession {
   activityLogs: ActivityLog[];
   referredFriends: ReferralFriend[];
   vaStats?: UserVAStats;
+  // Community Safety, Age Verification & Device Binding
+  accountSafetyStatus?: AccountSafetyStatus;
+  isMinor?: boolean;
+  dateOfBirth?: string;
+  boundDeviceId?: string;
+  verificationAudit?: VerificationAuditSummary;
+}
+
+export type AccountSafetyStatus =
+  | 'pending_verification'
+  | 'verified_adult'
+  | 'minor_restricted'
+  | 'reverification_required'
+  | 'under_review';
+
+export type VerificationAgeBracket = 'minor_under18' | 'adult_18plus' | 'unknown';
+
+export interface VerificationAuditSummary {
+  verifiedAt: string;
+  providerRef: string;
+  bracket: VerificationAgeBracket;
+  method: string;
+  riskScore?: number;
+}
+
+export interface VerificationAuditRecord {
+  id: string;
+  userId: string;
+  userEmail: string;
+  status: 'approved' | 'rejected' | 'under_review';
+  ageBracket: VerificationAgeBracket;
+  provider: 'veriff_protocol' | 'didit_protocol' | 'face_liveness_sdk' | 'system_audit';
+  providerReferenceId: string;
+  verifiedAt: string;
+  riskScore: number;
+  estimatedAge?: number;
+  notes?: string;
+}
+
+export interface RegisteredDeviceDoc {
+  id: string; // deviceKeyId UUID
+  boundUserId: string;
+  boundUserEmail: string;
+  createdAt: string;
+  lastSeenAt: string;
+  deviceLabel: string;
+  status: 'active' | 'transferred' | 'blocked';
+  ipRiskLogs: Array<{ ip: string; timestamp: string }>;
+}
+
+export interface DeviceTransferChallenge {
+  id: string;
+  userId: string;
+  targetDeviceKeyId: string;
+  otpCodeHash: string;
+  createdAt: string;
+  expiresAt: string;
+  attempts: number;
+  verified: boolean;
+}
+
+export interface KiddieContentItem {
+  id: string;
+  title: string;
+  description: string;
+  category: 'educational' | 'cartoon' | 'story' | 'kiddie_movie';
+  videoUrl: string;
+  thumbnailUrl: string;
+  durationSeconds: number;
+  ageRating: 'all_ages' | 'kids_7plus';
+  tags: string[];
+  viewsCount?: number;
+  featured?: boolean;
+  createdAt: string;
 }
 
 

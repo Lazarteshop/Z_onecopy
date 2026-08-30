@@ -49,6 +49,7 @@ export const ZoneShopCheckoutModal: React.FC<ZoneShopCheckoutModalProps> = ({
   const [shippingAddress, setShippingAddress] = useState<ShopShippingAddress>({
     recipientName: user.name || '',
     phoneNumber: '0917-555-0199',
+    region: 'NCR',
     streetAddress: 'Blk 12 Lot 4 Magnolia St., Green Park Subd.',
     barangay: 'San Antonio',
     city: 'Pasig City',

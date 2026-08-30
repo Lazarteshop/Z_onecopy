@@ -94,15 +94,62 @@
       .install-btn:active {
         transform: translateY(1px);
       }
+
+      /* Initial Preloader styles */
+      #initial-app-loader {
+        min-height: 100vh;
+        background: #020617;
+        color: #f8fafc;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        padding: 20px;
+        text-align: center;
+      }
+      .spinner-circle {
+        width: 48px;
+        height: 48px;
+        border: 4px solid rgba(59, 130, 246, 0.2);
+        border-top-color: #3b82f6;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 16px;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
     </style>
-    <link rel="stylesheet" href="./style.css">
+
+    <!-- Global Early Error Handler -->
+    <script>
+      window.addEventListener('error', function(e) {
+        console.error('Global Unhandled Window Error:', e.error || e.message);
+        var root = document.getElementById('root');
+        if (root && (!root.firstElementChild || root.querySelector('#initial-app-loader'))) {
+          root.innerHTML = '<div style="min-height:100vh;background:#090d16;color:#fff;padding:24px;display:flex;align-items:center;justify-content:center;font-family:sans-serif;">' +
+            '<div style="max-width:480px;background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px;text-align:center;">' +
+              '<h3 style="color:#ef4444;margin-top:0;">⚡ Error Loading Preview</h3>' +
+              '<p style="font-size:13px;color:#cbd5e1;">' + (e.message || 'Script execution interrupted') + '</p>' +
+              '<button onclick="window.location.reload()" style="background:#2563eb;color:#fff;border:none;padding:10px 18px;border-radius:6px;font-weight:bold;cursor:pointer;margin-top:10px;">🔄 Reload Page</button>' +
+            '</div></div>';
+        }
+      });
+    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="initial-app-loader">
+        <div class="spinner-circle"></div>
+        <div style="font-size: 16px; font-weight: 700; color: #60a5fa; letter-spacing: -0.02em;">Z-oneApp Platform</div>
+        <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">Inihahanda ang live interface at rewards portal...</div>
+      </div>
+    </div>
     <button id="installBtn" class="install-btn">Install App</button>
-    <script type="module" src="src/main.tsx"></script>
+    <script type="module" src="/src/main.tsx"></script>
     
-    <!-- PWA Installation Script & Service Worker Registration -->
+    <!-- PWA Installation & Service Worker Manager -->
     <script>
       let deferredPrompt;
       const installBtn = document.getElementById("installBtn");
@@ -175,61 +222,65 @@
         }
       });
 
-      window.addEventListener("load", () => {
-        setTimeout(() => {
-          if (!deferredPrompt && !document.body.classList.contains('user-logged-in') && installBtn) {
-            installBtn.style.display = "block";
-            installBtn.innerText = "Install App 📱";
-          }
-        }, 3000);
-      });
-
+      // Manage Service Worker registration safely
       if ("serviceWorker" in navigator) {
-        let isRefreshing = false;
-        navigator.serviceWorker.addEventListener("controllerchange", () => {
-          if (!isRefreshing) {
-            isRefreshing = true;
-            console.log("SW: New service worker active, updating page...");
-            window.location.reload();
-          }
-        });
+        const isPreviewOrDev = 
+          window.self !== window.top ||
+          window.location.hostname.includes('run.app') ||
+          window.location.hostname.includes('localhost') ||
+          window.location.hostname.includes('127.0.0.1') ||
+          window.location.port === '3000';
 
-        navigator.serviceWorker.register("sw.js")
-          .then((reg) => {
-            console.log("SW registered");
-
-            // Check for update immediately
-            reg.update().catch(() => {});
-
-            // If a new worker is waiting, tell it to activate
-            if (reg.waiting) {
-              reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        if (isPreviewOrDev) {
+          // AI Studio Preview / Dev Environment: Unregister SW & clear caches to prevent stale cache conflicts
+          navigator.serviceWorker.getRegistrations().then((registrations) => {
+            for (const registration of registrations) {
+              registration.unregister().then(() => {
+                console.log("SW: Unregistered active service worker in AI Studio Preview for fresh live updates.");
+              });
             }
+          }).catch(() => {});
 
-            reg.addEventListener("updatefound", () => {
-              const newWorker = reg.installing;
-              if (newWorker) {
-                newWorker.addEventListener("statechange", () => {
-                  if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-                    newWorker.postMessage({ type: 'SKIP_WAITING' });
-                  }
-                });
-              }
-            });
+          if (window.caches) {
+            caches.keys().then((keys) => {
+              keys.forEach((key) => {
+                if (key.includes('zone-') || key.includes('v13') || key.includes('app')) {
+                  caches.delete(key);
+                }
+              });
+            }).catch(() => {});
+          }
+        } else {
+          // Production Domain (e.g. z-oneapp.onrender.com)
+          let isRefreshing = false;
+          navigator.serviceWorker.addEventListener("controllerchange", () => {
+            if (!isRefreshing) {
+              isRefreshing = true;
+              console.log("SW: New service worker active, updating page...");
+              window.location.reload();
+            }
+          });
 
-            // Check for updates when user returns to app
-            document.addEventListener("visibilitychange", () => {
-              if (document.visibilityState === "visible") {
-                reg.update().catch(() => {});
-              }
-            });
-
-            // Check for updates every 3 minutes
-            setInterval(() => {
+          navigator.serviceWorker.register("/sw.js")
+            .then((reg) => {
+              console.log("SW registered");
               reg.update().catch(() => {});
-            }, 180000);
-          })
-          .catch((err) => console.log("SW registration failed:", err));
+              if (reg.waiting) {
+                reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+              }
+              reg.addEventListener("updatefound", () => {
+                const newWorker = reg.installing;
+                if (newWorker) {
+                  newWorker.addEventListener("statechange", () => {
+                    if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+                      newWorker.postMessage({ type: 'SKIP_WAITING' });
+                    }
+                  });
+                }
+              });
+            })
+            .catch((err) => console.log("SW registration skipped/failed:", err));
+        }
       }
     </script>
   </body>

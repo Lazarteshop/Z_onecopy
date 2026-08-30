@@ -987,7 +987,7 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
                 </h3>
               </div>
               <button
-                onClick={fetchData}
+                onClick={() => fetchData()}
                 className="text-xs text-slate-500 hover:text-blue-600 font-bold flex items-center gap-1 cursor-pointer"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
@@ -1134,7 +1134,7 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
                 </p>
               </div>
               <button
-                onClick={fetchData}
+                onClick={() => fetchData()}
                 className="text-xs text-slate-500 hover:text-blue-600 font-bold flex items-center gap-1 cursor-pointer self-start sm:self-auto"
               >
                 <RefreshCw className="w-3.5 h-3.5" />

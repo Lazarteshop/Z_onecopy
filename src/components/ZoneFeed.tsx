@@ -1950,7 +1950,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     const outboxIds = new Set(outbox.map(item => item.id));
     const nonOutboxPosts = posts.filter(p => !outboxIds.has(p.id));
     
-    const outboxPosts = outbox.map(item => ({
+    const outboxPosts: ZonePost[] = outbox.map(item => ({
       id: item.id,
       userId: user.id,
       userName: user.name,
@@ -1966,7 +1966,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       isFailed: item.isFailed,
       errorMsg: item.errorMsg,
       progress: item.progress || 15
-    }));
+    } as unknown as ZonePost));
     
     return [...outboxPosts, ...nonOutboxPosts];
   }, [posts, outbox, user.id, user.name, user.avatar]);
@@ -6135,7 +6135,6 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                     controls
                     autoPlay
                     playsInline
-                    referrerPolicy="no-referrer"
                   />
                 ) : (
                   <iframe

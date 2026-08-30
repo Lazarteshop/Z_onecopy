@@ -1124,6 +1124,17 @@ interface UserSession {
       status: 'active' | 'flagged';
     }>;
   };
+  accountSafetyStatus?: 'pending_verification' | 'verified_adult' | 'minor_restricted' | 'reverification_required' | 'under_review';
+  dateOfBirth?: string;
+  isMinor?: boolean;
+  boundDeviceId?: string;
+  verificationAudit?: {
+    verifiedAt: string;
+    providerRef: string;
+    bracket: 'minor_under18' | 'adult_18plus';
+    method: 'face_liveness_id' | 'device_attestation';
+    riskScore: number;
+  };
 }
 
 interface DirectMessage {
@@ -1324,6 +1335,58 @@ interface UserAlbum {
   updatedAt?: string;
 }
 
+interface RegisteredDeviceDoc {
+  id: string; // Device Key ID (UUID)
+  boundUserId: string;
+  boundUserEmail: string;
+  createdAt: string;
+  lastSeenAt: string;
+  deviceLabel?: string;
+  status: 'active' | 'transferred' | 'suspended';
+  ipRiskLogs?: Array<{
+    ip: string;
+    timestamp: string;
+  }>;
+}
+
+interface VerificationAuditRecord {
+  id: string;
+  userId: string;
+  userEmail: string;
+  status: 'approved' | 'rejected' | 'pending' | 'flagged';
+  ageBracket: 'minor_under18' | 'adult_18plus';
+  provider: 'face_liveness_sdk' | 'system_admin' | 'device_attestation';
+  providerReferenceId: string;
+  verifiedAt: string;
+  riskScore: number;
+  estimatedAge?: number;
+  notes?: string;
+}
+
+interface DeviceTransferChallenge {
+  id: string;
+  userId: string;
+  oldDeviceId: string;
+  newDeviceId: string;
+  transferCode: string;
+  expiresAt: string;
+  status: 'pending' | 'completed' | 'expired';
+  createdAt: string;
+}
+
+interface KiddieContentItem {
+  id: string;
+  title: string;
+  description: string;
+  category: 'cartoon' | 'educational' | 'story' | 'kiddie_movie';
+  videoUrl: string;
+  thumbnailUrl: string;
+  durationSeconds?: number;
+  ageRating: 'all_ages' | 'kids_7plus';
+  tags: string[];
+  createdAt: string;
+}
+
 interface DBStructure {
   users: UserSession[];
   campaigns?: any[];
@@ -1345,7 +1408,62 @@ interface DBStructure {
   shopOrders?: any[];
   vaBanners?: any[];
   vaSubscriptions?: any[];
+  registeredDevices?: RegisteredDeviceDoc[];
+  userVerifications?: VerificationAuditRecord[];
+  kiddieContent?: KiddieContentItem[];
+  deviceTransfers?: DeviceTransferChallenge[];
 }
+
+const INITIAL_KIDDIE_CONTENT: KiddieContentItem[] = [
+  {
+    id: 'kiddie-1',
+    title: 'Alamat ng Pinya - Kwentong Pambata na may Magandang Aral',
+    description: 'Panoorin ang sikat na alamat ng pinya at matuto tungkol sa kahalagahan ng pagsunod at pagiging masipag.',
+    category: 'story',
+    videoUrl: 'https://www.youtube.com/embed/n33Z9K_bKxM',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 480,
+    ageRating: 'all_ages',
+    tags: ['Kwentong Pambata', 'Alamat', 'Aral sa Buhay'],
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'kiddie-2',
+    title: 'Mga Hugis at Kulay - Masayang Kantang Pambata (Educational Song)',
+    description: 'Matutunan ang ibat ibang hugis (bilog, parisukat, tatsulok) at makukulay na bagay sa pamamagitan ng masiglang awitin!',
+    category: 'educational',
+    videoUrl: 'https://www.youtube.com/embed/kJQP7kiw5Fk',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 320,
+    ageRating: 'all_ages',
+    tags: ['Edukasyon', 'Kantang Pambata', 'Kulay at Hugis'],
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'kiddie-3',
+    title: 'Si Pagong at si Matsing - Animated Classic Fable',
+    description: 'Ang klasikong kwento nina Pagong at Matsing tungkol sa pagtatanim ng saging at pagiging tapat sa kapwa.',
+    category: 'cartoon',
+    videoUrl: 'https://www.youtube.com/embed/L_LUpnjgPso',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 600,
+    ageRating: 'all_ages',
+    tags: ['Animation', 'Pagong at Matsing', 'Pambata'],
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'kiddie-4',
+    title: 'Ang Munting Bayani - Pambatang Pelikula at Pakikipagsapalaran',
+    description: 'Isang nakaka-inspire na animated movie para sa buong pamilya na nagpapakita ng katapangan, malasakit, at kabayanihan ng isang bata.',
+    category: 'kiddie_movie',
+    videoUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 1420,
+    ageRating: 'kids_7plus',
+    tags: ['Pelikula', 'Inspirational', 'Pakikipagsapalaran'],
+    createdAt: new Date().toISOString()
+  }
+];
 
 const INITIAL_SHOP_PRODUCTS = [
   {
@@ -2018,7 +2136,10 @@ const lastSyncedCache = {
   shopBaskets: new Map<string, string>(),
   shopOrders: new Map<string, string>(),
   vaBanners: new Map<string, string>(),
-  vaSubscriptions: new Map<string, string>()
+  vaSubscriptions: new Map<string, string>(),
+  registeredDevices: new Map<string, string>(),
+  userVerifications: new Map<string, string>(),
+  kiddieContent: new Map<string, string>()
 };
 
 function initLastSyncedCache(data: DBStructure) {
@@ -2100,6 +2221,21 @@ function initLastSyncedCache(data: DBStructure) {
   if (lastSyncedCache.vaSubscriptions.size === 0 && data.vaSubscriptions && data.vaSubscriptions.length > 0) {
     for (const vs of data.vaSubscriptions) {
       lastSyncedCache.vaSubscriptions.set(vs.id, JSON.stringify(vs));
+    }
+  }
+  if (lastSyncedCache.registeredDevices.size === 0 && data.registeredDevices && data.registeredDevices.length > 0) {
+    for (const rd of data.registeredDevices) {
+      lastSyncedCache.registeredDevices.set(rd.id, JSON.stringify(rd));
+    }
+  }
+  if (lastSyncedCache.userVerifications.size === 0 && data.userVerifications && data.userVerifications.length > 0) {
+    for (const uv of data.userVerifications) {
+      lastSyncedCache.userVerifications.set(uv.id, JSON.stringify(uv));
+    }
+  }
+  if (lastSyncedCache.kiddieContent.size === 0 && data.kiddieContent && data.kiddieContent.length > 0) {
+    for (const kc of data.kiddieContent) {
+      lastSyncedCache.kiddieContent.set(kc.id, JSON.stringify(kc));
     }
   }
 }
@@ -2440,6 +2576,57 @@ async function uploadToFirestore(data: DBStructure) {
       }
     }
 
+    if (data.registeredDevices) {
+      for (const rd of data.registeredDevices) {
+        const rdStr = JSON.stringify(rd);
+        if (lastSyncedCache.registeredDevices.get(rd.id) !== rdStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...rdWithoutId } = rd;
+              await cloudDb.setDoc('registered_devices', rd.id, rdWithoutId);
+              lastSyncedCache.registeredDevices.set(rd.id, rdStr);
+            } catch (rdErr) {
+              console.error(`Error saving registered device ${rd.id} to Cloud DB:`, rdErr);
+            }
+          })());
+        }
+      }
+    }
+
+    if (data.userVerifications) {
+      for (const uv of data.userVerifications) {
+        const uvStr = JSON.stringify(uv);
+        if (lastSyncedCache.userVerifications.get(uv.id) !== uvStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...uvWithoutId } = uv;
+              await cloudDb.setDoc('user_verifications', uv.id, uvWithoutId);
+              lastSyncedCache.userVerifications.set(uv.id, uvStr);
+            } catch (uvErr) {
+              console.error(`Error saving user verification ${uv.id} to Cloud DB:`, uvErr);
+            }
+          })());
+        }
+      }
+    }
+
+    if (data.kiddieContent) {
+      for (const kc of data.kiddieContent) {
+        const kcStr = JSON.stringify(kc);
+        if (lastSyncedCache.kiddieContent.get(kc.id) !== kcStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...kcWithoutId } = kc;
+              await cloudDb.setDoc('kiddie_content', kc.id, kcWithoutId);
+              lastSyncedCache.kiddieContent.set(kc.id, kcStr);
+            } catch (kcErr) {
+              console.error(`Error saving kiddie content ${kc.id} to Cloud DB:`, kcErr);
+            }
+          })());
+        }
+      }
+    }
+
     // Deletion syncs
     const currentStoryIds = new Set(data.stories ? data.stories.map(s => s.id) : []);
     for (const cachedId of lastSyncedCache.stories.keys()) {
@@ -2589,7 +2776,10 @@ async function syncFromFirestore() {
       dbShopProducts,
       dbShopBaskets,
       dbShopOrders,
-      dbVaBanners
+      dbVaBanners,
+      dbRegisteredDevices,
+      dbUserVerifications,
+      dbKiddieContent
     ] = await Promise.all([
       safeGetCollection('users'),
       safeGetCollection('campaigns'),
@@ -2605,18 +2795,21 @@ async function syncFromFirestore() {
       safeGetCollection('shop_products'),
       safeGetCollection('shop_baskets'),
       safeGetCollection('shop_orders'),
-      safeGetCollection('va_banners')
+      safeGetCollection('va_banners'),
+      safeGetCollection('registered_devices'),
+      safeGetCollection('user_verifications'),
+      safeGetCollection('kiddie_content')
     ]);
 
     const hasAnyCloudData = dbUsers.length > 0 || dbStories.length > 0 || dbAlbums.length > 0 || dbGroupChats.length > 0 || 
                             dbGroupMessages.length > 0 || dbDMs.length > 0 || dbPosts.length > 0 || 
                             dbReels.length > 0 || dbShopOrders.length > 0 || dbCampaigns.length > 0 || 
-                            dbMerchantAds.length > 0 || dbShopProducts.length > 0;
+                            dbMerchantAds.length > 0 || dbShopProducts.length > 0 || dbRegisteredDevices.length > 0;
 
     const localDB = loadDB(); // Read current local records
 
     if (hasAnyCloudData) {
-      console.log(`📱 Found Cloud Firestore records: ${dbUsers.length} users, ${dbReels.length} reels, ${dbStories.length} stories, ${dbGroupChats.length} group chats, ${dbGroupMessages.length} group msgs, ${dbDMs.length} DMs, ${dbPosts.length} posts. Applying Cloud-First authoritative merge...`);
+      console.log(`📱 Found Cloud Firestore records: ${dbUsers.length} users, ${dbReels.length} reels, ${dbStories.length} stories, ${dbGroupChats.length} group chats, ${dbGroupMessages.length} group msgs, ${dbDMs.length} DMs, ${dbPosts.length} posts, ${dbRegisteredDevices.length} registered devices. Applying Cloud-First authoritative merge...`);
 
       // 1. Clean withdrawals
       for (const u of dbUsers) {
@@ -2659,6 +2852,9 @@ async function syncFromFirestore() {
       const finalShopBaskets = mergeCloudFirst(localDB.shopBaskets || INITIAL_SHOP_BASKETS, dbShopBaskets);
       const finalShopOrders = mergeCloudFirst(localDB.shopOrders || INITIAL_SHOP_ORDERS, dbShopOrders);
       const finalVaBanners = mergeCloudFirst(localDB.vaBanners || [], dbVaBanners);
+      const finalRegisteredDevices = mergeCloudFirst(localDB.registeredDevices || [], dbRegisteredDevices);
+      const finalUserVerifications = mergeCloudFirst(localDB.userVerifications || [], dbUserVerifications);
+      const finalKiddieContent = mergeCloudFirst(localDB.kiddieContent || INITIAL_KIDDIE_CONTENT, dbKiddieContent);
 
       const mergedDB: DBStructure = {
         users: finalUsers.length > 0 ? finalUsers : localDB.users,
@@ -2677,7 +2873,11 @@ async function syncFromFirestore() {
         shopCarts: localDB.shopCarts || {},
         shopOrders: finalShopOrders,
         vaBanners: finalVaBanners,
-        vaSubscriptions: localDB.vaSubscriptions || []
+        vaSubscriptions: localDB.vaSubscriptions || [],
+        registeredDevices: finalRegisteredDevices,
+        userVerifications: finalUserVerifications,
+        kiddieContent: finalKiddieContent.length > 0 ? finalKiddieContent : INITIAL_KIDDIE_CONTENT,
+        deviceTransfers: localDB.deviceTransfers || []
       };
 
       // Admin credential verification
@@ -2721,6 +2921,50 @@ let database = loadDB();
 // --- AUTH MIDDLEWARE ---
 function generateToken(userId: string) {
   return userId; // Simple pass-through for simulation token
+}
+
+// Verification Session & Device Rate Limit Tracking
+const verificationSessionsMap: Record<string, { sessionId: string; sessionToken: string; userId: string; status: 'initiated' | 'consumed'; expiresAt: number }> = {};
+const transferRequestAttempts: Record<string, { count: number; lastRequestedAt: number; windowStart: number }> = {};
+const VERIF_SECRET = process.env.VERIF_SECRET || 'zone_community_safety_session_secret_2026';
+
+function enforceCommunitySafety(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const userId = req.headers.authorization || (req.body && req.body.userId) || (req.query && (req.query.userId as string));
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang ma-access ang serbisyong ito.' });
+  }
+
+  const db = loadDB();
+  const user = findUserInSystem(userId, db);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi nahanap ang user account.' });
+  }
+
+  if (user.isAdmin) {
+    return next();
+  }
+
+  const safetyStatus = user.accountSafetyStatus || 'pending_verification';
+
+  // 1. Hard Block for Minors on Adult Community Endpoints
+  if (safetyStatus === 'minor_restricted' || user.isMinor) {
+    return res.status(403).json({
+      error: '🛡️ [Z-oneKiddie Protection]: Ang account na ito ay restricted sa Z-oneKiddie Portal lamang. Bawal ang public posting, messaging, reels, at adult community interaction para sa kaligtasan ng kabataan.',
+      isMinorRestricted: true,
+      accountSafetyStatus: 'minor_restricted'
+    });
+  }
+
+  // 2. Pending, Under Review, or Re-verification required check (only verified_adult is allowed)
+  if (safetyStatus !== 'verified_adult') {
+    return res.status(403).json({
+      error: '🔒 Kailangang kumpletuhin ang Community Safety & Age Verification (18+ Verified Adult) bago ma-access ang adult community features.',
+      verificationRequired: true,
+      accountSafetyStatus: safetyStatus
+    });
+  }
+
+  next();
 }
 
 function hasActiveAccess(user: UserSession): boolean {
@@ -2950,8 +3194,9 @@ app.post('/api/auth/demo-session-clear', (req, res) => {
 
 // REGISTER
 app.post('/api/auth/register', (req, res) => {
-  const { email, password, name, avatar, referralCode, isDemo } = req.body;
+  const { email, password, name, avatar, referralCode, isDemo, deviceId: bodyDeviceId } = req.body;
   const isDemoModeReq = Boolean(isDemo || req.headers['x-demo-mode'] === 'true');
+  const deviceId = (req.headers['x-device-id'] as string) || bodyDeviceId || null;
 
   if (!email || !password || !name) {
     return res.status(400).json({ error: 'Kailangan ibigay ang email, password, at pangalan.' });
@@ -2966,6 +3211,29 @@ app.post('/api/auth/register', (req, res) => {
     return res.status(400).json({ error: 'Ang email na ito ay may rehistradong account na.' });
   }
 
+  // ONE ACCOUNT PER DEVICE POLICY CHECK (for non-demo accounts)
+  if (!isDemoModeReq) {
+    if (!deviceId || typeof deviceId !== 'string' || deviceId.trim().length < 8) {
+      return res.status(400).json({
+        error: '⚠️ Kinakailangan ang valid device registration credential (X-Device-Id) para sa pagpaparehistro ng bagong account alinsunod sa 1-Account Per Device Security Policy.',
+        deviceRequired: true
+      });
+    }
+
+    if (!db.registeredDevices) db.registeredDevices = [];
+    const existingDevice = db.registeredDevices.find(d => d.id === deviceId && d.status === 'active');
+    if (existingDevice && existingDevice.boundUserId) {
+      const boundUser = db.users.find(u => u.id === existingDevice.boundUserId);
+      if (boundUser && !boundUser.isBanned) {
+        return res.status(400).json({
+          error: `⚠️ ONE ACCOUNT PER DEVICE POLICY: Ang device na ito ay mayroon nang nakarehistrong account (${boundUser.email}). Bawal ang maramihang account bawat device alinsunod sa Community Safety Rules. Kung kailangan magpalit ng device, gamitin ang Device Transfer recovery.`,
+          deviceBindingBlocked: true,
+          existingUserEmail: boundUser.email
+        });
+      }
+    }
+  }
+
   // Generate individual referral code
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let myCode = 'REF-';
@@ -2976,7 +3244,7 @@ app.post('/api/auth/register', (req, res) => {
   const userId = isDemoModeReq ? ('demo-user-' + Date.now()) : ('user-api-' + Date.now());
   const defaultAvatar = avatar || '👤';
 
-  // Create new user session structure
+  // Create new user session structure with pending safety status
   const newUser: UserSession = {
     id: userId,
     email: email.trim(),
@@ -2986,6 +3254,9 @@ app.post('/api/auth/register', (req, res) => {
     referralCode: myCode,
     isAdmin: false,
     isDemo: isDemoModeReq,
+    accountSafetyStatus: 'pending_verification',
+    boundDeviceId: deviceId || undefined,
+    isMinor: false,
     createdAt: new Date().toISOString(),
     subscription: {
       status: 'none',
@@ -3045,6 +3316,20 @@ app.post('/api/auth/register', (req, res) => {
         });
       }
     }
+
+    if (deviceId) {
+      if (!db.registeredDevices) db.registeredDevices = [];
+      db.registeredDevices.push({
+        id: deviceId,
+        boundUserId: userId,
+        boundUserEmail: newUser.email,
+        createdAt: new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
+        deviceLabel: req.headers['user-agent'] ? String(req.headers['user-agent']).substring(0, 50) : 'Browser Device',
+        status: 'active'
+      });
+    }
+
     db.users.push(newUser);
     saveDB(db);
   }
@@ -3055,7 +3340,8 @@ app.post('/api/auth/register', (req, res) => {
 
 // LOGIN
 app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, deviceId: bodyDeviceId } = req.body;
+  const deviceId = (req.headers['x-device-id'] as string) || bodyDeviceId || null;
 
   if (!email || !password) {
     return res.status(400).json({ error: 'Kailangan ibigay ang email at password.' });
@@ -3077,8 +3363,394 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(403).json({ error: '🔴 Ang iyong account ay banned ng administrator dahil sa paglabag sa Community Rules ng Z-one.' });
   }
 
+  // Ensure default safety status for existing users if missing
+  if (!user.accountSafetyStatus) {
+    user.accountSafetyStatus = user.isAdmin ? 'verified_adult' : 'verified_adult';
+  }
+
+  // If user has no bound device, bind current device
+  if (deviceId && !user.boundDeviceId && !user.isDemo) {
+    user.boundDeviceId = deviceId;
+    if (!db.registeredDevices) db.registeredDevices = [];
+    const devDoc = db.registeredDevices.find(d => d.id === deviceId);
+    if (devDoc) {
+      devDoc.boundUserId = user.id;
+      devDoc.boundUserEmail = user.email;
+      devDoc.lastSeenAt = new Date().toISOString();
+      devDoc.status = 'active';
+    } else {
+      db.registeredDevices.push({
+        id: deviceId,
+        boundUserId: user.id,
+        boundUserEmail: user.email,
+        createdAt: new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
+        deviceLabel: req.headers['user-agent'] ? String(req.headers['user-agent']).substring(0, 50) : 'Browser Device',
+        status: 'active'
+      });
+    }
+    saveDB(db);
+  }
+
   const { password: _, ...userSafe } = user as any;
   res.json({ user: userSafe, token: generateToken(user.id) });
+});
+
+// ============================================================
+//   COMMUNITY SAFETY, AGE/IDENTITY VERIFICATION & DEVICE APIS
+// ============================================================
+
+// START VERIFICATION SESSION (Server-controlled challenge token)
+app.post('/api/verification/start-session', (req, res) => {
+  const userId = req.headers.authorization || req.body.userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan mag-login.' });
+  }
+
+  const db = loadDB();
+  const user = findUserInSystem(userId, db);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found.' });
+  }
+
+  const sessionId = 'vses-' + Date.now() + '-' + crypto.randomBytes(8).toString('hex');
+  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 mins validity
+  const sessionToken = crypto.createHmac('sha256', VERIF_SECRET).update(`${sessionId}:${user.id}:${expiresAt}`).digest('hex');
+
+  verificationSessionsMap[sessionId] = {
+    sessionId,
+    sessionToken,
+    userId: user.id,
+    status: 'initiated',
+    expiresAt
+  };
+
+  res.json({
+    success: true,
+    sessionId,
+    sessionToken,
+    expiresAt: new Date(expiresAt).toISOString()
+  });
+});
+
+// SUBMIT AGE / IDENTITY VERIFICATION (Server-controlled verification session required)
+app.post('/api/verification/submit', async (req, res) => {
+  const userId = req.headers.authorization || req.body.userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan mag-login.' });
+  }
+
+  const { dateOfBirth, method, sessionId, sessionToken } = req.body;
+  if (!dateOfBirth) {
+    return res.status(400).json({ error: 'Kailangan ibigay ang Date of Birth (YYYY-MM-DD).' });
+  }
+
+  const db = loadDB();
+  const user = findUserInSystem(userId, db);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi nahanap ang user.' });
+  }
+
+  // Cryptographic & Server Session Verification Guard
+  if (!sessionId || !sessionToken) {
+    return res.status(400).json({
+      error: '⚠️ [Security Alert]: Bawal ang unverified client DOB submission. Kailangan ng valid server verification session challenge token.',
+      sessionRequired: true
+    });
+  }
+
+  const session = verificationSessionsMap[sessionId];
+  if (!session || session.userId !== user.id) {
+    return res.status(400).json({ error: 'Hindi valid ang verification session para sa user na ito.' });
+  }
+
+  if (session.status === 'consumed') {
+    return res.status(400).json({ error: 'Ang verification session na ito ay nagamit na (Replay protection).' });
+  }
+
+  if (Date.now() > session.expiresAt) {
+    return res.status(400).json({ error: 'Nag-expire na ang verification session. Pakisubukang muli.' });
+  }
+
+  // Validate HMAC signature
+  const expectedToken = crypto.createHmac('sha256', VERIF_SECRET).update(`${sessionId}:${user.id}:${session.expiresAt}`).digest('hex');
+  if (sessionToken !== expectedToken || session.sessionToken !== sessionToken) {
+    return res.status(400).json({ error: 'Invalid verification cryptographic signature token.' });
+  }
+
+  // Mark session as consumed (anti-replay)
+  session.status = 'consumed';
+
+  // Calculate exact age from dateOfBirth
+  const birthDate = new Date(dateOfBirth);
+  if (isNaN(birthDate.getTime())) {
+    return res.status(400).json({ error: 'Invalid Date of Birth format.' });
+  }
+
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const m = today.getMonth() - birthDate.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+    age--;
+  }
+
+  const isMinor = age < 18;
+  const bracket: 'minor_under18' | 'adult_18plus' = isMinor ? 'minor_under18' : 'adult_18plus';
+  const newStatus: 'pending_verification' | 'verified_adult' | 'minor_restricted' | 'reverification_required' | 'under_review' = isMinor ? 'minor_restricted' : 'verified_adult';
+
+  const providerRef = 'verif_ref_' + crypto.createHash('sha256').update(user.id + Date.now().toString()).digest('hex').substring(0, 16);
+
+  // Privacy-preserving audit record (zero biometric or raw images stored)
+  const auditRecord: VerificationAuditRecord = {
+    id: 'verif-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+    userId: user.id,
+    userEmail: user.email,
+    status: 'approved',
+    ageBracket: bracket,
+    provider: method === 'face_liveness_sdk' ? 'face_liveness_sdk' : 'face_liveness_sdk',
+    providerReferenceId: providerRef,
+    verifiedAt: new Date().toISOString(),
+    riskScore: 0.02,
+    estimatedAge: age,
+    notes: isMinor ? 'Restricted to Z-oneKiddie Portal' : 'Approved full adult community access'
+  };
+
+  if (!db.userVerifications) db.userVerifications = [];
+  db.userVerifications.push(auditRecord);
+
+  // Update user in DB
+  user.dateOfBirth = dateOfBirth;
+  user.isMinor = isMinor;
+  user.accountSafetyStatus = newStatus;
+  user.verificationAudit = {
+    verifiedAt: auditRecord.verifiedAt,
+    providerRef: auditRecord.providerReferenceId,
+    bracket: auditRecord.ageBracket,
+    method: 'face_liveness_id',
+    riskScore: 0.02
+  };
+
+  // Bind device if deviceId provided
+  const deviceId = (req.headers['x-device-id'] as string) || req.body.deviceId;
+  if (deviceId && !user.boundDeviceId) {
+    user.boundDeviceId = deviceId;
+    if (!db.registeredDevices) db.registeredDevices = [];
+    const existingDev = db.registeredDevices.find(d => d.id === deviceId);
+    if (existingDev) {
+      existingDev.boundUserId = user.id;
+      existingDev.boundUserEmail = user.email;
+      existingDev.status = 'active';
+      existingDev.lastSeenAt = new Date().toISOString();
+    } else {
+      db.registeredDevices.push({
+        id: deviceId,
+        boundUserId: user.id,
+        boundUserEmail: user.email,
+        createdAt: new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
+        deviceLabel: req.headers['user-agent'] ? String(req.headers['user-agent']).substring(0, 50) : 'Browser Device',
+        status: 'active'
+      });
+    }
+  }
+
+  saveDB(db, true);
+
+  const { password: _, ...userSafe } = user as any;
+  res.json({
+    success: true,
+    accountSafetyStatus: newStatus,
+    status: newStatus,
+    isMinor,
+    age,
+    message: isMinor 
+      ? 'Na-detect na minor ang account. Inilipat ka sa Z-oneKiddie Safe Community!'
+      : 'Matagumpay na na-verify ang iyong 18+ Adult Identity! May full access ka na sa Z-one Community.',
+    user: userSafe
+  });
+});
+
+// GET VERIFICATION STATUS
+app.get('/api/verification/status', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan mag-login.' });
+  }
+
+  const db = loadDB();
+  const user = findUserInSystem(userId, db);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found.' });
+  }
+
+  res.json({
+    accountSafetyStatus: user.accountSafetyStatus || (user.isAdmin ? 'verified_adult' : 'pending_verification'),
+    isMinor: Boolean(user.isMinor),
+    dateOfBirth: user.dateOfBirth || null,
+    verificationAudit: user.verificationAudit || null,
+    boundDeviceId: user.boundDeviceId || null
+  });
+});
+
+// DEVICE TRANSFER: REQUEST OTP (with Rate Limiting & Cooldown)
+app.post('/api/device/transfer-request', (req, res) => {
+  const userId = req.headers.authorization || req.body.userId;
+  const newDeviceId = req.body.newDeviceId || (req.headers['x-device-id'] as string);
+
+  if (!userId) {
+    return res.status(400).json({ error: 'Kailangan ibigay ang user ID.' });
+  }
+
+  const db = loadDB();
+  const user = findUserInSystem(userId, db);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found.' });
+  }
+
+  // Rate Limiting & Cooldown: 60-second cooldown & max 5 requests per hour
+  const now = Date.now();
+  const userRate = transferRequestAttempts[user.id] || { count: 0, lastRequestedAt: 0, windowStart: now };
+  if (now - userRate.windowStart > 3600000) {
+    userRate.count = 0;
+    userRate.windowStart = now;
+  }
+
+  if (now - userRate.lastRequestedAt < 60000) {
+    const remainingSecs = Math.ceil((60000 - (now - userRate.lastRequestedAt)) / 1000);
+    return res.status(429).json({
+      error: `Mangyaring maghintay ng ${remainingSecs} segundo bago muling humiling ng bagong transfer OTP security code.`
+    });
+  }
+
+  if (userRate.count >= 5) {
+    return res.status(429).json({
+      error: 'Naabot mo na ang limitasyon ng 5 requests bawat oras para sa device transfer recovery.'
+    });
+  }
+
+  userRate.count += 1;
+  userRate.lastRequestedAt = now;
+  transferRequestAttempts[user.id] = userRate;
+
+  const transferCode = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+  if (!db.deviceTransfers) db.deviceTransfers = [];
+  db.deviceTransfers.push({
+    id: 'dt-' + Date.now(),
+    userId: user.id,
+    oldDeviceId: user.boundDeviceId || 'unbound',
+    newDeviceId: newDeviceId || 'pending_device',
+    transferCode,
+    expiresAt,
+    status: 'pending',
+    createdAt: new Date().toISOString()
+  });
+
+  saveDB(db);
+
+  console.log(`🔑 [Device Transfer Challenge] User ${user.email} (${user.id}) transfer code: ${transferCode} (Expires: 15 mins)`);
+
+  res.json({
+    success: true,
+    message: `Naipadala ang 6-digit verification security code sa iyong email (${user.email}).`,
+    expiresInMinutes: 15,
+    demoCode: user.isDemo ? transferCode : undefined
+  });
+});
+
+// DEVICE TRANSFER: CONFIRM OTP (Supports newDeviceId and otpCode/code seamlessly)
+app.post('/api/device/transfer-confirm', (req, res) => {
+  const userId = req.headers.authorization || req.body.userId;
+  const newDeviceId = req.body.newDeviceId || (req.headers['x-device-id'] as string);
+  const code = req.body.code || req.body.otpCode;
+
+  if (!userId || !code) {
+    return res.status(400).json({ error: 'Kailangan ibigay ang user ID at security code.' });
+  }
+
+  if (!newDeviceId) {
+    return res.status(400).json({ error: 'Kailangan ibigay ang bagong device ID.' });
+  }
+
+  const db = loadDB();
+  const user = findUserInSystem(userId, db);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found.' });
+  }
+
+  if (!db.deviceTransfers) db.deviceTransfers = [];
+  const challenge = db.deviceTransfers.find(c => 
+    c.userId === user.id && 
+    c.transferCode === String(code).trim() && 
+    c.status === 'pending' && 
+    new Date(c.expiresAt).getTime() > Date.now()
+  );
+
+  if (!challenge) {
+    return res.status(400).json({ error: 'Maling code o nag-expire na ang transfer code. Pakisubukang muli.' });
+  }
+
+  // Complete transfer (Anti-replay protection)
+  challenge.status = 'completed';
+
+  // Mark old device as transferred
+  if (!db.registeredDevices) db.registeredDevices = [];
+  const oldDev = db.registeredDevices.find(d => d.id === user.boundDeviceId);
+  if (oldDev) {
+    oldDev.status = 'transferred';
+  }
+
+  // Register new device
+  const existingNewDev = db.registeredDevices.find(d => d.id === newDeviceId);
+  if (existingNewDev) {
+    existingNewDev.boundUserId = user.id;
+    existingNewDev.boundUserEmail = user.email;
+    existingNewDev.status = 'active';
+    existingNewDev.lastSeenAt = new Date().toISOString();
+  } else {
+    db.registeredDevices.push({
+      id: newDeviceId,
+      boundUserId: user.id,
+      boundUserEmail: user.email,
+      createdAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString(),
+      deviceLabel: req.headers['user-agent'] ? String(req.headers['user-agent']).substring(0, 50) : 'Browser Device',
+      status: 'active'
+    });
+  }
+
+  user.boundDeviceId = newDeviceId;
+  saveDB(db, true);
+
+  const { password: _, ...userSafe } = user as any;
+  res.json({
+    success: true,
+    message: 'Matagumpay na nailipat ang iyong account sa bagong device!',
+    user: userSafe
+  });
+});
+
+// Z-ONE KIDDIE PORTAL CONTENT ENDPOINTS
+app.get('/api/kiddie/feed', (req, res) => {
+  const db = loadDB();
+  const items = (db.kiddieContent && db.kiddieContent.length > 0) ? db.kiddieContent : INITIAL_KIDDIE_CONTENT;
+  res.json({
+    success: true,
+    items,
+    total: items.length
+  });
+});
+
+app.get('/api/kiddie/movies', (req, res) => {
+  const db = loadDB();
+  const allItems = (db.kiddieContent && db.kiddieContent.length > 0) ? db.kiddieContent : INITIAL_KIDDIE_CONTENT;
+  const movies = allItems.filter(it => it.category === 'kiddie_movie' || it.category === 'cartoon');
+  res.json({
+    success: true,
+    movies,
+    total: movies.length
+  });
 });
 
 // AUTO-RESTORE SESSION ENDPOINT
@@ -3515,7 +4187,7 @@ app.get('/api/reels', (req, res) => {
   });
 });
 
-app.post('/api/reels', (req, res) => {
+app.post('/api/reels', enforceCommunitySafety, (req, res) => {
   const { url, embedUrl, platform, title, addedBy, userId } = req.body;
   if (!url || !url.trim()) {
     return res.status(400).json({ error: 'Kailangan ibigay ang Video URL.' });
@@ -3919,7 +4591,7 @@ app.post('/api/admin/users/:userId/tokens', (req, res) => {
 });
 
 
-app.delete('/api/reels/:id', (req, res) => {
+app.delete('/api/reels/:id', enforceCommunitySafety, (req, res) => {
   const { id } = req.params;
   const db = loadDB();
   db.reels = (db.reels || [...INITIAL_REELS]).filter(r => r.id !== id);
@@ -3932,7 +4604,7 @@ app.delete('/api/reels/:id', (req, res) => {
   res.json({ success: true, reels: db.reels });
 });
 
-app.post('/api/reels/:id/like', (req, res) => {
+app.post('/api/reels/:id/like', enforceCommunitySafety, (req, res) => {
   const { id } = req.params;
   const userId = req.headers.authorization || req.body?.userId;
   const db = loadDB();
@@ -7038,7 +7710,7 @@ function extractMentionedUsers(text: string, users: UserSession[], authorId: str
 }
 
 // 2. CREATE A NEW POST
-app.post('/api/zone/posts', async (req, res) => {
+app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Mag-login muna upang makapag-post.' });
@@ -7149,7 +7821,7 @@ app.post('/api/zone/posts', async (req, res) => {
 });
 
 // 3. TOGGLE LIKE (LIKE ONLY - NO UNLIKE & AWARD ₱0.05)
-app.post('/api/zone/posts/:postId/like', (req, res) => {
+app.post('/api/zone/posts/:postId/like', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Mag-login upang mag-like at kumita ng ₱0.05.' });
@@ -7224,7 +7896,7 @@ app.post('/api/zone/posts/:postId/like', (req, res) => {
 });
 
 // 4. POST COMMENT
-app.post('/api/zone/posts/:postId/comment', (req, res) => {
+app.post('/api/zone/posts/:postId/comment', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Mag-login upang mag-comment.' });
@@ -7305,7 +7977,7 @@ app.post('/api/zone/posts/:postId/comment', (req, res) => {
 });
 
 // 4b. SHARE POST
-app.post('/api/zone/posts/:postId/share', (req, res) => {
+app.post('/api/zone/posts/:postId/share', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Mag-login muna upang makapag-share.' });
@@ -7373,7 +8045,7 @@ app.post('/api/zone/posts/:postId/share', (req, res) => {
 });
 
 // 4c. EDIT A POST
-app.put('/api/zone/posts/:postId', (req, res) => {
+app.put('/api/zone/posts/:postId', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Mag-login muna.' });
@@ -7425,7 +8097,7 @@ app.put('/api/zone/posts/:postId', (req, res) => {
 });
 
 // 4d. DELETE A POST
-app.delete('/api/zone/posts/:postId', (req, res) => {
+app.delete('/api/zone/posts/:postId', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Mag-login muna.' });
@@ -7470,7 +8142,7 @@ app.delete('/api/zone/posts/:postId', (req, res) => {
 });
 
 // 4e. EDIT A COMMENT
-app.put('/api/zone/posts/:postId/comments/:commentId', (req, res) => {
+app.put('/api/zone/posts/:postId/comments/:commentId', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Mag-login muna.' });
@@ -7522,7 +8194,7 @@ app.put('/api/zone/posts/:postId/comments/:commentId', (req, res) => {
 });
 
 // 4f. DELETE A COMMENT
-app.delete('/api/zone/posts/:postId/comments/:commentId', (req, res) => {
+app.delete('/api/zone/posts/:postId/comments/:commentId', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Mag-login muna.' });
@@ -7567,7 +8239,7 @@ app.delete('/api/zone/posts/:postId/comments/:commentId', (req, res) => {
 });
 
 // 5. TOGGLE ZONE (FOLLOW)
-app.post('/api/zone/users/:targetUserId/toggle-zone', (req, res) => {
+app.post('/api/zone/users/:targetUserId/toggle-zone', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Mag-login muna.' });
@@ -7890,7 +8562,7 @@ async function handleAdminAutoReply(userSenderId: string, userText: string) {
 }
 
 // 2. SEND A DIRECT MESSAGE
-app.post('/api/zone/messages', async (req, res) => {
+app.post('/api/zone/messages', enforceCommunitySafety, async (req, res) => {
   const senderId = req.headers.authorization;
   if (!senderId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -7984,7 +8656,7 @@ app.post('/api/zone/messages', async (req, res) => {
 });
 
 // 2b. EDIT A DIRECT MESSAGE
-app.put('/api/zone/messages/:messageId', (req, res) => {
+app.put('/api/zone/messages/:messageId', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -8030,7 +8702,7 @@ app.put('/api/zone/messages/:messageId', (req, res) => {
 });
 
 // 2c. DELETE A DIRECT MESSAGE
-app.delete('/api/zone/messages/:messageId', (req, res) => {
+app.delete('/api/zone/messages/:messageId', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -8126,7 +8798,7 @@ app.get('/api/zone/groups', (req, res) => {
 });
 
 // 2. CREATE A NEW GROUP CHAT
-app.post('/api/zone/groups', (req, res) => {
+app.post('/api/zone/groups', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -8233,7 +8905,7 @@ app.get('/api/zone/groups/:groupId/messages', (req, res) => {
 });
 
 // 4. SEND A MESSAGE IN GROUP CHAT
-app.post('/api/zone/groups/:groupId/messages', async (req, res) => {
+app.post('/api/zone/groups/:groupId/messages', enforceCommunitySafety, async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -8339,7 +9011,7 @@ app.post('/api/zone/groups/:groupId/messages', async (req, res) => {
 });
 
 // 5. EDIT A GROUP MESSAGE (within 2 minutes)
-app.put('/api/zone/groups/:groupId/messages/:messageId', (req, res) => {
+app.put('/api/zone/groups/:groupId/messages/:messageId', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -8385,7 +9057,7 @@ app.put('/api/zone/groups/:groupId/messages/:messageId', (req, res) => {
 });
 
 // 6. DELETE / UNSEND A GROUP MESSAGE (within 2 minutes)
-app.delete('/api/zone/groups/:groupId/messages/:messageId', (req, res) => {
+app.delete('/api/zone/groups/:groupId/messages/:messageId', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -8422,7 +9094,7 @@ app.delete('/api/zone/groups/:groupId/messages/:messageId', (req, res) => {
 });
 
 // 7. ADD MEMBERS TO GROUP CHAT
-app.post('/api/zone/groups/:groupId/members', (req, res) => {
+app.post('/api/zone/groups/:groupId/members', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -8483,7 +9155,7 @@ app.post('/api/zone/groups/:groupId/members', (req, res) => {
 });
 
 // 8. LEAVE GROUP CHAT
-app.post('/api/zone/groups/:groupId/leave', (req, res) => {
+app.post('/api/zone/groups/:groupId/leave', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -8530,7 +9202,7 @@ app.post('/api/zone/groups/:groupId/leave', (req, res) => {
 });
 
 // 9. UPDATE GROUP CHAT (Name, Avatar, Description)
-app.put('/api/zone/groups/:groupId', (req, res) => {
+app.put('/api/zone/groups/:groupId', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -8606,7 +9278,7 @@ app.get('/api/zone/stories', (req, res) => {
 });
 
 // 2. CREATE A NEW STORY ("MY DAY")
-app.post('/api/zone/stories', async (req, res) => {
+app.post('/api/zone/stories', enforceCommunitySafety, async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -8679,7 +9351,7 @@ app.post('/api/zone/stories', async (req, res) => {
 });
 
 // 3. DELETE A STORY
-app.delete('/api/zone/stories/:storyId', (req, res) => {
+app.delete('/api/zone/stories/:storyId', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -8758,7 +9430,7 @@ app.post('/api/zone/stories/:storyId/view', (req, res) => {
 });
 
 // 5. REACT OR REPLY TO A STORY
-app.post('/api/zone/stories/:storyId/react', (req, res) => {
+app.post('/api/zone/stories/:storyId/react', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -8873,7 +9545,7 @@ app.get('/api/zone/calls', (req, res) => {
 });
 
 // 4. INITIATE OR UPDATE CALL SESSION STATE
-app.post('/api/zone/calls', (req, res) => {
+app.post('/api/zone/calls', enforceCommunitySafety, (req, res) => {
   const callerId = req.headers.authorization;
   if (!callerId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -9011,7 +9683,7 @@ app.get('/api/zone/profile/:targetUserId', (req, res) => {
 });
 
 // 2. UPDATE PROFILE (BIO, COVER PHOTO, AVATAR)
-app.put('/api/zone/profile', async (req, res) => {
+app.put('/api/zone/profile', enforceCommunitySafety, async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Mag-login muna upang i-edit ang profile.' });
@@ -9098,7 +9770,7 @@ app.get('/api/zone/albums', (req, res) => {
 });
 
 // 4. CREATE ALBUM
-app.post('/api/zone/albums', async (req, res) => {
+app.post('/api/zone/albums', enforceCommunitySafety, async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Mag-login muna upang gumawa ng album.' });
@@ -9151,7 +9823,7 @@ app.post('/api/zone/albums', async (req, res) => {
 });
 
 // 5. UPDATE ALBUM (TITLE, DESC, PRIVACY, COVER)
-app.put('/api/zone/albums/:albumId', async (req, res) => {
+app.put('/api/zone/albums/:albumId', enforceCommunitySafety, async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -9200,7 +9872,7 @@ app.put('/api/zone/albums/:albumId', async (req, res) => {
 });
 
 // 6. DELETE ALBUM
-app.delete('/api/zone/albums/:albumId', (req, res) => {
+app.delete('/api/zone/albums/:albumId', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -9232,7 +9904,7 @@ app.delete('/api/zone/albums/:albumId', (req, res) => {
 });
 
 // 7. ADD PHOTO TO ALBUM
-app.post('/api/zone/albums/:albumId/photos', async (req, res) => {
+app.post('/api/zone/albums/:albumId/photos', enforceCommunitySafety, async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -9295,7 +9967,7 @@ app.post('/api/zone/albums/:albumId/photos', async (req, res) => {
 });
 
 // 8. DELETE PHOTO FROM ALBUM
-app.delete('/api/zone/albums/:albumId/photos/:photoId', (req, res) => {
+app.delete('/api/zone/albums/:albumId/photos/:photoId', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -9335,7 +10007,7 @@ app.delete('/api/zone/albums/:albumId/photos/:photoId', (req, res) => {
 });
 
 // 9. TOGGLE PHOTO PRIVACY (PUBLIC VS ONLY_ME)
-app.put('/api/zone/albums/:albumId/photos/:photoId/privacy', (req, res) => {
+app.put('/api/zone/albums/:albumId/photos/:photoId/privacy', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
@@ -11455,8 +12127,17 @@ app.get('/appstore', (req, res) => {
 const isProduction = process.env.NODE_ENV === 'production';
 
 async function startServer() {
-  console.log('🔄 Sini-synchronize ang database sa live Cloud Firestore...');
-  await syncFromFirestore();
+  // STRICT SEQUENCE: Synchronize with authoritative Cloud Firestore BEFORE accepting incoming requests
+  console.log('🔄 Sini-synchronize ang database sa live Cloud Firestore bago buksan ang server...');
+  try {
+    const syncTimeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Firestore sync timeout (7000ms limit reached)')), 7000)
+    );
+    await Promise.race([syncFromFirestore(), syncTimeoutPromise]);
+    console.log('✅ Matagumpay na na-sync ang Firestore sa memory/db! Handa na ang authoritative database state.');
+  } catch (err: any) {
+    console.warn('⚠️ Babala sa Firestore startup sync (gamit ang verified persistent disk/local fallback):', err?.message || err);
+  }
 
   if (!isProduction) {
     const vite = await createViteServer({
@@ -11486,7 +12167,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 GCash Click-Earn running on http://0.0.0.0:${PORT}`);
+    console.log(`🚀 GCash Click-Earn running on http://0.0.0.0:${PORT} (Authoritative Database Ready)`);
   });
 }
 

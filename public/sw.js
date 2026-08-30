@@ -1,4 +1,4 @@
-const CACHE = "zone-v12-monetag-zone-11201519";
+const CACHE = "zone-v13-fresh-entry-fix";
 const MEDIA_CACHE = "zone-media-v8";
 const API_CACHE = "zone-api-v8";
 

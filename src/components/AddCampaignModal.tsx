@@ -98,7 +98,7 @@ export const AddCampaignModal: React.FC<AddCampaignModalProps> = ({
       timer: timerNum,
       completed: false,
       logo: 'Globe',
-      category: category || 'E-Services',
+      category: (category as 'Shopping' | 'Balita' | 'Teknolohiya' | 'E-Services' | 'Kultura') || 'E-Services',
       description: description.trim() || `Opisyal na pinagkakatiwalaang partner campaign sa kategoryang ${category}. Manatili sa site upang matanggap ang ₱${rewardNum.toFixed(2)} reward.`,
       mockPageContent: {
         heroTitle: title.trim(),

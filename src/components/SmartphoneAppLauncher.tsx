@@ -30,10 +30,10 @@ import { soundEffects } from '../utils/audio';
 
 import { WithdrawalRequest, ActivityLog } from '../types';
 
-export type AppTabType = 'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop';
+export type AppTabType = 'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop' | 'kiddie';
 
 export interface AppLauncherItem {
-  id: AppTabType | 'spin' | 'referral' | 'myday' | 'commercials' | 'reels' | 'policy' | 'data_saver';
+  id: AppTabType | 'spin' | 'referral' | 'myday' | 'commercials' | 'reels' | 'policy' | 'data_saver' | 'verify' | 'device_transfer';
   title: string;
   subtitle?: string;
   badge?: string;
@@ -58,11 +58,17 @@ interface SmartphoneAppLauncherProps {
     avatar?: string;
     email?: string;
     isVerified?: boolean;
+    isMinor?: boolean;
+    accountSafetyStatus?: string;
   } | null;
   stats?: {
     totalEarned?: number;
     totalTasksCompleted?: number;
     referralCount?: number;
+    balance?: number;
+    lifetimeEarnings?: number;
+    completedTasksCount?: number;
+    dailyCheckInDate?: string | null;
   } | null;
   activityLogs?: ActivityLog[];
   withdrawals?: WithdrawalRequest[];
@@ -74,6 +80,8 @@ interface SmartphoneAppLauncherProps {
   onOpenProfile?: () => void;
   onOpenNotifications?: () => void;
   onOpenDataSaver?: () => void;
+  onOpenVerification?: () => void;
+  onOpenDeviceTransfer?: () => void;
 }
 
 export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
@@ -94,7 +102,9 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
   onOpenPolicy,
   onOpenProfile,
   onOpenNotifications,
-  onOpenDataSaver
+  onOpenDataSaver,
+  onOpenVerification,
+  onOpenDeviceTransfer
 }) => {
   const isTl = language === 'tl';
 
@@ -126,16 +136,17 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
       actionType: 'handler'
     },
     {
-      id: 'referral',
-      title: isTl ? 'Referral' : 'Referral',
-      subtitle: 'Invite Friends',
-      icon: Share2,
-      iconBg: 'bg-sky-50 text-sky-600',
-      iconColor: 'text-sky-600',
-      badge: '+₱20',
-      badgeBg: 'bg-sky-100',
-      badgeTextColor: 'text-sky-800',
-      actionType: 'handler'
+      id: 'kiddie',
+      title: isTl ? 'Z-oneKiddie' : 'Z-oneKiddie',
+      subtitle: isTl ? 'Safe for Kids' : 'Safe for Kids',
+      icon: Sparkles,
+      iconBg: 'bg-purple-50 text-purple-600',
+      iconColor: 'text-purple-600',
+      badge: 'Kids ⭐',
+      badgeBg: 'bg-purple-100',
+      badgeTextColor: 'text-purple-800',
+      actionType: 'tab',
+      tabTarget: 'kiddie'
     },
     {
       id: 'cashout',
@@ -162,6 +173,18 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
       badgeTextColor: 'text-blue-800',
       actionType: 'tab',
       tabTarget: 'zone'
+    },
+    {
+      id: 'referral',
+      title: isTl ? 'Referral' : 'Referral',
+      subtitle: 'Invite Friends',
+      icon: Share2,
+      iconBg: 'bg-sky-50 text-sky-600',
+      iconColor: 'text-sky-600',
+      badge: '+₱20',
+      badgeBg: 'bg-sky-100',
+      badgeTextColor: 'text-sky-800',
+      actionType: 'handler'
     },
     {
       id: 'va_shop',
@@ -228,6 +251,30 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
       tabTarget: 'zone'
     },
     {
+      id: 'verify',
+      title: isTl ? 'Safety ID' : 'Age & ID',
+      subtitle: isTl ? 'Community Safety' : 'Verification',
+      icon: Shield,
+      iconBg: user?.accountSafetyStatus === 'verified_adult' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600',
+      iconColor: user?.accountSafetyStatus === 'verified_adult' ? 'text-emerald-600' : 'text-amber-600',
+      badge: user?.accountSafetyStatus === 'verified_adult' ? '18+ ✅' : 'Verify',
+      badgeBg: user?.accountSafetyStatus === 'verified_adult' ? 'bg-emerald-100' : 'bg-amber-100',
+      badgeTextColor: user?.accountSafetyStatus === 'verified_adult' ? 'text-emerald-800' : 'text-amber-800',
+      actionType: 'handler'
+    },
+    {
+      id: 'device_transfer',
+      title: isTl ? 'Lipat Phone' : 'Device Switch',
+      subtitle: isTl ? '1-Account Safety' : 'Transfer Binding',
+      icon: Smartphone,
+      iconBg: 'bg-indigo-50 text-indigo-600',
+      iconColor: 'text-indigo-600',
+      badge: 'OTP',
+      badgeBg: 'bg-indigo-100',
+      badgeTextColor: 'text-indigo-800',
+      actionType: 'handler'
+    },
+    {
       id: 'policy',
       title: isTl ? 'Payout Policy' : 'Payout Policy',
       subtitle: 'Rules & Schedule',
@@ -278,6 +325,10 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
       onOpenSpinWheel();
     } else if (item.id === 'referral' && onOpenReferral) {
       onOpenReferral();
+    } else if (item.id === 'verify' && onOpenVerification) {
+      onOpenVerification();
+    } else if (item.id === 'device_transfer' && onOpenDeviceTransfer) {
+      onOpenDeviceTransfer();
     } else if ((item.id === 'reels' || item.id === 'commercials')) {
       if (onOpenReels) {
         onOpenReels();
@@ -356,9 +407,29 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
               <h2 className="text-xs sm:text-base font-extrabold text-white leading-tight truncate max-w-[160px] sm:max-w-[200px]">
                 {user?.name ? `${isTl ? 'Maligayang pagbalik,' : 'Welcome back,'} ${user.name}` : (isTl ? 'Maligayang Pagdating!' : 'Welcome back!')}
               </h2>
-              <div className="inline-flex items-center gap-1 bg-white/20 backdrop-blur-xs text-blue-50 text-[9px] sm:text-[10px] font-bold px-2 py-0.5 rounded-full border border-white/20">
-                <CheckCircle2 className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-yellow-300" />
-                <span>{isTl ? 'Beripikadong Clicker' : 'Verified User'}</span>
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <div className="inline-flex items-center gap-1 bg-white/20 backdrop-blur-xs text-blue-50 text-[9px] sm:text-[10px] font-bold px-2 py-0.5 rounded-full border border-white/20">
+                  <CheckCircle2 className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-yellow-300" />
+                  <span>{isTl ? 'Beripikadong Clicker' : 'Verified User'}</span>
+                </div>
+
+                {user?.accountSafetyStatus === 'verified_adult' ? (
+                  <span className="inline-flex items-center gap-1 bg-emerald-500/30 text-emerald-200 border border-emerald-400/40 text-[9px] font-extrabold px-2 py-0.5 rounded-full">
+                    🛡️ 18+ Adult
+                  </span>
+                ) : user?.accountSafetyStatus === 'minor_restricted' || user?.isMinor ? (
+                  <span className="inline-flex items-center gap-1 bg-purple-500/30 text-purple-200 border border-purple-400/40 text-[9px] font-extrabold px-2 py-0.5 rounded-full">
+                    🧒 Z-oneKiddie Safe
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onOpenVerification}
+                    className="inline-flex items-center gap-1 bg-yellow-400/30 hover:bg-yellow-400/50 text-yellow-200 border border-yellow-300/40 text-[9px] font-black px-2 py-0.5 rounded-full cursor-pointer transition animate-pulse"
+                  >
+                    ⚠️ {isTl ? 'I-verify ang ID' : 'Verify Age/ID'}
+                  </button>
+                )}
               </div>
             </div>
           </div>
