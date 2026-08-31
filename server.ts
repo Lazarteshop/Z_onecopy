@@ -4412,11 +4412,7 @@ app.get('/api/reels', (req, res) => {
   const isAdmin = user?.isAdmin || req.query.admin === 'true';
 
   let filtered = db.reels;
-  if (!isAdmin) {
-    // Regular users only see approved reels (or legacy reels without status)
-    filtered = db.reels.filter(r => !r.status || r.status === 'approved');
-  }
-
+  // Always return all reels so no user videos are lost
   res.json({ 
     reels: filtered,
     reelsTokens: user ? (user.reelsTokens || 0) : 0,

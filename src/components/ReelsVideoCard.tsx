@@ -172,17 +172,18 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
             <div className="relative z-10 w-full h-full flex items-center justify-center">
               <iframe
                 src={
-                  formatted.embedUrl.includes('?') 
-                    ? `${formatted.embedUrl}&enablejsapi=1&autoplay=${isPlaying ? 1 : 0}` 
-                    : `${formatted.embedUrl}?enablejsapi=1&autoplay=${isPlaying ? 1 : 0}`
+                  formatted.platform === 'youtube'
+                    ? (formatted.embedUrl.includes('?') 
+                        ? `${formatted.embedUrl}&autoplay=${isPlaying ? 1 : 0}` 
+                        : `${formatted.embedUrl}?autoplay=${isPlaying ? 1 : 0}`)
+                    : formatted.embedUrl
                 }
                 title={reel.title || `Reel Video ${index + 1}`}
                 className={`w-full h-full border-0 bg-slate-950 transition-all duration-300 ${
                   fitMode === 'contain' ? 'max-h-[85vh] object-contain' : 'object-cover'
                 }`}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
-                sandbox="allow-scripts allow-same-origin allow-presentation allow-forms"
               />
             </div>
           )

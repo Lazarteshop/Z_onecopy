@@ -8,18 +8,10 @@ export function formatEmbedUrl(rawUrl: string): FormattedReelUrl {
   let url = rawUrl.trim();
 
   // 1. YouTube Shorts & Watch URLs
-  const ytShortsMatch = url.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]+)/i);
-  if (ytShortsMatch && ytShortsMatch[1]) {
+  const ytMatch = url.match(/(?:youtube\.com\/(?:shorts\/|watch\?v=|watch\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+  if (ytMatch && ytMatch[1]) {
     return {
-      embedUrl: `https://www.youtube.com/embed/${ytShortsMatch[1]}?autoplay=1&enablejsapi=1`,
-      platform: 'youtube'
-    };
-  }
-
-  const ytWatchMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]+)/i);
-  if (ytWatchMatch && ytWatchMatch[1]) {
-    return {
-      embedUrl: `https://www.youtube.com/embed/${ytWatchMatch[1]}?autoplay=1&enablejsapi=1`,
+      embedUrl: `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=1&enablejsapi=1&rel=0`,
       platform: 'youtube'
     };
   }
@@ -29,7 +21,8 @@ export function formatEmbedUrl(rawUrl: string): FormattedReelUrl {
     if (url.includes('facebook.com/plugins/video.php')) {
       return { embedUrl: url, platform: 'facebook' };
     }
-    const encoded = encodeURIComponent(url);
+    const cleanUrl = url.split('#')[0];
+    const encoded = encodeURIComponent(cleanUrl);
     return {
       embedUrl: `https://www.facebook.com/plugins/video.php?href=${encoded}&show_text=false&autoplay=true`,
       platform: 'facebook'
@@ -37,10 +30,10 @@ export function formatEmbedUrl(rawUrl: string): FormattedReelUrl {
   }
 
   // 3. TikTok
-  const tiktokMatch = url.match(/tiktok\.com\/.*\/video\/(\d+)/i) || url.match(/tiktok\.com\/embed\/v2\/(\d+)/i);
+  const tiktokMatch = url.match(/video\/(\d+)/i) || url.match(/v\/(\d+)/i) || url.match(/player\/v1\/(\d+)/i);
   if (tiktokMatch && tiktokMatch[1]) {
     return {
-      embedUrl: `https://www.tiktok.com/player/v1/${tiktokMatch[1]}?autoplay=1`,
+      embedUrl: `https://www.tiktok.com/embed/v2/${tiktokMatch[1]}`,
       platform: 'tiktok'
     };
   }
