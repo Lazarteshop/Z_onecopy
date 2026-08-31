@@ -749,8 +749,11 @@ app.get('/api/tts', async (req, res) => {
   }
 });
 
-// --- IN-MEMORY USER ONLINE STATUS TRACKING ---
+// --- IN-MEMORY USER ONLINE STATUS TRACKING & RECOVERY STATE ---
 const activeUsersMap: Record<string, number> = {};
+
+let isAuthoritativeDatabaseReady = true;
+let recoveryFailureReason: string | null = null;
 
 app.use((req, res, next) => {
   const token = req.headers.authorization;
@@ -760,8 +763,39 @@ app.use((req, res, next) => {
   next();
 });
 
+// Guard data mutations if authoritative recovery has not completed on an ephemeral container
+app.use((req, res, next) => {
+  if (!isAuthoritativeDatabaseReady && !hasValidPersistentDatabase()) {
+    // Allow read-only status, admin db maintenance/retry, and health checks
+    const path = req.path;
+    const isMaintenanceOrStatus = path.startsWith('/api/admin/db/') || 
+                                  path.startsWith('/api/health') || 
+                                  path === '/api/admin/db/status' || 
+                                  path === '/api/admin/db/force-cloud-pull' ||
+                                  req.method === 'GET' ||
+                                  req.method === 'HEAD' ||
+                                  req.method === 'OPTIONS';
+
+    if (!isMaintenanceOrStatus) {
+      return res.status(503).json({
+        error: '🛡️ [System Maintenance / Recovery Mode]: Ang database recovery mula sa Cloud Firestore ay kasalukuyang hindi kumpleto (Reason: ' + (recoveryFailureReason || 'quota/network limit') + '). Upang maiwasan ang pagka-overwrite o pagkawala ng data ng mga mamamayan, pansamantalang naka-lock ang write operations hanggang ma-re-sync ng Admin ang Cloud Database.',
+        recoveryRequired: true,
+        recoveryFailureReason
+      });
+    }
+  }
+  next();
+});
+
 // --- PERSISTENT DATA STORAGE PATHS ---
 const DATA_DIRECTORY = process.env.DATA_DIR || process.env.RENDER_DATA_PATH || (fs.existsSync('/var/data') ? '/var/data' : path.join(process.cwd(), 'src', 'data'));
+const IS_DEDICATED_PERSISTENT_STORAGE = !!(
+  process.env.DATA_DIR ||
+  process.env.RENDER_DATA_PATH ||
+  (fs.existsSync('/var/data') && DATA_DIRECTORY.startsWith('/var/data')) ||
+  (DATA_DIRECTORY !== path.join(process.cwd(), 'src', 'data'))
+);
+
 if (!fs.existsSync(DATA_DIRECTORY)) {
   try {
     fs.mkdirSync(DATA_DIRECTORY, { recursive: true });
@@ -1422,22 +1456,6 @@ interface DBStructure {
 const INITIAL_KIDDIE_CONTENT: KiddieContentItem[] = [
   {
     id: 'kiddie-live-1',
-    title: 'Cartoon Classics & 90s Toons (24/7 Live Animation Channel)',
-    description: 'Panoorin ang 24/7 live stream ng mga paboritong classic cartoons, animated adventures, at nakakaaliw na kwento para sa mga bata.',
-    category: 'live_tv',
-    videoUrl: 'https://jmp2.uk/plu-6452c814939a590008567a3b.m3u8',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=60',
-    durationSeconds: 0,
-    ageRating: 'all_ages',
-    isLive: true,
-    streamType: 'hls',
-    channelName: 'Cartoon Classics Live TV',
-    tags: ['Live TV', 'Cartoon Network', 'Classic Cartoons', '24/7 Live'],
-    featured: true,
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'kiddie-live-2',
     title: 'Mr. Bean The Animated Series (24/7 Live Stream Channel)',
     description: 'Walang tigil na tawanan kasama si Mr. Bean at Teddy sa kanyang mga nakakatawang animated adventures at misadventures!',
     category: 'cartoon',
@@ -1453,38 +1471,7 @@ const INITIAL_KIDDIE_CONTENT: KiddieContentItem[] = [
     createdAt: new Date().toISOString()
   },
   {
-    id: 'kiddie-live-3',
-    title: 'ABC Kids Live TV (24/7 Educational & Nursery Channel)',
-    description: 'Opisyal na live broadcast para sa mga bata na nagtatampok ng educational cartoons, nursery rhymes, at masayang pag-aaral.',
-    category: 'live_tv',
-    videoUrl: 'https://c.mjh.nz/abc-kids.m3u8',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?w=600&auto=format&fit=crop&q=60',
-    durationSeconds: 0,
-    ageRating: 'all_ages',
-    isLive: true,
-    streamType: 'hls',
-    channelName: 'ABC Kids TV Live',
-    tags: ['Live TV', 'Edukasyon', 'Nursery', 'Kids TV', '24/7 Live'],
-    featured: true,
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'kiddie-live-4',
-    title: 'Baby Shark & Friends Live 24/7 (Sing-Along & Rhymes)',
-    description: 'Kantahan, sayawan, at aral sa 24/7 stream ng Baby Shark, Pinkfong, at iba pang masayang pambatang awitin.',
-    category: 'educational',
-    videoUrl: 'https://c0c65b821b3542c3a4dca92702f59944.mediatailor.us-east-1.amazonaws.com/v1/master/04fd913bb278d8775298c26fdca9d9841f37601f/RakutenTV-eu_BabySharkTV/playlist.m3u8',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60',
-    durationSeconds: 0,
-    ageRating: 'all_ages',
-    isLive: true,
-    streamType: 'hls',
-    channelName: 'Baby Shark TV Live',
-    tags: ['Baby Shark', 'Pinkfong', 'Sing-Along', '24/7 Live'],
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'kiddie-live-5',
+    id: 'kiddie-live-2',
     title: 'Akili Kids Learning & Science TV (24/7 Educational Live)',
     description: 'Palabas tungkol sa agham, kalikasan, alpabeto, numero, at pagtuklas ng mga kamangha-manghang bagay sa paligid.',
     category: 'educational',
@@ -1495,54 +1482,87 @@ const INITIAL_KIDDIE_CONTENT: KiddieContentItem[] = [
     isLive: true,
     streamType: 'hls',
     channelName: 'Akili Kids TV Live',
-    tags: ['Science', 'Discovery', 'Education', '24/7 Live'],
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'kiddie-live-6',
-    title: 'Duck TV Kids Live (24/7 Animation & Toddler Development)',
-    description: 'Masayang pambatang channel na may makukulay na animation, musika, at visual storytelling na nakakatulong sa cognitive development ng bata.',
-    category: 'cartoon',
-    videoUrl: 'https://tvduck.akamaized.net/hls/live/2043681/ducktv/master.m3u8',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1513151233558-d860c5398176?w=600&auto=format&fit=crop&q=60',
-    durationSeconds: 0,
-    ageRating: 'all_ages',
-    isLive: true,
-    streamType: 'hls',
-    channelName: 'Duck TV Live 24/7',
-    tags: ['Duck TV', 'Toddlers', 'Animation', '24/7 Live'],
+    tags: ['Science', 'Agham', 'Discovery', 'Education', '24/7 Live'],
     featured: true,
     createdAt: new Date().toISOString()
   },
   {
-    id: 'kiddie-live-7',
-    title: 'Moonbug Kids TV Live (CoComelon, Blippi & Morphle 24/7)',
-    description: '24/7 non-stop broadcast ng mga paboritong pambatang palabas tulad ng CoComelon, Blippi, Gecko\'s Garage, at Morphle!',
+    id: 'kiddie-live-3',
+    title: 'Baby Shark & Pinkfong TV (24/7 Live Sing-Along & Cartoons)',
+    description: 'Kantahan, sayawan, at aral sa 24/7 live stream ng Baby Shark, Pinkfong, at iba pang masayang pambatang awitin.',
     category: 'educational',
-    videoUrl: 'https://d39g1vx53pxw41.cloudfront.net/v1/master/9d07b713292415174151121d582f3ef8/Moonbug-RakutenFR/playlist.m3u8',
-    thumbnailUrl: 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?w=600&auto=format&fit=crop&q=60',
+    videoUrl: 'https://newidco-babysharktv-1-us.roku.wurl.tv/playlist.m3u8',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=600&auto=format&fit=crop&q=60',
     durationSeconds: 0,
     ageRating: 'all_ages',
     isLive: true,
     streamType: 'hls',
-    channelName: 'Moonbug Kids TV Live',
-    tags: ['CoComelon', 'Blippi', 'Moonbug', '24/7 Live'],
+    channelName: 'Baby Shark TV Live',
+    tags: ['Baby Shark', 'Pinkfong', 'Sing-Along', '24/7 Live'],
     featured: true,
     createdAt: new Date().toISOString()
   },
   {
-    id: 'kiddie-live-8',
-    title: 'PBS Kids Live TV (24/7 Learning & Discovery Channel)',
-    description: 'Award-winning educational broadcast para sa mga bata na nagtuturo ng science, reading, math, and social-emotional learning.',
+    id: 'kiddie-live-4',
+    title: 'BabyFirst TV (24/7 Live Toddler Learning & ABCs)',
+    description: 'Nagtuturo ng mga salita, kulay, numero, at mga awiting pambata para sa maagang pag-unlad ng kaisipan ng bata.',
     category: 'educational',
-    videoUrl: 'https://c.mjh.nz/pbs-kids.m3u8',
+    videoUrl: 'https://cdn.fast.jwp.services/v1/channel/1_jB6940Ei_TvhvIHDL/manifest.m3u8',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 0,
+    ageRating: 'all_ages',
+    isLive: true,
+    streamType: 'hls',
+    channelName: 'BabyFirst TV Live',
+    tags: ['Toddler', 'ABCs', 'Nursery Rhymes', '24/7 Live'],
+    featured: true,
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'kiddie-live-5',
+    title: '3ABN Kids TV (24/7 Live Stories, Values & Music)',
+    description: 'Makabuluhang kwento, moral lessons, magagandang awitin, at animated features na nagtuturo ng kabutihan sa kapwa.',
+    category: 'story',
+    videoUrl: 'https://3abn.bozztv.com/3abn2/Kids_live/smil:Kids_live.smil/playlist.m3u8',
     thumbnailUrl: 'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?w=600&auto=format&fit=crop&q=60',
     durationSeconds: 0,
     ageRating: 'all_ages',
     isLive: true,
     streamType: 'hls',
-    channelName: 'PBS Kids TV Live',
-    tags: ['PBS Kids', 'Discovery', 'Education', '24/7 Live'],
+    channelName: '3ABN Kids TV 24/7',
+    tags: ['Kwento', 'Moral Values', 'Kids Music', '24/7 Live'],
+    featured: true,
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'kiddie-live-6',
+    title: 'BeJoy Kids TV (24/7 Live Animated Adventures & Lessons)',
+    description: 'Masayang pambatang channel na may makukulay na animation, musika, at visual storytelling na nakakatulong sa bata.',
+    category: 'story',
+    videoUrl: 'https://stream.paroledivita.org/bejoy.m3u8',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1513151233558-d860c5398176?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 0,
+    ageRating: 'all_ages',
+    isLive: true,
+    streamType: 'hls',
+    channelName: 'BeJoy Kids TV 24/7',
+    tags: ['Cartoons', 'Animated Lessons', 'Fun Adventures', '24/7 Live'],
+    featured: true,
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'kiddie-live-7',
+    title: '4Fun Kids Live (24/7 Cartoons, Songs & Dance)',
+    description: 'Masiglang live stream ng mga paboritong pambatang awitin, sayaw, at animated mini-shows para sa buong pamilya.',
+    category: 'cartoon',
+    videoUrl: 'https://stream.4fun.tv:8889/hls/4fk_high/index.m3u8',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=60',
+    durationSeconds: 0,
+    ageRating: 'all_ages',
+    isLive: true,
+    streamType: 'hls',
+    channelName: '4Fun Kids Live',
+    tags: ['Kids Music', 'Cartoons', 'Dance & Fun', '24/7 Live'],
     featured: true,
     createdAt: new Date().toISOString()
   }
@@ -1859,6 +1879,50 @@ function checkAndSyncAllCartsToBaskets(db: DBStructure) {
 
 // --- HELPER TO INITIALIZE AND GET DATABASE ---
 let cachedDB: DBStructure | null = null;
+
+function hasValidPersistentDatabase(): boolean {
+  // If running on an ephemeral filesystem without a dedicated persistent disk/volume mounted,
+  // local files are not persistent across fresh deploys or container replacements.
+  if (!IS_DEDICATED_PERSISTENT_STORAGE) {
+    return false;
+  }
+
+  // Ensure storage path is distinct from repository bundled static directory
+  const bundledStaticPath = path.join(process.cwd(), 'src', 'data');
+  if (DATA_DIRECTORY === bundledStaticPath) {
+    return false;
+  }
+
+  try {
+    let rawData: string | null = null;
+    if (fs.existsSync(DB_FILE_PATH)) {
+      const content = fs.readFileSync(DB_FILE_PATH, 'utf-8');
+      if (content && content.trim().length > 0) {
+        rawData = content;
+      }
+    }
+    if (!rawData && fs.existsSync(DB_BACKUP_PATH)) {
+      const content = fs.readFileSync(DB_BACKUP_PATH, 'utf-8');
+      if (content && content.trim().length > 0) {
+        rawData = content;
+      }
+    }
+    if (!rawData) {
+      return false;
+    }
+    const parsed = JSON.parse(rawData);
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.users) || parsed.users.length === 0) {
+      return false;
+    }
+    // Structural integrity check: verify core database collections exist as arrays
+    if (!Array.isArray(parsed.posts) && !Array.isArray(parsed.reels)) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function loadDB(): DBStructure {
   if (cachedDB && Array.isArray(cachedDB.users) && cachedDB.users.length > 0) {
@@ -2333,6 +2397,12 @@ function saveDB(data: DBStructure, immediate: boolean = false) {
     return;
   }
 
+  // Centralized safety guard: If database recovery is pending/failed on ephemeral container, block all mutations
+  if (!isAuthoritativeDatabaseReady && !hasValidPersistentDatabase()) {
+    console.warn('🛡️ [saveDB Blocked]: Database mutations locked in Recovery Mode (isAuthoritativeDatabaseReady === false). Skipping write to protect authoritative state.');
+    return;
+  }
+
   cachedDB = data;
   
   const doSave = () => {
@@ -2374,6 +2444,12 @@ async function uploadToFirestore(data: DBStructure) {
     return;
   }
   
+  // Centralized safety guard: If database recovery is pending/failed on ephemeral container, refuse to upload forward
+  if (!isAuthoritativeDatabaseReady && !hasValidPersistentDatabase()) {
+    console.warn('🛡️ [uploadToFirestore Blocked]: Cloud sync locked in Recovery Mode (isAuthoritativeDatabaseReady === false). Refusing to upload to prevent cloud data overwrite.');
+    return;
+  }
+
   initLastSyncedCache(data);
 
   try {
@@ -2819,10 +2895,10 @@ async function uploadToFirestore(data: DBStructure) {
   }
 }
 
-async function syncFromFirestore() {
+async function syncFromFirestore(): Promise<{ success: boolean; reason?: string; fetchErrors?: number; usersCount?: number }> {
   if (!cloudDb.isActive) {
     console.log('ℹ️ Cloud DB adapter not active. Using persistent local disk storage.');
-    return;
+    return { success: true, reason: 'adapter_inactive' };
   }
 
   try {
@@ -2830,59 +2906,99 @@ async function syncFromFirestore() {
     const envAdminPassword = process.env.ADMIN_PASSWORD || 'AdminSecurePassword123';
     const envAdminName = process.env.ADMIN_NAME || 'System Administrator';
 
-    console.log('☁️ Initiating cloud synchronization from Firestore database...');
+    console.log('☁️ Initiating sequential cloud synchronization from Firestore database...');
 
     let fetchErrors = 0;
-    const safeGetCollection = async (name: string) => {
-      try {
-        return await cloudDb.getCollection(name);
-      } catch (err) {
-        fetchErrors++;
-        console.warn(`⚠️ Could not fetch collection "${name}" from Cloud DB:`, err);
-        return [];
+    const failedCollections: string[] = [];
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    const safeGetCollectionWithRetry = async (name: string, maxRetries = 2): Promise<any[]> => {
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        let timeoutHandle: NodeJS.Timeout | null = null;
+        try {
+          const perRequestTimeout = new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(() => reject(new Error(`Timeout (3500ms limit) fetching collection "${name}"`)), 3500);
+          });
+          const items = await Promise.race([cloudDb.getCollection(name), perRequestTimeout]);
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          return Array.isArray(items) ? items : [];
+        } catch (err: any) {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          const errMsg = err?.message || String(err);
+          if (attempt < maxRetries) {
+            const backoffMs = (attempt + 1) * 600; // 600ms, then 1200ms backoff
+            console.warn(`⚠️ [Cloud Fetch Retry] Collection "${name}" error (${errMsg}). Retrying in ${backoffMs}ms (attempt ${attempt + 1}/${maxRetries})...`);
+            await sleep(backoffMs);
+          } else {
+            fetchErrors++;
+            failedCollections.push(name);
+            console.warn(`❌ [Cloud Fetch Failed] Collection "${name}" failed after ${maxRetries + 1} attempts:`, errMsg);
+            return [];
+          }
+        }
       }
+      return [];
     };
 
-    // Load all collections concurrently with individual try-catch tracking
-    const [
-      dbUsers,
-      dbCampaigns,
-      dbPosts,
-      dbDMs,
-      dbMerchantAds,
-      dbReels,
-      dbReelSubs,
-      dbStories,
-      dbAlbums,
-      dbGroupChats,
-      dbGroupMessages,
-      dbShopProducts,
-      dbShopBaskets,
-      dbShopOrders,
-      dbVaBanners,
-      dbRegisteredDevices,
-      dbUserVerifications,
-      dbKiddieContent
-    ] = await Promise.all([
-      safeGetCollection('users'),
-      safeGetCollection('campaigns'),
-      safeGetCollection('posts'),
-      safeGetCollection('direct_messages'),
-      safeGetCollection('merchant_ads'),
-      safeGetCollection('reels'),
-      safeGetCollection('reel_subscriptions'),
-      safeGetCollection('stories'),
-      safeGetCollection('albums'),
-      safeGetCollection('group_chats'),
-      safeGetCollection('group_messages'),
-      safeGetCollection('shop_products'),
-      safeGetCollection('shop_baskets'),
-      safeGetCollection('shop_orders'),
-      safeGetCollection('va_banners'),
-      safeGetCollection('registered_devices'),
-      safeGetCollection('user_verifications'),
-      safeGetCollection('kiddie_content')
-    ]);
+    // Sequential paced fetching across all 18 collections to prevent RESOURCE_EXHAUSTED / rate-limit bursts
+    const collectionNames = [
+      'users',
+      'campaigns',
+      'posts',
+      'direct_messages',
+      'merchant_ads',
+      'reels',
+      'reel_subscriptions',
+      'stories',
+      'albums',
+      'group_chats',
+      'group_messages',
+      'shop_products',
+      'shop_baskets',
+      'shop_orders',
+      'va_banners',
+      'registered_devices',
+      'user_verifications',
+      'kiddie_content'
+    ];
+
+    // Completely isolated temporary recovery buffer
+    const fetched: Record<string, any[]> = {};
+    for (const name of collectionNames) {
+      fetched[name] = await safeGetCollectionWithRetry(name);
+      if (fetchErrors > 0) {
+        // Fast-fail: Immediately stop fetching remaining collections to avoid wasted quota/background requests
+        break;
+      }
+      // Small pacing delay between collection requests
+      await sleep(50);
+    }
+
+    // STRICT CLOUD-FIRST GUARD: If any collection failed (e.g. Quota Exceeded or Network limit),
+    // NEVER merge or save partial state over our authoritative database!
+    if (fetchErrors > 0) {
+      console.warn(`🛡️ [Cloud-First Guard] Firestore fetch encountered ${fetchErrors} error(s) in collections: [${failedCollections.join(', ')}]. Aborting cloud merge to prevent partial or corrupted state. Authoritative local/backup state safely retained.`);
+      return { success: false, reason: 'partial_fetch_errors', fetchErrors };
+    }
+
+    const dbUsers = fetched['users'] || [];
+    const dbCampaigns = fetched['campaigns'] || [];
+    const dbPosts = fetched['posts'] || [];
+    const dbDMs = fetched['direct_messages'] || [];
+    const dbMerchantAds = fetched['merchant_ads'] || [];
+    const dbReels = fetched['reels'] || [];
+    const dbReelSubs = fetched['reel_subscriptions'] || [];
+    const dbStories = fetched['stories'] || [];
+    const dbAlbums = fetched['albums'] || [];
+    const dbGroupChats = fetched['group_chats'] || [];
+    const dbGroupMessages = fetched['group_messages'] || [];
+    const dbShopProducts = fetched['shop_products'] || [];
+    const dbShopBaskets = fetched['shop_baskets'] || [];
+    const dbShopOrders = fetched['shop_orders'] || [];
+    const dbVaBanners = fetched['va_banners'] || [];
+    const dbRegisteredDevices = fetched['registered_devices'] || [];
+    const dbUserVerifications = fetched['user_verifications'] || [];
+    const dbKiddieContent = fetched['kiddie_content'] || [];
 
     const hasAnyCloudData = dbUsers.length > 0 || dbStories.length > 0 || dbAlbums.length > 0 || dbGroupChats.length > 0 || 
                             dbGroupMessages.length > 0 || dbDMs.length > 0 || dbPosts.length > 0 || 
@@ -2976,25 +3092,30 @@ async function syncFromFirestore() {
       fs.writeFileSync(DB_BACKUP_PATH, JSON.stringify(mergedDB, null, 2), 'utf-8');
       initLastSyncedCache(mergedDB);
       lastCloudSyncTimestamp = new Date().toISOString();
-      console.log(`✅ [Cloud-First] Merged state saved safely: ${mergedDB.users.length} users, ${mergedDB.reels?.length} reels, ${mergedDB.stories?.length} stories, ${mergedDB.groupChats?.length} group chats, ${mergedDB.groupMessages?.length} group msgs.`);
+      isAuthoritativeDatabaseReady = true;
+      recoveryFailureReason = null;
+      console.log(`✅ [Cloud Recovery Complete] Merged state saved safely: ${mergedDB.users.length} users, ${mergedDB.reels?.length} reels, ${mergedDB.stories?.length} stories, ${mergedDB.groupChats?.length} group chats, ${mergedDB.groupMessages?.length} group msgs.`);
 
       // Sync forward any non-conflicting new items
       uploadToFirestore(mergedDB).catch(err => {
         console.error('Error in initial post-merge upload to Cloud DB:', err);
       });
-    } else if (fetchErrors > 0) {
-      // STRICT CLOUD-FIRST GUARD: If there were errors reaching Firestore, NEVER overwrite cloud data with baseline seed!
-      console.warn(`🛡️ [Cloud-First Guard] Firestore fetch encountered ${fetchErrors} error(s). Retaining current state to prevent destructive cloud overwrite on restart/redeploy.`);
+
+      return { success: true, reason: 'merged', usersCount: mergedDB.users.length };
     } else {
-      console.log('🌱 Cloud Firestore confirmed empty. Seeding baseline records to Cloud...');
+      console.log('🌱 Cloud Firestore confirmed empty with 0 errors. Seeding baseline records to Cloud...');
       const seedDB = localDB;
       initLastSyncedCache(seedDB);
       await uploadToFirestore(seedDB);
       lastCloudSyncTimestamp = new Date().toISOString();
+      isAuthoritativeDatabaseReady = true;
+      recoveryFailureReason = null;
       console.log('✅ Baseline seed completed: All initial reels, group chats, and stories are now persistent in Cloud Firestore!');
+      return { success: true, reason: 'seeded' };
     }
   } catch (err) {
-    console.error('⚠️ Could not sync with Cloud DB at startup. Using local database fallback:', err);
+    console.error('⚠️ [Cloud-First Guard] Could not complete sync with Cloud DB. Safely retained persistent/local fallback state:', err);
+    return { success: false, reason: 'exception' };
   }
 }
 
@@ -3833,19 +3954,26 @@ app.post('/api/device/transfer-confirm', (req, res) => {
 app.get('/api/kiddie/feed', (req, res) => {
   const db = loadDB();
   const existingMap = new Map<string, KiddieContentItem>();
-  // Prepopulate with verified 24/7 Live channels
+  
+  // Set verified baseline 24/7 Live channels
   for (const item of INITIAL_KIDDIE_CONTENT) {
     if (item.isLive) {
       existingMap.set(item.id, item);
     }
   }
+
+  // If there are custom added live streams in DB with working HLS m3u8, include them
   if (db.kiddieContent && Array.isArray(db.kiddieContent)) {
     for (const item of db.kiddieContent) {
-      if (item && item.id && (item.isLive || item.category === 'live_tv' || (item.videoUrl && item.videoUrl.includes('.m3u8')))) {
-        existingMap.set(item.id, { ...existingMap.get(item.id), ...item, isLive: true });
+      // Exclude outdated defunct URLs
+      if (item && item.id && item.videoUrl && !item.videoUrl.includes('jmp2.uk') && !item.videoUrl.includes('c.mjh.nz') && !item.videoUrl.includes('mediatailor') && !item.videoUrl.includes('tvduck.akamaized') && !item.videoUrl.includes('Moonbug-RakutenFR')) {
+        if (item.isLive || (item.videoUrl && item.videoUrl.includes('.m3u8'))) {
+          existingMap.set(item.id, { ...(existingMap.get(item.id) || {}), ...item, isLive: true });
+        }
       }
     }
   }
+  
   const items = Array.from(existingMap.values()).filter(item => item.isLive);
   res.json({
     success: true,
@@ -3855,13 +3983,10 @@ app.get('/api/kiddie/feed', (req, res) => {
 });
 
 app.get('/api/kiddie/movies', (req, res) => {
-  const db = loadDB();
-  const allItems = (db.kiddieContent && db.kiddieContent.length > 0) ? db.kiddieContent : INITIAL_KIDDIE_CONTENT;
-  const liveItems = allItems.filter(it => it.isLive);
   res.json({
     success: true,
-    movies: liveItems,
-    total: liveItems.length
+    movies: INITIAL_KIDDIE_CONTENT,
+    total: INITIAL_KIDDIE_CONTENT.length
   });
 });
 
@@ -6279,6 +6404,8 @@ app.get('/api/admin/db/status', (req, res) => {
   }
 
   res.json({
+    isAuthoritativeDatabaseReady,
+    recoveryFailureReason,
     cloudActive: cloudDb.isActive,
     cloudType: cloudDb.type,
     databaseId: firebaseConfigObj.firestoreDatabaseId || 'default',
@@ -6327,8 +6454,21 @@ app.post('/api/admin/db/force-cloud-pull', async (req, res) => {
   }
 
   try {
-    await syncFromFirestore();
+    const result = await syncFromFirestore();
     const updated = loadDB();
+    if (result && !result.success) {
+      return res.status(502).json({
+        success: false,
+        error: `Cloud pull incomplete: ${result.reason || 'errors detected'} (${result.fetchErrors || 0} failed collection(s)). Authoritative state safely retained without overwriting.`,
+        counts: {
+          users: updated.users?.length || 0,
+          reels: updated.reels?.length || 0,
+          stories: updated.stories?.length || 0,
+          groupChats: updated.groupChats?.length || 0,
+          groupMessages: updated.groupMessages?.length || 0
+        }
+      });
+    }
     res.json({ 
       success: true, 
       message: 'Matagumpay na na-sync at na-merge ang lahat ng data mula sa Cloud Firestore!',
@@ -12239,16 +12379,43 @@ app.get('/appstore', (req, res) => {
 const isProduction = process.env.NODE_ENV === 'production';
 
 async function startServer() {
-  // STRICT SEQUENCE: Synchronize with authoritative Cloud Firestore BEFORE accepting incoming requests
-  console.log('🔄 Sini-synchronize ang database sa live Cloud Firestore bago buksan ang server...');
-  try {
-    const syncTimeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Firestore sync timeout (7000ms limit reached)')), 7000)
-    );
-    await Promise.race([syncFromFirestore(), syncTimeoutPromise]);
-    console.log('✅ Matagumpay na na-sync ang Firestore sa memory/db! Handa na ang authoritative database state.');
-  } catch (err: any) {
-    console.warn('⚠️ Babala sa Firestore startup sync (gamit ang verified persistent disk/local fallback):', err?.message || err);
+  const isHealthyPersistent = hasValidPersistentDatabase();
+  const localDbState = loadDB();
+
+  if (isHealthyPersistent && localDbState && Array.isArray(localDbState.users) && localDbState.users.length > 0) {
+    console.log(`📁 [Dedicated Persistent Storage Active] Storage path: ${DB_FILE_PATH}`);
+    console.log(`⚡ [Normal Startup] Valid & healthy persistent database state detected (${localDbState.users.length} users, ${localDbState.posts?.length || 0} posts, ${localDbState.reels?.length || 0} reels).`);
+    console.log(`⏩ [Skipped Full Sync] Skipping heavy 18-collection Firestore download to conserve quota and ensure instantaneous startup.`);
+    initLastSyncedCache(localDbState);
+    console.log('✅ Authoritative persistent database state ready for incoming requests.');
+  } else {
+    if (!IS_DEDICATED_PERSISTENT_STORAGE) {
+      console.log(`ℹ️ [Ephemeral Storage Detected] Path: ${DB_FILE_PATH}. No dedicated persistent disk attached.`);
+      console.log('☁️ [Cloud-First Sync] Synchronizing latest authoritative data from Cloud Firestore...');
+    } else {
+      console.log('🚨 [Recovery Mode] Missing, empty, or uninitialized persistent database state. Attempting full Firestore cloud recovery sync...');
+    }
+    try {
+      const result = await syncFromFirestore();
+      if (result && result.success) {
+        isAuthoritativeDatabaseReady = true;
+        recoveryFailureReason = null;
+        console.log('✅ [Cloud Sync Complete] Authoritative database synchronized and atomically merged!');
+      } else {
+        if (!IS_DEDICATED_PERSISTENT_STORAGE) {
+          isAuthoritativeDatabaseReady = false;
+          recoveryFailureReason = result?.reason || 'partial_fetch_errors';
+          console.error(`🚨 [CRITICAL: Safe Recovery Lockout] Firestore cloud recovery did not complete on ephemeral container (${result?.fetchErrors || 0} collection(s) failed). System write operations locked to prevent empty/corrupted state mutations over user records.`);
+        }
+        console.warn(`🛡️ [Recovery Guard Active] Cloud sync did not complete (Reason: ${result?.reason || 'unknown'}, fetch errors: ${result?.fetchErrors || 0}). Authoritative local state safely preserved with zero mutations.`);
+      }
+    } catch (err: any) {
+      if (!IS_DEDICATED_PERSISTENT_STORAGE) {
+        isAuthoritativeDatabaseReady = false;
+        recoveryFailureReason = err?.message || 'startup_sync_exception';
+      }
+      console.warn('🛡️ [Safe Fallback] Firestore startup sync note (using verified local/backup state):', err?.message || err);
+    }
   }
 
   if (!isProduction) {
