@@ -141,6 +141,7 @@ export interface ReelVideo {
   embedUrl: string;
   platform: 'tiktok' | 'facebook' | 'youtube' | 'direct';
   title?: string;
+  thumbnailUrl?: string;
   likes: number;
   likedBy?: string[];
   watchedBy?: string[];

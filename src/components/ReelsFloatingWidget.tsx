@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatEmbedUrl, calculateReelRevenue, AUDIENCE_CPM_RATES, AudienceCountry } from '../utils/reels';
 import { 
   Tv, 
@@ -34,10 +34,16 @@ import {
   ArrowUpRight,
   Wallet,
   RefreshCw,
-  Info
+  Info,
+  Search,
+  ArrowLeft,
+  Flame,
+  Zap,
+  Radio
 } from 'lucide-react';
 import { ReelVideo, ReelRedemption } from '../types';
 import { idbStorage } from '../utils/idbStorage';
+import { ReelsVideoCard } from './ReelsVideoCard';
 
 interface ReelsFloatingWidgetProps {
   reels: ReelVideo[];
@@ -140,6 +146,12 @@ export default function ReelsFloatingWidget({
 }: ReelsFloatingWidgetProps) {
   const [isOpen, setIsOpen] = useState(true);
 
+  // Sorting and filtering tabs: 'all' | 'low_likes' | 'popular'
+  const [activeTab, setActiveTab] = useState<'all' | 'low_likes' | 'popular'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearchInput, setShowSearchInput] = useState(false);
+  const [fitMode, setFitMode] = useState<'contain' | 'cover'>('contain');
+
   // User upload & token modal state
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [activeUploadTab, setActiveUploadTab] = useState<'upload' | 'buy_tokens' | 'activity'>('upload');
@@ -168,7 +180,7 @@ export default function ReelsFloatingWidget({
     setLocalTokens(userTokens);
   }, [userTokens]);
 
-  // Cache only lightweight reels metadata, thumbnails, IDs and safe references (no raw video binaries)
+  // Cache only lightweight reels metadata, thumbnails, IDs and safe references
   useEffect(() => {
     if (reels && reels.length > 0) {
       const metadataOnly = reels.map(r => ({
@@ -354,6 +366,7 @@ export default function ReelsFloatingWidget({
     window.addEventListener('open-reels-widget', handleOpenWidget);
     return () => window.removeEventListener('open-reels-widget', handleOpenWidget);
   }, []);
+
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showAddForm, setShowAddForm] = useState(false);
   const [inputUrl, setInputUrl] = useState('');
@@ -379,16 +392,31 @@ export default function ReelsFloatingWidget({
   const [watchProgress, setWatchProgress] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const widgetRef = useRef<HTMLDivElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  const activeReels = reels && reels.length > 0 
-    ? [...reels].sort((a, b) => a.likes - b.likes) 
-    : [];
+  // Filter and sort reels based on tab & search
+  const activeReels = React.useMemo(() => {
+    let list = reels && reels.length > 0 ? [...reels] : [];
 
-  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter(r => 
+        (r.title && r.title.toLowerCase().includes(q)) ||
+        (r.addedBy && r.addedBy.toLowerCase().includes(q)) ||
+        (r.platform && r.platform.toLowerCase().includes(q))
+      );
+    }
+
+    if (activeTab === 'low_likes') {
+      list.sort((a, b) => (a.likes || 0) - (b.likes || 0));
+    } else if (activeTab === 'popular') {
+      list.sort((a, b) => (b.likes || 0) - (a.likes || 0));
+    }
+
+    return list;
+  }, [reels, activeTab, searchQuery]);
 
   // Draggable position state for the Watch Reels floating button
   const [btnPos, setBtnPos] = useState<{ x: number; y: number } | null>(null);
@@ -405,7 +433,7 @@ export default function ReelsFloatingWidget({
     }
   }, [btnPos]);
 
-  // Handle Drag Start (Mouse & Touch)
+  // Handle Drag Start
   const handleDragStart = (clientX: number, clientY: number) => {
     const currentX = btnPos ? btnPos.x : Math.max(12, window.innerWidth - 185);
     const currentY = btnPos ? btnPos.y : Math.max(12, window.innerHeight - 75);
@@ -418,7 +446,7 @@ export default function ReelsFloatingWidget({
     isDraggingRef.current = false;
   };
 
-  // Handle Drag Move (Mouse & Touch)
+  // Handle Drag Move
   const handleDragMove = (clientX: number, clientY: number) => {
     if (!dragStartRef.current) return;
     const dx = clientX - dragStartRef.current.startX;
@@ -444,7 +472,6 @@ export default function ReelsFloatingWidget({
   useEffect(() => {
     if (!isOpen) return;
 
-    // Safely override window.open to permanently block ad popunders while Reels Widget is active
     const originalWindowOpen = window.open;
     window.open = function (url?: string | URL, target?: string, features?: string) {
       const activeEl = document.activeElement as HTMLElement | null;
@@ -456,14 +483,12 @@ export default function ReelsFloatingWidget({
       return null;
     };
 
-    // 3. Intercept events for widget open/close without blocking internal React button clicks
     const handleGlobalCapture = (e: Event) => {
       const el = widgetRef.current;
       const backdrop = backdropRef.current;
       const target = e.target as HTMLElement | null;
 
       if ((el && (el.contains(target) || target === el)) || (backdrop && (backdrop.contains(target) || target === backdrop))) {
-        // Handle Close and Open buttons directly
         if (target && (target.id === 'reels-widget-close-btn' || target.closest('#reels-widget-close-btn'))) {
           setIsOpen(false);
         }
@@ -474,7 +499,6 @@ export default function ReelsFloatingWidget({
     };
 
     const events = ['click', 'pointerup', 'mouseup'];
-    
     events.forEach((evt) => {
       window.addEventListener(evt, handleGlobalCapture, { capture: true, passive: true });
       document.addEventListener(evt, handleGlobalCapture, { capture: true, passive: true });
@@ -489,10 +513,10 @@ export default function ReelsFloatingWidget({
     };
   }, [isOpen]);
 
-  // Hide floating Install App button whenever Reels widget is open OR when user is logged in
+  // Hide floating Install App button when open
   useEffect(() => {
     const installBtn = document.getElementById('installBtn');
-    const isLoggedIn = document.body.classList.contains('user-logged-in');
+    const userLoggedIn = document.body.classList.contains('user-logged-in');
 
     if (isOpen) {
       document.body.classList.add('reels-widget-open');
@@ -501,9 +525,9 @@ export default function ReelsFloatingWidget({
       }
     } else {
       document.body.classList.remove('reels-widget-open');
-      if (installBtn && !isLoggedIn) {
+      if (installBtn && !userLoggedIn) {
         installBtn.style.display = 'block';
-      } else if (installBtn && isLoggedIn) {
+      } else if (installBtn && userLoggedIn) {
         installBtn.style.setProperty('display', 'none', 'important');
       }
     }
@@ -519,28 +543,63 @@ export default function ReelsFloatingWidget({
     }
   }, [activeReels.length, currentIndex]);
 
-  const scrollToReel = (index: number) => {
-    if (index < 0 || index >= activeReels.length) return;
+  // Scroll to video card in the snap container
+  const scrollToCard = (index: number) => {
+    const el = containerRef.current;
+    if (!el || index < 0 || index >= activeReels.length) return;
+    const height = el.clientHeight;
+    el.scrollTo({
+      top: index * height,
+      behavior: 'smooth'
+    });
     setCurrentIndex(index);
-    if (scrollContainerRef.current) {
-      const child = scrollContainerRef.current.children[index] as HTMLElement;
-      if (child) {
-        child.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    }
   };
 
   const handleNext = () => {
     if (activeReels.length === 0) return;
     const nextIdx = (currentIndex + 1) % activeReels.length;
-    scrollToReel(nextIdx);
+    scrollToCard(nextIdx);
   };
 
   const handlePrev = () => {
     if (activeReels.length === 0) return;
     const prevIdx = (currentIndex - 1 + activeReels.length) % activeReels.length;
-    scrollToReel(prevIdx);
+    scrollToCard(prevIdx);
   };
+
+  // Scroll listener for detecting active card in the vertical snap container
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    const height = el.clientHeight;
+    if (height > 0) {
+      const newIndex = Math.round(el.scrollTop / height);
+      if (newIndex !== currentIndex && newIndex >= 0 && newIndex < activeReels.length) {
+        setCurrentIndex(newIndex);
+      }
+    }
+  };
+
+  // Keyboard navigation shortcuts
+  useEffect(() => {
+    if (!isOpen || showUploadModal || showAddForm) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault();
+        handleNext();
+      } else if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault();
+        handlePrev();
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        setIsPlaying(prev => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, currentIndex, activeReels.length, showUploadModal, showAddForm]);
 
   const handleLike = (id: string, e?: React.MouseEvent) => {
     if (e) {
@@ -588,21 +647,10 @@ export default function ReelsFloatingWidget({
     }
   };
 
-  // Sync HTML5 video element play/pause state
-  useEffect(() => {
-    if (videoRef.current) {
-      if (isPlaying) {
-        videoRef.current.play().catch(() => {});
-      } else {
-        videoRef.current.pause();
-      }
-    }
-  }, [isPlaying]);
-
-  // Reset watch progress whenever active reel changes (e.g. user switches reels)
+  // Reset watch progress whenever active reel changes
   useEffect(() => {
     setWatchProgress(0);
-    setIsPlaying(false);
+    setIsPlaying(true);
   }, [currentIndex]);
 
   const handleClaimWatchReward = (id: string) => {
@@ -627,7 +675,7 @@ export default function ReelsFloatingWidget({
     }
   };
 
-  // YouTube / Iframe postMessage event listener for synchronized video progress
+  // YouTube / Iframe postMessage event listener
   useEffect(() => {
     const handleWindowMessage = (event: MessageEvent) => {
       try {
@@ -638,7 +686,6 @@ export default function ReelsFloatingWidget({
         const activeReel = activeReels[currentIndex];
         if (!activeReel) return;
 
-        // YouTube state change (1: playing, 2: paused, 0: ended)
         if (data.event === 'onStateChange') {
           if (data.info === 1) setIsPlaying(true);
           if (data.info === 2 || data.info === 3) setIsPlaying(false);
@@ -649,7 +696,6 @@ export default function ReelsFloatingWidget({
           }
         }
 
-        // YouTube info delivery with exact currentTime & duration
         if (data.event === 'infoDelivery' && data.info) {
           if (typeof data.info.playerState === 'number') {
             if (data.info.playerState === 1) setIsPlaying(true);
@@ -677,13 +723,12 @@ export default function ReelsFloatingWidget({
     return () => window.removeEventListener('message', handleWindowMessage);
   }, [currentIndex, activeReels]);
 
-  // Watch Timer Fallback for Embedded Iframes (only runs while isPlaying is TRUE and for non-direct video files)
+  // Watch Timer Fallback for Embedded Iframes
   useEffect(() => {
     if (!isOpen || !isPlaying) return;
     const activeReel = activeReels[currentIndex];
     if (!activeReel) return;
 
-    // Direct MP4 videos update watchProgress via video.onTimeUpdate directly, so skip timer for direct videos
     if (activeReel.platform === 'direct' && activeReel.embedUrl.match(/\.(mp4|webm)($|\?)/i)) {
       return;
     }
@@ -700,7 +745,6 @@ export default function ReelsFloatingWidget({
 
     if (watchProgress >= 100) return;
 
-    // 250ms interval ~ 25s total reel duration sync
     const timer = setInterval(() => {
       setWatchProgress((prev) => {
         const next = prev + 1;
@@ -723,11 +767,10 @@ export default function ReelsFloatingWidget({
     setInputUrl('');
     setInputTitle('');
     setShowAddForm(false);
-    // Jump to newly added reel at index 0 (top)
-    scrollToReel(0);
+    scrollToCard(0);
   };
 
-  // Closed Trigger Floating Button (Vibrant Solid Gradient & Draggable)
+  // Closed Trigger Floating Button
   if (!isOpen) {
     if (isLoggedIn || (typeof document !== 'undefined' && document.body.classList.contains('user-logged-in'))) {
       return null;
@@ -788,10 +831,10 @@ export default function ReelsFloatingWidget({
 
   return (
     <>
-      {/* 🌑 BACKDROP OVERLAY to completely lock and freeze background Login/Register area when widget is open */}
+      {/* 🌑 BACKDROP OVERLAY */}
       <div 
         ref={backdropRef}
-        className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs transition-opacity duration-300 animate-fadeIn touch-none"
+        className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs transition-opacity duration-300 animate-fadeIn touch-none"
         onClick={() => setIsOpen(false)}
         onTouchMove={(e) => {
           e.preventDefault();
@@ -799,476 +842,247 @@ export default function ReelsFloatingWidget({
         }}
       />
 
+      {/* ================= TIKTOK VERTICAL SCROLL PORTAL CONTAINER ================= */}
       <div 
         ref={widgetRef}
-        className="fixed bottom-3 right-3 sm:bottom-5 sm:right-5 z-50 max-w-[340px] w-[92vw] bg-slate-950/98 border border-slate-800 backdrop-blur-2xl rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.9)] overflow-hidden flex flex-col transition duration-300 animate-fadeIn"
+        className="fixed inset-0 z-50 w-full h-[100dvh] bg-black text-white overflow-hidden select-none flex justify-center items-center"
       >
-      
-      {/* 🔮 HEADER BAR WITH NAVIGATION CONTROLS */}
-      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-3 border-b border-slate-800 flex items-center justify-between gap-1.5 shrink-0 select-none">
-        
-        {/* Title & Badge */}
-        <div className="flex items-center gap-2">
-          <div className="p-1.5 bg-rose-500/20 border border-rose-500/40 rounded-xl text-rose-400 shrink-0">
-            <Video className="w-4 h-4 animate-pulse" />
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <h3 className="font-black text-xs text-white tracking-tight uppercase flex items-center gap-1">
-                <span>REELS & SHORTS</span>
-              </h3>
-              {activeReels.length > 0 && (
-                <span className="bg-rose-500/20 text-rose-300 text-[9px] font-extrabold px-1.5 py-0.2 rounded-md border border-rose-500/30">
-                  {currentIndex + 1}/{activeReels.length}
-                </span>
-              )}
-            </div>
-            <p className="text-[9px] text-slate-400 font-bold leading-none mt-0.5">
-              {language === 'tl' ? 'I-scroll pababa o gamitin ang ⬆️⬇️' : 'Scroll down or use ⬆️⬇️'}
-            </p>
-          </div>
-        </div>
-
-        {/* Navigation & Action Controls */}
-        <div className="flex items-center gap-1">
+        <div className="relative w-full h-full max-w-[480px] bg-black overflow-hidden flex flex-col justify-between shadow-2xl border-x border-white/5">
           
-          {/* Scroll Up / Previous Reel */}
-          {activeReels.length > 1 && (
-            <button
-              onClick={handlePrev}
-              className="bg-slate-800 hover:bg-slate-700 text-white p-1.5 rounded-xl transition cursor-pointer border border-slate-700 active:scale-90"
-              title={language === 'tl' ? 'Itaas / Nakaraang Reel' : 'Scroll Up'}
-            >
-              <ChevronUp className="w-3.5 h-3.5 text-indigo-300" />
-            </button>
-          )}
+          {/* ================= FIXED TOP TIKTOK HEADER BAR ================= */}
+          <header className="absolute top-0 inset-x-0 z-40 pt-3 pb-2 px-3 flex items-center justify-between pointer-events-auto bg-gradient-to-b from-black/90 via-black/50 to-transparent">
+            
+            {/* Left: Close/Back button & Feed Badge */}
+            <div className="flex items-center gap-2">
+              <button
+                id="reels-widget-close-btn"
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="w-9 h-9 rounded-full bg-black/50 backdrop-blur-md border border-white/15 flex items-center justify-center text-white active:scale-90 transition shadow-md hover:bg-black/80 cursor-pointer"
+                title={language === 'tl' ? 'Isara ang Reels' : 'Close Reels'}
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
 
-          {/* Scroll Down / Next Reel */}
-          {activeReels.length > 1 && (
-            <button
-              onClick={handleNext}
-              className="bg-slate-800 hover:bg-slate-700 text-white p-1.5 rounded-xl transition cursor-pointer border border-slate-700 active:scale-90"
-              title={language === 'tl' ? 'Ibaba / Susunod na Reel' : 'Scroll Down'}
-            >
-              <ChevronDown className="w-3.5 h-3.5 text-indigo-300" />
-            </button>
-          )}
+              <div className="flex items-center gap-1 bg-rose-600/30 border border-rose-500/40 text-rose-300 px-2 py-1 rounded-full text-[10px] font-black backdrop-blur-md">
+                <Video className="w-3.5 h-3.5 text-rose-400 animate-pulse" />
+                <span>REELS</span>
+              </div>
+            </div>
 
-          {/* User Upload Reel Icon Button (Registered & Non-registered users) */}
-          <button
-            type="button"
-            onClick={() => setShowUploadModal(true)}
-            className="bg-gradient-to-r from-rose-600 via-pink-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white px-2 py-1 rounded-xl text-[10px] font-black flex items-center gap-1 transition cursor-pointer shadow-md shadow-rose-950/50 border border-rose-400/40 active:scale-95 shrink-0"
-            title={language === 'tl' ? 'Mag-upload ng Reels/Shorts (0.50 Tokens)' : 'Upload Reel'}
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span className="font-extrabold">Upload</span>
-          </button>
-
-          {/* Admin Add Reel button */}
-          {isAdmin && (
-            <button
-              onClick={() => setShowAddForm(!showAddForm)}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white p-1.5 rounded-xl text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
-              title={language === 'tl' ? 'Magdagdag ng Reel (Admin)' : 'Add Reel'}
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-          )}
-
-          {/* Close Floating Window Button */}
-          <button
-            id="reels-widget-close-btn"
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              setIsOpen(false);
-            }}
-            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition cursor-pointer z-10"
-            title={language === 'tl' ? 'Isara ang Window' : 'Close Floating Window'}
-          >
-            <X className="w-4 h-4 pointer-events-none" />
-          </button>
-        </div>
-      </div>
-
-      {/* 📹 MAIN CONTENT AREA - SMOOTH ULTRA-RESPONSIVE FEED */}
-      <div 
-        ref={scrollContainerRef}
-        onScroll={() => {
-          if (!scrollContainerRef.current) return;
-          const container = scrollContainerRef.current;
-          const children = Array.from(container.children) as HTMLElement[];
-          let closestIndex = currentIndex;
-          let minDiff = Infinity;
-          const containerTop = container.scrollTop;
-
-          children.forEach((child, idx) => {
-            const childTop = child.offsetTop - container.offsetTop;
-            const diff = Math.abs(childTop - containerTop);
-            if (diff < minDiff) {
-              minDiff = diff;
-              closestIndex = idx;
-            }
-          });
-
-          if (closestIndex !== currentIndex && closestIndex >= 0 && closestIndex < activeReels.length) {
-            if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-            scrollTimeoutRef.current = setTimeout(() => {
-              setCurrentIndex(closestIndex);
-            }, 600);
-          }
-        }}
-        className="reels-widget-scroll-container p-3 space-y-4 max-h-[68vh] sm:max-h-[460px] overflow-y-auto touch-pan-y overscroll-contain"
-        style={{
-          scrollbarWidth: 'thin',
-          scrollbarColor: '#4f46e5 #0f172a',
-          WebkitOverflowScrolling: 'touch'
-        }}
-      >
-        {activeReels.length > 0 ? (
-          activeReels.map((reel, index) => {
-            const isActive = index === currentIndex;
-
-            return (
-              <div 
-                key={reel.id} 
-                onClick={() => {
-                  if (!isActive) scrollToReel(index);
-                }}
-                className={`space-y-2 p-2.5 rounded-2xl border transition duration-200 ${
-                  isActive 
-                    ? 'ring-2 ring-indigo-500/60 bg-indigo-950/40 border-indigo-500/50 shadow-lg' 
-                    : 'bg-slate-900/40 border-slate-800/80 hover:border-slate-700 opacity-90 hover:opacity-100 cursor-pointer'
+            {/* Center: Sorting / Filter Tabs (TikTok Style) */}
+            <div className="flex items-center gap-1 bg-black/40 backdrop-blur-md p-1 rounded-full border border-white/10 text-xs font-black">
+              <button
+                type="button"
+                onClick={() => { setActiveTab('all'); scrollToCard(0); }}
+                className={`px-2.5 py-1 rounded-full transition cursor-pointer text-[11px] ${
+                  activeTab === 'all'
+                    ? 'bg-white text-black shadow-md'
+                    : 'text-slate-300 hover:text-white'
                 }`}
               >
-                
-                {/* Header bar for each reel */}
-                <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold px-1">
-                  <span className="flex items-center gap-1.5">
-                    <span className={`font-extrabold px-2 py-0.5 rounded-md border ${
-                      isActive ? 'bg-rose-500 text-white border-rose-400 shadow-md' : 'bg-slate-800 text-slate-300 border-slate-700'
-                    }`}>
-                      Reel #{index + 1} {isActive && '▶️ NOW PLAYING'}
-                    </span>
-                    {index === 0 && (
-                      <span className="bg-emerald-500/20 text-emerald-300 font-extrabold px-1.5 py-0.5 rounded-md border border-emerald-500/30 uppercase text-[8px]">
-                        ⚡ PINAKAMABABANG LIKES
-                      </span>
-                    )}
-                    {index === activeReels.length - 1 && activeReels.length > 1 && (
-                      <span className="bg-amber-500/20 text-amber-300 font-extrabold px-1.5 py-0.5 rounded-md border border-amber-500/30 uppercase text-[8px]">
-                        🔥 MARAMING LIKES
-                      </span>
-                    )}
-                  </span>
-                  
-                  <span className={`font-black px-2 py-0.5 rounded-full border text-[9px] ${
-                    reel.platform === 'tiktok'
-                      ? 'bg-black/80 text-cyan-300 border-cyan-500/40'
-                      : reel.platform === 'facebook'
-                      ? 'bg-blue-900/80 text-blue-200 border-blue-400/40'
-                      : reel.platform === 'youtube'
-                      ? 'bg-rose-950/80 text-rose-200 border-rose-500/40'
-                      : 'bg-slate-900/80 text-slate-200 border-slate-700'
-                  }`}>
-                    {reel.platform === 'tiktok' && '🎵 TikTok'}
-                    {reel.platform === 'facebook' && '📘 FB Reel'}
-                    {reel.platform === 'youtube' && '▶️ YT Short'}
-                    {reel.platform === 'direct' && '📹 Video'}
-                  </span>
-                </div>
-
-                {/* Video Container Frame */}
-                <div className="relative bg-black rounded-2xl overflow-hidden border border-slate-800 aspect-[9/14] sm:aspect-[9/13] max-h-[320px] flex items-center justify-center shadow-lg group touch-pan-y">
-                  
-                  {/* 🧧 RED POCKET FLOATING BADGE WITH CIRCULAR PROGRESS RING */}
-                  {(() => {
-                    const isReelClaimed = Boolean(
-                      (currentUserId && reel.watchedBy?.includes(currentUserId)) ||
-                      watchedIds.includes(reel.id)
-                    );
-                    const currentProgress = isActive ? (isReelClaimed ? 100 : watchProgress) : (isReelClaimed ? 100 : 0);
-                    const radius = 11;
-                    const circumference = 2 * Math.PI * radius; // ~69.115
-                    const dashOffset = circumference - (circumference * currentProgress) / 100;
-
-                    return (
-                      <div className="absolute top-2 left-2 z-30 flex items-center gap-1.5 bg-black/40 backdrop-blur-sm border border-amber-500/40 p-1 pr-2.5 rounded-full shadow-lg hover:bg-black/60 transition">
-                        <div className="relative w-7 h-7 flex items-center justify-center shrink-0">
-                          <svg className="w-7 h-7 -rotate-90 transform">
-                            <circle
-                              cx="14"
-                              cy="14"
-                              r={radius}
-                              className="stroke-slate-900/80"
-                              strokeWidth="2.5"
-                              fill="transparent"
-                            />
-                            <circle
-                              cx="14"
-                              cy="14"
-                              r={radius}
-                              className={isReelClaimed ? 'stroke-emerald-400' : 'stroke-amber-400'}
-                              strokeWidth="2.5"
-                              strokeDasharray={circumference}
-                              strokeDashoffset={dashOffset}
-                              strokeLinecap="round"
-                              fill="transparent"
-                              style={{ transition: 'stroke-dashoffset 0.15s linear' }}
-                            />
-                          </svg>
-                          <div className={`absolute inset-0 m-auto w-4.5 h-4.5 rounded-full flex items-center justify-center text-[9px] shadow-sm ${
-                            isReelClaimed ? 'bg-emerald-600 text-white' : 'bg-red-600/90 text-amber-200 border border-amber-300/80 animate-pulse'
-                          }`}>
-                            {isReelClaimed ? '✅' : '🧧'}
-                          </div>
-                        </div>
-
-                        <div className="flex flex-col text-left">
-                          <span className="text-[7.5px] font-black uppercase tracking-wider text-amber-300 leading-none">
-                            {isReelClaimed ? 'RED POCKET CLAIMED' : 'RED POCKET REWARD'}
-                          </span>
-                          <span className="text-[10px] font-black text-white leading-tight flex items-center gap-1 mt-0.5">
-                            {isReelClaimed ? (
-                              <span className="text-emerald-400 font-extrabold flex items-center gap-1 text-[9px]">
-                                100% DONE (+₱0.10)
-                              </span>
-                            ) : (
-                              <>
-                                <span className="text-amber-400 font-black">{currentProgress}%</span>
-                                <span className="text-[8.5px] text-slate-200 font-semibold">
-                                  {isActive ? (isPlaying ? '▶️ Loading...' : '⏸️ Tap Play to Start') : '0%'}
-                                </span>
-                              </>
-                            )}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Play Button Overlay (Shown when active reel is NOT playing and NOT yet claimed) */}
-                  {(() => {
-                    const isReelClaimed = Boolean(
-                      (currentUserId && reel.watchedBy?.includes(currentUserId)) ||
-                      watchedIds.includes(reel.id)
-                    );
-                    if (isActive && !isPlaying && !isReelClaimed) {
-                      return (
-                        <div 
-                          onClick={() => setIsPlaying(true)}
-                          className="absolute inset-0 z-25 bg-slate-950/80 backdrop-blur-[2px] flex flex-col items-center justify-center p-4 text-center cursor-pointer hover:bg-slate-950/70 transition group/play"
-                        >
-                          {/* Red YouTube style Play Button */}
-                          <div className="w-16 h-12 bg-gradient-to-r from-red-600 to-rose-600 rounded-2xl border border-amber-300/60 flex items-center justify-center shadow-[0_0_25px_rgba(239,68,68,0.8)] group-hover/play:scale-110 group-hover/play:from-red-500 group-hover/play:to-rose-500 transition-all mb-3 animate-bounce">
-                            <Play className="w-8 h-8 fill-white text-white ml-1" />
-                          </div>
-                          <span className="text-xs font-black text-amber-300 uppercase tracking-wide drop-shadow-md bg-slate-900/90 px-3 py-1 rounded-full border border-amber-500/40">
-                            ▶️ PINDUTIN ANG PLAY BUTTON
-                          </span>
-                          <p className="text-[11px] font-bold text-slate-200 mt-2 max-w-[220px] leading-snug">
-                            I-click para i-play at simulan ang circular loading animation (1% ➔ 100%) para sa ₱0.10 Red Pocket reward!
-                          </p>
-                        </div>
-                      );
-                    }
-                    return null;
-                  })()}
-
-                  {/* IF ACTIVE: Render iframe / video. IF INACTIVE: Render placeholder thumbnail preview to stop audio/video background playing */}
-                  {isActive ? (
-                    (() => {
-                      const formatted = formatEmbedUrl(reel.embedUrl || reel.url || '');
-                      const isDirect = formatted.platform === 'direct' && (
-                        formatted.embedUrl.match(/\.(mp4|webm|mov)($|\?)/i) || 
-                        reel.url?.match(/\.(mp4|webm|mov)($|\?)/i)
-                      );
-
-                      if (isDirect) {
-                        return (
-                          <video
-                            ref={videoRef}
-                            src={formatted.embedUrl || reel.url}
-                            controls
-                            autoPlay={isPlaying}
-                            playsInline
-                            className="w-full h-full object-contain bg-black"
-                            onPlay={() => setIsPlaying(true)}
-                            onPause={() => setIsPlaying(false)}
-                            onTimeUpdate={(e) => {
-                              const v = e.currentTarget;
-                              if (v.duration && v.duration > 0) {
-                                const pct = Math.min(100, Math.floor((v.currentTime / v.duration) * 100));
-                                setWatchProgress(pct);
-                                if (pct >= 100) {
-                                  handleClaimWatchReward(reel.id);
-                                }
-                              }
-                            }}
-                            onEnded={() => {
-                              setWatchProgress(100);
-                              handleClaimWatchReward(reel.id);
-                              setIsPlaying(false);
-                            }}
-                          />
-                        );
-                      }
-
-                      const finalIframeSrc = formatted.embedUrl.includes('?') 
-                        ? `${formatted.embedUrl}&enablejsapi=1&autoplay=${isPlaying ? 1 : 0}` 
-                        : `${formatted.embedUrl}?enablejsapi=1&autoplay=${isPlaying ? 1 : 0}`;
-
-                      return (
-                        <iframe
-                          src={finalIframeSrc}
-                          title={reel.title || `Reel Video ${index + 1}`}
-                          className="w-full h-full border-0 bg-slate-950"
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                          allowFullScreen
-                          sandbox="allow-scripts allow-same-origin allow-presentation allow-forms"
-                        />
-                      );
-                    })()
-                  ) : (
-                    /* Inactive Reel Card Overlay (Stops video/audio playback completely until clicked/scrolled) */
-                    <div 
-                      onClick={() => scrollToReel(index)}
-                      className="w-full h-full bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-950 flex flex-col items-center justify-center p-4 text-center cursor-pointer hover:bg-slate-900/90 transition group/play"
-                    >
-                      <div className="p-4 bg-indigo-600/30 border border-indigo-500/50 rounded-full text-indigo-300 group-hover/play:scale-110 group-hover/play:bg-indigo-600 transition shadow-xl mb-2">
-                        <Play className="w-7 h-7 fill-indigo-300 text-indigo-300 group-hover/play:fill-white group-hover/play:text-white" />
-                      </div>
-                      <span className="text-xs font-black text-white uppercase tracking-wider">
-                        I-tap para i-play ang Reel #{index + 1}
-                      </span>
-                      <p className="text-[10px] text-slate-400 mt-1 line-clamp-1 max-w-[200px]">
-                        {reel.title || 'Panoorin ang video reel'}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Delete Button for Admin */}
-                  {isAdmin && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteReel(reel.id);
-                      }}
-                      className="absolute top-2 right-2 bg-rose-600/90 hover:bg-rose-600 text-white p-1.5 rounded-full border border-rose-400/30 transition cursor-pointer shadow-md z-10"
-                      title="Delete Reel (Admin)"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
-
-                {/* Title & Interactive Controls Bar */}
-                <div className="space-y-2 bg-slate-900/80 border border-slate-800/80 p-2.5 rounded-2xl">
-                  
-                  {/* Title / Description */}
-                  {reel.title && (
-                    <p className="text-xs font-bold text-slate-200 leading-snug line-clamp-2">
-                      {reel.title}
-                    </p>
-                  )}
-
-                  {/* Like Button & Open Original Link */}
-                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/80">
-                    
-                    {/* LIKE BUTTON */}
-                    {(() => {
-                      const isReelLiked = Boolean(
-                        currentUserId
-                          ? reel.likedBy?.includes(currentUserId)
-                          : likedIds.includes(reel.id)
-                      );
-                      return (
-                        <button
-                          type="button"
-                          onClick={(e) => handleLike(reel.id, e)}
-                          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-black text-xs transition-all cursor-pointer active:scale-90 select-none z-20 ${
-                            isReelLiked
-                              ? 'bg-gradient-to-r from-rose-600 to-pink-600 text-white border border-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.6)] scale-105'
-                              : 'bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-rose-400 border border-slate-700'
-                          }`}
-                        >
-                          <Heart className={`w-4 h-4 transition ${isReelLiked ? 'fill-white text-white scale-110' : ''}`} />
-                          <span>{reel.likes}</span>
-                        </button>
-                      );
-                    })()}
-
-                    {/* Pause / Play Watch Timer button */}
-                    {isActive && !Boolean((currentUserId && reel.watchedBy?.includes(currentUserId)) || watchedIds.includes(reel.id)) && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setIsPlaying(!isPlaying);
-                        }}
-                        className={`px-3 py-1.5 rounded-xl font-black text-[11px] border flex items-center gap-1.5 transition-all cursor-pointer z-20 ${
-                          isPlaying
-                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
-                            : 'bg-emerald-600 text-white border-emerald-400 hover:bg-emerald-500 shadow-md animate-pulse'
-                        }`}
-                      >
-                        {isPlaying ? (
-                          <>
-                            <Pause className="w-3.5 h-3.5 fill-amber-300 text-amber-300" />
-                            <span>⏸️ Pause</span>
-                          </>
-                        ) : (
-                          <>
-                            <Play className="w-3.5 h-3.5 fill-white text-white" />
-                            <span>▶️ Start Watch</span>
-                          </>
-                        )}
-                      </button>
-                    )}
-
-                    {/* Open original link button */}
-                    <a
-                      href={reel.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-indigo-300 px-2.5 py-1.5 rounded-xl text-[10px] font-bold border border-slate-700 flex items-center gap-1 transition"
-                      title="Open original link in new tab"
-                    >
-                      <span>Link</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-
-                  </div>
-                </div>
-
-              </div>
-            );
-          })
-        ) : (
-          <div className="py-8 text-center space-y-2">
-            <Tv className="w-8 h-8 text-slate-600 mx-auto animate-pulse" />
-            <p className="text-xs text-slate-400 font-semibold">
-              {language === 'tl' ? 'Walang available na reels video.' : 'No reels videos published yet.'}
-            </p>
-            {isAdmin && (
-              <button
-                onClick={() => setShowAddForm(true)}
-                className="bg-indigo-600 text-white font-bold px-3 py-1.5 rounded-xl text-xs"
-              >
-                + Magdagdag ng Unang Reel
+                Lahat
               </button>
+
+              <button
+                type="button"
+                onClick={() => { setActiveTab('low_likes'); scrollToCard(0); }}
+                className={`px-2.5 py-1 rounded-full transition cursor-pointer flex items-center gap-1 text-[11px] ${
+                  activeTab === 'low_likes'
+                    ? 'bg-rose-600 text-white shadow-md'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+                title="Pinakamababang likes muna"
+              >
+                <Zap className="w-3 h-3 text-amber-300" />
+                <span>Low Likes</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => { setActiveTab('popular'); scrollToCard(0); }}
+                className={`px-2.5 py-1 rounded-full transition cursor-pointer flex items-center gap-1 text-[11px] ${
+                  activeTab === 'popular'
+                    ? 'bg-amber-500 text-black shadow-md'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+                title="Maraming likes"
+              >
+                <Flame className="w-3 h-3 text-red-600" />
+                <span>Popular</span>
+              </button>
+            </div>
+
+            {/* Right: Upload & Admin Buttons */}
+            <div className="flex items-center gap-1.5">
+              {/* User Upload Reel Button */}
+              <button
+                type="button"
+                onClick={() => setShowUploadModal(true)}
+                className="bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black px-2.5 py-1.5 rounded-full text-[10px] flex items-center gap-1 shadow-md active:scale-95 transition cursor-pointer border border-white/20"
+                title="Mag-upload ng Reels (0.50 Tokens)"
+              >
+                <Upload className="w-3 h-3" />
+                <span>Upload</span>
+              </button>
+
+              {/* Admin Add Reel button */}
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setShowAddForm(true)}
+                  className="w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center text-xs font-black shadow-md transition cursor-pointer border border-indigo-400"
+                  title="Admin: Magdagdag ng Reel"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              )}
+
+              {/* Search Toggle */}
+              <button
+                type="button"
+                onClick={() => setShowSearchInput(!showSearchInput)}
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-white backdrop-blur-md border transition cursor-pointer ${
+                  showSearchInput ? 'bg-amber-500 text-black border-amber-400' : 'bg-black/40 border-white/10 hover:bg-black/60'
+                }`}
+                title="Mag-search ng Reel"
+              >
+                <Search className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+          </header>
+
+          {/* Search Bar Input Dropdown (When active) */}
+          {showSearchInput && (
+            <div className="absolute top-14 inset-x-3 z-40 bg-black/90 backdrop-blur-md p-2 rounded-2xl border border-white/15 shadow-2xl flex items-center gap-2 animate-fadeIn">
+              <Search className="w-4 h-4 text-amber-400 shrink-0 ml-1" />
+              <input
+                type="text"
+                autoFocus
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Mag-search ayon sa pamagat, creator, platform..."
+                className="w-full bg-transparent text-white text-xs outline-none placeholder:text-slate-400"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="text-slate-400 hover:text-white text-xs font-bold px-1"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* ================= TIKTOK VERTICAL SNAP SCROLL CONTAINER ================= */}
+          <main 
+            ref={containerRef}
+            onScroll={handleScroll}
+            className="w-full h-full overflow-y-scroll snap-y snap-mandatory scroll-smooth no-scrollbar relative z-0"
+            style={{
+              scrollbarWidth: 'none',
+              msOverflowStyle: 'none',
+              WebkitOverflowScrolling: 'touch'
+            }}
+          >
+            {activeReels.length > 0 ? (
+              activeReels.map((reel, index) => {
+                const isActive = index === currentIndex;
+                const isReelClaimed = Boolean(
+                  (currentUserId && reel.watchedBy?.includes(currentUserId)) ||
+                  watchedIds.includes(reel.id)
+                );
+                const isReelLiked = Boolean(
+                  currentUserId
+                    ? reel.likedBy?.includes(currentUserId)
+                    : likedIds.includes(reel.id)
+                );
+
+                return (
+                  <ReelsVideoCard
+                    key={reel.id}
+                    reel={reel}
+                    index={index}
+                    totalCount={activeReels.length}
+                    isActive={isActive}
+                    isPlaying={isActive ? isPlaying : false}
+                    watchProgress={watchProgress}
+                    isLiked={isReelLiked}
+                    isClaimed={isReelClaimed}
+                    fitMode={fitMode}
+                    isAdmin={isAdmin}
+                    language={language}
+                    onTogglePlay={() => setIsPlaying(!isPlaying)}
+                    onToggleFitMode={() => setFitMode(fitMode === 'contain' ? 'cover' : 'contain')}
+                    onLike={handleLike}
+                    onClaimReward={handleClaimWatchReward}
+                    onDelete={onDeleteReel}
+                    onOpenUploadModal={() => setShowUploadModal(true)}
+                    triggerNotification={triggerNotification}
+                  />
+                );
+              })
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center space-y-3 bg-slate-950">
+                <Tv className="w-12 h-12 text-slate-600 animate-pulse" />
+                <h3 className="text-sm font-black text-white">Walang Nahanap na Reel</h3>
+                <p className="text-xs text-slate-400 max-w-xs">
+                  {searchQuery ? `Walang tugma sa query na "${searchQuery}".` : 'Walang reels video sa listahan.'}
+                </p>
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="px-4 py-2 rounded-xl bg-slate-800 text-white text-xs font-bold hover:bg-slate-700"
+                  >
+                    I-clear ang Search
+                  </button>
+                )}
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAddForm(true)}
+                    className="px-4 py-2 rounded-xl bg-rose-600 text-white text-xs font-black hover:bg-rose-500 shadow-lg"
+                  >
+                    + Magdagdag ng Bagong Reel
+                  </button>
+                )}
+              </div>
             )}
-          </div>
-        )}
+          </main>
+
+          {/* ================= ON-SCREEN SCROLL FLOATER BUTTONS (Desktop/Mobile Nav Helper) ================= */}
+          {activeReels.length > 1 && (
+            <div className="absolute left-3 bottom-24 z-30 flex flex-col gap-2 pointer-events-auto">
+              <button
+                type="button"
+                onClick={handlePrev}
+                className="w-8 h-8 rounded-full bg-black/50 backdrop-blur-md border border-white/15 flex items-center justify-center text-white/80 hover:text-white hover:bg-black/80 transition active:scale-90 shadow-md cursor-pointer"
+                title="Previous Reel (Itaas)"
+              >
+                <ChevronUp className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={handleNext}
+                className="w-8 h-8 rounded-full bg-black/50 backdrop-blur-md border border-white/15 flex items-center justify-center text-white/80 hover:text-white hover:bg-black/80 transition active:scale-90 shadow-md cursor-pointer"
+                title="Next Reel (Ibaba)"
+              >
+                <ChevronDown className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+        </div>
       </div>
 
-      {/* ⚙️ ADMIN ADD REEL FORM POPUP MODAL */}
+      {/* ================= ⚙️ ADMIN ADD REEL FORM POPUP MODAL ================= */}
       {showAddForm && isAdmin && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-fadeIn">
-          <div className="w-full max-w-md bg-slate-900 border-2 border-indigo-500/60 rounded-2xl shadow-2xl overflow-hidden p-5 space-y-4 text-xs">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-fadeIn">
+          <div className="w-full max-w-md bg-slate-900 border-2 border-indigo-500/60 rounded-3xl shadow-2xl overflow-hidden p-5 space-y-4 text-xs">
             <div className="flex items-center justify-between pb-3 border-b border-indigo-900/60">
               <span className="text-xs font-black text-indigo-200 uppercase tracking-wider flex items-center gap-2">
                 <Shield className="w-4 h-4 text-amber-300" />
@@ -1334,34 +1148,9 @@ export default function ReelsFloatingWidget({
         </div>
       )}
 
-      {/* 📜 BOTTOM SCROLL NAVIGATION CONTROL BAR */}
-      {activeReels.length > 1 && (
-        <div className="p-2 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-xs shrink-0">
-          <button
-            onClick={handlePrev}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 font-bold border border-slate-700 transition cursor-pointer text-[11px]"
-          >
-            <ChevronUp className="w-4 h-4" />
-            <span>Itaas (Previous)</span>
-          </button>
-
-          <span className="text-[10px] font-black text-slate-400 uppercase">
-            {currentIndex + 1} / {activeReels.length}
-          </span>
-
-          <button
-            onClick={handleNext}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 font-bold border border-slate-700 transition cursor-pointer text-[11px]"
-          >
-            <span>Ibaba (Next)</span>
-            <ChevronDown className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
-      {/* 📤 USER REEL UPLOAD & TOKEN SUBSCRIPTION MODAL */}
+      {/* ================= 📤 USER REEL UPLOAD & TOKEN SUBSCRIPTION MODAL ================= */}
       {showUploadModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 animate-fadeIn">
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-md flex items-center justify-center p-3 animate-fadeIn">
           <div className="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-5 shadow-2xl text-slate-100 space-y-4">
             
             {/* Modal Header */}
@@ -1644,7 +1433,6 @@ export default function ReelsFloatingWidget({
                   const approvedReels = myReelsList.filter(r => r.status === 'approved' || !r.status);
                   const totalViews = approvedReels.reduce((acc, r) => acc + (r.watchedBy?.length || r.views || 0), 0);
                   
-                  // Calculate total gross revenue across all approved reels
                   let totalGrossRevenue = 0;
                   approvedReels.forEach(r => {
                     const country = reelCountries[r.id] || r.audienceCountry || 'Philippines';
@@ -1866,8 +1654,6 @@ export default function ReelsFloatingWidget({
         </div>
       )}
 
-    </div>
     </>
   );
 }
-
