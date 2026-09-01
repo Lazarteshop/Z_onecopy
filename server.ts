@@ -754,6 +754,7 @@ const activeUsersMap: Record<string, number> = {};
 
 let isAuthoritativeDatabaseReady = false;
 let recoveryFailureReason: string | null = null;
+let isCloudRebuildInProgress = false;
 
 app.use((req, res, next) => {
   const token = req.headers.authorization;
@@ -774,6 +775,7 @@ app.use((req, res, next) => {
     const allowedRecoveryPaths = [
       '/api/admin/db/status',
       '/api/admin/db/force-cloud-pull',
+      '/api/admin/db/rebuild-from-firestore',
       '/api/health'
     ];
 
@@ -794,12 +796,20 @@ app.use((req, res, next) => {
 });
 
 // --- PERSISTENT DATA STORAGE PATHS ---
-const DATA_DIRECTORY = process.env.DATA_DIR || process.env.RENDER_DATA_PATH || (fs.existsSync('/var/data') ? '/var/data' : path.join(process.cwd(), 'src', 'data'));
-const IS_DEDICATED_PERSISTENT_STORAGE = !!(
-  process.env.DATA_DIR ||
-  process.env.RENDER_DATA_PATH ||
-  (fs.existsSync('/var/data') && DATA_DIRECTORY.startsWith('/var/data')) ||
-  (DATA_DIRECTORY !== path.join(process.cwd(), 'src', 'data'))
+const BUNDLED_STATIC_DATA_PATH = path.join(process.cwd(), 'src', 'data');
+const DATA_DIRECTORY = (process.env.DATA_DIR && process.env.DATA_DIR !== BUNDLED_STATIC_DATA_PATH)
+  ? process.env.DATA_DIR
+  : (process.env.RENDER_DATA_PATH && process.env.RENDER_DATA_PATH !== BUNDLED_STATIC_DATA_PATH)
+    ? process.env.RENDER_DATA_PATH
+    : (fs.existsSync('/var/data') ? '/var/data' : BUNDLED_STATIC_DATA_PATH);
+
+const IS_DEDICATED_PERSISTENT_STORAGE = (
+  DATA_DIRECTORY !== BUNDLED_STATIC_DATA_PATH &&
+  (
+    (fs.existsSync('/var/data') && (DATA_DIRECTORY === '/var/data' || DATA_DIRECTORY.startsWith('/var/data/'))) ||
+    (Boolean(process.env.DATA_DIR) && process.env.DATA_DIR !== BUNDLED_STATIC_DATA_PATH) ||
+    (Boolean(process.env.RENDER_DATA_PATH) && process.env.RENDER_DATA_PATH !== BUNDLED_STATIC_DATA_PATH)
+  )
 );
 
 if (!fs.existsSync(DATA_DIRECTORY)) {
@@ -814,16 +824,8 @@ const DB_FILE_PATH = path.join(DATA_DIRECTORY, 'db.json');
 const DB_BACKUP_PATH = path.join(DATA_DIRECTORY, 'db.json.bak');
 const DB_TMP_PATH = path.join(DATA_DIRECTORY, 'db.json.tmp');
 
-// If running with a dedicated persistent disk (e.g. on Render) and DB does not exist yet there, copy initial db.json
-const BASE_DEFAULT_DB = path.join(process.cwd(), 'src', 'data', 'db.json');
-if (DATA_DIRECTORY !== path.join(process.cwd(), 'src', 'data') && !fs.existsSync(DB_FILE_PATH) && fs.existsSync(BASE_DEFAULT_DB)) {
-  try {
-    fs.copyFileSync(BASE_DEFAULT_DB, DB_FILE_PATH);
-    console.log(`📁 Persistent storage initialized: Copied baseline database from ${BASE_DEFAULT_DB} to ${DB_FILE_PATH}`);
-  } catch (copyErr) {
-    console.error('Error copying baseline database to persistent disk:', copyErr);
-  }
-}
+// NOTE: Automatic copying of bundled static db.json to an empty persistent disk is intentionally disabled.
+// An empty persistent disk must trigger safe authoritative Cloud Firestore recovery first.
 
 // --- FIREBASE CONFIGURATION & INITIALIZATION ---
 let firebaseConfigObj = {
@@ -1899,48 +1901,80 @@ function hasValidPersistentDatabase(): boolean {
     return false;
   }
 
+  const isValidStructure = (obj: any): boolean => {
+    return (
+      obj !== null &&
+      typeof obj === 'object' &&
+      Array.isArray(obj.users) &&
+      Array.isArray(obj.posts) &&
+      Array.isArray(obj.reels)
+    );
+  };
+
   try {
-    let rawData: string | null = null;
+    // 1. Check primary db.json
     if (fs.existsSync(DB_FILE_PATH)) {
-      const content = fs.readFileSync(DB_FILE_PATH, 'utf-8');
-      if (content && content.trim().length > 0) {
-        rawData = content;
+      try {
+        const content = fs.readFileSync(DB_FILE_PATH, 'utf-8');
+        if (content && content.trim().length > 0) {
+          const parsed = JSON.parse(content);
+          if (isValidStructure(parsed)) {
+            return true;
+          }
+        }
+      } catch {
+        // Fall through to backup check
       }
     }
-    if (!rawData && fs.existsSync(DB_BACKUP_PATH)) {
-      const content = fs.readFileSync(DB_BACKUP_PATH, 'utf-8');
-      if (content && content.trim().length > 0) {
-        rawData = content;
+
+    // 2. Check backup db.json.bak
+    if (fs.existsSync(DB_BACKUP_PATH)) {
+      try {
+        const content = fs.readFileSync(DB_BACKUP_PATH, 'utf-8');
+        if (content && content.trim().length > 0) {
+          const parsed = JSON.parse(content);
+          if (isValidStructure(parsed)) {
+            return true;
+          }
+        }
+      } catch {
+        // Return false below
       }
     }
-    if (!rawData) {
-      return false;
-    }
-    const parsed = JSON.parse(rawData);
-    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.users) || parsed.users.length === 0) {
-      return false;
-    }
-    return true;
+
+    return false;
   } catch {
     return false;
   }
 }
 
 function loadDB(): DBStructure {
-  if (cachedDB && Array.isArray(cachedDB.users) && cachedDB.users.length > 0) {
+  if (cachedDB && Array.isArray(cachedDB.users)) {
     return cachedDB;
   }
   const envAdminEmail = process.env.ADMIN_EMAIL || 'admin@example.com';
   const envAdminPassword = process.env.ADMIN_PASSWORD || 'AdminSecurePassword123';
   const envAdminName = process.env.ADMIN_NAME || 'System Administrator';
 
-  // Ensure the src/data directory exists
+  // Ensure the directory exists
   const dir = path.dirname(DB_FILE_PATH);
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {}
   }
 
   let loaded: DBStructure | null = null;
+
+  const isValidStructure = (obj: any): boolean => {
+    return (
+      obj !== null &&
+      typeof obj === 'object' &&
+      Array.isArray(obj.users) &&
+      Array.isArray(obj.posts) &&
+      Array.isArray(obj.reels)
+    );
+  };
 
   // 1. Try reading primary db.json
   if (fs.existsSync(DB_FILE_PATH)) {
@@ -1948,7 +1982,7 @@ function loadDB(): DBStructure {
       const data = fs.readFileSync(DB_FILE_PATH, 'utf-8');
       if (data && data.trim().length > 0) {
         const parsed = JSON.parse(data);
-        if (parsed && Array.isArray(parsed.users) && parsed.users.length > 0) {
+        if (isValidStructure(parsed)) {
           loaded = parsed;
         }
       }
@@ -1963,7 +1997,7 @@ function loadDB(): DBStructure {
       const data = fs.readFileSync(DB_BACKUP_PATH, 'utf-8');
       if (data && data.trim().length > 0) {
         const parsed = JSON.parse(data);
-        if (parsed && Array.isArray(parsed.users) && parsed.users.length > 0) {
+        if (isValidStructure(parsed)) {
           console.log('🛡️ Auto-Recovery: Successfully restored database from db.json.bak!');
           loaded = parsed;
           try {
@@ -6480,6 +6514,221 @@ app.post('/api/admin/db/force-cloud-pull', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: 'Nabigo ang cloud pull: ' + (err as any).message });
+  }
+});
+
+// ONE-TIME ADMIN CLOUD -> PERSISTENT DISK RECOVERY (CLOUD -> LOCAL ONLY)
+// ABSOLUTELY NEVER UPLOADS TO FIRESTORE OR DELETES FIRESTORE DOCUMENTS.
+app.post('/api/admin/db/rebuild-from-firestore', async (req, res) => {
+  const adminId = req.headers.authorization;
+  const db = loadDB();
+  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
+  }
+
+  if (isCloudRebuildInProgress) {
+    return res.status(409).json({
+      error: 'Ang Cloud Firestore rebuild ay kasalukuyan nang tumatakbo. Mangyaring maghintay.'
+    });
+  }
+
+  isCloudRebuildInProgress = true;
+
+  try {
+    if (!cloudDb.isActive) {
+      return res.status(400).json({
+        success: false,
+        error: 'Hindi aktibo ang Cloud DB adapter.'
+      });
+    }
+
+    console.log('🔄 [Admin Cloud Rebuild] Starting safe Cloud Firestore -> Persistent Disk rebuild...');
+
+    const collectionNames = [
+      'users',
+      'campaigns',
+      'posts',
+      'direct_messages',
+      'merchant_ads',
+      'reels',
+      'reel_subscriptions',
+      'stories',
+      'albums',
+      'group_chats',
+      'group_messages',
+      'shop_products',
+      'shop_baskets',
+      'shop_orders',
+      'va_banners',
+      'registered_devices',
+      'user_verifications',
+      'kiddie_content'
+    ];
+
+    let fetchErrors = 0;
+    const failedCollections: string[] = [];
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    const safeGetCollection = async (name: string, maxRetries = 2): Promise<any[]> => {
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        let timeoutHandle: NodeJS.Timeout | null = null;
+        try {
+          const perRequestTimeout = new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(() => reject(new Error(`Timeout (4000ms limit) fetching collection "${name}"`)), 4000);
+          });
+          const items = await Promise.race([cloudDb.getCollection(name), perRequestTimeout]);
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          return Array.isArray(items) ? items : [];
+        } catch (err: any) {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          const errMsg = err?.message || String(err);
+          if (attempt < maxRetries) {
+            const backoffMs = (attempt + 1) * 600;
+            console.warn(`⚠️ [Rebuild Cloud Fetch Retry] Collection "${name}" error (${errMsg}). Retrying in ${backoffMs}ms...`);
+            await sleep(backoffMs);
+          } else {
+            fetchErrors++;
+            failedCollections.push(name);
+            console.warn(`❌ [Rebuild Cloud Fetch Failed] Collection "${name}" failed after ${maxRetries + 1} attempts:`, errMsg);
+            return [];
+          }
+        }
+      }
+      return [];
+    };
+
+    // Completely isolated temporary recovery buffer (Zero mutation of cachedDB or files during download)
+    const fetched: Record<string, any[]> = {};
+    for (const name of collectionNames) {
+      fetched[name] = await safeGetCollection(name);
+      if (fetchErrors > 0) {
+        // Fast-fail on any error
+        break;
+      }
+      await sleep(60);
+    }
+
+    if (fetchErrors > 0) {
+      console.warn(`🛡️ [Rebuild Aborted] Firestore fetch encountered ${fetchErrors} error(s) in collections: [${failedCollections.join(', ')}]. No changes made to disk or memory.`);
+      return res.status(502).json({
+        success: false,
+        reason: 'partial_fetch_errors',
+        fetchErrors,
+        failedCollections,
+        error: `Cloud rebuild aborted: ${fetchErrors} collection(s) failed (${failedCollections.join(', ')}). No local files or state were modified.`
+      });
+    }
+
+    const rawUsers = fetched['users'] || [];
+    const rawCampaigns = fetched['campaigns'] || [];
+    const rawPosts = fetched['posts'] || [];
+    const rawDMs = fetched['direct_messages'] || [];
+    const rawMerchantAds = fetched['merchant_ads'] || [];
+    const rawReels = fetched['reels'] || [];
+    const rawReelSubs = fetched['reel_subscriptions'] || [];
+    const rawStories = fetched['stories'] || [];
+    const rawAlbums = fetched['albums'] || [];
+    const rawGroupChats = fetched['group_chats'] || [];
+    const rawGroupMessages = fetched['group_messages'] || [];
+    const rawShopProducts = fetched['shop_products'] || [];
+    const rawShopBaskets = fetched['shop_baskets'] || [];
+    const rawShopOrders = fetched['shop_orders'] || [];
+    const rawVaBanners = fetched['va_banners'] || [];
+    const rawRegisteredDevices = fetched['registered_devices'] || [];
+    const rawUserVerifications = fetched['user_verifications'] || [];
+    const rawKiddieContent = fetched['kiddie_content'] || [];
+
+    if (!Array.isArray(rawUsers)) {
+      return res.status(500).json({
+        success: false,
+        error: 'Reconstructed users collection is invalid.'
+      });
+    }
+
+    // Pure Cloud -> Local database reconstruction without seed fallbacks or record mutation
+    const reconstructedDB: DBStructure = {
+      users: rawUsers,
+      campaigns: rawCampaigns,
+      posts: rawPosts,
+      directMessages: rawDMs,
+      merchantAds: rawMerchantAds,
+      reels: rawReels,
+      reelSubscriptions: rawReelSubs,
+      stories: rawStories,
+      albums: rawAlbums,
+      groupChats: rawGroupChats,
+      groupMessages: rawGroupMessages,
+      shopProducts: rawShopProducts,
+      shopBaskets: rawShopBaskets,
+      shopCarts: {},
+      shopOrders: rawShopOrders,
+      vaBanners: rawVaBanners,
+      vaSubscriptions: [],
+      registeredDevices: rawRegisteredDevices,
+      userVerifications: rawUserVerifications,
+      kiddieContent: rawKiddieContent,
+      deviceTransfers: []
+    };
+
+    // Create safety timestamped backup of the CURRENT database BEFORE replacing
+    const timestamp = Date.now();
+    const preRebuildBackupPath = path.join(DATA_DIRECTORY, `db.before-cloud-rebuild.${timestamp}.json`);
+    if (fs.existsSync(DB_FILE_PATH)) {
+      try {
+        fs.copyFileSync(DB_FILE_PATH, preRebuildBackupPath);
+        console.log(`📦 Safety backup created at: ${preRebuildBackupPath}`);
+      } catch (bErr) {
+        console.warn('Warning: Could not create pre-rebuild safety backup:', bErr);
+      }
+    }
+
+    // ATOMIC WRITE TO PERSISTENT DISK
+    const jsonStr = JSON.stringify(reconstructedDB, null, 2);
+    fs.writeFileSync(DB_TMP_PATH, jsonStr, 'utf-8');
+    fs.renameSync(DB_TMP_PATH, DB_FILE_PATH);
+    fs.writeFileSync(DB_BACKUP_PATH, jsonStr, 'utf-8');
+
+    // Update memory cache
+    cachedDB = reconstructedDB;
+    initLastSyncedCache(reconstructedDB);
+    lastCloudSyncTimestamp = new Date().toISOString();
+    isAuthoritativeDatabaseReady = true;
+    recoveryFailureReason = null;
+
+    console.log(`✅ [Cloud Rebuild Succeeded] Persistent disk populated with authoritative Cloud Firestore state: ${reconstructedDB.users.length} users, ${reconstructedDB.posts.length} posts, ${reconstructedDB.reels.length} reels, ${reconstructedDB.stories.length} stories, ${reconstructedDB.groupChats.length} group chats, ${reconstructedDB.directMessages.length} DMs.`);
+
+    // ABSOLUTELY NEVER CALL uploadToFirestore() HERE.
+
+    return res.json({
+      success: true,
+      source: 'firestore',
+      message: 'Cloud database successfully rebuilt to persistent disk',
+      collectionsRecovered: collectionNames.length,
+      timestamp: new Date().toISOString(),
+      backupCreated: preRebuildBackupPath,
+      counts: {
+        users: reconstructedDB.users.length,
+        posts: reconstructedDB.posts.length,
+        reels: reconstructedDB.reels.length,
+        stories: reconstructedDB.stories.length,
+        groupChats: reconstructedDB.groupChats.length,
+        groupMessages: reconstructedDB.groupMessages.length,
+        directMessages: reconstructedDB.directMessages.length,
+        shopProducts: reconstructedDB.shopProducts.length,
+        shopOrders: reconstructedDB.shopOrders.length,
+        campaigns: reconstructedDB.campaigns.length,
+        registeredDevices: reconstructedDB.registeredDevices.length
+      }
+    });
+  } catch (err: any) {
+    console.error('❌ Cloud Rebuild Error:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'Nabigo ang cloud rebuild: ' + (err?.message || String(err))
+    });
+  } finally {
+    isCloudRebuildInProgress = false;
   }
 });
 
@@ -12380,7 +12629,7 @@ async function startServer() {
   const isHealthyPersistent = hasValidPersistentDatabase();
   const localDbState = isHealthyPersistent ? loadDB() : null;
 
-  if (isHealthyPersistent && localDbState && Array.isArray(localDbState.users) && localDbState.users.length > 0) {
+  if (isHealthyPersistent && localDbState && Array.isArray(localDbState.users) && Array.isArray(localDbState.posts) && Array.isArray(localDbState.reels)) {
     isAuthoritativeDatabaseReady = true;
     recoveryFailureReason = null;
     console.log(`📁 [Dedicated Persistent Storage Active] Storage path: ${DB_FILE_PATH}`);
@@ -12394,19 +12643,19 @@ async function startServer() {
       console.log(`ℹ️ [Ephemeral Storage Detected] Path: ${DB_FILE_PATH}. No dedicated persistent disk attached.`);
       console.log('☁️ [Cloud-First Sync] Synchronizing latest authoritative data from Cloud Firestore...');
     } else {
-      console.log('🚨 [Recovery Mode] Missing, empty, or uninitialized persistent database state. Attempting full Firestore cloud recovery sync...');
+      console.log(`🚨 [Recovery Mode] Missing or uninitialized database on persistent storage (${DB_FILE_PATH}). Attempting safe authoritative Cloud Firestore recovery...`);
     }
     try {
       const result = await syncFromFirestore();
       if (result && result.success) {
         isAuthoritativeDatabaseReady = true;
         recoveryFailureReason = null;
-        console.log('✅ [Cloud Sync Complete] Authoritative database synchronized and atomically merged!');
+        console.log('✅ [Cloud Recovery Complete] Authoritative database synchronized and saved atomically to persistent storage!');
       } else {
         isAuthoritativeDatabaseReady = false;
         recoveryFailureReason = result?.reason || 'partial_fetch_errors';
-        console.error(`🚨 [CRITICAL: Safe Recovery Lockout] Firestore cloud recovery did not complete on ephemeral container (${result?.fetchErrors || 0} collection(s) failed). System write operations locked to prevent empty/corrupted state mutations over user records.`);
-        console.warn(`🛡️ [Recovery Guard Active] Cloud sync did not complete (Reason: ${result?.reason || 'unknown'}, fetch errors: ${result?.fetchErrors || 0}). Database write operations locked in Recovery Mode.`);
+        console.error(`🚨 [CRITICAL: Safe Recovery Lockout] Firestore cloud recovery did not complete (${result?.fetchErrors || 0} collection(s) failed). System write operations locked in Recovery Mode.`);
+        console.warn(`🛡️ [Recovery Guard Active] Cloud sync did not complete (Reason: ${result?.reason || 'unknown'}, fetch errors: ${result?.fetchErrors || 0}). Write operations locked.`);
       }
     } catch (err: any) {
       isAuthoritativeDatabaseReady = false;
