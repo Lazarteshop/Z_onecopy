@@ -752,7 +752,7 @@ app.get('/api/tts', async (req, res) => {
 // --- IN-MEMORY USER ONLINE STATUS TRACKING & RECOVERY STATE ---
 const activeUsersMap: Record<string, number> = {};
 
-let isAuthoritativeDatabaseReady = true;
+let isAuthoritativeDatabaseReady = false;
 let recoveryFailureReason: string | null = null;
 
 app.use((req, res, next) => {
@@ -766,17 +766,18 @@ app.use((req, res, next) => {
 // Guard data mutations if authoritative recovery has not completed on an ephemeral container
 app.use((req, res, next) => {
   if (!isAuthoritativeDatabaseReady && !hasValidPersistentDatabase()) {
-    // Allow read-only status, admin db maintenance/retry, and health checks
-    const path = req.path;
-    const isMaintenanceOrStatus = path.startsWith('/api/admin/db/') || 
-                                  path.startsWith('/api/health') || 
-                                  path === '/api/admin/db/status' || 
-                                  path === '/api/admin/db/force-cloud-pull' ||
-                                  req.method === 'GET' ||
-                                  req.method === 'HEAD' ||
-                                  req.method === 'OPTIONS';
+    // Allow read-only operations (GET, HEAD, OPTIONS)
+    const isAllowedMethod = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
+    
+    // Explicit allowlist of safe recovery endpoints
+    const allowedRecoveryPaths = [
+      '/api/admin/db/status',
+      '/api/admin/db/force-cloud-pull',
+      '/api/health'
+    ];
+    const isAllowedRecoveryPath = allowedRecoveryPaths.includes(req.path);
 
-    if (!isMaintenanceOrStatus) {
+    if (!isAllowedMethod && !isAllowedRecoveryPath) {
       return res.status(503).json({
         error: '🛡️ [System Maintenance / Recovery Mode]: Ang database recovery mula sa Cloud Firestore ay kasalukuyang hindi kumpleto (Reason: ' + (recoveryFailureReason || 'quota/network limit') + '). Upang maiwasan ang pagka-overwrite o pagkawala ng data ng mga mamamayan, pansamantalang naka-lock ang write operations hanggang ma-re-sync ng Admin ang Cloud Database.',
         recoveryRequired: true,
@@ -1912,10 +1913,6 @@ function hasValidPersistentDatabase(): boolean {
     }
     const parsed = JSON.parse(rawData);
     if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.users) || parsed.users.length === 0) {
-      return false;
-    }
-    // Structural integrity check: verify core database collections exist as arrays
-    if (!Array.isArray(parsed.posts) && !Array.isArray(parsed.reels)) {
       return false;
     }
     return true;
@@ -12376,15 +12373,18 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 async function startServer() {
   const isHealthyPersistent = hasValidPersistentDatabase();
-  const localDbState = loadDB();
+  const localDbState = isHealthyPersistent ? loadDB() : null;
 
   if (isHealthyPersistent && localDbState && Array.isArray(localDbState.users) && localDbState.users.length > 0) {
+    isAuthoritativeDatabaseReady = true;
+    recoveryFailureReason = null;
     console.log(`📁 [Dedicated Persistent Storage Active] Storage path: ${DB_FILE_PATH}`);
     console.log(`⚡ [Normal Startup] Valid & healthy persistent database state detected (${localDbState.users.length} users, ${localDbState.posts?.length || 0} posts, ${localDbState.reels?.length || 0} reels).`);
     console.log(`⏩ [Skipped Full Sync] Skipping heavy 18-collection Firestore download to conserve quota and ensure instantaneous startup.`);
     initLastSyncedCache(localDbState);
     console.log('✅ Authoritative persistent database state ready for incoming requests.');
   } else {
+    isAuthoritativeDatabaseReady = false;
     if (!IS_DEDICATED_PERSISTENT_STORAGE) {
       console.log(`ℹ️ [Ephemeral Storage Detected] Path: ${DB_FILE_PATH}. No dedicated persistent disk attached.`);
       console.log('☁️ [Cloud-First Sync] Synchronizing latest authoritative data from Cloud Firestore...');
@@ -12398,19 +12398,15 @@ async function startServer() {
         recoveryFailureReason = null;
         console.log('✅ [Cloud Sync Complete] Authoritative database synchronized and atomically merged!');
       } else {
-        if (!IS_DEDICATED_PERSISTENT_STORAGE) {
-          isAuthoritativeDatabaseReady = false;
-          recoveryFailureReason = result?.reason || 'partial_fetch_errors';
-          console.error(`🚨 [CRITICAL: Safe Recovery Lockout] Firestore cloud recovery did not complete on ephemeral container (${result?.fetchErrors || 0} collection(s) failed). System write operations locked to prevent empty/corrupted state mutations over user records.`);
-        }
-        console.warn(`🛡️ [Recovery Guard Active] Cloud sync did not complete (Reason: ${result?.reason || 'unknown'}, fetch errors: ${result?.fetchErrors || 0}). Authoritative local state safely preserved with zero mutations.`);
+        isAuthoritativeDatabaseReady = false;
+        recoveryFailureReason = result?.reason || 'partial_fetch_errors';
+        console.error(`🚨 [CRITICAL: Safe Recovery Lockout] Firestore cloud recovery did not complete on ephemeral container (${result?.fetchErrors || 0} collection(s) failed). System write operations locked to prevent empty/corrupted state mutations over user records.`);
+        console.warn(`🛡️ [Recovery Guard Active] Cloud sync did not complete (Reason: ${result?.reason || 'unknown'}, fetch errors: ${result?.fetchErrors || 0}). Database write operations locked in Recovery Mode.`);
       }
     } catch (err: any) {
-      if (!IS_DEDICATED_PERSISTENT_STORAGE) {
-        isAuthoritativeDatabaseReady = false;
-        recoveryFailureReason = err?.message || 'startup_sync_exception';
-      }
-      console.warn('🛡️ [Safe Fallback] Firestore startup sync note (using verified local/backup state):', err?.message || err);
+      isAuthoritativeDatabaseReady = false;
+      recoveryFailureReason = err?.message || 'startup_sync_exception';
+      console.error('🚨 [CRITICAL: Safe Recovery Lockout] Startup sync exception:', err?.message || err);
     }
   }
 
@@ -12442,7 +12438,10 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 GCash Click-Earn running on http://0.0.0.0:${PORT} (Authoritative Database Ready)`);
+    const status = isAuthoritativeDatabaseReady
+      ? 'Authoritative Database Ready'
+      : `RECOVERY MODE – Writes Locked (${recoveryFailureReason || 'database recovery incomplete'})`;
+    console.log(`🚀 GCash Click-Earn running on http://0.0.0.0:${PORT} (${status})`);
   });
 }
 
