@@ -766,25 +766,30 @@ app.use((req, res, next) => {
 // Guard data mutations if authoritative recovery has not completed on an ephemeral container
 app.use((req, res, next) => {
   if (!isAuthoritativeDatabaseReady && !hasValidPersistentDatabase()) {
-    // Allow read-only operations (GET, HEAD, OPTIONS)
-    const isAllowedMethod = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
-    
-    // Explicit allowlist of safe recovery endpoints
+    const isAllowedMethod =
+      req.method === 'GET' ||
+      req.method === 'HEAD' ||
+      req.method === 'OPTIONS';
+
     const allowedRecoveryPaths = [
       '/api/admin/db/status',
       '/api/admin/db/force-cloud-pull',
       '/api/health'
     ];
-    const isAllowedRecoveryPath = allowedRecoveryPaths.includes(req.path);
+
+    const isAllowedRecoveryPath =
+      allowedRecoveryPaths.includes(req.path);
 
     if (!isAllowedMethod && !isAllowedRecoveryPath) {
       return res.status(503).json({
-        error: '🛡️ [System Maintenance / Recovery Mode]: Ang database recovery mula sa Cloud Firestore ay kasalukuyang hindi kumpleto (Reason: ' + (recoveryFailureReason || 'quota/network limit') + '). Upang maiwasan ang pagka-overwrite o pagkawala ng data ng mga mamamayan, pansamantalang naka-lock ang write operations hanggang ma-re-sync ng Admin ang Cloud Database.',
+        error:
+          'System Maintenance / Recovery Mode: database recovery is incomplete.',
         recoveryRequired: true,
         recoveryFailureReason
       });
     }
   }
+
   next();
 });
 
