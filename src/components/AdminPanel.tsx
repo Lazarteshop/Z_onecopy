@@ -44,7 +44,12 @@ import {
   PlusCircle,
   Plus,
   ShoppingBag,
-  Truck
+  Truck,
+  Database,
+  CloudDownload,
+  HardDrive,
+  Server,
+  FileJson
 } from 'lucide-react';
 import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd, WebsiteCampaign } from '../types';
 
@@ -89,7 +94,7 @@ export default function AdminPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'campaigns' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'shop_management' | 'settings'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'campaigns' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'shop_management' | 'settings' | 'database'>('overview');
   const [adminCampaigns, setAdminCampaigns] = useState<WebsiteCampaign[]>([]);
   const [showAddCampaignModal, setShowAddCampaignModal] = useState<boolean>(false);
   const [campaignSearch, setCampaignSearch] = useState<string>('');
@@ -99,6 +104,21 @@ export default function AdminPanel({
   const [showSuccessStoryModal, setShowSuccessStoryModal] = useState<boolean>(false);
   const [showRedemptionModal, setShowRedemptionModal] = useState<boolean>(false);
   const [activeRedemptionRecord, setActiveRedemptionRecord] = useState<RedemptionRecordItem | null>(null);
+
+  // Database Management & Cloud Rebuild States
+  const [showRebuildConfirmModal, setShowRebuildConfirmModal] = useState<boolean>(false);
+  const [isRebuildingDb, setIsRebuildingDb] = useState<boolean>(false);
+  const [rebuildResult, setRebuildResult] = useState<{
+    success: boolean;
+    message?: string;
+    error?: string;
+    collectionsRecovered?: number;
+    backupCreated?: string;
+    timestamp?: string;
+    counts?: Record<string, number>;
+  } | null>(null);
+  const [dbStatus, setDbStatus] = useState<any>(null);
+  const [loadingDbStatus, setLoadingDbStatus] = useState<boolean>(false);
 
   const fetchAdminCampaigns = async () => {
     try {
@@ -307,6 +327,56 @@ export default function AdminPanel({
       triggerNotification('❌ Hindi makakonekta sa server.', 'error');
     } finally {
       setQrUploading(false);
+    }
+  };
+
+  // Database status and Cloud Rebuild handlers
+  const fetchDbStatus = async () => {
+    setLoadingDbStatus(true);
+    try {
+      const res = await fetch('/api/admin/db/status', {
+        headers: { 'Authorization': token }
+      });
+      if (res.ok) {
+        const s = await res.json();
+        setDbStatus(s);
+      }
+    } catch (e) {
+      console.error('Error fetching db status:', e);
+    } finally {
+      setLoadingDbStatus(false);
+    }
+  };
+
+  const handleRebuildFromFirestore = async () => {
+    setShowRebuildConfirmModal(false);
+    setIsRebuildingDb(true);
+    setRebuildResult(null);
+    try {
+      const res = await fetch('/api/admin/db/rebuild-from-firestore', {
+        method: 'POST',
+        headers: {
+          'Authorization': token,
+          'Content-Type': 'application/json'
+        }
+      });
+      const resData = await res.json();
+      if (res.ok && resData.success) {
+        setRebuildResult(resData);
+        triggerNotification(`🎉 Tagumpay! Nareconstruct ang ${resData.collectionsRecovered || 18} Firestore collections papunta sa Persistent Disk (${resData.counts?.users ?? 0} users, ${resData.counts?.posts ?? 0} posts, ${resData.counts?.reels ?? 0} reels).`, 'success');
+        fetchAdminData();
+        fetchDbStatus();
+      } else {
+        const errMsg = resData.error || resData.message || `HTTP ${res.status}: Nabigo ang cloud recovery`;
+        setRebuildResult({ success: false, error: errMsg });
+        triggerNotification(`⚠️ Bigo sa cloud rebuild: ${errMsg}`, 'error');
+      }
+    } catch (err: any) {
+      const errMsg = err?.message || 'Hindi makakonekta sa server.';
+      setRebuildResult({ success: false, error: errMsg });
+      triggerNotification(`❌ Error: ${errMsg}`, 'error');
+    } finally {
+      setIsRebuildingDb(false);
     }
   };
 
@@ -931,6 +1001,17 @@ export default function AdminPanel({
         >
           <Settings className="w-3.5 h-3.5" />
           <span>App Settings</span>
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('database'); fetchDbStatus(); }}
+          className={`px-3.5 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            activeSubTab === 'database'
+              ? 'border-indigo-600 text-indigo-600 bg-white/70'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Database className="w-3.5 h-3.5 text-indigo-600" />
+          <span>🗄️ Database & Cloud</span>
         </button>
       </div>
 
@@ -2507,6 +2588,59 @@ export default function AdminPanel({
             </div>
 
           </div>
+
+          {/* PERSISTENT DISK RECOVERY CARD IN SETTINGS */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 space-y-5">
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <h4 className="font-black text-slate-950 text-sm flex items-center gap-2">
+                  <Database className="w-4 h-4 text-indigo-600" />
+                  <span>Render Persistent Storage & Firestore Rebuild</span>
+                </h4>
+                <p className="text-[11px] text-slate-500 font-semibold">
+                  I-reconstruct ang persistent disk (/var/data/db.json) gamit ang authoritative Cloud Firestore data.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setActiveSubTab('database'); fetchDbStatus(); }}
+                className="text-xs font-black text-indigo-600 hover:text-indigo-700 flex items-center gap-1 cursor-pointer"
+              >
+                <span>Tingnan ang Buong Database Panel</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="bg-indigo-50/50 border border-indigo-100 p-5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <span className="text-xs font-black text-indigo-950 block">One-Time Authoritative Cloud Rebuild</span>
+                <p className="text-[11px] text-slate-600 font-medium max-w-xl">
+                  Ito ay magda-download ng authoritative Cloud Firestore data papunta sa Render Persistent Disk. Hindi ito mag-u-upload o magmo-modify ng Firestore.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                id="btn-rebuild-firestore-settings"
+                onClick={() => setShowRebuildConfirmModal(true)}
+                disabled={isRebuildingDb}
+                className="w-full sm:w-auto px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs cursor-pointer shrink-0"
+              >
+                {isRebuildingDb ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Dina-download...</span>
+                  </>
+                ) : (
+                  <>
+                    <CloudDownload className="w-3.5 h-3.5" />
+                    <span>Rebuild Persistent Database from Firestore</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
         </div>
       )}
 
@@ -2516,6 +2650,307 @@ export default function AdminPanel({
           token={token}
           triggerNotification={triggerNotification}
         />
+      )}
+
+      {/* SECTION 9: DATABASE & PERSISTENT STORAGE MANAGEMENT */}
+      {activeSubTab === 'database' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* HEADER CARD */}
+          <div className="bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-900 border-2 border-indigo-500/40 p-6 rounded-3xl shadow-xl text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="inline-flex items-center gap-2 bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full">
+                <Database className="w-3.5 h-3.5" />
+                <span>Persistent Storage & Cloud Firestore</span>
+              </div>
+              <h2 className="text-xl font-black text-white flex items-center gap-2">
+                <span>Database Administration</span>
+              </h2>
+              <p className="text-xs text-indigo-200/80 max-w-xl font-medium">
+                Pamahalaan ang Render Persistent Disk (/var/data) at i-synchronize ang authoritative Cloud Firestore data nang ligtas.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={fetchDbStatus}
+                disabled={loadingDbStatus}
+                className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/20 font-black text-xs flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingDbStatus ? 'animate-spin' : ''}`} />
+                <span>I-refresh ang Status</span>
+              </button>
+            </div>
+          </div>
+
+          {/* MAIN RECOVERY & PERSISTENCE CARD */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 space-y-6">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="font-black text-slate-950 text-base flex items-center gap-2">
+                  <HardDrive className="w-5 h-5 text-indigo-600" />
+                  <span>One-Time Cloud Recovery to Persistent Disk</span>
+                </h3>
+                <p className="text-xs text-slate-500 font-semibold">
+                  I-reconstruct ang persistent disk database mula sa tunay na Cloud Firestore records nang walang binubura o ina-upload sa ulap.
+                </p>
+              </div>
+            </div>
+
+            {/* STATUS SUMMARY */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Storage Path</span>
+                <p className="text-xs font-black text-slate-800 font-mono break-all">
+                  {dbStatus?.storagePath || '/var/data/db.json'}
+                </p>
+                <span className="text-[10px] text-emerald-600 font-bold block">
+                  {dbStatus?.isDedicatedPersistent ? '✅ Dedicated Disk Active' : '📁 Local Storage'}
+                </span>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Cloud Adapter</span>
+                <p className="text-xs font-black text-slate-800 font-mono">
+                  Cloud Firestore
+                </p>
+                <span className="text-[10px] text-indigo-600 font-bold block">
+                  {dbStatus?.cloudDbActive ? '⚡ Connected' : '⚡ Active Mode'}
+                </span>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Kasalukuyang State</span>
+                <p className="text-xs font-black text-slate-800">
+                  {data?.users?.length ?? 0} Users / {adminCampaigns.length} Campaigns
+                </p>
+                <span className="text-[10px] text-slate-500 font-medium block">
+                  {dbStatus?.isAuthoritativeReady ? '🟢 Authoritative Ready' : '🟡 System Online'}
+                </span>
+              </div>
+            </div>
+
+            {/* ACTION BANNER */}
+            <div className="bg-indigo-50/50 border border-indigo-100 p-6 rounded-2xl space-y-4">
+              <div className="space-y-1">
+                <h4 className="font-black text-indigo-950 text-sm flex items-center gap-2">
+                  <CloudDownload className="w-4 h-4 text-indigo-600" />
+                  <span>Authoritative Firestore Recovery</span>
+                </h4>
+                <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                  Pindutin ang button sa ibaba upang i-download ang kumpletong 18 collections mula sa Cloud Firestore at ligtas na i-save sa Render Persistent Disk. Lilikha muna ito ng timestamped backup bago i-commit ang bagong data.
+                </p>
+              </div>
+
+              {/* ACTION BUTTON */}
+              <div>
+                <button
+                  type="button"
+                  id="btn-rebuild-firestore-db"
+                  onClick={() => setShowRebuildConfirmModal(true)}
+                  disabled={isRebuildingDb}
+                  className={`w-full sm:w-auto px-6 py-3.5 rounded-2xl font-black text-xs transition duration-200 flex items-center justify-center gap-2.5 shadow-md cursor-pointer ${
+                    isRebuildingDb
+                      ? 'bg-slate-200 text-slate-500 cursor-not-allowed border border-slate-300'
+                      : 'bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white shadow-indigo-200'
+                  }`}
+                >
+                  {isRebuildingDb ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin text-indigo-600" />
+                      <span>Kasalukuyang dina-download mula sa Cloud Firestore...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CloudDownload className="w-4 h-4" />
+                      <span>Rebuild Persistent Database from Firestore</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* LOADING STATE DISPLAY */}
+            {isRebuildingDb && (
+              <div className="bg-amber-50 border border-amber-200 p-5 rounded-2xl space-y-2 animate-pulse">
+                <div className="flex items-center gap-2 text-amber-900 font-black text-xs">
+                  <RefreshCw className="w-4 h-4 animate-spin text-amber-600 shrink-0" />
+                  <span>Isinasagawa ang One-Time Authoritative Cloud Rebuild...</span>
+                </div>
+                <p className="text-[11px] text-amber-800 font-medium leading-normal">
+                  Dina-download ang 18 Firestore collections sa isang isolated memory buffer. Kapag 100% kumpleto, gagawa ng backup at isusulat nang atomically sa persistent storage. Mangyaring huwag isara ang tab.
+                </p>
+              </div>
+            )}
+
+            {/* SERVER RESPONSE: SUCCESS */}
+            {rebuildResult && rebuildResult.success && (
+              <div className="bg-emerald-50 border border-emerald-200 p-6 rounded-2xl space-y-4 animate-fadeIn">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-emerald-500 text-white rounded-xl shrink-0">
+                    <CheckCircle2 className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1 flex-1">
+                    <h4 className="font-black text-emerald-950 text-sm">
+                      {rebuildResult.message || 'Cloud database successfully rebuilt to persistent disk'}
+                    </h4>
+                    <p className="text-xs text-emerald-800 font-semibold">
+                      Na-download at na-save nang matagumpay ang lahat ng {rebuildResult.collectionsRecovered || 18} Firestore collections!
+                    </p>
+                    {rebuildResult.timestamp && (
+                      <p className="text-[10px] text-emerald-700 font-mono">
+                        Timestamp: {rebuildResult.timestamp}
+                      </p>
+                    )}
+                    {rebuildResult.backupCreated && (
+                      <p className="text-[10px] text-emerald-700 font-mono break-all">
+                        Safety Backup: {rebuildResult.backupCreated}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* RECOVERED COLLECTION COUNTS GRID */}
+                {rebuildResult.counts && (
+                  <div className="space-y-2 pt-2 border-t border-emerald-200/60">
+                    <span className="text-[11px] font-black text-emerald-950 uppercase tracking-wider block">
+                      Aktwal na Bilang ng Na-recover na Records (Recovered Counts):
+                    </span>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2.5">
+                      <div className="bg-white/80 border border-emerald-200 p-3 rounded-xl">
+                        <span className="text-[10px] font-bold text-slate-500 block">👥 Users</span>
+                        <span className="text-base font-black text-emerald-950">{rebuildResult.counts.users ?? 0}</span>
+                      </div>
+                      <div className="bg-white/80 border border-emerald-200 p-3 rounded-xl">
+                        <span className="text-[10px] font-bold text-slate-500 block">📝 Posts</span>
+                        <span className="text-base font-black text-emerald-950">{rebuildResult.counts.posts ?? 0}</span>
+                      </div>
+                      <div className="bg-white/80 border border-emerald-200 p-3 rounded-xl">
+                        <span className="text-[10px] font-bold text-slate-500 block">🎬 Reels</span>
+                        <span className="text-base font-black text-emerald-950">{rebuildResult.counts.reels ?? 0}</span>
+                      </div>
+                      <div className="bg-white/80 border border-emerald-200 p-3 rounded-xl">
+                        <span className="text-[10px] font-bold text-slate-500 block">📖 Stories</span>
+                        <span className="text-base font-black text-emerald-950">{rebuildResult.counts.stories ?? 0}</span>
+                      </div>
+                      <div className="bg-white/80 border border-emerald-200 p-3 rounded-xl">
+                        <span className="text-[10px] font-bold text-slate-500 block">💬 Group Chats</span>
+                        <span className="text-base font-black text-emerald-950">{rebuildResult.counts.groupChats ?? 0}</span>
+                      </div>
+                      <div className="bg-white/80 border border-emerald-200 p-3 rounded-xl">
+                        <span className="text-[10px] font-bold text-slate-500 block">💬 Group Msgs</span>
+                        <span className="text-base font-black text-emerald-950">{rebuildResult.counts.groupMessages ?? 0}</span>
+                      </div>
+                      <div className="bg-white/80 border border-emerald-200 p-3 rounded-xl">
+                        <span className="text-[10px] font-bold text-slate-500 block">✉️ Direct Msgs</span>
+                        <span className="text-base font-black text-emerald-950">{rebuildResult.counts.directMessages ?? 0}</span>
+                      </div>
+                      <div className="bg-white/80 border border-emerald-200 p-3 rounded-xl">
+                        <span className="text-[10px] font-bold text-slate-500 block">🛍️ Shop Products</span>
+                        <span className="text-base font-black text-emerald-950">{rebuildResult.counts.shopProducts ?? 0}</span>
+                      </div>
+                      <div className="bg-white/80 border border-emerald-200 p-3 rounded-xl">
+                        <span className="text-[10px] font-bold text-slate-500 block">📦 Shop Orders</span>
+                        <span className="text-base font-black text-emerald-950">{rebuildResult.counts.shopOrders ?? 0}</span>
+                      </div>
+                      <div className="bg-white/80 border border-emerald-200 p-3 rounded-xl">
+                        <span className="text-[10px] font-bold text-slate-500 block">🌐 Campaigns</span>
+                        <span className="text-base font-black text-emerald-950">{rebuildResult.counts.campaigns ?? 0}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SERVER RESPONSE: FAILURE */}
+            {rebuildResult && !rebuildResult.success && (
+              <div className="bg-rose-50 border border-rose-200 p-5 rounded-2xl space-y-2 animate-fadeIn">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-rose-500 text-white rounded-xl shrink-0">
+                    <AlertCircle className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1 flex-1">
+                    <h4 className="font-black text-rose-950 text-sm">
+                      Nabigo ang Cloud Firestore Rebuild
+                    </h4>
+                    <p className="text-xs text-rose-800 font-semibold leading-relaxed">
+                      {rebuildResult.error || 'May naganap na error habang dina-download ang cloud collections.'}
+                    </p>
+                    <p className="text-[10px] text-rose-700 font-medium">
+                      🛡️ Safe Fail: Walang binago sa iyong Persistent Storage o Memory Cache.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRMATION MODAL FOR CLOUD FIRESTORE REBUILD */}
+      {showRebuildConfirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-3xl border border-slate-200 max-w-md w-full p-6 space-y-5 shadow-2xl animate-scaleUp">
+            <div className="flex items-start gap-3">
+              <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0">
+                <Database className="w-6 h-6" />
+              </div>
+              <div className="space-y-1 flex-1">
+                <h3 className="font-black text-slate-900 text-base">
+                  Rebuild Persistent Database
+                </h3>
+                <p className="text-xs text-slate-500 font-semibold">
+                  Cloud Firestore → Render Persistent Disk (/var/data)
+                </p>
+              </div>
+              <button
+                onClick={() => setShowRebuildConfirmModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-900 leading-relaxed font-semibold">
+              <p>
+                Ito ay magda-download ng authoritative Cloud Firestore data papunta sa Render Persistent Disk. Hindi ito mag-u-upload o magmo-modify ng Firestore. Sigurado ka ba?
+              </p>
+            </div>
+
+            <div className="space-y-2 text-[11px] text-slate-500 font-medium bg-slate-50 p-3.5 rounded-xl border border-slate-100">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>Gagawa muna ng timestamped safety backup bago magpalit ng file.</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>Hindi magmo-modify, magde-delete, o mag-u-upload sa Cloud Firestore.</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowRebuildConfirmModal(false)}
+                disabled={isRebuildingDb}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-black text-xs hover:bg-slate-50 cursor-pointer"
+              >
+                Kanselahin
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-rebuild-firestore"
+                onClick={handleRebuildFromFirestore}
+                disabled={isRebuildingDb}
+                className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs cursor-pointer"
+              >
+                <CloudDownload className="w-4 h-4" />
+                <span>Oo, I-rebuild</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
