@@ -851,6 +851,52 @@ try {
   console.error('Warning: Failed to load dynamic firebase-applet-config.json, using defaults.', e);
 }
 
+/**
+ * Recursively sanitizes data payloads before sending to Cloud Firestore.
+ * - Removes all properties whose values are strictly `undefined` at any object depth.
+ * - Filters out `undefined` items inside arrays while recursively sanitizing nested array elements.
+ * - Preserves null, false, 0, empty strings, timestamps, IDs, Dates, Buffers, and all valid Firestore data types.
+ * - Does not mutate the input argument; returns a clean sanitized copy.
+ */
+function sanitizeFirestorePayload<T = any>(val: T): T {
+  if (val === undefined) {
+    return undefined as any;
+  }
+  if (val === null || typeof val !== 'object') {
+    return val;
+  }
+
+  // Preserve Date instances
+  if (val instanceof Date) {
+    return val;
+  }
+
+  // Preserve Buffers if any
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(val)) {
+    return val;
+  }
+
+  // Handle Arrays safely
+  if (Array.isArray(val)) {
+    return val
+      .map(item => sanitizeFirestorePayload(item))
+      .filter(item => item !== undefined) as any;
+  }
+
+  // Handle Plain & Nested Objects
+  const sanitizedObj: Record<string, any> = {};
+  for (const [key, propVal] of Object.entries(val)) {
+    if (propVal !== undefined) {
+      const cleaned = sanitizeFirestorePayload(propVal);
+      if (cleaned !== undefined) {
+        sanitizedObj[key] = cleaned;
+      }
+    }
+  }
+
+  return sanitizedObj as T;
+}
+
 // Unified Cloud DB Adapter
 interface CloudDBAdapter {
   isActive: boolean;
@@ -985,13 +1031,15 @@ if (hasServiceAccount || isOnGoogleCloud) {
         return { id: snap.id, ...snap.data() };
       },
       setDoc: async (colName: string, docId: string, data: any) => {
-        await gcpFirestore.collection(colName).doc(docId).set(data);
+        const sanitized = sanitizeFirestorePayload(data || {});
+        await gcpFirestore.collection(colName).doc(docId).set(sanitized);
       },
       deleteDoc: async (colName: string, docId: string) => {
         await gcpFirestore.collection(colName).doc(docId).delete();
       },
       updateDoc: async (colName: string, docId: string, data: any) => {
-        await gcpFirestore.collection(colName).doc(docId).update(data);
+        const sanitized = sanitizeFirestorePayload(data || {});
+        await gcpFirestore.collection(colName).doc(docId).update(sanitized);
       },
       queryByField: async (colName: string, field: string, value: any) => {
         const snap = await gcpFirestore.collection(colName).where(field, '==', value).get();
@@ -1043,13 +1091,15 @@ if (!cloudDb.isActive && fbAppInstance) {
         return { id: snap.id, ...snap.data() };
       },
       setDoc: async (colName: string, docId: string, data: any) => {
-        await webSetDoc(webDoc(webDbInstance, colName, docId), data);
+        const sanitized = sanitizeFirestorePayload(data || {});
+        await webSetDoc(webDoc(webDbInstance, colName, docId), sanitized);
       },
       deleteDoc: async (colName: string, docId: string) => {
         await webDeleteDoc(webDoc(webDbInstance, colName, docId));
       },
       updateDoc: async (colName: string, docId: string, data: any) => {
-        await webUpdateDoc(webDoc(webDbInstance, colName, docId), data);
+        const sanitized = sanitizeFirestorePayload(data || {});
+        await webUpdateDoc(webDoc(webDbInstance, colName, docId), sanitized);
       },
       queryByField: async (colName: string, field: string, value: any) => {
         const q = webQuery(webCollection(webDbInstance, colName), webWhere(field, '==', value));
@@ -2496,7 +2546,7 @@ function loadPersistentSyncQueue(): void {
                 op: item.op || 'set',
                 collection: item.collection,
                 docId: item.docId,
-                data: item.data,
+                data: item.data ? sanitizeFirestorePayload(item.data) : undefined,
                 versionTimestamp: item.versionTimestamp || (item.queuedAt ? new Date(item.queuedAt).getTime() : Date.now()),
                 seq: item.seq || ++syncQueueGlobalSeq,
                 firstQueuedAt: item.firstQueuedAt || item.queuedAt || new Date().toISOString(),
@@ -2591,18 +2641,18 @@ function enqueueFirestoreSync(
       existing.data = undefined;
     } else if (op === 'set') {
       existing.op = 'set';
-      existing.data = data ? JSON.parse(JSON.stringify(data)) : {};
+      existing.data = data ? sanitizeFirestorePayload(JSON.parse(JSON.stringify(data))) : {};
     } else if (op === 'update') {
       if (existing.op === 'delete') {
         // Was deleted, now updated -> treat as set
         existing.op = 'set';
-        existing.data = data ? JSON.parse(JSON.stringify(data)) : {};
+        existing.data = data ? sanitizeFirestorePayload(JSON.parse(JSON.stringify(data))) : {};
       } else {
         // Coalesce fields into existing payload
-        existing.data = {
+        existing.data = sanitizeFirestorePayload({
           ...(existing.data || {}),
           ...(data ? JSON.parse(JSON.stringify(data)) : {})
-        };
+        });
       }
     }
 
@@ -2624,7 +2674,7 @@ function enqueueFirestoreSync(
       op,
       collection,
       docId,
-      data: op !== 'delete' ? (data ? JSON.parse(JSON.stringify(data)) : {}) : undefined,
+      data: op !== 'delete' ? (data ? sanitizeFirestorePayload(JSON.parse(JSON.stringify(data))) : {}) : undefined,
       versionTimestamp: nowTs,
       seq: newSeq,
       firstQueuedAt: nowIso,
@@ -2656,15 +2706,16 @@ async function safeCloudSync(
   data?: any
 ): Promise<void> {
   const timestamp = Date.now();
+  const sanitizedData = data !== undefined ? sanitizeFirestorePayload(data) : undefined;
   if (!cloudDb.isActive) {
-    enqueueFirestoreSync(op, collection, docId, data, 'Cloud DB adapter is inactive', timestamp);
+    enqueueFirestoreSync(op, collection, docId, sanitizedData, 'Cloud DB adapter is inactive', timestamp);
     return;
   }
   try {
     if (op === 'set') {
-      await cloudDb.setDoc(collection, docId, data || {});
+      await cloudDb.setDoc(collection, docId, sanitizedData || {});
     } else if (op === 'update') {
-      await cloudDb.updateDoc(collection, docId, data || {});
+      await cloudDb.updateDoc(collection, docId, sanitizedData || {});
     } else if (op === 'delete') {
       await cloudDb.deleteDoc(collection, docId);
     }
@@ -2672,7 +2723,7 @@ async function safeCloudSync(
   } catch (err: any) {
     const errorMsg = String(err?.message || err);
     console.warn(`⚠️ [CloudSync Non-blocking Error] ${collection}/${docId}: ${errorMsg}. Stored in persistent queue.`);
-    enqueueFirestoreSync(op, collection, docId, data, errorMsg, timestamp);
+    enqueueFirestoreSync(op, collection, docId, sanitizedData, errorMsg, timestamp);
   }
 }
 
@@ -2733,10 +2784,12 @@ async function processPersistentSyncQueue(): Promise<{ processed: number; failed
           }
         }
 
+        const outgoingPayload = sanitizeFirestorePayload(payload || {});
+
         if (currentQueueItem.op === 'set') {
-          await cloudDb.setDoc(currentQueueItem.collection, currentQueueItem.docId, payload || {});
+          await cloudDb.setDoc(currentQueueItem.collection, currentQueueItem.docId, outgoingPayload);
         } else if (currentQueueItem.op === 'update') {
-          await cloudDb.updateDoc(currentQueueItem.collection, currentQueueItem.docId, payload || {});
+          await cloudDb.updateDoc(currentQueueItem.collection, currentQueueItem.docId, outgoingPayload);
         } else if (currentQueueItem.op === 'delete') {
           await cloudDb.deleteDoc(currentQueueItem.collection, currentQueueItem.docId);
         }
