@@ -108,6 +108,7 @@ export default function AdminPanel({
   // Database Management & Cloud Rebuild States
   const [showRebuildConfirmModal, setShowRebuildConfirmModal] = useState<boolean>(false);
   const [isRebuildingDb, setIsRebuildingDb] = useState<boolean>(false);
+  const [isProcessingQueue, setIsProcessingQueue] = useState<boolean>(false);
   const [rebuildResult, setRebuildResult] = useState<{
     success: boolean;
     message?: string;
@@ -377,6 +378,81 @@ export default function AdminPanel({
       triggerNotification(`❌ Error: ${errMsg}`, 'error');
     } finally {
       setIsRebuildingDb(false);
+    }
+  };
+
+  const handleProcessSyncQueue = async () => {
+    setIsProcessingQueue(true);
+    try {
+      const res = await fetch('/api/admin/db/process-sync-queue', {
+        method: 'POST',
+        headers: {
+          'Authorization': token,
+          'Content-Type': 'application/json'
+        }
+      });
+      const resData = await res.json();
+      if (res.ok && resData.success) {
+        triggerNotification(`✅ ${resData.message}`, 'success');
+        fetchDbStatus();
+      } else {
+        triggerNotification(`⚠️ Bigo: ${resData.error || 'Hindi ma-process ang sync queue'}`, 'error');
+      }
+    } catch (err: any) {
+      triggerNotification(`❌ Error: ${err?.message || 'Hindi makakonekta sa server'}`, 'error');
+    } finally {
+      setIsProcessingQueue(false);
+    }
+  };
+
+  const handleRetryDeadLetter = async () => {
+    setIsProcessingQueue(true);
+    try {
+      const res = await fetch('/api/admin/db/deadletter/retry', {
+        method: 'POST',
+        headers: {
+          'Authorization': token,
+          'Content-Type': 'application/json'
+        }
+      });
+      const resData = await res.json();
+      if (res.ok && resData.success) {
+        triggerNotification(`✅ ${resData.message}`, 'success');
+        fetchDbStatus();
+      } else {
+        triggerNotification(`⚠️ Bigo: ${resData.error || 'Hindi ma-retry ang Dead Letter Queue'}`, 'error');
+      }
+    } catch (err: any) {
+      triggerNotification(`❌ Error: ${err?.message || 'Hindi makakonekta sa server'}`, 'error');
+    } finally {
+      setIsProcessingQueue(false);
+    }
+  };
+
+  const handleClearDeadLetter = async () => {
+    if (!window.confirm('Sigurado ka bang nais mong burahin ang lahat ng Dead Letter Queue items?')) {
+      return;
+    }
+    setIsProcessingQueue(true);
+    try {
+      const res = await fetch('/api/admin/db/deadletter/clear', {
+        method: 'POST',
+        headers: {
+          'Authorization': token,
+          'Content-Type': 'application/json'
+        }
+      });
+      const resData = await res.json();
+      if (res.ok && resData.success) {
+        triggerNotification(`✅ ${resData.message}`, 'info');
+        fetchDbStatus();
+      } else {
+        triggerNotification(`⚠️ Bigo: ${resData.error || 'Hindi ma-clear ang Dead Letter Queue'}`, 'error');
+      }
+    } catch (err: any) {
+      triggerNotification(`❌ Error: ${err?.message || 'Hindi makakonekta sa server'}`, 'error');
+    } finally {
+      setIsProcessingQueue(false);
     }
   };
 
@@ -2698,7 +2774,7 @@ export default function AdminPanel({
             </div>
 
             {/* STATUS SUMMARY */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
               <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl space-y-1">
                 <span className="text-[10px] font-bold text-slate-400 uppercase">Storage Path</span>
                 <p className="text-xs font-black text-slate-800 font-mono break-all">
@@ -2726,6 +2802,28 @@ export default function AdminPanel({
                 </p>
                 <span className="text-[10px] text-slate-500 font-medium block">
                   {dbStatus?.isAuthoritativeReady ? '🟢 Authoritative Ready' : '🟡 System Online'}
+                </span>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Persistent Sync Queue</span>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-black text-slate-800">
+                    {dbStatus?.syncQueue?.count || 0} Pending
+                  </p>
+                  {(dbStatus?.syncQueue?.count || 0) > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleProcessSyncQueue}
+                      disabled={isProcessingQueue}
+                      className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] rounded-lg transition"
+                    >
+                      {isProcessingQueue ? 'Retrying...' : 'Retry Now'}
+                    </button>
+                  )}
+                </div>
+                <span className="text-[10px] text-slate-500 font-medium block">
+                  {dbStatus?.syncQueue?.count ? '⏳ Auto-retrying every 40s' : '✅ Lahat naka-sync'}
                 </span>
               </div>
             </div>
@@ -2884,6 +2982,121 @@ export default function AdminPanel({
                 </div>
               </div>
             )}
+          </div>
+
+          {/* PERSISTENT SYNC QUEUE & DEAD LETTER QUEUE (DLQ) CARD */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 space-y-5">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="font-black text-slate-950 text-base flex items-center gap-2">
+                  <RefreshCw className={`w-5 h-5 text-amber-500 ${isProcessingQueue ? 'animate-spin' : ''}`} />
+                  <span>Persistent Sync Queue & Dead Letter Queue (DLQ)</span>
+                </h3>
+                <p className="text-xs text-slate-500 font-semibold">
+                  Awtomatikong sine-save ang lahat ng failed cloud mutations sa persistent disk (/var/data) at inuulit tuwing may koneksyon nang hindi bina-block ang mga user.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleProcessSyncQueue}
+                  disabled={isProcessingQueue || (dbStatus?.syncQueue?.count || 0) === 0}
+                  className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white rounded-xl font-black text-xs flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isProcessingQueue ? 'animate-spin' : ''}`} />
+                  <span>Drain Active Queue ({dbStatus?.syncQueue?.count || 0})</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* ACTIVE QUEUE */}
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                    Active Persistent Queue
+                  </span>
+                  <span className="px-2 py-0.5 bg-amber-100 text-amber-800 font-black text-[11px] rounded-full">
+                    {dbStatus?.syncQueue?.count || 0} Pending
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium font-mono">
+                  File: {dbStatus?.syncQueue?.queueFilePath || '/var/data/firestore_sync_queue.json'}
+                </p>
+                {dbStatus?.syncQueue?.items && dbStatus.syncQueue.items.length > 0 ? (
+                  <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                    {dbStatus.syncQueue.items.map((item: any, idx: number) => (
+                      <div key={idx} className="bg-white border border-slate-200/80 rounded-xl p-2 text-[10px] space-y-0.5">
+                        <div className="flex items-center justify-between font-black text-slate-800">
+                          <span>{item.op?.toUpperCase()} [{item.collection}]</span>
+                          <span className="text-amber-600">Retries: {item.retryCount || 0}</span>
+                        </div>
+                        <p className="text-slate-500 truncate font-mono">ID: {item.docId}</p>
+                        {item.lastError && (
+                          <p className="text-rose-600 truncate font-medium">{item.lastError}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="bg-white/60 border border-dashed border-slate-200 rounded-xl p-3 text-center text-xs text-slate-400 font-bold">
+                    ✅ Walang pending mutations sa active queue. Lahat ay naka-sync.
+                  </div>
+                )}
+              </div>
+
+              {/* DEAD LETTER QUEUE (DLQ) */}
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full ${(dbStatus?.syncQueue?.deadLetterCount || 0) > 0 ? 'bg-rose-500' : 'bg-emerald-500'}`}></span>
+                    Dead Letter Queue (DLQ)
+                  </span>
+                  <span className={`px-2 py-0.5 font-black text-[11px] rounded-full ${(dbStatus?.syncQueue?.deadLetterCount || 0) > 0 ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                    {dbStatus?.syncQueue?.deadLetterCount || 0} Items
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRetryDeadLetter}
+                    disabled={isProcessingQueue || (dbStatus?.syncQueue?.deadLetterCount || 0) === 0}
+                    className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-black text-[10px] rounded-xl transition cursor-pointer"
+                  >
+                    Retry All DLQ Items
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearDeadLetter}
+                    disabled={isProcessingQueue || (dbStatus?.syncQueue?.deadLetterCount || 0) === 0}
+                    className="flex-1 py-1.5 bg-rose-100 hover:bg-rose-200 disabled:opacity-40 text-rose-700 font-black text-[10px] rounded-xl transition cursor-pointer"
+                  >
+                    Clear DLQ
+                  </button>
+                </div>
+                {dbStatus?.syncQueue?.deadLetterItems && dbStatus.syncQueue.deadLetterItems.length > 0 ? (
+                  <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                    {dbStatus.syncQueue.deadLetterItems.map((item: any, idx: number) => (
+                      <div key={idx} className="bg-white border border-rose-200 rounded-xl p-2 text-[10px] space-y-0.5">
+                        <div className="flex items-center justify-between font-black text-rose-950">
+                          <span>{item.op?.toUpperCase()} [{item.collection}]</span>
+                          <span className="text-rose-600">Failed</span>
+                        </div>
+                        <p className="text-slate-500 truncate font-mono">ID: {item.docId}</p>
+                        {item.lastError && (
+                          <p className="text-rose-600 truncate font-medium">{item.lastError}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="bg-white/60 border border-dashed border-slate-200 rounded-xl p-3 text-center text-xs text-slate-400 font-bold">
+                    ✅ Walang items sa Dead Letter Queue. Malinis ang system.
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

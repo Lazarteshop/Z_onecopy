@@ -823,6 +823,10 @@ if (!fs.existsSync(DATA_DIRECTORY)) {
 const DB_FILE_PATH = path.join(DATA_DIRECTORY, 'db.json');
 const DB_BACKUP_PATH = path.join(DATA_DIRECTORY, 'db.json.bak');
 const DB_TMP_PATH = path.join(DATA_DIRECTORY, 'db.json.tmp');
+const FIRESTORE_QUEUE_FILE_PATH = path.join(DATA_DIRECTORY, 'firestore_sync_queue.json');
+const FIRESTORE_QUEUE_TMP_PATH = path.join(DATA_DIRECTORY, 'firestore_sync_queue.json.tmp');
+const FIRESTORE_DEADLETTER_FILE_PATH = path.join(DATA_DIRECTORY, 'firestore_sync_deadletter.json');
+const FIRESTORE_DEADLETTER_TMP_PATH = path.join(DATA_DIRECTORY, 'firestore_sync_deadletter.json.tmp');
 
 // NOTE: Automatic copying of bundled static db.json to an empty persistent disk is intentionally disabled.
 // An empty persistent disk must trigger safe authoritative Cloud Firestore recovery first.
@@ -2423,6 +2427,381 @@ function initLastSyncedCache(data: DBStructure) {
   }
 }
 
+// ============================================
+//   PERSISTENT FIRESTORE SYNC QUEUE ON /var/data
+// ============================================
+
+interface FirestoreSyncQueueItem {
+  id: string; // collection:docId
+  opId: string; // Unique idempotency operation ID
+  op: 'set' | 'update' | 'delete';
+  collection: string;
+  docId: string;
+  data?: any;
+  versionTimestamp: number; // Monotonic update timestamp (Last-Write-Wins / Stale Write Prevention)
+  seq: number; // Monotonic sequence for strict FIFO ordering per document
+  firstQueuedAt: string;
+  lastQueuedAt: string;
+  attempts: number;
+  nextRetryAt: number; // Timestamp (ms) for exponential backoff scheduling
+  lastAttemptAt?: string;
+  lastError?: string;
+}
+
+interface FirestoreDeadLetterItem extends FirestoreSyncQueueItem {
+  movedToDeadLetterAt: string;
+  finalError: string;
+}
+
+let syncQueueGlobalSeq = 0;
+let persistentSyncQueue: Map<string, FirestoreSyncQueueItem> = new Map();
+let deadLetterQueue: FirestoreDeadLetterItem[] = [];
+
+let isProcessingSyncQueue = false;
+let syncQueueWorkerLockedAt = 0;
+const SYNC_QUEUE_LOCK_TIMEOUT_MS = 180000; // 3 minutes stale lock recovery
+const MAX_QUEUE_RETRIES = 15; // Move to Dead Letter Queue after 15 failed retries
+
+let syncQueueInterval: NodeJS.Timeout | null = null;
+let queueSaveTimeout: NodeJS.Timeout | null = null;
+let deadLetterSaveTimeout: NodeJS.Timeout | null = null;
+
+function calculateBackoffDelay(attempts: number): number {
+  // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s, 128s, 256s... max 10 mins (600,000ms) + jitter
+  const exponent = Math.min(Math.max(attempts, 0), 8);
+  const baseDelay = Math.min(1000 * Math.pow(2, exponent), 600000);
+  const jitter = Math.floor(Math.random() * 1000);
+  return baseDelay + jitter;
+}
+
+function loadPersistentSyncQueue(): void {
+  try {
+    if (fs.existsSync(FIRESTORE_QUEUE_FILE_PATH)) {
+      const content = fs.readFileSync(FIRESTORE_QUEUE_FILE_PATH, 'utf-8');
+      if (content && content.trim().length > 0) {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed)) {
+          persistentSyncQueue.clear();
+          let maxSeq = 0;
+          for (const item of parsed) {
+            if (item && item.collection && item.docId) {
+              const key = `${item.collection}:${item.docId}`;
+              if (item.seq && typeof item.seq === 'number' && item.seq > maxSeq) {
+                maxSeq = item.seq;
+              }
+              // Ensure legacy items have all required properties
+              const normalized: FirestoreSyncQueueItem = {
+                id: key,
+                opId: item.opId || `op_${item.collection}_${item.docId}_${Date.now()}`,
+                op: item.op || 'set',
+                collection: item.collection,
+                docId: item.docId,
+                data: item.data,
+                versionTimestamp: item.versionTimestamp || (item.queuedAt ? new Date(item.queuedAt).getTime() : Date.now()),
+                seq: item.seq || ++syncQueueGlobalSeq,
+                firstQueuedAt: item.firstQueuedAt || item.queuedAt || new Date().toISOString(),
+                lastQueuedAt: item.lastQueuedAt || item.queuedAt || new Date().toISOString(),
+                attempts: typeof item.attempts === 'number' ? item.attempts : 0,
+                nextRetryAt: typeof item.nextRetryAt === 'number' ? item.nextRetryAt : Date.now(),
+                lastAttemptAt: item.lastAttemptAt,
+                lastError: item.lastError
+              };
+              persistentSyncQueue.set(key, normalized);
+            }
+          }
+          if (maxSeq > syncQueueGlobalSeq) syncQueueGlobalSeq = maxSeq;
+          console.log(`📥 [Sync Queue] Loaded ${persistentSyncQueue.size} pending change(s) from persistent disk (${FIRESTORE_QUEUE_FILE_PATH}).`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('⚠️ [Sync Queue] Error loading persistent queue from disk:', err);
+  }
+
+  // Load Dead Letter Queue
+  try {
+    if (fs.existsSync(FIRESTORE_DEADLETTER_FILE_PATH)) {
+      const dlContent = fs.readFileSync(FIRESTORE_DEADLETTER_FILE_PATH, 'utf-8');
+      if (dlContent && dlContent.trim().length > 0) {
+        const parsedDl = JSON.parse(dlContent);
+        if (Array.isArray(parsedDl)) {
+          deadLetterQueue = parsedDl;
+          console.log(`📥 [Dead Letter Queue] Loaded ${deadLetterQueue.length} dead letter item(s) from persistent disk.`);
+        }
+      }
+    }
+  } catch (dlErr) {
+    console.error('⚠️ [Dead Letter Queue] Error loading dead letter queue from disk:', dlErr);
+  }
+}
+
+function savePersistentSyncQueue(): void {
+  if (queueSaveTimeout) clearTimeout(queueSaveTimeout);
+  queueSaveTimeout = setTimeout(() => {
+    try {
+      const items = Array.from(persistentSyncQueue.values());
+      const jsonStr = JSON.stringify(items, null, 2);
+      fs.writeFileSync(FIRESTORE_QUEUE_TMP_PATH, jsonStr, 'utf-8');
+      fs.renameSync(FIRESTORE_QUEUE_TMP_PATH, FIRESTORE_QUEUE_FILE_PATH);
+    } catch (err) {
+      console.error('⚠️ [Sync Queue] Error writing queue to disk:', err);
+    }
+  }, 100);
+}
+
+function saveDeadLetterQueue(): void {
+  if (deadLetterSaveTimeout) clearTimeout(deadLetterSaveTimeout);
+  deadLetterSaveTimeout = setTimeout(() => {
+    try {
+      const jsonStr = JSON.stringify(deadLetterQueue, null, 2);
+      fs.writeFileSync(FIRESTORE_DEADLETTER_TMP_PATH, jsonStr, 'utf-8');
+      fs.renameSync(FIRESTORE_DEADLETTER_TMP_PATH, FIRESTORE_DEADLETTER_FILE_PATH);
+    } catch (err) {
+      console.error('⚠️ [Dead Letter Queue] Error writing DLQ to disk:', err);
+    }
+  }, 100);
+}
+
+function enqueueFirestoreSync(
+  op: 'set' | 'update' | 'delete',
+  collection: string,
+  docId: string,
+  data?: any,
+  errorMsg?: string,
+  explicitTimestamp?: number
+): void {
+  const key = `${collection}:${docId}`;
+  const nowTs = explicitTimestamp || Date.now();
+  const nowIso = new Date(nowTs).toISOString();
+  const existing = persistentSyncQueue.get(key);
+
+  // Stale Write Protection: If incoming payload is strictly older than existing queued change, ignore
+  if (existing && existing.versionTimestamp > nowTs) {
+    console.warn(`🛡️ [Sync Queue Coalesce Ignored Stale Write] ${collection}/${docId} (incoming timestamp ${nowTs} < queued timestamp ${existing.versionTimestamp})`);
+    return;
+  }
+
+  const newSeq = ++syncQueueGlobalSeq;
+  const newOpId = `op_${collection}_${docId}_${nowTs}_${Math.random().toString(36).substring(2, 7)}`;
+
+  if (existing) {
+    // Coalescing logic based on operation types
+    if (op === 'delete') {
+      existing.op = 'delete';
+      existing.data = undefined;
+    } else if (op === 'set') {
+      existing.op = 'set';
+      existing.data = data ? JSON.parse(JSON.stringify(data)) : {};
+    } else if (op === 'update') {
+      if (existing.op === 'delete') {
+        // Was deleted, now updated -> treat as set
+        existing.op = 'set';
+        existing.data = data ? JSON.parse(JSON.stringify(data)) : {};
+      } else {
+        // Coalesce fields into existing payload
+        existing.data = {
+          ...(existing.data || {}),
+          ...(data ? JSON.parse(JSON.stringify(data)) : {})
+        };
+      }
+    }
+
+    existing.opId = newOpId;
+    existing.versionTimestamp = nowTs;
+    existing.seq = newSeq;
+    existing.lastQueuedAt = nowIso;
+    existing.nextRetryAt = Date.now(); // Reset backoff to attempt fresh delivery
+    if (errorMsg) existing.lastError = errorMsg;
+
+    persistentSyncQueue.set(key, existing);
+    savePersistentSyncQueue();
+    console.log(`🔄 [Sync Queue Coalesced] Updated pending ${existing.op.toUpperCase()} for ${collection}/${docId} (version: ${nowTs}, total in queue: ${persistentSyncQueue.size})`);
+  } else {
+    // Fresh queue item
+    const queueItem: FirestoreSyncQueueItem = {
+      id: key,
+      opId: newOpId,
+      op,
+      collection,
+      docId,
+      data: op !== 'delete' ? (data ? JSON.parse(JSON.stringify(data)) : {}) : undefined,
+      versionTimestamp: nowTs,
+      seq: newSeq,
+      firstQueuedAt: nowIso,
+      lastQueuedAt: nowIso,
+      attempts: 0,
+      nextRetryAt: Date.now(),
+      lastAttemptAt: nowIso,
+      lastError: errorMsg
+    };
+
+    persistentSyncQueue.set(key, queueItem);
+    savePersistentSyncQueue();
+    console.log(`📥 [Sync Queue Enqueued] ${op.toUpperCase()} ${collection}/${docId} (opId: ${newOpId}, total in queue: ${persistentSyncQueue.size})`);
+  }
+}
+
+function dequeueFirestoreSync(collection: string, docId: string): void {
+  const key = `${collection}:${docId}`;
+  if (persistentSyncQueue.has(key)) {
+    persistentSyncQueue.delete(key);
+    savePersistentSyncQueue();
+  }
+}
+
+async function safeCloudSync(
+  op: 'set' | 'update' | 'delete',
+  collection: string,
+  docId: string,
+  data?: any
+): Promise<void> {
+  const timestamp = Date.now();
+  if (!cloudDb.isActive) {
+    enqueueFirestoreSync(op, collection, docId, data, 'Cloud DB adapter is inactive', timestamp);
+    return;
+  }
+  try {
+    if (op === 'set') {
+      await cloudDb.setDoc(collection, docId, data || {});
+    } else if (op === 'update') {
+      await cloudDb.updateDoc(collection, docId, data || {});
+    } else if (op === 'delete') {
+      await cloudDb.deleteDoc(collection, docId);
+    }
+    dequeueFirestoreSync(collection, docId);
+  } catch (err: any) {
+    const errorMsg = String(err?.message || err);
+    console.warn(`⚠️ [CloudSync Non-blocking Error] ${collection}/${docId}: ${errorMsg}. Stored in persistent queue.`);
+    enqueueFirestoreSync(op, collection, docId, data, errorMsg, timestamp);
+  }
+}
+
+async function processPersistentSyncQueue(): Promise<{ processed: number; failed: number; remaining: number; deadLetterCount: number }> {
+  // Stale Lock Clearing
+  if (isProcessingSyncQueue) {
+    if (Date.now() - syncQueueWorkerLockedAt > SYNC_QUEUE_LOCK_TIMEOUT_MS) {
+      console.warn('⚠️ [Sync Queue Worker] Detected stale worker lock. Resetting lock state.');
+      isProcessingSyncQueue = false;
+    } else {
+      return { processed: 0, failed: 0, remaining: persistentSyncQueue.size, deadLetterCount: deadLetterQueue.length };
+    }
+  }
+
+  if (persistentSyncQueue.size === 0) {
+    return { processed: 0, failed: 0, remaining: 0, deadLetterCount: deadLetterQueue.length };
+  }
+
+  if (!cloudDb.isActive) {
+    return { processed: 0, failed: 0, remaining: persistentSyncQueue.size, deadLetterCount: deadLetterQueue.length };
+  }
+
+  // Safety guard: do not write to cloud during Recovery Mode if DB is not ready
+  if (!isAuthoritativeDatabaseReady && !hasValidPersistentDatabase()) {
+    return { processed: 0, failed: 0, remaining: persistentSyncQueue.size, deadLetterCount: deadLetterQueue.length };
+  }
+
+  isProcessingSyncQueue = true;
+  syncQueueWorkerLockedAt = Date.now();
+  let processed = 0;
+  let failed = 0;
+
+  try {
+    const now = Date.now();
+    // 1. Sort items by sequence number (FIFO) and filter by exponential backoff eligibility
+    const allItems = Array.from(persistentSyncQueue.values());
+    const eligibleItems = allItems
+      .filter(item => (item.nextRetryAt || 0) <= now)
+      .sort((a, b) => a.seq - b.seq);
+
+    for (const item of eligibleItems) {
+      // Check if item was dequeued/modified concurrently
+      const currentQueueItem = persistentSyncQueue.get(item.id);
+      if (!currentQueueItem) continue;
+
+      try {
+        // Stale Data Protection: For 'set' operations, ensure we send the latest in-memory/disk representation if available
+        let payload = currentQueueItem.data;
+        if (currentQueueItem.op === 'set') {
+          const liveDb = loadDB();
+          const collectionData = (liveDb as any)[currentQueueItem.collection];
+          if (Array.isArray(collectionData)) {
+            const liveDoc = collectionData.find((d: any) => d && d.id === currentQueueItem.docId);
+            if (liveDoc) {
+              const { id, ...docWithoutId } = liveDoc;
+              payload = docWithoutId;
+            }
+          }
+        }
+
+        if (currentQueueItem.op === 'set') {
+          await cloudDb.setDoc(currentQueueItem.collection, currentQueueItem.docId, payload || {});
+        } else if (currentQueueItem.op === 'update') {
+          await cloudDb.updateDoc(currentQueueItem.collection, currentQueueItem.docId, payload || {});
+        } else if (currentQueueItem.op === 'delete') {
+          await cloudDb.deleteDoc(currentQueueItem.collection, currentQueueItem.docId);
+        }
+        
+        dequeueFirestoreSync(currentQueueItem.collection, currentQueueItem.docId);
+        processed++;
+      } catch (err: any) {
+        failed++;
+        const errorMsg = String(err?.message || err);
+        const existing = persistentSyncQueue.get(item.id);
+
+        if (existing) {
+          existing.attempts += 1;
+          existing.lastAttemptAt = new Date().toISOString();
+          existing.lastError = errorMsg;
+
+          // Check if retry limit reached -> Move to Dead Letter Queue
+          if (existing.attempts >= MAX_QUEUE_RETRIES) {
+            console.error(`🚨 [Dead Letter Queue] Item ${existing.collection}/${existing.docId} exceeded maximum retries (${MAX_QUEUE_RETRIES}). Moving to DLQ.`);
+            deadLetterQueue.unshift({
+              ...existing,
+              movedToDeadLetterAt: new Date().toISOString(),
+              finalError: errorMsg
+            });
+            if (deadLetterQueue.length > 500) deadLetterQueue = deadLetterQueue.slice(0, 500); // Bound DLQ size
+            persistentSyncQueue.delete(existing.id);
+            savePersistentSyncQueue();
+            saveDeadLetterQueue();
+            continue;
+          }
+
+          // Calculate exponential backoff delay with jitter
+          const backoffDelay = calculateBackoffDelay(existing.attempts);
+          existing.nextRetryAt = Date.now() + backoffDelay;
+          savePersistentSyncQueue();
+          console.warn(`⏳ [Sync Queue Backoff] ${existing.collection}/${existing.docId} retry #${existing.attempts} failed (${errorMsg}). Next retry in ${(backoffDelay / 1000).toFixed(1)}s.`);
+        }
+
+        // If quota limit or network down, break early so we don't hammer exhausted API
+        if (
+          errorMsg.includes('RESOURCE_EXHAUSTED') ||
+          errorMsg.includes('Quota exceeded') ||
+          errorMsg.includes('UNAVAILABLE') ||
+          errorMsg.includes('DEADLINE_EXCEEDED') ||
+          errorMsg.includes('ECONNRESET') ||
+          errorMsg.includes('ETIMEDOUT')
+        ) {
+          console.warn(`⏸️ [Sync Queue Pause] Cloud Firestore unavailable (${errorMsg}). Pausing queue processor until next cycle.`);
+          break;
+        }
+      }
+    }
+  } finally {
+    isProcessingSyncQueue = false;
+    syncQueueWorkerLockedAt = 0;
+  }
+
+  if (processed > 0) {
+    lastCloudSyncTimestamp = new Date().toISOString();
+    console.log(`✅ [Sync Queue Batch Success] Drained ${processed} change(s) to Firestore. Remaining: ${persistentSyncQueue.size}, DLQ: ${deadLetterQueue.length}`);
+  }
+
+  return { processed, failed, remaining: persistentSyncQueue.size, deadLetterCount: deadLetterQueue.length };
+}
+
 let saveDBTimeout: NodeJS.Timeout | null = null;
 let firestoreSyncTimeout: NodeJS.Timeout | null = null;
 let lastCloudSyncTimestamp: string | null = null;
@@ -2503,8 +2882,10 @@ async function uploadToFirestore(data: DBStructure) {
             }
             await cloudDb.setDoc('users', u.id, uWithoutId);
             lastSyncedCache.users.set(u.id, uStr);
-          } catch (userErr) {
+            dequeueFirestoreSync('users', u.id);
+          } catch (userErr: any) {
             console.error(`Error saving user ${u.id} to Cloud DB:`, userErr);
+            enqueueFirestoreSync('set', 'users', u.id, u, userErr?.message || String(userErr));
           }
         })());
       }
@@ -2520,8 +2901,10 @@ async function uploadToFirestore(data: DBStructure) {
               const { id, ...cWithoutId } = c;
               await cloudDb.setDoc('campaigns', c.id, cWithoutId);
               lastSyncedCache.campaigns.set(c.id, cStr);
-            } catch (campErr) {
+              dequeueFirestoreSync('campaigns', c.id);
+            } catch (campErr: any) {
               console.error(`Error saving campaign ${c.id} to Cloud DB:`, campErr);
+              enqueueFirestoreSync('set', 'campaigns', c.id, c, campErr?.message || String(campErr));
             }
           })());
         }
@@ -2551,8 +2934,10 @@ async function uploadToFirestore(data: DBStructure) {
               }
               await cloudDb.setDoc('posts', p.id, pWithoutId);
               lastSyncedCache.posts.set(p.id, pStr);
-            } catch (postErr) {
+              dequeueFirestoreSync('posts', p.id);
+            } catch (postErr: any) {
               console.error(`Error saving post ${p.id} to Cloud DB:`, postErr);
+              enqueueFirestoreSync('set', 'posts', p.id, p, postErr?.message || String(postErr));
             }
           })());
         }
@@ -2573,8 +2958,10 @@ async function uploadToFirestore(data: DBStructure) {
               }
               await cloudDb.setDoc('direct_messages', dm.id, dmWithoutId);
               lastSyncedCache.directMessages.set(dm.id, dmStr);
-            } catch (dmErr) {
+              dequeueFirestoreSync('direct_messages', dm.id);
+            } catch (dmErr: any) {
               console.error(`Error saving DM ${dm.id} to Cloud DB:`, dmErr);
+              enqueueFirestoreSync('set', 'direct_messages', dm.id, dm, dmErr?.message || String(dmErr));
             }
           })());
         }
@@ -2591,8 +2978,10 @@ async function uploadToFirestore(data: DBStructure) {
               const { id, ...maWithoutId } = ma;
               await cloudDb.setDoc('merchant_ads', ma.id, maWithoutId);
               lastSyncedCache.merchantAds.set(ma.id, maStr);
-            } catch (maErr) {
+              dequeueFirestoreSync('merchant_ads', ma.id);
+            } catch (maErr: any) {
               console.error(`Error saving Merchant Ad ${ma.id} to Cloud DB:`, maErr);
+              enqueueFirestoreSync('set', 'merchant_ads', ma.id, ma, maErr?.message || String(maErr));
             }
           })());
         }
@@ -2613,8 +3002,10 @@ async function uploadToFirestore(data: DBStructure) {
               }
               await cloudDb.setDoc('reels', r.id, rWithoutId);
               lastSyncedCache.reels.set(r.id, rStr);
-            } catch (reelErr) {
+              dequeueFirestoreSync('reels', r.id);
+            } catch (reelErr: any) {
               console.error(`Error saving Reel ${r.id} to Cloud DB:`, reelErr);
+              enqueueFirestoreSync('set', 'reels', r.id, r, reelErr?.message || String(reelErr));
             }
           })());
         }
@@ -2631,8 +3022,10 @@ async function uploadToFirestore(data: DBStructure) {
               const { id, ...rsWithoutId } = rs;
               await cloudDb.setDoc('reel_subscriptions', rs.id, rsWithoutId);
               lastSyncedCache.reelSubscriptions.set(rs.id, rsStr);
-            } catch (rsErr) {
+              dequeueFirestoreSync('reel_subscriptions', rs.id);
+            } catch (rsErr: any) {
               console.error(`Error saving Reel Subscription ${rs.id} to Cloud DB:`, rsErr);
+              enqueueFirestoreSync('set', 'reel_subscriptions', rs.id, rs, rsErr?.message || String(rsErr));
             }
           })());
         }
@@ -2653,8 +3046,10 @@ async function uploadToFirestore(data: DBStructure) {
               }
               await cloudDb.setDoc('stories', s.id, sWithoutId);
               lastSyncedCache.stories.set(s.id, sStr);
-            } catch (sErr) {
+              dequeueFirestoreSync('stories', s.id);
+            } catch (sErr: any) {
               console.error(`Error saving Story ${s.id} to Cloud DB:`, sErr);
+              enqueueFirestoreSync('set', 'stories', s.id, s, sErr?.message || String(sErr));
             }
           })());
         }
@@ -2671,8 +3066,10 @@ async function uploadToFirestore(data: DBStructure) {
               const { id, ...aWithoutId } = a;
               await cloudDb.setDoc('albums', a.id, aWithoutId);
               lastSyncedCache.albums.set(a.id, aStr);
-            } catch (aErr) {
+              dequeueFirestoreSync('albums', a.id);
+            } catch (aErr: any) {
               console.error(`Error saving Album ${a.id} to Cloud DB:`, aErr);
+              enqueueFirestoreSync('set', 'albums', a.id, a, aErr?.message || String(aErr));
             }
           })());
         }
@@ -2689,8 +3086,10 @@ async function uploadToFirestore(data: DBStructure) {
               const { id, ...gWithoutId } = g;
               await cloudDb.setDoc('group_chats', g.id, gWithoutId);
               lastSyncedCache.groupChats.set(g.id, gStr);
-            } catch (gErr) {
+              dequeueFirestoreSync('group_chats', g.id);
+            } catch (gErr: any) {
               console.error(`Error saving Group ${g.id} to Cloud DB:`, gErr);
+              enqueueFirestoreSync('set', 'group_chats', g.id, g, gErr?.message || String(gErr));
             }
           })());
         }
@@ -2711,8 +3110,10 @@ async function uploadToFirestore(data: DBStructure) {
               }
               await cloudDb.setDoc('group_messages', gm.id, gmWithoutId);
               lastSyncedCache.groupMessages.set(gm.id, gmStr);
-            } catch (gmErr) {
+              dequeueFirestoreSync('group_messages', gm.id);
+            } catch (gmErr: any) {
               console.error(`Error saving Group Message ${gm.id} to Cloud DB:`, gmErr);
+              enqueueFirestoreSync('set', 'group_messages', gm.id, gm, gmErr?.message || String(gmErr));
             }
           })());
         }
@@ -2729,8 +3130,10 @@ async function uploadToFirestore(data: DBStructure) {
               const { id, ...spWithoutId } = sp;
               await cloudDb.setDoc('shop_products', sp.id, spWithoutId);
               lastSyncedCache.shopProducts.set(sp.id, spStr);
-            } catch (spErr) {
+              dequeueFirestoreSync('shop_products', sp.id);
+            } catch (spErr: any) {
               console.error(`Error saving shop product ${sp.id} to Cloud DB:`, spErr);
+              enqueueFirestoreSync('set', 'shop_products', sp.id, sp, spErr?.message || String(spErr));
             }
           })());
         }
@@ -2746,8 +3149,10 @@ async function uploadToFirestore(data: DBStructure) {
               const { id, ...soWithoutId } = so;
               await cloudDb.setDoc('shop_orders', so.id, soWithoutId);
               lastSyncedCache.shopOrders.set(so.id, soStr);
-            } catch (soErr) {
+              dequeueFirestoreSync('shop_orders', so.id);
+            } catch (soErr: any) {
               console.error(`Error saving shop order ${so.id} to Cloud DB:`, soErr);
+              enqueueFirestoreSync('set', 'shop_orders', so.id, so, soErr?.message || String(soErr));
             }
           })());
         }
@@ -2763,8 +3168,10 @@ async function uploadToFirestore(data: DBStructure) {
               const { id, ...vbWithoutId } = vb;
               await cloudDb.setDoc('va_banners', vb.id, vbWithoutId);
               lastSyncedCache.vaBanners.set(vb.id, vbStr);
-            } catch (vbErr) {
+              dequeueFirestoreSync('va_banners', vb.id);
+            } catch (vbErr: any) {
               console.error(`Error saving VA Banner ${vb.id} to Cloud DB:`, vbErr);
+              enqueueFirestoreSync('set', 'va_banners', vb.id, vb, vbErr?.message || String(vbErr));
             }
           })());
         }
@@ -2780,8 +3187,10 @@ async function uploadToFirestore(data: DBStructure) {
               const { id, ...rdWithoutId } = rd;
               await cloudDb.setDoc('registered_devices', rd.id, rdWithoutId);
               lastSyncedCache.registeredDevices.set(rd.id, rdStr);
-            } catch (rdErr) {
+              dequeueFirestoreSync('registered_devices', rd.id);
+            } catch (rdErr: any) {
               console.error(`Error saving registered device ${rd.id} to Cloud DB:`, rdErr);
+              enqueueFirestoreSync('set', 'registered_devices', rd.id, rd, rdErr?.message || String(rdErr));
             }
           })());
         }
@@ -2797,8 +3206,10 @@ async function uploadToFirestore(data: DBStructure) {
               const { id, ...uvWithoutId } = uv;
               await cloudDb.setDoc('user_verifications', uv.id, uvWithoutId);
               lastSyncedCache.userVerifications.set(uv.id, uvStr);
-            } catch (uvErr) {
+              dequeueFirestoreSync('user_verifications', uv.id);
+            } catch (uvErr: any) {
               console.error(`Error saving user verification ${uv.id} to Cloud DB:`, uvErr);
+              enqueueFirestoreSync('set', 'user_verifications', uv.id, uv, uvErr?.message || String(uvErr));
             }
           })());
         }
@@ -2814,8 +3225,10 @@ async function uploadToFirestore(data: DBStructure) {
               const { id, ...kcWithoutId } = kc;
               await cloudDb.setDoc('kiddie_content', kc.id, kcWithoutId);
               lastSyncedCache.kiddieContent.set(kc.id, kcStr);
-            } catch (kcErr) {
+              dequeueFirestoreSync('kiddie_content', kc.id);
+            } catch (kcErr: any) {
               console.error(`Error saving kiddie content ${kc.id} to Cloud DB:`, kcErr);
+              enqueueFirestoreSync('set', 'kiddie_content', kc.id, kc, kcErr?.message || String(kcErr));
             }
           })());
         }
@@ -2830,8 +3243,10 @@ async function uploadToFirestore(data: DBStructure) {
           try {
             await cloudDb.deleteDoc('stories', cachedId);
             lastSyncedCache.stories.delete(cachedId);
-          } catch (delErr) {
+            dequeueFirestoreSync('stories', cachedId);
+          } catch (delErr: any) {
             console.error(`Error deleting Story ${cachedId} from Cloud DB:`, delErr);
+            enqueueFirestoreSync('delete', 'stories', cachedId, undefined, delErr?.message || String(delErr));
           }
         })());
       }
@@ -2844,8 +3259,10 @@ async function uploadToFirestore(data: DBStructure) {
           try {
             await cloudDb.deleteDoc('albums', cachedId);
             lastSyncedCache.albums.delete(cachedId);
-          } catch (delErr) {
+            dequeueFirestoreSync('albums', cachedId);
+          } catch (delErr: any) {
             console.error(`Error deleting Album ${cachedId} from Cloud DB:`, delErr);
+            enqueueFirestoreSync('delete', 'albums', cachedId, undefined, delErr?.message || String(delErr));
           }
         })());
       }
@@ -2858,8 +3275,10 @@ async function uploadToFirestore(data: DBStructure) {
           try {
             await cloudDb.deleteDoc('group_chats', cachedId);
             lastSyncedCache.groupChats.delete(cachedId);
-          } catch (delErr) {
+            dequeueFirestoreSync('group_chats', cachedId);
+          } catch (delErr: any) {
             console.error(`Error deleting Group ${cachedId} from Cloud DB:`, delErr);
+            enqueueFirestoreSync('delete', 'group_chats', cachedId, undefined, delErr?.message || String(delErr));
           }
         })());
       }
@@ -2872,8 +3291,10 @@ async function uploadToFirestore(data: DBStructure) {
           try {
             await cloudDb.deleteDoc('group_messages', cachedId);
             lastSyncedCache.groupMessages.delete(cachedId);
-          } catch (delErr) {
+            dequeueFirestoreSync('group_messages', cachedId);
+          } catch (delErr: any) {
             console.error(`Error deleting Group Message ${cachedId} from Cloud DB:`, delErr);
+            enqueueFirestoreSync('delete', 'group_messages', cachedId, undefined, delErr?.message || String(delErr));
           }
         })());
       }
@@ -2886,8 +3307,10 @@ async function uploadToFirestore(data: DBStructure) {
           try {
             await cloudDb.deleteDoc('reels', cachedId);
             lastSyncedCache.reels.delete(cachedId);
-          } catch (delErr) {
+            dequeueFirestoreSync('reels', cachedId);
+          } catch (delErr: any) {
             console.error(`Error deleting Reel ${cachedId} from Cloud DB:`, delErr);
+            enqueueFirestoreSync('delete', 'reels', cachedId, undefined, delErr?.message || String(delErr));
           }
         })());
       }
@@ -2900,8 +3323,10 @@ async function uploadToFirestore(data: DBStructure) {
           try {
             await cloudDb.deleteDoc('posts', cachedId);
             lastSyncedCache.posts.delete(cachedId);
-          } catch (delErr) {
+            dequeueFirestoreSync('posts', cachedId);
+          } catch (delErr: any) {
             console.error(`Error deleting post ${cachedId} from Cloud DB:`, delErr);
+            enqueueFirestoreSync('delete', 'posts', cachedId, undefined, delErr?.message || String(delErr));
           }
         })());
       }
@@ -2914,8 +3339,10 @@ async function uploadToFirestore(data: DBStructure) {
           try {
             await cloudDb.deleteDoc('direct_messages', cachedId);
             lastSyncedCache.directMessages.delete(cachedId);
-          } catch (delErr) {
+            dequeueFirestoreSync('direct_messages', cachedId);
+          } catch (delErr: any) {
             console.error(`Error deleting DM ${cachedId} from Cloud DB:`, delErr);
+            enqueueFirestoreSync('delete', 'direct_messages', cachedId, undefined, delErr?.message || String(delErr));
           }
         })());
       }
@@ -2925,6 +3352,11 @@ async function uploadToFirestore(data: DBStructure) {
       await Promise.all(promises);
       lastCloudSyncTimestamp = new Date().toISOString();
       console.log(`☁️ Cloud DB sync finished: Pushed ${promises.length} changes to persistent Firestore.`);
+    }
+
+    // If there are pending queue items, trigger background drain
+    if (persistentSyncQueue.size > 0 && !isProcessingSyncQueue) {
+      processPersistentSyncQueue().catch(() => {});
     }
   } catch (err) {
     console.error('❌ Failed background write to Cloud DB:', err);
@@ -3056,7 +3488,7 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
             return !isFake;
           });
           if (u.withdrawals.length !== originalLen) {
-            cloudDb.updateDoc('users', u.id, { withdrawals: u.withdrawals }).catch(() => {});
+            safeCloudSync('update', 'users', u.id, { withdrawals: u.withdrawals });
           }
         }
       }
@@ -4328,11 +4760,7 @@ app.post('/api/admin/users/:userId/ban', async (req, res) => {
   targetUser.isBanned = !targetUser.isBanned;
   saveDB(db);
 
-  if (cloudDb.isActive) {
-    cloudDb.updateDoc('users', userId, { isBanned: targetUser.isBanned }).catch((e) => {
-      console.error('Cloud DB ban update error:', e);
-    });
-  }
+  safeCloudSync('update', 'users', userId, { isBanned: targetUser.isBanned });
 
   res.json({ 
     success: true, 
@@ -4368,11 +4796,7 @@ app.delete('/api/admin/users/:userId', async (req, res) => {
   db.users.splice(userIndex, 1);
   saveDB(db);
 
-  if (cloudDb.isActive) {
-    cloudDb.deleteDoc('users', userId).catch((e) => {
-      console.error('Cloud DB delete user error:', e);
-    });
-  }
+  safeCloudSync('delete', 'users', userId);
 
   res.json({ success: true, message: `Si ${targetUser.name} ay matagumpay na na-delete sa sistema.` });
 });
@@ -4524,10 +4948,8 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
   db.reels.unshift(newReel);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...rWithoutId } = newReel;
-    cloudDb.setDoc('reels', newReel.id, rWithoutId).catch(() => {});
-  }
+  const { id: _, ...rWithoutId } = newReel;
+  safeCloudSync('set', 'reels', newReel.id, rWithoutId);
 
   res.json({ success: true, reel: newReel, reels: db.reels, message: 'Matagumpay na naidagdag ang Reel (Admin Approved)!' });
 });
@@ -4673,15 +5095,11 @@ app.post('/api/reels/redeem-profit', (req, res) => {
 
   saveDB(db);
 
-  if (cloudDb.isActive) {
-    cloudDb.updateDoc('users', user.id, {
-      balance: user.balance,
-      lifetimeEarnings: user.lifetimeEarnings,
-      activityLogs: user.activityLogs
-    }).catch((e) => {
-      console.error('Cloud DB update balance error:', e);
-    });
-  }
+  safeCloudSync('update', 'users', user.id, {
+    balance: user.balance,
+    lifetimeEarnings: user.lifetimeEarnings,
+    activityLogs: user.activityLogs
+  });
 
   res.json({
     success: true,
@@ -4866,9 +5284,7 @@ app.delete('/api/reels/:id', enforceCommunitySafety, (req, res) => {
   db.reels = (db.reels || [...INITIAL_REELS]).filter(r => r.id !== id);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    cloudDb.deleteDoc('reels', id).catch(() => {});
-  }
+  safeCloudSync('delete', 'reels', id);
 
   res.json({ success: true, reels: db.reels });
 });
@@ -5164,12 +5580,7 @@ app.delete('/api/admin/campaigns/:id', async (req, res) => {
 
   saveDB(db);
 
-  // If cloudDb is active, also delete the document from Firestore campaigns collection
-  if (cloudDb.isActive) {
-    cloudDb.deleteDoc('campaigns', campaignId).catch((err) => {
-      console.error(`❌ Failed to delete campaign ${campaignId} from Cloud DB:`, err);
-    });
-  }
+  safeCloudSync('delete', 'campaigns', campaignId);
 
   res.json({ success: true, campaigns: db.campaigns });
 });
@@ -5579,12 +5990,8 @@ app.post('/api/admin/merchant/ads/:id/action', async (req, res) => {
 
   saveDB(db);
 
-  // Sync campaign and post to Cloud DB if active
-  if (cloudDb.isActive) {
-    cloudDb.setDoc('campaigns', newCampaign.id, newCampaign).catch((e: any) => console.error(e));
-    cloudDb.setDoc('posts', sponsorPost.id, sponsorPost).catch((e: any) => console.error(e));
-    console.log(`🔥 Synced new merchant campaign and sponsor post to Cloud DB.`);
-  }
+  safeCloudSync('set', 'campaigns', newCampaign.id, newCampaign);
+  safeCloudSync('set', 'posts', sponsorPost.id, sponsorPost);
 
   res.json({ success: true, ad });
 });
@@ -5634,11 +6041,7 @@ app.post('/api/user/task-complete', checkIdempotency, (req, res) => {
       const merchantCamp = (db.campaigns || []).find((c: any) => c.id === campaignId);
       if (merchantCamp) {
         merchantCamp.clicks = (merchantCamp.clicks || 0) + 1;
-        
-        // Sync with Cloud DB if active
-        if (cloudDb.isActive) {
-          cloudDb.updateDoc('campaigns', campaignId, { clicks: merchantCamp.clicks }).catch((e: any) => console.error(e));
-        }
+        safeCloudSync('update', 'campaigns', campaignId, { clicks: merchantCamp.clicks });
       }
     }
   }
@@ -6443,6 +6846,15 @@ app.get('/api/admin/db/status', (req, res) => {
     databaseId: firebaseConfigObj.firestoreDatabaseId || 'default',
     storagePath: DB_FILE_PATH,
     lastCloudSync: lastCloudSyncTimestamp,
+    syncQueue: {
+      count: persistentSyncQueue.size,
+      isProcessing: isProcessingSyncQueue,
+      queueFilePath: FIRESTORE_QUEUE_FILE_PATH,
+      deadLetterCount: deadLetterQueue.length,
+      deadLetterFilePath: FIRESTORE_DEADLETTER_FILE_PATH,
+      items: Array.from(persistentSyncQueue.values()).slice(0, 50),
+      deadLetterItems: deadLetterQueue.slice(0, 30)
+    },
     counts: {
       users: db.users ? db.users.length : 0,
       posts: db.posts ? db.posts.length : 0,
@@ -6455,6 +6867,84 @@ app.get('/api/admin/db/status', (req, res) => {
       shopOrders: db.shopOrders ? db.shopOrders.length : 0,
       campaigns: db.campaigns ? db.campaigns.length : 0
     }
+  });
+});
+
+// PROCESS / DRAIN PERSISTENT SYNC QUEUE ON DEMAND
+app.post('/api/admin/db/process-sync-queue', async (req, res) => {
+  const adminId = req.headers.authorization;
+  const db = loadDB();
+  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
+  }
+
+  try {
+    const result = await processPersistentSyncQueue();
+    res.json({
+      success: true,
+      message: `Na-process ang ${result.processed} items mula sa persistent queue (${result.remaining} natitira, ${result.deadLetterCount} sa DLQ).`,
+      ...result
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: 'Nabigo ang pag-process ng sync queue: ' + err.message });
+  }
+});
+
+// RETRY DEAD LETTER QUEUE (MOVE DLQ ITEMS BACK TO ACTIVE QUEUE)
+app.post('/api/admin/db/deadletter/retry', async (req, res) => {
+  const adminId = req.headers.authorization;
+  const db = loadDB();
+  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
+  }
+
+  try {
+    const dlqCount = deadLetterQueue.length;
+    if (dlqCount === 0) {
+      return res.json({ success: true, message: 'Walang dead letter items na ire-retry.', retried: 0 });
+    }
+
+    const itemsToRetry = [...deadLetterQueue];
+    deadLetterQueue = [];
+    saveDeadLetterQueue();
+
+    for (const item of itemsToRetry) {
+      enqueueFirestoreSync(item.op, item.collection, item.docId, item.data, 'Retried from Dead Letter Queue');
+    }
+
+    // Trigger immediate process attempt
+    processPersistentSyncQueue().catch(() => {});
+
+    res.json({
+      success: true,
+      message: `Matagumpay na ibinalik ang ${dlqCount} dead letter item(s) sa active persistent queue.`,
+      retried: dlqCount,
+      activeQueueCount: persistentSyncQueue.size
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: 'Nabigo ang pag-retry ng dead letter queue: ' + err.message });
+  }
+});
+
+// PURGE / CLEAR DEAD LETTER QUEUE
+app.post('/api/admin/db/deadletter/clear', (req, res) => {
+  const adminId = req.headers.authorization;
+  const db = loadDB();
+  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
+  }
+
+  const clearedCount = deadLetterQueue.length;
+  deadLetterQueue = [];
+  saveDeadLetterQueue();
+
+  res.json({
+    success: true,
+    message: `Matagumpay na na-clear ang ${clearedCount} dead letter item(s).`,
+    clearedCount
   });
 });
 
@@ -7001,24 +7491,18 @@ async function uploadMediaToCloudflareR2Detailed(
       console.log(`✅ [R2][SUCCESS] Permanent Media Upload: ${storageKey} -> ${permanentMediaUrl} (${sizeKB} KB, MIME: ${mimeType})`);
 
       // Index metadata-only document in Cloud Firestore (URL / metadata only, strictly NO binary data)
-      if (cloudDb.isActive) {
-        try {
-          await cloudDb.setDoc('media_storage', localFilename, {
-            filename: localFilename,
-            storageKey,
-            storagePath: storageKey,
-            downloadUrl: permanentMediaUrl,
-            category: safeCategory,
-            entityId: safeEntityId,
-            size: buffer.length,
-            mimeType,
-            storageEngine: 'cloudflare-r2',
-            uploadedAt: new Date().toISOString()
-          });
-        } catch (idxErr: any) {
-          console.error(`⚠️ [R2][METADATA_WARNING] Error indexing media metadata in Cloud Firestore for ${localFilename}:`, idxErr.message);
-        }
-      }
+      safeCloudSync('set', 'media_storage', localFilename, {
+        filename: localFilename,
+        storageKey,
+        storagePath: storageKey,
+        downloadUrl: permanentMediaUrl,
+        category: safeCategory,
+        entityId: safeEntityId,
+        size: buffer.length,
+        mimeType,
+        storageEngine: 'cloudflare-r2',
+        uploadedAt: new Date().toISOString()
+      });
 
       return {
         result: {
@@ -7211,16 +7695,13 @@ app.post('/api/admin/update-qr', async (req, res) => {
     // Save persistently to Firebase Storage
     uploadMediaToFirebaseStorage(buffer, 'app-settings', 'admin_gcash_qr', mimeType).catch(() => {});
 
-    // Save persistently to Firestore
-    if (cloudDb.isActive) {
-      await cloudDb.setDoc('app_settings', 'gcash_qr', {
-        base64: base64Data,
-        mimeType,
-        updatedAt: new Date().toISOString(),
-        updatedBy: userId
-      });
-      console.log('☁️ Persistent custom GCash QR saved to Cloud DB.');
-    }
+    // Save persistently to Firestore via safeCloudSync
+    safeCloudSync('set', 'app_settings', 'gcash_qr', {
+      base64: base64Data,
+      mimeType,
+      updatedAt: new Date().toISOString(),
+      updatedBy: userId
+    });
 
     res.json({ success: true, message: 'Tagumpay na napalitan ang iyong GCash QR Code!' });
   } catch (err: any) {
@@ -8298,12 +8779,8 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
   db.posts.push(newPost);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...pWithoutId } = newPost;
-    cloudDb.setDoc('posts', newPost.id, pWithoutId).catch(err => {
-      console.error('Direct cloud save error for Post:', err);
-    });
-  }
+  const { id: _, ...pWithoutId } = newPost;
+  safeCloudSync('set', 'posts', newPost.id, pWithoutId);
 
   // Push notifications for mentions in post
   const mentionedInPost = extractMentionedUsers(cleanedText, db.users, user.id);
@@ -8366,13 +8843,11 @@ app.post('/api/zone/posts/:postId/like', enforceCommunitySafety, (req, res) => {
 
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...pWithoutId } = post;
-    cloudDb.setDoc('posts', post.id, pWithoutId).catch(() => {});
-    if (user) {
-      const { id: uid, ...uWithoutId } = user;
-      cloudDb.setDoc('users', user.id, uWithoutId).catch(() => {});
-    }
+  const { id: _, ...postWithoutId } = post;
+  safeCloudSync('set', 'posts', post.id, postWithoutId);
+  if (user) {
+    const { id: uid, ...uWithoutId } = user;
+    safeCloudSync('set', 'users', user.id, uWithoutId);
   }
 
   // Send push notification to post author if someone else liked the post
@@ -8444,10 +8919,8 @@ app.post('/api/zone/posts/:postId/comment', enforceCommunitySafety, (req, res) =
   post.comments.push(newComment);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...pWithoutId } = post;
-    cloudDb.setDoc('posts', post.id, pWithoutId).catch(() => {});
-  }
+  const { id: _, ...commentPostWithoutId } = post;
+  safeCloudSync('set', 'posts', post.id, commentPostWithoutId);
 
   // Send push notification to post author if someone else commented
   if (post.userId && post.userId !== userId) {
@@ -8535,10 +9008,8 @@ app.post('/api/zone/posts/:postId/share', enforceCommunitySafety, (req, res) => 
   db.posts.push(newPost);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...pWithoutId } = newPost;
-    cloudDb.setDoc('posts', newPost.id, pWithoutId).catch(() => {});
-  }
+  const { id: _, ...pWithoutId } = newPost;
+  safeCloudSync('set', 'posts', newPost.id, pWithoutId);
 
   res.json({ success: true, post: newPost, message: 'Matagumpay na na-share ang post!' });
 });
@@ -8587,10 +9058,8 @@ app.put('/api/zone/posts/:postId', enforceCommunitySafety, (req, res) => {
   post.text = filterSwearWords(text);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...pWithoutId } = post;
-    cloudDb.setDoc('posts', post.id, pWithoutId).catch(() => {});
-  }
+  const { id: _, ...postWithoutId } = post;
+  safeCloudSync('set', 'posts', post.id, postWithoutId);
 
   res.json({ success: true, post, message: 'Matagumpay na na-update ang post!' });
 });
@@ -8633,9 +9102,7 @@ app.delete('/api/zone/posts/:postId', enforceCommunitySafety, (req, res) => {
   db.posts.splice(postIndex, 1);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    cloudDb.deleteDoc('posts', postId).catch(() => {});
-  }
+  safeCloudSync('delete', 'posts', postId);
 
   res.json({ success: true, message: 'Matagumpay na na-delete ang post!' });
 });
@@ -8689,6 +9156,9 @@ app.put('/api/zone/posts/:postId/comments/:commentId', enforceCommunitySafety, (
   comment.text = filterSwearWords(text);
   saveDB(db);
 
+  const { id: _, ...postWithoutId } = post;
+  safeCloudSync('set', 'posts', post.id, postWithoutId);
+
   res.json({ success: true, comments: post.comments, message: 'Matagumpay na na-edit ang comment!' });
 });
 
@@ -8733,6 +9203,9 @@ app.delete('/api/zone/posts/:postId/comments/:commentId', enforceCommunitySafety
 
   post.comments.splice(commentIndex, 1);
   saveDB(db);
+
+  const { id: _, ...postWithoutId } = post;
+  safeCloudSync('set', 'posts', post.id, postWithoutId);
 
   res.json({ success: true, comments: post.comments, message: 'Matagumpay na na-delete ang comment!' });
 });
@@ -9129,12 +9602,8 @@ app.post('/api/zone/messages', enforceCommunitySafety, async (req, res) => {
   db.directMessages.push(newMsg);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...dmWithoutId } = newMsg;
-    cloudDb.setDoc('direct_messages', newMsg.id, dmWithoutId).catch(err => {
-      console.error('Direct cloud save error for Direct Message:', err);
-    });
-  }
+  const { id: _, ...dmWithoutId } = newMsg;
+  safeCloudSync('set', 'direct_messages', newMsg.id, dmWithoutId);
 
   // Send background push notification to the receiver
   sendPushNotificationToUser(receiverId, {
@@ -9192,10 +9661,8 @@ app.put('/api/zone/messages/:messageId', enforceCommunitySafety, (req, res) => {
   msg.text = filterSwearWords(text);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...dmWithoutId } = msg;
-    cloudDb.setDoc('direct_messages', msg.id, dmWithoutId).catch(() => {});
-  }
+  const { id: _, ...editedDmWithoutId } = msg;
+  safeCloudSync('set', 'direct_messages', msg.id, editedDmWithoutId);
 
   res.json({ success: true, message: msg, messageText: 'Matagumpay na na-edit ang mensahe!' });
 });
@@ -9230,11 +9697,7 @@ app.delete('/api/zone/messages/:messageId', enforceCommunitySafety, (req, res) =
   db.directMessages.splice(msgIndex, 1);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    cloudDb.deleteDoc('direct_messages', messageId).catch(err => {
-      console.error('Direct cloud delete error for Direct Message:', err);
-    });
-  }
+  safeCloudSync('delete', 'direct_messages', messageId);
 
   res.json({ success: true, message: 'Matagumpay na na-delete ang mensahe!' });
 });
@@ -9353,12 +9816,10 @@ app.post('/api/zone/groups', enforceCommunitySafety, (req, res) => {
 
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...gWithoutId } = newGroup;
-    const { id: mid, ...gmWithoutId } = initialMsg;
-    cloudDb.setDoc('group_chats', newGroup.id, gWithoutId).catch(() => {});
-    cloudDb.setDoc('group_messages', initialMsg.id, gmWithoutId).catch(() => {});
-  }
+  const { id: _, ...gWithoutId } = newGroup;
+  const { id: mid, ...gmWithoutId } = initialMsg;
+  safeCloudSync('set', 'group_chats', newGroup.id, gWithoutId);
+  safeCloudSync('set', 'group_messages', initialMsg.id, gmWithoutId);
 
   const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
   const formattedGroup = {
@@ -9485,12 +9946,10 @@ app.post('/api/zone/groups/:groupId/messages', enforceCommunitySafety, async (re
   group.updatedAt = new Date().toISOString();
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...gmWithoutId } = newMsg;
-    const { id: gid, ...gWithoutId } = group;
-    cloudDb.setDoc('group_messages', newMsg.id, gmWithoutId).catch(() => {});
-    cloudDb.setDoc('group_chats', group.id, gWithoutId).catch(() => {});
-  }
+  const { id: _, ...gmWithoutId } = newMsg;
+  const { id: gid, ...groupWithoutId } = group;
+  safeCloudSync('set', 'group_messages', newMsg.id, gmWithoutId);
+  safeCloudSync('set', 'group_chats', group.id, groupWithoutId);
 
   // Send background push notifications to all other group members
   if (Array.isArray(group.members)) {
@@ -9547,10 +10006,8 @@ app.put('/api/zone/groups/:groupId/messages/:messageId', enforceCommunitySafety,
   msg.text = filterSwearWords(text.trim());
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...gmWithoutId } = msg;
-    cloudDb.setDoc('group_messages', msg.id, gmWithoutId).catch(() => {});
-  }
+  const { id: _, ...editedGmWithoutId } = msg;
+  safeCloudSync('set', 'group_messages', msg.id, editedGmWithoutId);
 
   res.json({ success: true, message: msg });
 });
@@ -9585,9 +10042,7 @@ app.delete('/api/zone/groups/:groupId/messages/:messageId', enforceCommunitySafe
   db.groupMessages.splice(msgIndex, 1);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    cloudDb.deleteDoc('group_messages', messageId).catch(() => {});
-  }
+  safeCloudSync('delete', 'group_messages', messageId);
 
   res.json({ success: true, message: 'Matagumpay na na-delete ang mensahe!' });
 });
@@ -9637,12 +10092,10 @@ app.post('/api/zone/groups/:groupId/members', enforceCommunitySafety, (req, res)
 
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...gWithoutId } = group;
-    const { id: mid, ...gmWithoutId } = addSysMsg;
-    cloudDb.setDoc('group_chats', group.id, gWithoutId).catch(() => {});
-    cloudDb.setDoc('group_messages', addSysMsg.id, gmWithoutId).catch(() => {});
-  }
+  const { id: _, ...gWithoutId } = group;
+  const { id: mid, ...gmWithoutId } = addSysMsg;
+  safeCloudSync('set', 'group_chats', group.id, gWithoutId);
+  safeCloudSync('set', 'group_messages', addSysMsg.id, gmWithoutId);
 
   const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
   const updatedGroup = {
@@ -9690,12 +10143,10 @@ app.post('/api/zone/groups/:groupId/leave', enforceCommunitySafety, (req, res) =
 
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...gWithoutId } = group;
-    const { id: mid, ...gmWithoutId } = leaveSysMsg;
-    cloudDb.setDoc('group_chats', group.id, gWithoutId).catch(() => {});
-    cloudDb.setDoc('group_messages', leaveSysMsg.id, gmWithoutId).catch(() => {});
-  }
+  const { id: _, ...gWithoutId } = group;
+  const { id: mid, ...gmWithoutId } = leaveSysMsg;
+  safeCloudSync('set', 'group_chats', group.id, gWithoutId);
+  safeCloudSync('set', 'group_messages', leaveSysMsg.id, gmWithoutId);
 
   res.json({ success: true, message: 'Nakaalis ka na sa group chat.' });
 });
@@ -9727,10 +10178,8 @@ app.put('/api/zone/groups/:groupId', enforceCommunitySafety, (req, res) => {
 
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...gWithoutId } = group;
-    cloudDb.setDoc('group_chats', group.id, gWithoutId).catch(() => {});
-  }
+  const { id: _, ...gWithoutId } = group;
+  safeCloudSync('set', 'group_chats', group.id, gWithoutId);
 
   const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
   const updatedGroup = {
@@ -9839,12 +10288,8 @@ app.post('/api/zone/stories', enforceCommunitySafety, async (req, res) => {
   db.stories.unshift(newStory);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...sWithoutId } = newStory;
-    cloudDb.setDoc('stories', newStory.id, sWithoutId).catch(err => {
-      console.error('Direct cloud save error for Story:', err);
-    });
-  }
+  const { id: _, ...sWithoutId } = newStory;
+  safeCloudSync('set', 'stories', newStory.id, sWithoutId);
 
   res.json({ success: true, story: newStory, message: 'Matagumpay na na-post ang iyong My Day / Story!' });
 });
@@ -9876,11 +10321,7 @@ app.delete('/api/zone/stories/:storyId', enforceCommunitySafety, (req, res) => {
   db.stories.splice(index, 1);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    cloudDb.deleteDoc('stories', storyId).catch(err => {
-      console.error('Direct cloud delete error for Story:', err);
-    });
-  }
+  safeCloudSync('delete', 'stories', storyId);
 
   res.json({ success: true, message: 'Na-delete na ang Story!' });
 });
@@ -9919,10 +10360,8 @@ app.post('/api/zone/stories/:storyId/view', (req, res) => {
     });
     saveDB(db);
 
-    if (cloudDb.isActive) {
-      const { id, ...sWithoutId } = story;
-      cloudDb.setDoc('stories', story.id, sWithoutId).catch(() => {});
-    }
+    const { id: _, ...storyWithoutId } = story;
+    safeCloudSync('set', 'stories', story.id, storyWithoutId);
   }
 
   res.json({ success: true, viewersCount: story.viewers.length });
@@ -10005,6 +10444,9 @@ app.post('/api/zone/stories/:storyId/react', enforceCommunitySafety, (req, res) 
       };
       db.directMessages.push(dmMsg);
 
+      const { id: _, ...dmWithoutId } = dmMsg;
+      safeCloudSync('set', 'direct_messages', dmMsg.id, dmWithoutId);
+
       // Send push notification to story author
       sendPushNotificationToUser(author.id, {
         title: `✨ ${user.name} nag-react sa iyong My Day`,
@@ -10017,10 +10459,8 @@ app.post('/api/zone/stories/:storyId/react', enforceCommunitySafety, (req, res) 
 
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...sWithoutId } = story;
-    cloudDb.setDoc('stories', story.id, sWithoutId).catch(() => {});
-  }
+  const { id: _, ...storyWithoutId } = story;
+  safeCloudSync('set', 'stories', story.id, storyWithoutId);
 
   res.json({ success: true, reactions: story.reactions });
 });
@@ -10223,13 +10663,11 @@ app.put('/api/zone/profile', enforceCommunitySafety, async (req, res) => {
 
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    cloudDb.updateDoc('users', user.id, {
-      bio: user.bio,
-      avatar: user.avatar,
-      coverPhoto: user.coverPhoto
-    }).catch(err => console.error('Cloud DB user profile update error:', err));
-  }
+  safeCloudSync('update', 'users', user.id, {
+    bio: user.bio,
+    avatar: user.avatar,
+    coverPhoto: user.coverPhoto
+  });
 
   res.json({
     success: true,
@@ -10311,12 +10749,8 @@ app.post('/api/zone/albums', enforceCommunitySafety, async (req, res) => {
   db.albums.push(newAlbum);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...aWithoutId } = newAlbum;
-    cloudDb.setDoc('albums', newAlbum.id, aWithoutId).catch(err => {
-      console.error('Cloud DB album create error:', err);
-    });
-  }
+  const { id: _, ...aWithoutId } = newAlbum;
+  safeCloudSync('set', 'albums', newAlbum.id, aWithoutId);
 
   res.json({ success: true, album: newAlbum, message: 'Matagumpay na nagawa ang album!' });
 });
@@ -10360,12 +10794,8 @@ app.put('/api/zone/albums/:albumId', enforceCommunitySafety, async (req, res) =>
   album.updatedAt = new Date().toISOString();
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...aWithoutId } = album;
-    cloudDb.setDoc('albums', album.id, aWithoutId).catch(err => {
-      console.error('Cloud DB album update error:', err);
-    });
-  }
+  const { id: _, ...albumWithoutId } = album;
+  safeCloudSync('set', 'albums', album.id, albumWithoutId);
 
   res.json({ success: true, album, message: 'Na-update ang album!' });
 });
@@ -10393,11 +10823,7 @@ app.delete('/api/zone/albums/:albumId', enforceCommunitySafety, (req, res) => {
   db.albums.splice(index, 1);
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    cloudDb.deleteDoc('albums', albumId).catch(err => {
-      console.error('Cloud DB album delete error:', err);
-    });
-  }
+  safeCloudSync('delete', 'albums', albumId);
 
   res.json({ success: true, message: 'Matagumpay na nabura ang album.' });
 });
@@ -10409,7 +10835,7 @@ app.post('/api/zone/albums/:albumId/photos', enforceCommunitySafety, async (req,
     return res.status(401).json({ error: 'Unauthenticated.' });
   }
 
-  const { albumId } = req.params;
+  const { albumId, photoId } = req.params;
   const { url, caption, privacy } = req.body;
   const db = loadDB();
 
@@ -10455,12 +10881,8 @@ app.post('/api/zone/albums/:albumId/photos', enforceCommunitySafety, async (req,
   album.updatedAt = new Date().toISOString();
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...aWithoutId } = album;
-    cloudDb.setDoc('albums', album.id, aWithoutId).catch(err => {
-      console.error('Cloud DB album photo add error:', err);
-    });
-  }
+  const { id: _, ...albumWithoutId } = album;
+  safeCloudSync('set', 'albums', album.id, albumWithoutId);
 
   res.json({ success: true, photo: newPhoto, album, message: 'Matagumpay na naidagdag ang photo!' });
 });
@@ -10495,12 +10917,8 @@ app.delete('/api/zone/albums/:albumId/photos/:photoId', enforceCommunitySafety, 
   album.updatedAt = new Date().toISOString();
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...aWithoutId } = album;
-    cloudDb.setDoc('albums', album.id, aWithoutId).catch(err => {
-      console.error('Cloud DB album photo delete error:', err);
-    });
-  }
+  const { id: _, ...albumWithoutId } = album;
+  safeCloudSync('set', 'albums', album.id, albumWithoutId);
 
   res.json({ success: true, message: 'Matagumpay na nabura ang photo.' });
 });
@@ -10536,12 +10954,8 @@ app.put('/api/zone/albums/:albumId/photos/:photoId/privacy', enforceCommunitySaf
   album.updatedAt = new Date().toISOString();
   saveDB(db, true);
 
-  if (cloudDb.isActive) {
-    const { id, ...aWithoutId } = album;
-    cloudDb.setDoc('albums', album.id, aWithoutId).catch(err => {
-      console.error('Cloud DB photo privacy update error:', err);
-    });
-  }
+  const { id: _, ...albumWithoutId } = album;
+  safeCloudSync('set', 'albums', album.id, albumWithoutId);
 
   res.json({ success: true, photo, message: `Naitakda ang photo privacy sa ${photo.privacy === 'only_me' ? 'Only Me (Pribado)' : 'Public (Lahat makakakita)'}!` });
 });
@@ -12626,6 +13040,9 @@ app.get('/appstore', (req, res) => {
 const isProduction = process.env.NODE_ENV === 'production';
 
 async function startServer() {
+  // 1. Load any pending sync queue items from persistent disk (/var/data/firestore_sync_queue.json)
+  loadPersistentSyncQueue();
+
   const isHealthyPersistent = hasValidPersistentDatabase();
   const localDbState = isHealthyPersistent ? loadDB() : null;
 
@@ -12662,6 +13079,22 @@ async function startServer() {
       recoveryFailureReason = err?.message || 'startup_sync_exception';
       console.error('🚨 [CRITICAL: Safe Recovery Lockout] Startup sync exception:', err?.message || err);
     }
+  }
+
+  // 2. Setup periodic background retry loop for pending Firestore sync queue
+  if (!syncQueueInterval) {
+    syncQueueInterval = setInterval(() => {
+      if (persistentSyncQueue.size > 0 && cloudDb.isActive && !isProcessingSyncQueue) {
+        processPersistentSyncQueue().catch(() => {});
+      }
+    }, 40000); // Check and retry every 40 seconds
+  }
+
+  // Initial retry if items are pending
+  if (persistentSyncQueue.size > 0 && cloudDb.isActive) {
+    setTimeout(() => {
+      processPersistentSyncQueue().catch(() => {});
+    }, 3000);
   }
 
   if (!isProduction) {
