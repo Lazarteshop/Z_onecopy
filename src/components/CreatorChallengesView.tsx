@@ -25,9 +25,14 @@ import {
   Filter,
   Check,
   ChevronRight,
-  Edit3
+  Edit3,
+  Wallet,
+  AlertCircle,
+  QrCode
 } from 'lucide-react';
 import { CreatorChallenge, ChallengeEntry, SponsoredMission, UserSession } from '../types';
+import { DepositModal } from './DepositModal';
+import { ParticipantShareModal } from './ParticipantShareModal';
 
 interface CreatorChallengesViewProps {
   token: string | null;
@@ -246,6 +251,43 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
   const [missionBudget, setMissionBudget] = useState('5000');
   const [missionChallengeId, setMissionChallengeId] = useState('');
   const [creatingMission, setCreatingMission] = useState(false);
+
+  // Deposit Modal State (Wallet Funding & Budget Reservation)
+  const [showDepositModal, setShowDepositModal] = useState(false);
+  const [depositModalConfig, setDepositModalConfig] = useState<{
+    requiredBudget: number;
+    currentAvailableBalance?: number;
+    targetPurpose: 'challenge_budget' | 'mission_budget' | 'wallet';
+    targetEntityId?: string;
+  }>({
+    requiredBudget: 0,
+    targetPurpose: 'wallet'
+  });
+
+  // Participant Viral Sharing State
+  const [sharingEntry, setSharingEntry] = useState<ChallengeEntry | null>(null);
+
+  // Wallet Breakdown
+  const [walletBreakdown, setWalletBreakdown] = useState<any>(null);
+
+  const fetchWalletBreakdown = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/user/wallet-breakdown', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setWalletBreakdown(data);
+      }
+    } catch (e) {
+      // silent
+    }
+  };
+
+  useEffect(() => {
+    fetchWalletBreakdown();
+  }, [token]);
 
   // Load Challenges
   const fetchChallenges = async () => {
@@ -480,6 +522,28 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
       return;
     }
 
+    const requiredBudget = Number(hostPrizePool) || 1000;
+    const currentAvailable = walletBreakdown?.availableBalance !== undefined
+      ? walletBreakdown.availableBalance
+      : (user?.availableBalance !== undefined ? user.availableBalance : (user?.stats?.balance || 0));
+
+    // Pre-flight check: If balance is less than required budget, show deposit modal immediately!
+    if (currentAvailable < requiredBudget) {
+      setDepositModalConfig({
+        requiredBudget,
+        currentAvailableBalance: currentAvailable,
+        targetPurpose: 'challenge_budget'
+      });
+      setShowDepositModal(true);
+      triggerNotification?.(
+        isTl 
+          ? `Kulang ang iyong available balance (₱${currentAvailable.toFixed(2)}) para sa prize pool na ₱${requiredBudget.toFixed(2)}. Mag-deposit muna via GCash QR.`
+          : `Insufficient balance (₱${currentAvailable.toFixed(2)}) for required budget of ₱${requiredBudget.toFixed(2)}. Please deposit via GCash QR.`,
+        'error'
+      );
+      return;
+    }
+
     setHostingLoading(true);
     try {
       const endDate = new Date(Date.now() + (Number(hostDays) || 14) * 24 * 60 * 60 * 1000).toISOString();
@@ -494,7 +558,7 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
           description: hostDescription.trim(),
           category: hostCategory,
           rules: hostRules.trim(),
-          prizePool: Number(hostPrizePool) || 1000,
+          prizePool: requiredBudget,
           maxParticipants: Number(hostMaxParticipants) || 100,
           endDate,
           coverImage: hostCoverImage.trim() || undefined
@@ -503,13 +567,23 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
 
       const data = await res.json();
       if (res.ok && data.success) {
-        triggerNotification?.(isTl ? '🎉 Tagumpay! Na-publish ang iyong bagong challenge.' : 'Challenge published successfully!', 'success');
+        triggerNotification?.(isTl ? '🎉 Tagumpay! Na-publish at na-lock ang budget para sa iyong bagong challenge.' : 'Challenge published and budget reserved!', 'success');
         setHostTitle('');
         setHostDescription('');
         setHostRules('');
         setActiveTab('browse');
         fetchChallenges();
+        fetchWalletBreakdown();
+        onRefreshProfile?.();
       } else {
+        if (data.code === 'INSUFFICIENT_BALANCE') {
+          setDepositModalConfig({
+            requiredBudget: data.requiredAmount || requiredBudget,
+            currentAvailableBalance: data.availableBalance !== undefined ? data.availableBalance : currentAvailable,
+            targetPurpose: 'challenge_budget'
+          });
+          setShowDepositModal(true);
+        }
         triggerNotification?.(data.error || 'Failed to publish challenge', 'error');
       }
     } catch (err) {
@@ -527,6 +601,28 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
       return;
     }
 
+    const requiredBudget = Number(missionBudget) || 5000;
+    const currentAvailable = walletBreakdown?.availableBalance !== undefined
+      ? walletBreakdown.availableBalance
+      : (user?.availableBalance !== undefined ? user.availableBalance : (user?.stats?.balance || 0));
+
+    // Pre-flight check: If balance is less than required budget, show deposit modal immediately!
+    if (currentAvailable < requiredBudget) {
+      setDepositModalConfig({
+        requiredBudget,
+        currentAvailableBalance: currentAvailable,
+        targetPurpose: 'mission_budget'
+      });
+      setShowDepositModal(true);
+      triggerNotification?.(
+        isTl 
+          ? `Kulang ang iyong available balance (₱${currentAvailable.toFixed(2)}) para sa mission budget na ₱${requiredBudget.toFixed(2)}. Mag-deposit muna via GCash QR.`
+          : `Insufficient balance (₱${currentAvailable.toFixed(2)}) for mission budget of ₱${requiredBudget.toFixed(2)}. Please deposit via GCash QR.`,
+        'error'
+      );
+      return;
+    }
+
     setCreatingMission(true);
     try {
       const res = await fetch('/api/sponsored-missions', {
@@ -538,20 +634,30 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
         body: JSON.stringify({
           title: missionTitle.trim(),
           description: missionDescription.trim(),
-          budget: Number(missionBudget) || 5000,
+          budget: requiredBudget,
           challengeId: missionChallengeId || undefined
         })
       });
 
       const data = await res.json();
       if (res.ok && data.success) {
-        triggerNotification?.(isTl ? '💎 Tagumpay na naitatag ang Sponsored Mission!' : 'Sponsored mission created successfully!', 'success');
+        triggerNotification?.(isTl ? '💎 Tagumpay na naitatag at na-lock ang pondo para sa Sponsored Mission!' : 'Sponsored mission created and budget reserved!', 'success');
         setMissionTitle('');
         setMissionDescription('');
         fetchMissions();
         fetchChallenges();
+        fetchWalletBreakdown();
+        onRefreshProfile?.();
         setActiveTab('missions');
       } else {
+        if (data.code === 'INSUFFICIENT_BALANCE') {
+          setDepositModalConfig({
+            requiredBudget: data.requiredAmount || requiredBudget,
+            currentAvailableBalance: data.availableBalance !== undefined ? data.availableBalance : currentAvailable,
+            targetPurpose: 'mission_budget'
+          });
+          setShowDepositModal(true);
+        }
         triggerNotification?.(data.error || 'Failed to create mission', 'error');
       }
     } catch (err) {
@@ -1050,6 +1156,74 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                 </select>
               </div>
 
+              {/* Sponsor Wallet & Mission Budget Breakdown */}
+              {(() => {
+                const reqBudget = Number(missionBudget) || 5000;
+                const currentAvail = walletBreakdown?.availableBalance !== undefined
+                  ? walletBreakdown.availableBalance
+                  : (user?.availableBalance !== undefined ? user.availableBalance : (user?.stats?.balance || 0));
+                const isShort = currentAvail < reqBudget;
+                const shortfall = Math.max(0, reqBudget - currentAvail);
+
+                return (
+                  <div className={`p-4 rounded-2xl border text-xs space-y-2.5 ${
+                    isShort ? 'bg-amber-50/80 border-amber-300 text-amber-950' : 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <span className="font-black flex items-center gap-1.5">
+                        <Wallet className="w-4 h-4 text-slate-700" />
+                        <span>{isTl ? 'Sponsor Wallet & Budget Reservation' : 'Sponsor Wallet & Budget Reservation'}</span>
+                      </span>
+                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                        isShort ? 'bg-amber-200 text-amber-900' : 'bg-emerald-200 text-emerald-900'
+                      }`}>
+                        {isShort ? (isTl ? 'Kulang ang Pondo' : 'Insufficient') : (isTl ? 'Sapat ang Pondo' : 'Sufficient')}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="bg-white/80 p-2 rounded-xl border border-slate-200/60">
+                        <span className="text-[10px] text-slate-500 font-bold uppercase block">Available Balance</span>
+                        <span className="font-black text-slate-800 font-mono">₱{currentAvail.toFixed(2)}</span>
+                      </div>
+                      <div className="bg-white/80 p-2 rounded-xl border border-slate-200/60">
+                        <span className="text-[10px] text-slate-500 font-bold uppercase block">Mission Budget</span>
+                        <span className="font-black text-emerald-700 font-mono">₱{reqBudget.toFixed(2)}</span>
+                      </div>
+                      <div className={`p-2 rounded-xl border ${isShort ? 'bg-amber-100/90 border-amber-300' : 'bg-white/80 border-slate-200/60'}`}>
+                        <span className="text-[10px] text-slate-500 font-bold uppercase block">{isShort ? 'Kulang (Shortfall)' : 'Matitira'}</span>
+                        <span className={`font-black font-mono ${isShort ? 'text-amber-700' : 'text-emerald-700'}`}>
+                          {isShort ? `₱${shortfall.toFixed(2)}` : `₱${(currentAvail - reqBudget).toFixed(2)}`}
+                        </span>
+                      </div>
+                    </div>
+
+                    {isShort && (
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
+                        <p className="text-[11px] text-amber-800 font-medium">
+                          {isTl ? 'Kailangan munang mag-deposit bago maitatag ang mission.' : 'Deposit required before creating mission.'}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDepositModalConfig({
+                              requiredBudget: reqBudget,
+                              currentAvailableBalance: currentAvail,
+                              targetPurpose: 'mission_budget'
+                            });
+                            setShowDepositModal(true);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-xs self-start sm:self-auto"
+                        >
+                          <QrCode className="w-3.5 h-3.5" />
+                          <span>Mag-deposit via GCash QR</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               <button
                 type="submit"
                 disabled={creatingMission}
@@ -1182,6 +1356,74 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
               />
             </div>
 
+            {/* Host Wallet & Challenge Budget Breakdown */}
+            {(() => {
+              const reqBudget = Number(hostPrizePool) || 1000;
+              const currentAvail = walletBreakdown?.availableBalance !== undefined
+                ? walletBreakdown.availableBalance
+                : (user?.availableBalance !== undefined ? user.availableBalance : (user?.stats?.balance || 0));
+              const isShort = currentAvail < reqBudget;
+              const shortfall = Math.max(0, reqBudget - currentAvail);
+
+              return (
+                <div className={`p-4 rounded-2xl border text-xs space-y-2.5 ${
+                  isShort ? 'bg-amber-50/80 border-amber-300 text-amber-950' : 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-black flex items-center gap-1.5">
+                      <Wallet className="w-4 h-4 text-slate-700" />
+                      <span>{isTl ? 'Host Wallet & Prize Pool Reservation' : 'Host Wallet & Prize Pool Reservation'}</span>
+                    </span>
+                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                      isShort ? 'bg-amber-200 text-amber-900' : 'bg-emerald-200 text-emerald-900'
+                    }`}>
+                      {isShort ? (isTl ? 'Kulang ang Pondo' : 'Insufficient') : (isTl ? 'Sapat ang Pondo' : 'Sufficient')}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-white/80 p-2 rounded-xl border border-slate-200/60">
+                      <span className="text-[10px] text-slate-500 font-bold uppercase block">Available Balance</span>
+                      <span className="font-black text-slate-800 font-mono">₱{currentAvail.toFixed(2)}</span>
+                    </div>
+                    <div className="bg-white/80 p-2 rounded-xl border border-slate-200/60">
+                      <span className="text-[10px] text-slate-500 font-bold uppercase block">Required Prize Pool</span>
+                      <span className="font-black text-indigo-700 font-mono">₱{reqBudget.toFixed(2)}</span>
+                    </div>
+                    <div className={`p-2 rounded-xl border ${isShort ? 'bg-amber-100/90 border-amber-300' : 'bg-white/80 border-slate-200/60'}`}>
+                      <span className="text-[10px] text-slate-500 font-bold uppercase block">{isShort ? 'Kulang (Shortfall)' : 'Matitira'}</span>
+                      <span className={`font-black font-mono ${isShort ? 'text-amber-700' : 'text-emerald-700'}`}>
+                        {isShort ? `₱${shortfall.toFixed(2)}` : `₱${(currentAvail - reqBudget).toFixed(2)}`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {isShort && (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
+                      <p className="text-[11px] text-amber-800 font-medium">
+                        {isTl ? 'Kailangan munang mag-deposit bago mai-publish ang challenge.' : 'Deposit required before publishing challenge.'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDepositModalConfig({
+                            requiredBudget: reqBudget,
+                            currentAvailableBalance: currentAvail,
+                            targetPurpose: 'challenge_budget'
+                          });
+                          setShowDepositModal(true);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-xs self-start sm:self-auto"
+                      >
+                        <QrCode className="w-3.5 h-3.5" />
+                        <span>Mag-deposit via GCash QR</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             <button
               type="submit"
               disabled={hostingLoading}
@@ -1301,15 +1543,26 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                             </p>
                           </div>
                         </div>
-                        {!isChallengeEnded && (
+                        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
                           <button
-                            onClick={() => openSubmitOrEditModal(selectedChallenge, myActiveEntry)}
-                            className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition cursor-pointer flex items-center gap-1.5 shrink-0 shadow-xs"
+                            type="button"
+                            onClick={() => setSharingEntry(myActiveEntry)}
+                            className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs transition cursor-pointer flex items-center gap-1.5 shrink-0 shadow-xs"
+                            title={isTl ? 'I-share ang iyong entry sa mga kaibigan' : 'Share your entry'}
                           >
-                            <Edit3 className="w-3.5 h-3.5" />
-                            <span>{isTl ? 'I-edit / Palitan ang Entry' : 'Edit / Replace Entry'}</span>
+                            <Share2 className="w-3.5 h-3.5" />
+                            <span>{isTl ? 'I-share ang Entry 🚀' : 'Share Entry 🚀'}</span>
                           </button>
-                        )}
+                          {!isChallengeEnded && (
+                            <button
+                              onClick={() => openSubmitOrEditModal(selectedChallenge, myActiveEntry)}
+                              className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition cursor-pointer flex items-center gap-1.5 shrink-0 shadow-xs"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>{isTl ? 'I-edit / Palitan ang Entry' : 'Edit / Replace Entry'}</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
                     )}
 
@@ -1477,6 +1730,17 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                                     </a>
                                   )
                                 )}
+
+                                {/* Share & Invite Entry */}
+                                <button
+                                  type="button"
+                                  onClick={() => setSharingEntry(entry)}
+                                  className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-black transition cursor-pointer flex items-center gap-1 shrink-0 shadow-2xs"
+                                  title={isTl ? 'I-share ang entry na ito' : 'Share this entry'}
+                                >
+                                  <Share2 className="w-3.5 h-3.5 text-indigo-600" />
+                                  <span>{isTl ? 'I-share' : 'Share'}</span>
+                                </button>
 
                                 {/* If own entry and challenge is active, allow quick edit */}
                                 {isMyOwnEntry && !isChallengeEnded && (
@@ -1721,6 +1985,32 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
           </div>
         </div>
       )}
+      {/* DEPOSIT MODAL (GCASH QR FUNDING) */}
+      <DepositModal
+        isOpen={showDepositModal}
+        onClose={() => setShowDepositModal(false)}
+        token={token}
+        user={user}
+        requiredBudget={depositModalConfig.requiredBudget}
+        currentAvailableBalance={depositModalConfig.currentAvailableBalance}
+        targetPurpose={depositModalConfig.targetPurpose}
+        targetEntityId={depositModalConfig.targetEntityId}
+        language={language}
+        onSuccess={() => {
+          fetchWalletBreakdown();
+          onRefreshProfile?.();
+        }}
+      />
+
+      {/* PARTICIPANT VIRAL SHARING MODAL */}
+      <ParticipantShareModal
+        isOpen={!!sharingEntry}
+        onClose={() => setSharingEntry(null)}
+        entry={sharingEntry}
+        challenge={selectedChallenge || challenges.find(c => c.id === sharingEntry?.challengeId) || null}
+        currentUser={user}
+        language={language}
+      />
     </div>
   );
 };

@@ -84,6 +84,7 @@ import { BackgroundNotificationModal } from './components/BackgroundNotification
 import { DataSaverSettingsModal } from './components/DataSaverSettingsModal';
 import { KiddiePortal } from './components/KiddiePortal';
 import { CreatorChallengesView } from './components/CreatorChallengesView';
+import { PublicEntryLandingModal } from './components/PublicEntryLandingModal';
 import { VerificationFlowModal } from './components/VerificationFlowModal';
 import { DeviceTransferModal } from './components/DeviceTransferModal';
 import { getOrCreateDeviceKeyId, getDeviceSecurityHeaders } from './utils/deviceSecurity';
@@ -314,6 +315,35 @@ export default function App() {
     }
     return localStorage.getItem('is_demo_mode') === 'true';
   });
+
+  // 🌟 Public Challenge Entry Viral Landing State
+  const [publicEntryParam, setPublicEntryParam] = useState<{
+    challengeId: string;
+    entryId: string;
+    inviterId?: string;
+  } | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const challenge = p.get('challenge');
+      const entry = p.get('entry');
+      if (challenge && entry) {
+        return {
+          challengeId: challenge,
+          entryId: entry,
+          inviterId: p.get('inviter') || undefined
+        };
+      }
+    } catch (e) {}
+    return null;
+  });
+
+  // Viral registration attribution tracker
+  const [pendingAttribution, setPendingAttribution] = useState<{
+    sourceEntryId: string;
+    sourceChallengeId: string;
+    inviterParticipantId?: string;
+  } | null>(null);
 
   // Animation states
   const [floatingCoinReward, setFloatingCoinReward] = useState<number | null>(null);
@@ -1453,7 +1483,14 @@ export default function App() {
     const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
     const payload = authMode === 'login' 
       ? { email: emailInput.trim(), password: passwordInput, isDemo: isDemoMode }
-      : { name: nameInput.trim(), email: emailInput.trim(), password: passwordInput, referralCode: referralInput.trim(), isDemo: isDemoMode };
+      : { 
+          name: nameInput.trim(), 
+          email: emailInput.trim(), 
+          password: passwordInput, 
+          referralCode: referralInput.trim(), 
+          isDemo: isDemoMode,
+          attribution: pendingAttribution || undefined
+        };
 
     try {
       const res = await fetch(endpoint, {
@@ -3335,6 +3372,33 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
         language={language}
         triggerNotification={triggerNotification}
       />
+
+      {/* 🌟 VIRAL CHALLENGE ENTRY LANDING MODAL */}
+      {publicEntryParam && (
+        <PublicEntryLandingModal
+          challengeId={publicEntryParam.challengeId}
+          entryId={publicEntryParam.entryId}
+          inviterId={publicEntryParam.inviterId}
+          user={user}
+          token={token}
+          onClose={() => setPublicEntryParam(null)}
+          onOpenRegister={(attr) => {
+            if (attr) setPendingAttribution(attr);
+            setAuthMode('register');
+            setPublicEntryParam(null);
+          }}
+          onOpenLogin={() => {
+            setAuthMode('login');
+            setPublicEntryParam(null);
+          }}
+          onNavigateToChallenges={() => {
+            setActiveTab('challenges');
+            setPublicEntryParam(null);
+          }}
+          triggerNotification={triggerNotification}
+          isTl={language === 'tl'}
+        />
+      )}
 
     </div>
   );

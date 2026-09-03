@@ -32,7 +32,7 @@ export interface WithdrawalRequest {
 
 export interface ActivityLog {
   id: string;
-  type: 'reward' | 'withdraw' | 'bonus';
+  type: 'reward' | 'withdraw' | 'bonus' | 'deposit';
   title: string;
   amount: number;
   timestamp: string;
@@ -563,6 +563,12 @@ export interface UserSession {
   dateOfBirth?: string;
   boundDeviceId?: string;
   verificationAudit?: VerificationAuditSummary;
+  attribution?: {
+    sourceEntryId?: string;
+    sourceChallengeId?: string;
+    inviterParticipantId?: string;
+    timestamp?: string;
+  };
 }
 
 export type AccountSafetyStatus =
@@ -693,6 +699,8 @@ export interface ChallengeEntry {
   score: number;
   likes: string[];
   votesCount: number;
+  linkOpensCount?: number;
+  referralRegistrationsCount?: number;
 }
 
 export interface SponsoredMission {
@@ -731,7 +739,7 @@ export interface DepositRequest {
   reviewedAt?: string;
   reviewedBy?: string;
   rejectionReason?: string;
-  targetPurpose?: 'challenge' | 'sponsor' | 'wallet';
+  targetPurpose?: 'challenge' | 'sponsor' | 'wallet' | 'challenge_budget' | 'mission_budget';
   targetEntityId?: string;
 }
 

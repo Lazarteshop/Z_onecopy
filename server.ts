@@ -1171,7 +1171,7 @@ interface UserSession {
   }[];
   activityLogs: {
     id: string;
-    type: 'reward' | 'withdraw' | 'bonus';
+    type: 'reward' | 'withdraw' | 'bonus' | 'deposit';
     title: string;
     amount: number;
     timestamp: string;
@@ -1235,6 +1235,12 @@ interface UserSession {
   lockedMissionFunds?: number;
   availableBalance?: number;
   pendingDeposits?: number;
+  attribution?: {
+    sourceEntryId?: string;
+    sourceChallengeId?: string;
+    inviterParticipantId?: string;
+    timestamp?: string;
+  };
 }
 
 interface DirectMessage {
@@ -1540,6 +1546,8 @@ interface ChallengeEntry {
   score: number;
   likes: string[];
   votesCount: number;
+  linkOpensCount?: number;
+  referralRegistrationsCount?: number;
 }
 
 interface SponsoredMission {
@@ -1626,9 +1634,7 @@ function getUserWalletBreakdown(user: UserSession, db: DBStructure) {
   // Calculate active locked sponsored mission funds sponsored by this user
   const activeMissions = (db.sponsoredMissions || []).filter(m => 
     m.sponsorId === user.id && 
-    (m.status === 'active' || m.status === 'pending_review' || m.status === 'draft') &&
-    m.status !== 'completed' &&
-    m.status !== 'cancelled'
+    (m.status === 'active' || m.status === 'pending_review' || m.status === 'draft')
   );
   const lockedMissionFunds = Number(activeMissions.reduce((sum, m) => sum + (m.budget || 0), 0).toFixed(2));
 
@@ -4381,7 +4387,7 @@ app.post('/api/auth/demo-session-clear', (req, res) => {
 
 // REGISTER
 app.post('/api/auth/register', (req, res) => {
-  const { email, password, name, avatar, referralCode, isDemo, deviceId: bodyDeviceId } = req.body;
+  const { email, password, name, avatar, referralCode, isDemo, deviceId: bodyDeviceId, attribution } = req.body;
   const isDemoModeReq = Boolean(isDemo || req.headers['x-demo-mode'] === 'true');
   const deviceId = (req.headers['x-device-id'] as string) || bodyDeviceId || null;
 
@@ -4483,7 +4489,8 @@ app.post('/api/auth/register', (req, res) => {
     if (referralCode) {
       const codeClean = referralCode.trim().toUpperCase();
       const referrer = db.users.find(u => u.referralCode === codeClean);
-      if (referrer) {
+      // STRICT SELF-REFERRAL PREVENTION: Cannot refer self via referralCode or same email
+      if (referrer && referrer.id !== userId && referrer.email.toLowerCase() !== lowerEmail) {
         newUser.invitedBy = codeClean;
         referrer.referredFriends.push({
           id: userId,
@@ -4515,6 +4522,25 @@ app.post('/api/auth/register', (req, res) => {
         deviceLabel: req.headers['user-agent'] ? String(req.headers['user-agent']).substring(0, 50) : 'Browser Device',
         status: 'active'
       });
+    }
+
+    if (attribution && typeof attribution === 'object') {
+      const { sourceEntryId, sourceChallengeId, inviterParticipantId } = attribution;
+      // STRICT SELF-ATTRIBUTION PREVENTION: Inviter cannot be the same user id
+      if (sourceEntryId || sourceChallengeId || inviterParticipantId) {
+        newUser.attribution = {
+          sourceEntryId: sourceEntryId ? String(sourceEntryId) : undefined,
+          sourceChallengeId: sourceChallengeId ? String(sourceChallengeId) : undefined,
+          inviterParticipantId: (inviterParticipantId && inviterParticipantId !== userId) ? String(inviterParticipantId) : undefined,
+          timestamp: new Date().toISOString()
+        };
+        if (sourceEntryId && db.challengeEntries) {
+          const entry = db.challengeEntries.find(e => e.id === sourceEntryId);
+          if (entry && entry.participantId !== userId && (!inviterParticipantId || inviterParticipantId !== userId)) {
+            entry.referralRegistrationsCount = (entry.referralRegistrationsCount || 0) + 1;
+          }
+        }
+      }
     }
 
     db.users.push(newUser);
@@ -6604,6 +6630,11 @@ app.post('/api/user/claim-referral-bonus', (req, res) => {
 
   if (!hasActiveAccess(user)) {
     return res.status(403).json({ error: 'Expired na ang iyong trial o subscription. Mangyaring kumuha ng access plan upang magpatuloy.' });
+  }
+
+  // STRICT SELF-REFERRAL REWARD CLAIMING PREVENTION
+  if (friendId === user.id) {
+    return res.status(400).json({ error: 'Bawal ang self-referral.' });
   }
 
   const friend = user.referredFriends.find(f => f.id === friendId);
@@ -13995,6 +14026,11 @@ app.post('/api/challenges/:id/entries/:entryId/vote', (req, res) => {
   const entry = (db.challengeEntries || []).find(e => e.id === entryId && e.challengeId === id);
   if (!entry) return res.status(404).json({ error: 'Entry not found' });
 
+  // STRICT SERVER-SIDE SELF-VOTING PREVENTION
+  if (entry.participantId === user.id) {
+    return res.status(400).json({ error: 'Hindi maaaring bumoto sa sariling entry.' });
+  }
+
   if (!Array.isArray(entry.likes)) entry.likes = [];
 
   const existingIndex = entry.likes.indexOf(user.id);
@@ -14305,6 +14341,296 @@ app.post('/api/admin/challenges/:id/distribute-prizes', (req, res) => {
     message: `Matagumpay na na-disburse ang mga premyo sa ${distributions.length} kalahok at host!`,
     challenge,
     distributions
+  });
+});
+
+// ============================================
+//      WALLET FUNDING & DEPOSIT REQUESTS
+// ============================================
+
+// GET /api/user/wallet-summary - Retrieve authoritative wallet balance & locks breakdown
+app.get('/api/user/wallet-summary', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const wallet = getUserWalletBreakdown(user, db);
+  return res.json({ success: true, wallet });
+});
+
+// GET /api/user/deposit-requests - Retrieve current user's deposit requests
+app.get('/api/user/deposit-requests', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const requests = (db.depositRequests || [])
+    .filter(d => d.userId === user.id)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  return res.json({ success: true, requests });
+});
+
+// POST /api/user/deposit-requests - Submit a manual GCash deposit request
+app.post('/api/user/deposit-requests', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const { amount, referenceNo, proofImageUrl, targetPurpose, targetEntityId } = req.body;
+  const numAmount = Number(amount);
+  if (isNaN(numAmount) || numAmount <= 0) {
+    return res.status(400).json({ error: 'Maglagay ng wastong deposit amount (minimum ₱10.00).' });
+  }
+
+  if (!referenceNo || String(referenceNo).trim().length < 4) {
+    return res.status(400).json({ error: 'Kinakailangan ang wastong GCash reference number para sa verification.' });
+  }
+
+  const cleanRef = String(referenceNo).trim();
+
+  // Check duplicate pending reference
+  const duplicatePending = (db.depositRequests || []).find(d => 
+    d.referenceNo?.toLowerCase() === cleanRef.toLowerCase() && 
+    d.status === 'pending'
+  );
+  if (duplicatePending) {
+    return res.status(400).json({ error: 'Ang GCash reference number na ito ay naisumite na at kasalukuyang sinusuri pa ng admin.' });
+  }
+
+  const newDeposit: DepositRequest = {
+    id: 'dep-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    userId: user.id,
+    userName: user.name,
+    userEmail: user.email,
+    userAvatar: user.avatar,
+    amount: Number(numAmount.toFixed(2)),
+    referenceNo: cleanRef,
+    proofImageUrl: proofImageUrl ? String(proofImageUrl).trim() : undefined,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+    targetPurpose: targetPurpose || 'wallet',
+    targetEntityId: targetEntityId || undefined
+  };
+
+  if (!db.depositRequests) db.depositRequests = [];
+  db.depositRequests.unshift(newDeposit);
+
+  if (!user.activityLogs) user.activityLogs = [];
+  user.activityLogs.unshift({
+    id: 'act-dep-req-' + Date.now(),
+    type: 'deposit',
+    title: '⏳ GCash Deposit Submitted',
+    amount: newDeposit.amount,
+    timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+    details: `Hinihintay ang admin verification para sa ₱${newDeposit.amount.toFixed(2)} GCash deposit (Ref: ${cleanRef}).`
+  });
+
+  const walletSummary = getUserWalletBreakdown(user, db);
+
+  saveDB(db);
+  safeCloudSync('set', 'deposit_requests', newDeposit.id, newDeposit);
+  safeCloudSync('update', 'users', user.id, { activityLogs: user.activityLogs });
+
+  return res.json({
+    success: true,
+    message: 'Deposit request submitted. Hinihintay ang admin verification bago maidagdag ang funds sa iyong wallet.',
+    depositRequest: newDeposit,
+    wallet: walletSummary
+  });
+});
+
+// GET /api/admin/deposit-requests - List all deposit requests for admin review
+app.get('/api/admin/deposit-requests', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
+  const requests = (db.depositRequests || []).slice().sort((a, b) => 
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+
+  return res.json({ success: true, requests });
+});
+
+// POST /api/admin/deposit-requests/:id/approve - Approve deposit request & credit wallet server-side once
+app.post('/api/admin/deposit-requests/:id/approve', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
+  const { id } = req.params;
+  const depositReq = (db.depositRequests || []).find(d => d.id === id);
+  if (!depositReq) return res.status(404).json({ error: 'Deposit request not found' });
+
+  // STRICT IDEMPOTENCY & DUPLICATE APPROVAL PROTECTION
+  if (depositReq.status !== 'pending') {
+    return res.status(400).json({ error: `Ang deposit request na ito ay naproseso na (${depositReq.status}). Hindi maaaring ulitin.` });
+  }
+
+  const targetUser = db.users.find(u => u.id === depositReq.userId);
+  if (!targetUser) {
+    return res.status(404).json({ error: 'Ang user para sa deposit na ito ay hindi matagpuan.' });
+  }
+
+  depositReq.status = 'approved';
+  depositReq.reviewedAt = new Date().toISOString();
+  depositReq.reviewedBy = admin.name || admin.email || 'Admin';
+
+  // Server-side authoritative credit to wallet
+  targetUser.stats.balance = Number(((targetUser.stats.balance || 0) + depositReq.amount).toFixed(2));
+  targetUser.stats.lifetimeEarnings = Number(((targetUser.stats.lifetimeEarnings || 0) + depositReq.amount).toFixed(2));
+
+  if (!targetUser.activityLogs) targetUser.activityLogs = [];
+  targetUser.activityLogs.unshift({
+    id: 'act-dep-app-' + Date.now(),
+    type: 'reward',
+    title: '✅ GCash Deposit Approved',
+    amount: depositReq.amount,
+    timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+    details: `Na-credit ang ₱${depositReq.amount.toFixed(2)} sa iyong wallet mula sa GCash deposit (Ref: ${depositReq.referenceNo || 'N/A'}).`
+  });
+
+  const walletSummary = getUserWalletBreakdown(targetUser, db);
+
+  saveDB(db);
+  safeCloudSync('update', 'deposit_requests', depositReq.id, {
+    status: 'approved',
+    reviewedAt: depositReq.reviewedAt,
+    reviewedBy: depositReq.reviewedBy
+  });
+  safeCloudSync('update', 'users', targetUser.id, {
+    stats: targetUser.stats,
+    activityLogs: targetUser.activityLogs
+  });
+
+  return res.json({
+    success: true,
+    message: `Matagumpay na na-credit ang ₱${depositReq.amount.toFixed(2)} sa wallet ni ${targetUser.name}!`,
+    depositRequest: depositReq,
+    wallet: walletSummary
+  });
+});
+
+// POST /api/admin/deposit-requests/:id/reject - Reject deposit request without crediting wallet
+app.post('/api/admin/deposit-requests/:id/reject', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
+  const { id } = req.params;
+  const depositReq = (db.depositRequests || []).find(d => d.id === id);
+  if (!depositReq) return res.status(404).json({ error: 'Deposit request not found' });
+
+  if (depositReq.status !== 'pending') {
+    return res.status(400).json({ error: `Ang deposit request na ito ay naproseso na (${depositReq.status}). Hindi maaaring ulitin.` });
+  }
+
+  const reason = req.body.reason ? String(req.body.reason).trim() : 'Hindi ma-verify ang reference number o payment proof.';
+
+  depositReq.status = 'rejected';
+  depositReq.reviewedAt = new Date().toISOString();
+  depositReq.reviewedBy = admin.name || admin.email || 'Admin';
+  depositReq.rejectionReason = reason;
+
+  const targetUser = db.users.find(u => u.id === depositReq.userId);
+  if (targetUser) {
+    if (!targetUser.activityLogs) targetUser.activityLogs = [];
+    targetUser.activityLogs.unshift({
+      id: 'act-dep-rej-' + Date.now(),
+      type: 'withdraw',
+      title: '❌ GCash Deposit Rejected',
+      amount: depositReq.amount,
+      timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+      details: `Hindi naaprubahan ang iyong deposit request: ${reason}`
+    });
+    getUserWalletBreakdown(targetUser, db);
+    safeCloudSync('update', 'users', targetUser.id, { activityLogs: targetUser.activityLogs });
+  }
+
+  saveDB(db);
+  safeCloudSync('update', 'deposit_requests', depositReq.id, {
+    status: 'rejected',
+    reviewedAt: depositReq.reviewedAt,
+    reviewedBy: depositReq.reviewedBy,
+    rejectionReason: reason
+  });
+
+  return res.json({
+    success: true,
+    message: 'Deposit request marked as rejected.',
+    depositRequest: depositReq
+  });
+});
+
+// ============================================
+//   VIRAL SHARING & PUBLIC ENTRY LANDING
+// ============================================
+
+// GET /api/public/challenges/:challengeId/entries/:entryId - Public entry landing & share details
+app.get('/api/public/challenges/:challengeId/entries/:entryId', (req, res) => {
+  const { challengeId, entryId } = req.params;
+  const db = loadDB();
+
+  const challenge = (db.creatorChallenges || []).find(c => c.id === challengeId);
+  const entry = (db.challengeEntries || []).find(e => e.id === entryId && e.challengeId === challengeId);
+
+  if (!challenge || !entry) {
+    return res.status(404).json({ error: 'Challenge entry not found' });
+  }
+
+  // Record link open counter locally (non-blocking local persistent save, no firestore thrashing)
+  entry.linkOpensCount = (entry.linkOpensCount || 0) + 1;
+  saveDB(db);
+
+  return res.json({
+    success: true,
+    challenge: {
+      id: challenge.id,
+      title: challenge.title,
+      description: challenge.description,
+      category: challenge.category,
+      rules: challenge.rules,
+      prizePool: challenge.prizePool,
+      sponsorName: challenge.sponsorName,
+      status: challenge.status,
+      endDate: challenge.endDate,
+      participantsCount: challenge.participantsCount
+    },
+    entry: {
+      id: entry.id,
+      challengeId: entry.challengeId,
+      participantId: entry.participantId,
+      participantName: entry.participantName,
+      participantAvatar: entry.participantAvatar,
+      mediaUrl: entry.mediaUrl,
+      mediaType: entry.mediaType,
+      caption: entry.caption,
+      score: entry.score,
+      votesCount: entry.votesCount,
+      likesCount: entry.likes?.length || 0,
+      createdAt: entry.createdAt,
+      linkOpensCount: entry.linkOpensCount || 0,
+      referralRegistrationsCount: entry.referralRegistrationsCount || 0
+    }
   });
 });
 
