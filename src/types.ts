@@ -552,6 +552,11 @@ export interface UserSession {
   activityLogs: ActivityLog[];
   referredFriends: ReferralFriend[];
   vaStats?: UserVAStats;
+  // Wallet Funding & Reservation (Local-First Ledger)
+  lockedChallengeFunds?: number;
+  lockedMissionFunds?: number;
+  availableBalance?: number;
+  pendingDeposits?: number;
   // Community Safety, Age Verification & Device Binding
   accountSafetyStatus?: AccountSafetyStatus;
   isMinor?: boolean;
@@ -683,6 +688,7 @@ export interface ChallengeEntry {
   mediaType?: 'video' | 'image' | 'text';
   caption: string;
   createdAt: string;
+  updatedAt?: string;
   status: ChallengeEntryStatus;
   score: number;
   likes: string[];
@@ -707,6 +713,36 @@ export interface SponsoredMission {
   createdAt: string;
   approvedAt?: string;
   settledAt?: string;
+}
+
+export type DepositStatus = 'pending' | 'approved' | 'rejected';
+
+export interface DepositRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userAvatar?: string;
+  amount: number;
+  referenceNo?: string;
+  proofImageUrl?: string;
+  status: DepositStatus;
+  createdAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  rejectionReason?: string;
+  targetPurpose?: 'challenge' | 'sponsor' | 'wallet';
+  targetEntityId?: string;
+}
+
+export interface WalletSummary {
+  totalBalance: number;
+  availableBalance: number;
+  lockedChallengeFunds: number;
+  lockedMissionFunds: number;
+  pendingDeposits: number;
+  activeChallengesCount?: number;
+  activeMissionsCount?: number;
 }
 
 

@@ -1231,6 +1231,10 @@ interface UserSession {
     method: 'face_liveness_id' | 'device_attestation';
     riskScore: number;
   };
+  lockedChallengeFunds?: number;
+  lockedMissionFunds?: number;
+  availableBalance?: number;
+  pendingDeposits?: number;
 }
 
 interface DirectMessage {
@@ -1531,6 +1535,7 @@ interface ChallengeEntry {
   mediaType?: 'video' | 'image' | 'text';
   caption: string;
   createdAt: string;
+  updatedAt?: string;
   status: 'pending' | 'approved' | 'rejected';
   score: number;
   likes: string[];
@@ -1585,6 +1590,72 @@ interface DBStructure {
   creatorChallenges?: CreatorChallenge[];
   challengeEntries?: ChallengeEntry[];
   sponsoredMissions?: SponsoredMission[];
+  depositRequests?: DepositRequest[];
+}
+
+interface DepositRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userAvatar?: string;
+  amount: number;
+  referenceNo?: string;
+  proofImageUrl?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  rejectionReason?: string;
+  targetPurpose?: 'challenge' | 'sponsor' | 'wallet';
+  targetEntityId?: string;
+}
+
+function getUserWalletBreakdown(user: UserSession, db: DBStructure) {
+  const totalBalance = Number((user.stats?.balance || 0).toFixed(2));
+  
+  // Calculate active locked challenge funds hosted by this user (where self-funded, not yet settled or cancelled)
+  const activeChallenges = (db.creatorChallenges || []).filter(c => 
+    c.hostId === user.id && 
+    (c.status === 'active' || c.status === 'pending_review' || c.status === 'draft') &&
+    !c.isSettled &&
+    (!c.sponsorBudget || c.sponsorBudget <= 0)
+  );
+  const lockedChallengeFunds = Number(activeChallenges.reduce((sum, c) => sum + (c.prizePool || 0), 0).toFixed(2));
+
+  // Calculate active locked sponsored mission funds sponsored by this user
+  const activeMissions = (db.sponsoredMissions || []).filter(m => 
+    m.sponsorId === user.id && 
+    (m.status === 'active' || m.status === 'pending_review' || m.status === 'draft') &&
+    m.status !== 'completed' &&
+    m.status !== 'cancelled'
+  );
+  const lockedMissionFunds = Number(activeMissions.reduce((sum, m) => sum + (m.budget || 0), 0).toFixed(2));
+
+  // Calculate pending deposits
+  const pendingDepositReqs = (db.depositRequests || []).filter(d => 
+    d.userId === user.id && d.status === 'pending'
+  );
+  const pendingDeposits = Number(pendingDepositReqs.reduce((sum, d) => sum + (d.amount || 0), 0).toFixed(2));
+
+  // Available balance is total balance minus locked challenge and mission funds
+  const availableBalance = Math.max(0, Number((totalBalance - lockedChallengeFunds - lockedMissionFunds).toFixed(2)));
+
+  // Sync to user object
+  user.lockedChallengeFunds = lockedChallengeFunds;
+  user.lockedMissionFunds = lockedMissionFunds;
+  user.availableBalance = availableBalance;
+  user.pendingDeposits = pendingDeposits;
+
+  return {
+    totalBalance,
+    availableBalance,
+    lockedChallengeFunds,
+    lockedMissionFunds,
+    pendingDeposits,
+    activeChallengesCount: activeChallenges.length,
+    activeMissionsCount: activeMissions.length
+  };
 }
 
 const INITIAL_KIDDIE_CONTENT: KiddieContentItem[] = [
@@ -2371,6 +2442,9 @@ function loadDB(): DBStructure {
     if (!loaded.sponsoredMissions) {
       loaded.sponsoredMissions = INITIAL_SPONSORED_MISSIONS;
     }
+    if (!loaded.depositRequests) {
+      loaded.depositRequests = [];
+    }
 
     // Run auto-expiration on banners & unpaid baskets
     checkAndExpireBanners(loaded);
@@ -2592,7 +2666,8 @@ function loadDB(): DBStructure {
     ],
     creatorChallenges: INITIAL_CREATOR_CHALLENGES,
     challengeEntries: INITIAL_CHALLENGE_ENTRIES,
-    sponsoredMissions: INITIAL_SPONSORED_MISSIONS
+    sponsoredMissions: INITIAL_SPONSORED_MISSIONS,
+    depositRequests: []
   };
 
   // Add Maria Clara as admin's referred friend at the start
@@ -2638,7 +2713,8 @@ const lastSyncedCache = {
   kiddieContent: new Map<string, string>(),
   creatorChallenges: new Map<string, string>(),
   challengeEntries: new Map<string, string>(),
-  sponsoredMissions: new Map<string, string>()
+  sponsoredMissions: new Map<string, string>(),
+  depositRequests: new Map<string, string>()
 };
 
 function initLastSyncedCache(data: DBStructure) {
@@ -2750,6 +2826,11 @@ function initLastSyncedCache(data: DBStructure) {
   if (lastSyncedCache.sponsoredMissions.size === 0 && data.sponsoredMissions && data.sponsoredMissions.length > 0) {
     for (const sm of data.sponsoredMissions) {
       lastSyncedCache.sponsoredMissions.set(sm.id, JSON.stringify(sm));
+    }
+  }
+  if (lastSyncedCache.depositRequests.size === 0 && data.depositRequests && data.depositRequests.length > 0) {
+    for (const dr of data.depositRequests) {
+      lastSyncedCache.depositRequests.set(dr.id, JSON.stringify(dr));
     }
   }
 }
@@ -3616,6 +3697,25 @@ async function uploadToFirestore(data: DBStructure) {
             } catch (smErr: any) {
               console.error(`Error saving sponsored mission ${sm.id} to Cloud DB:`, smErr);
               enqueueFirestoreSync('set', 'sponsored_missions', sm.id, sm, smErr?.message || String(smErr));
+            }
+          })());
+        }
+      }
+    }
+
+    if (data.depositRequests) {
+      for (const dr of data.depositRequests) {
+        const drStr = JSON.stringify(dr);
+        if (lastSyncedCache.depositRequests.get(dr.id) !== drStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...drWithoutId } = dr;
+              await cloudDb.setDoc('deposit_requests', dr.id, drWithoutId);
+              lastSyncedCache.depositRequests.set(dr.id, drStr);
+              dequeueFirestoreSync('deposit_requests', dr.id);
+            } catch (drErr: any) {
+              console.error(`Error saving deposit request ${dr.id} to Cloud DB:`, drErr);
+              enqueueFirestoreSync('set', 'deposit_requests', dr.id, dr, drErr?.message || String(drErr));
             }
           })());
         }
@@ -5083,6 +5183,8 @@ app.get('/api/user/profile', (req, res) => {
       withdrawals: realSuccessWithdrawals
     };
   });
+
+  getUserWalletBreakdown(user, db);
 
   const { password: _, ...userSafe } = user as any;
   userSafe.referredFriends = synchronizedReferredFriends;
@@ -6600,8 +6702,11 @@ app.post('/api/user/withdraw', checkIdempotency, (req, res) => {
     return res.status(403).json({ error: 'Expired na ang iyong trial o subscription. Mangyaring kumuha ng access plan upang magpatuloy.' });
   }
 
-  if (user.stats.balance < requestedAmount) {
-    return res.status(400).json({ error: 'Kulang ang iyong kasalukuyang balanse sa hinihiling na withdrawal.' });
+  const { availableBalance } = getUserWalletBreakdown(user, db);
+  if (availableBalance < requestedAmount) {
+    return res.status(400).json({
+      error: `Kulang ang iyong available balance (₱${availableBalance.toFixed(2)}). May mga pondo kang naka-lock sa active challenges o sponsored missions na hindi maaaring i-withdraw.`
+    });
   }
 
   // Deduct from balance
@@ -13565,6 +13670,32 @@ app.post('/api/challenges', (req, res) => {
   const hostEarn = budget > 0 ? Math.floor(budget * 0.25) : 0;
   const fee = budget > 0 ? budget - prize - hostEarn : 0;
 
+  // Server-side check for host available balance if self-funding the challenge prize pool
+  const requiredBudget = budget > 0 ? 0 : prize;
+  if (requiredBudget > 0) {
+    const { availableBalance } = getUserWalletBreakdown(user, db);
+    if (availableBalance < requiredBudget) {
+      const shortfall = Number((requiredBudget - availableBalance).toFixed(2));
+      return res.status(400).json({
+        error: `Kulang ang iyong available wallet balance (₱${availableBalance.toFixed(2)}). Kailangan ng ₱${requiredBudget.toFixed(2)} para ma-ponduhan ang challenge prize pool. Kulang: ₱${shortfall.toFixed(2)}. Mangyaring mag-deposit muna ng pondo.`,
+        code: 'INSUFFICIENT_BALANCE',
+        requiredAmount: requiredBudget,
+        availableBalance,
+        shortfall
+      });
+    }
+
+    if (!user.activityLogs) user.activityLogs = [];
+    user.activityLogs.unshift({
+      id: 'act-chal-lock-' + Date.now(),
+      type: 'withdraw',
+      title: `🔒 Challenge Budget Reserved (${String(title).trim()})`,
+      amount: requiredBudget,
+      timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+      details: `Na-reserve ang ₱${requiredBudget.toFixed(2)} prize pool mula sa iyong available balance para sa iyong bagong challenge.`
+    });
+  }
+
   const newChallenge: CreatorChallenge = {
     id: 'chal-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
     hostId: user.id,
@@ -13598,12 +13729,17 @@ app.post('/api/challenges', (req, res) => {
   if (!db.creatorChallenges) db.creatorChallenges = [];
   db.creatorChallenges.unshift(newChallenge);
 
+  // Recalculate wallet state after locking funds
+  const walletSummary = getUserWalletBreakdown(user, db);
+
   saveDB(db);
   safeCloudSync('set', 'challenges', newChallenge.id, newChallenge);
+  safeCloudSync('update', 'users', user.id, { stats: user.stats, activityLogs: user.activityLogs });
 
   return res.json({
     success: true,
-    challenge: newChallenge
+    challenge: newChallenge,
+    wallet: walletSummary
   });
 });
 
@@ -13659,7 +13795,28 @@ app.post('/api/challenges/:id/join', (req, res) => {
   });
 });
 
-// 7. POST /api/challenges/:id/entries - Submit an entry
+// 7. GET /api/challenges/:id/my-entry - Get user's current entry for this challenge
+app.get('/api/challenges/:id/my-entry', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const { id } = req.params;
+  const entry = (db.challengeEntries || []).find(
+    e => e.challengeId === id && e.participantId === user.id && e.status !== 'rejected'
+  );
+
+  return res.json({
+    success: true,
+    hasEntry: !!entry,
+    entry: entry || null
+  });
+});
+
+// 7b. POST /api/challenges/:id/entries - Submit an entry with One User = One Entry Per Challenge rule
 app.post('/api/challenges/:id/entries', (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Authentication required' });
@@ -13676,9 +13833,53 @@ app.post('/api/challenges/:id/entries', (req, res) => {
     return res.status(400).json({ error: 'Ang challenge na ito ay hindi na aktibo.' });
   }
 
-  const { mediaUrl, mediaType, caption } = req.body;
+  // Check deadline
+  if (new Date(challenge.endDate).getTime() < Date.now()) {
+    return res.status(400).json({ error: 'Tapos na ang palugit ng challenge na ito.' });
+  }
+
+  const { mediaUrl, mediaType, caption, action, replace } = req.body;
   if (!mediaUrl) {
     return res.status(400).json({ error: 'Kailangang mag-upload o maglagay ng video o image URL.' });
+  }
+
+  if (!db.challengeEntries) db.challengeEntries = [];
+
+  // ONE USER = ONE ENTRY ENFORCEMENT (Server-side validation)
+  const existingEntry = db.challengeEntries.find(
+    e => e.challengeId === challenge.id && e.participantId === user.id && e.status !== 'rejected'
+  );
+
+  if (existingEntry) {
+    // If request explicitly indicates to replace or edit
+    if (action === 'replace' || replace === true) {
+      existingEntry.mediaUrl = String(mediaUrl).trim();
+      existingEntry.mediaType = mediaType === 'video' ? 'video' : 'image';
+      existingEntry.caption = String(caption || '').trim();
+      existingEntry.updatedAt = new Date().toISOString();
+
+      saveDB(db);
+      safeCloudSync('update', 'challenge_entries', existingEntry.id, {
+        mediaUrl: existingEntry.mediaUrl,
+        mediaType: existingEntry.mediaType,
+        caption: existingEntry.caption,
+        updatedAt: existingEntry.updatedAt
+      });
+
+      return res.json({
+        success: true,
+        isUpdated: true,
+        message: 'Matagumpay na na-update ang iyong entry sa challenge!',
+        entry: existingEntry
+      });
+    }
+
+    // Reject duplicate entry with required exact message
+    return res.status(400).json({
+      error: 'May existing entry ka na sa challenge na ito. Maaari mo itong i-edit o palitan habang hindi pa tapos ang challenge.',
+      hasExistingEntry: true,
+      existingEntry
+    });
   }
 
   // Ensure user is in participants
@@ -13704,9 +13905,7 @@ app.post('/api/challenges/:id/entries', (req, res) => {
     votesCount: 1
   };
 
-  if (!db.challengeEntries) db.challengeEntries = [];
   db.challengeEntries.unshift(newEntry);
-
   challenge.entriesCount = (challenge.entriesCount || 0) + 1;
 
   saveDB(db);
@@ -13721,6 +13920,65 @@ app.post('/api/challenges/:id/entries', (req, res) => {
     success: true,
     message: 'Nai-submit na ang iyong entry sa challenge!',
     entry: newEntry
+  });
+});
+
+// 7c. PUT /api/challenges/:id/entries/:entryId - Edit / Replace existing entry
+app.put('/api/challenges/:id/entries/:entryId', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const { id, entryId } = req.params;
+  const challenge = (db.creatorChallenges || []).find(c => c.id === id);
+  if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
+
+  if (challenge.status !== 'active' || new Date(challenge.endDate).getTime() < Date.now()) {
+    return res.status(400).json({ error: 'Hindi na maaaring i-edit o palitan ang entry dahil sarado o tapos na ang challenge.' });
+  }
+
+  if (!db.challengeEntries) db.challengeEntries = [];
+
+  const entry = entryId === 'my-entry'
+    ? db.challengeEntries.find(e => e.challengeId === challenge.id && e.participantId === user.id && e.status !== 'rejected')
+    : db.challengeEntries.find(e => e.id === entryId && e.challengeId === challenge.id);
+
+  if (!entry) {
+    return res.status(404).json({ error: 'Entry not found' });
+  }
+
+  // Security: strict ownership validation
+  if (entry.participantId !== user.id) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na i-edit ang entry na ito dahil hindi ikaw ang may-ari.' });
+  }
+
+  const { mediaUrl, mediaType, caption } = req.body;
+  if (!mediaUrl) {
+    return res.status(400).json({ error: 'Kailangang mag-upload o maglagay ng video o image URL.' });
+  }
+
+  // Update in place without creating new entry record
+  entry.mediaUrl = String(mediaUrl).trim();
+  entry.mediaType = mediaType === 'video' ? 'video' : 'image';
+  entry.caption = String(caption || '').trim();
+  entry.updatedAt = new Date().toISOString();
+
+  saveDB(db);
+  safeCloudSync('update', 'challenge_entries', entry.id, {
+    mediaUrl: entry.mediaUrl,
+    mediaType: entry.mediaType,
+    caption: entry.caption,
+    updatedAt: entry.updatedAt
+  });
+
+  return res.json({
+    success: true,
+    isUpdated: true,
+    message: 'Matagumpay na na-update ang iyong entry sa challenge!',
+    entry
   });
 });
 
@@ -13803,6 +14061,29 @@ app.post('/api/sponsored-missions', (req, res) => {
     return res.status(400).json({ error: 'Minimum sponsor budget ay ₱500.' });
   }
 
+  // Server-side check for sponsor available balance
+  const { availableBalance } = getUserWalletBreakdown(user, db);
+  if (availableBalance < numBudget) {
+    const shortfall = Number((numBudget - availableBalance).toFixed(2));
+    return res.status(400).json({
+      error: `Kulang ang iyong available wallet balance (₱${availableBalance.toFixed(2)}). Kailangan ng ₱${numBudget.toFixed(2)} para ma-ponduhan ang Sponsored Mission. Kulang: ₱${shortfall.toFixed(2)}. Mangyaring mag-deposit muna ng pondo.`,
+      code: 'INSUFFICIENT_BALANCE',
+      requiredAmount: numBudget,
+      availableBalance,
+      shortfall
+    });
+  }
+
+  if (!user.activityLogs) user.activityLogs = [];
+  user.activityLogs.unshift({
+    id: 'act-miss-lock-' + Date.now(),
+    type: 'withdraw',
+    title: `🔒 Sponsored Mission Budget Reserved (${String(title).trim()})`,
+    amount: numBudget,
+    timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+    details: `Na-reserve ang ₱${numBudget.toFixed(2)} mission budget mula sa iyong available balance para sa Sponsored Mission.`
+  });
+
   const prizePool = Math.floor(numBudget * 0.5);
   const hostEarnings = Math.floor(numBudget * 0.25);
   const platformFee = numBudget - prizePool - hostEarnings;
@@ -13853,12 +14134,17 @@ app.post('/api/sponsored-missions', (req, res) => {
     }
   }
 
+  // Recalculate wallet state after locking funds
+  const walletSummary = getUserWalletBreakdown(user, db);
+
   saveDB(db);
   safeCloudSync('set', 'sponsored_missions', newMission.id, newMission);
+  safeCloudSync('update', 'users', user.id, { stats: user.stats, activityLogs: user.activityLogs });
 
   return res.json({
     success: true,
-    mission: newMission
+    mission: newMission,
+    wallet: walletSummary
   });
 });
 

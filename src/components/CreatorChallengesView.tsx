@@ -24,7 +24,8 @@ import {
   Upload,
   Filter,
   Check,
-  ChevronRight
+  ChevronRight,
+  Edit3
 } from 'lucide-react';
 import { CreatorChallenge, ChallengeEntry, SponsoredMission, UserSession } from '../types';
 
@@ -36,6 +37,145 @@ interface CreatorChallengesViewProps {
   triggerNotification?: (message: string, type: 'success' | 'info' | 'error') => void;
   onRefreshProfile?: () => void;
 }
+
+// Fallback image constants
+const DEFAULT_CHALLENGE_COVER = 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&auto=format&fit=crop&q=60';
+const DEFAULT_ENTRY_PLACEHOLDER = 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=400&auto=format&fit=crop&q=60';
+
+// Safe image URL helper - ensures image URLs or data:image values are strictly used as image source, never normal text
+const getSafeImageUrl = (url?: string, fallback: string = DEFAULT_CHALLENGE_COVER): string => {
+  if (!url || typeof url !== 'string') return fallback;
+  const trimmed = url.trim();
+  if (
+    trimmed.startsWith('data:image/') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('blob:') ||
+    trimmed.startsWith('/')
+  ) {
+    return trimmed;
+  }
+  return fallback;
+};
+
+// Check if a media value is an image (including base64 data URLs)
+const isImageMedia = (url?: string, type?: string): boolean => {
+  if (type === 'image') return true;
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim().toLowerCase();
+  if (trimmed.startsWith('data:image/')) return true;
+  if (trimmed.includes(';base64,')) return true;
+  if (
+    trimmed.endsWith('.jpg') ||
+    trimmed.endsWith('.jpeg') ||
+    trimmed.endsWith('.png') ||
+    trimmed.endsWith('.gif') ||
+    trimmed.endsWith('.webp') ||
+    trimmed.endsWith('.svg') ||
+    trimmed.endsWith('.avif') ||
+    trimmed.includes('images.unsplash.com')
+  ) {
+    return true;
+  }
+  return false;
+};
+
+// Safe display name helper - guarantees base64 data, raw media URLs, or raw media fields never leak into name
+const getSafeDisplayName = (name?: string, fallback: string = 'Kalahok'): string => {
+  if (!name || typeof name !== 'string') return fallback;
+  const trimmed = name.trim();
+  if (
+    trimmed.startsWith('data:') ||
+    trimmed.includes(';base64,') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('blob:') ||
+    trimmed.length > 50
+  ) {
+    return fallback;
+  }
+  return trimmed;
+};
+
+// Safe caption helper - prevents raw base64 or media URLs from displaying as text caption
+const getSafeCaption = (caption?: string): string | null => {
+  if (!caption || typeof caption !== 'string') return null;
+  const trimmed = caption.trim();
+  if (
+    trimmed.startsWith('data:') ||
+    trimmed.includes(';base64,') ||
+    trimmed.startsWith('blob:') ||
+    trimmed.length > 400
+  ) {
+    return null;
+  }
+  return trimmed;
+};
+
+// Safe text helper for title/description/rules
+const getSafeText = (text?: string, maxLen: number = 300): string => {
+  if (!text || typeof text !== 'string') return '';
+  const trimmed = text.trim();
+  if (trimmed.startsWith('data:') || trimmed.includes(';base64,')) {
+    return '';
+  }
+  return trimmed.length > maxLen ? trimmed.slice(0, maxLen) + '...' : trimmed;
+};
+
+// Safe Avatar Component - renders image tag if data:image or URL, emoji if short text, fallback if invalid/empty
+const SafeAvatar: React.FC<{
+  avatar?: string;
+  fallbackEmoji?: string;
+  className?: string;
+  alt?: string;
+}> = ({ avatar, fallbackEmoji = '👤', className = 'w-10 h-10 rounded-full', alt = 'Avatar' }) => {
+  const [hasError, setHasError] = useState(false);
+
+  if (!avatar || typeof avatar !== 'string' || hasError) {
+    return (
+      <span className="text-base select-none leading-none flex items-center justify-center">
+        {fallbackEmoji}
+      </span>
+    );
+  }
+
+  const trimmed = avatar.trim();
+  const isImage = 
+    trimmed.startsWith('data:image/') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('blob:') ||
+    trimmed.startsWith('/') ||
+    trimmed.includes(';base64,');
+
+  if (isImage) {
+    return (
+      <img
+        src={trimmed}
+        alt={alt}
+        className={`${className} object-cover shrink-0 select-none`}
+        referrerPolicy="no-referrer"
+        onError={() => setHasError(true)}
+      />
+    );
+  }
+
+  // If it's some other long string or data scheme, never render as raw text
+  if (trimmed.startsWith('data:') || trimmed.length > 20) {
+    return (
+      <span className="text-base select-none leading-none flex items-center justify-center">
+        {fallbackEmoji}
+      </span>
+    );
+  }
+
+  // Standard short emoji or initials
+  return (
+    <span className="text-base select-none leading-none flex items-center justify-center">
+      {trimmed}
+    </span>
+  );
+};
 
 export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
   token,
@@ -62,13 +202,32 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
   const [challengeEntries, setChallengeEntries] = useState<ChallengeEntry[]>([]);
   const [challengeLeaderboard, setChallengeLeaderboard] = useState<ChallengeEntry[]>([]);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [viewingMedia, setViewingMedia] = useState<{ url: string; type: 'image' | 'video'; title: string } | null>(null);
 
-  // Submit Entry Modal
+  // Submit / Edit Entry Modal
   const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [entryMediaUrl, setEntryMediaUrl] = useState('');
   const [entryMediaType, setEntryMediaType] = useState<'video' | 'image'>('video');
   const [entryCaption, setEntryCaption] = useState('');
   const [submittingEntry, setSubmittingEntry] = useState(false);
+
+  // Helper to open submit or edit modal with prefilled data
+  const openSubmitOrEditModal = (chal: CreatorChallenge, existingEntry?: ChallengeEntry | null) => {
+    setSelectedChallenge(chal);
+    if (existingEntry) {
+      setEditingEntryId(existingEntry.id);
+      setEntryMediaUrl(existingEntry.mediaUrl || '');
+      setEntryMediaType(existingEntry.mediaType === 'image' ? 'image' : 'video');
+      setEntryCaption(existingEntry.caption || '');
+    } else {
+      setEditingEntryId(null);
+      setEntryMediaUrl('');
+      setEntryMediaType('video');
+      setEntryCaption('');
+    }
+    setShowSubmitModal(true);
+  };
 
   // Host Challenge Form
   const [hostTitle, setHostTitle] = useState('');
@@ -225,7 +384,7 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
     }
   };
 
-  // Submit an Entry
+  // Submit or Edit an Entry (One User = One Entry Per Challenge)
   const handleSubmitEntry = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token || !selectedChallenge) return;
@@ -237,29 +396,69 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
 
     setSubmittingEntry(true);
     try {
-      const res = await fetch(`/api/challenges/${selectedChallenge.id}/entries`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          mediaUrl: entryMediaUrl.trim(),
-          mediaType: entryMediaType,
-          caption: entryCaption.trim()
-        })
-      });
+      if (editingEntryId) {
+        // Edit / Replace existing entry
+        const res = await fetch(`/api/challenges/${selectedChallenge.id}/entries/${editingEntryId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            mediaUrl: entryMediaUrl.trim(),
+            mediaType: entryMediaType,
+            caption: entryCaption.trim()
+          })
+        });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
-        triggerNotification?.(isTl ? '🎉 Tagumpay! Nai-submit ang iyong challenge entry.' : 'Entry submitted successfully!', 'success');
-        setShowSubmitModal(false);
-        setEntryMediaUrl('');
-        setEntryCaption('');
-        handleOpenChallenge(selectedChallenge);
-        fetchChallenges();
+        const data = await res.json();
+        if (res.ok && data.success) {
+          triggerNotification?.(isTl ? '🎉 Tagumpay! Na-update ang iyong challenge entry nang walang duplicate record.' : 'Entry updated successfully without duplicate record!', 'success');
+          setShowSubmitModal(false);
+          setEditingEntryId(null);
+          setEntryMediaUrl('');
+          setEntryCaption('');
+          handleOpenChallenge(selectedChallenge);
+          fetchChallenges();
+        } else {
+          triggerNotification?.(data.error || (isTl ? 'Bigo sa pag-update ng entry.' : 'Failed to update entry.'), 'error');
+        }
       } else {
-        triggerNotification?.(data.error || (isTl ? 'Bigo sa pag-submit ng entry.' : 'Failed to submit entry.'), 'error');
+        // Submit new entry (Enforces 1 user = 1 entry server-side)
+        const res = await fetch(`/api/challenges/${selectedChallenge.id}/entries`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            mediaUrl: entryMediaUrl.trim(),
+            mediaType: entryMediaType,
+            caption: entryCaption.trim()
+          })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+          triggerNotification?.(isTl ? '🎉 Tagumpay! Nai-submit ang iyong challenge entry.' : 'Entry submitted successfully!', 'success');
+          setShowSubmitModal(false);
+          setEditingEntryId(null);
+          setEntryMediaUrl('');
+          setEntryCaption('');
+          handleOpenChallenge(selectedChallenge);
+          fetchChallenges();
+        } else if (data.hasExistingEntry) {
+          // Explicit message required by prompt
+          triggerNotification?.(data.error || (isTl ? 'May existing entry ka na sa challenge na ito. Maaari mo itong i-edit o palitan habang hindi pa tapos ang challenge.' : 'You already have an existing entry in this challenge. You may edit or replace it.'), 'info');
+          if (data.existingEntry) {
+            setEditingEntryId(data.existingEntry.id);
+            setEntryMediaUrl(data.existingEntry.mediaUrl || '');
+            setEntryMediaType(data.existingEntry.mediaType === 'image' ? 'image' : 'video');
+            setEntryCaption(data.existingEntry.caption || '');
+          }
+        } else {
+          triggerNotification?.(data.error || (isTl ? 'Bigo sa pag-submit ng entry.' : 'Failed to submit entry.'), 'error');
+        }
       }
     } catch (err) {
       triggerNotification?.('Error submitting entry', 'error');
@@ -565,15 +764,18 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                 return (
                   <div
                     key={chal.id}
-                    className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-md transition duration-300 flex flex-col justify-between group"
+                    className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-md transition duration-300 flex flex-col justify-between group max-w-full"
                   >
                     {/* Top Cover Image & Badges */}
                     <div className="relative h-44 bg-slate-900 overflow-hidden">
                       <img
-                        src={chal.coverImage || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&auto=format&fit=crop&q=60'}
-                        alt={chal.title}
+                        src={getSafeImageUrl(chal.coverImage, DEFAULT_CHALLENGE_COVER)}
+                        alt={getSafeText(chal.title, 40) || 'Challenge'}
                         className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
                         referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          e.currentTarget.src = DEFAULT_CHALLENGE_COVER;
+                        }}
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/20 to-transparent" />
 
@@ -619,20 +821,24 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                     </div>
 
                     {/* Card Body */}
-                    <div className="p-5 space-y-4 flex-1 flex flex-col justify-between">
-                      <div className="space-y-2">
+                    <div className="p-5 space-y-4 flex-1 flex flex-col justify-between overflow-hidden min-w-0 max-w-full">
+                      <div className="space-y-2 overflow-hidden min-w-0">
                         {/* Host info */}
-                        <div className="flex items-center gap-2 text-xs">
-                          <span className="text-base">{chal.hostAvatar || '👤'}</span>
-                          <span className="font-black text-slate-800">{chal.hostName}</span>
-                          <span className="text-[10px] text-slate-400 font-bold">• Host</span>
+                        <div className="flex items-center gap-2 text-xs min-w-0 max-w-full overflow-hidden">
+                          <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center overflow-hidden shrink-0 border border-slate-200">
+                            <SafeAvatar avatar={chal.hostAvatar} fallbackEmoji="👤" className="w-6 h-6 rounded-full" alt="Host" />
+                          </div>
+                          <span className="font-black text-slate-800 truncate max-w-[170px] sm:max-w-[210px]">
+                            {getSafeDisplayName(chal.hostName, 'Challenge Host')}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-bold shrink-0">• Host</span>
                         </div>
 
-                        <h3 className="font-extrabold text-base text-slate-900 line-clamp-1 group-hover:text-indigo-600 transition">
-                          {chal.title}
+                        <h3 className="font-extrabold text-base text-slate-900 line-clamp-1 group-hover:text-indigo-600 transition break-words">
+                          {getSafeText(chal.title, 80) || (isTl ? 'Walang Pamagat' : 'Untitled Challenge')}
                         </h3>
-                        <p className="text-xs text-slate-600 font-medium line-clamp-2 leading-relaxed">
-                          {chal.description || chal.rules}
+                        <p className="text-xs text-slate-600 font-medium line-clamp-2 leading-relaxed break-words">
+                          {getSafeText(chal.description || chal.rules, 200)}
                         </p>
                       </div>
 
@@ -662,10 +868,7 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                           {!isEnded && (
                             isJoined ? (
                               <button
-                                onClick={() => {
-                                  setSelectedChallenge(chal);
-                                  setShowSubmitModal(true);
-                                }}
+                                onClick={() => openSubmitOrEditModal(chal, null)}
                                 className="px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition cursor-pointer flex items-center gap-1 shrink-0 shadow-sm"
                               >
                                 <Upload className="w-3.5 h-3.5" />
@@ -741,24 +944,24 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {sponsoredMissions.map(m => (
-                <div key={m.id} className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xs space-y-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-150 flex items-center justify-center text-lg">
-                        {m.sponsorAvatar || '🏢'}
+                <div key={m.id} className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xs space-y-4 max-w-full overflow-hidden">
+                  <div className="flex items-start justify-between gap-3 min-w-0 max-w-full">
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1 overflow-hidden">
+                      <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-150 flex items-center justify-center overflow-hidden shrink-0">
+                        <SafeAvatar avatar={m.sponsorAvatar} fallbackEmoji="🏢" className="w-10 h-10 rounded-2xl" alt="Sponsor" />
                       </div>
-                      <div>
-                        <h4 className="font-extrabold text-sm text-slate-900">{m.title}</h4>
-                        <span className="text-xs text-indigo-600 font-black">{m.sponsorName}</span>
+                      <div className="min-w-0 flex-1 overflow-hidden">
+                        <h4 className="font-extrabold text-sm text-slate-900 truncate max-w-[200px]">{getSafeText(m.title, 60)}</h4>
+                        <span className="text-xs text-indigo-600 font-black truncate block max-w-[200px]">{getSafeDisplayName(m.sponsorName, 'Sponsor')}</span>
                       </div>
                     </div>
-                    <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-black uppercase tracking-wider border border-emerald-200">
+                    <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-black uppercase tracking-wider border border-emerald-200 shrink-0">
                       ₱{m.budget.toLocaleString()} Budget
                     </span>
                   </div>
 
-                  <p className="text-xs text-slate-600 font-medium leading-relaxed">
-                    {m.description}
+                  <p className="text-xs text-slate-600 font-medium leading-relaxed break-words line-clamp-3">
+                    {getSafeText(m.description, 300)}
                   </p>
 
                   <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-2xl text-center text-xs">
@@ -996,12 +1199,15 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-fadeIn">
           <div className="bg-white rounded-3xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-slate-200">
             {/* Modal Header */}
-            <div className="relative h-44 bg-slate-950 shrink-0">
+            <div className="relative h-44 bg-slate-950 shrink-0 overflow-hidden">
               <img
-                src={selectedChallenge.coverImage || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&auto=format&fit=crop&q=60'}
-                alt={selectedChallenge.title}
+                src={getSafeImageUrl(selectedChallenge.coverImage, DEFAULT_CHALLENGE_COVER)}
+                alt={getSafeText(selectedChallenge.title, 40) || 'Challenge'}
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
+                onError={(e) => {
+                  e.currentTarget.src = DEFAULT_CHALLENGE_COVER;
+                }}
               />
               <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
 
@@ -1012,18 +1218,20 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                 <X className="w-4 h-4" />
               </button>
 
-              <div className="absolute bottom-3 left-4 right-4 text-white">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="px-2.5 py-0.5 rounded-full bg-indigo-500 text-white text-[9px] font-black uppercase">
+              <div className="absolute bottom-3 left-4 right-4 text-white overflow-hidden">
+                <div className="flex items-center gap-2 mb-1 overflow-hidden">
+                  <span className="px-2.5 py-0.5 rounded-full bg-indigo-500 text-white text-[9px] font-black uppercase shrink-0">
                     {selectedChallenge.category}
                   </span>
                   {selectedChallenge.sponsorName && (
-                    <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[9px] font-black uppercase">
-                      💎 {selectedChallenge.sponsorName}
+                    <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[9px] font-black uppercase truncate max-w-[200px]">
+                      💎 {getSafeDisplayName(selectedChallenge.sponsorName, 'Sponsor')}
                     </span>
                   )}
                 </div>
-                <h2 className="text-xl font-black text-white truncate">{selectedChallenge.title}</h2>
+                <h2 className="text-xl font-black text-white truncate max-w-full break-words">
+                  {getSafeText(selectedChallenge.title, 80)}
+                </h2>
               </div>
             </div>
 
@@ -1053,135 +1261,255 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
               </div>
 
               {/* Rules */}
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4.5 space-y-1.5">
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4.5 space-y-1.5 overflow-hidden">
                 <h4 className="font-black text-xs text-slate-800 flex items-center gap-1.5">
                   <ShieldCheck className="w-4 h-4 text-indigo-600" />
                   <span>{isTl ? 'Mga Panuntunan at Mechanics' : 'Rules & Guidelines'}</span>
                 </h4>
-                <p className="text-xs text-slate-600 whitespace-pre-line leading-relaxed font-medium">
-                  {selectedChallenge.rules || selectedChallenge.description}
+                <p className="text-xs text-slate-600 whitespace-pre-line leading-relaxed font-medium break-words overflow-hidden">
+                  {getSafeText(selectedChallenge.rules || selectedChallenge.description, 2000)}
                 </p>
               </div>
 
               {/* LEADERBOARD & VOTING SECTION */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                  <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                    <Trophy className="w-4 h-4 text-amber-500" />
-                    <span>{isTl ? 'Live Leaderboard at Entries' : 'Live Leaderboard & Entries'}</span>
-                  </h3>
-                  <button
-                    onClick={() => setShowSubmitModal(true)}
-                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs transition cursor-pointer flex items-center gap-1"
-                  >
-                    <Upload className="w-3.5 h-3.5" />
-                    <span>{isTl ? 'Mag-submit ng Entry' : 'Submit Entry'}</span>
-                  </button>
-                </div>
+              {(() => {
+                const myActiveEntry = challengeEntries.find(e => e.participantId === user?.id);
+                const isChallengeEnded = selectedChallenge.status !== 'active' || (selectedChallenge.endDate && new Date(selectedChallenge.endDate).getTime() < Date.now());
 
-                {loadingDetails ? (
-                  <div className="text-center py-8">
-                    <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                    <p className="text-xs text-slate-400 font-bold">{isTl ? 'Kinakarga ang leaderboard...' : 'Loading leaderboard...'}</p>
-                  </div>
-                ) : challengeLeaderboard.length === 0 ? (
-                  <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
-                    <Video className="w-8 h-8 text-slate-300 mx-auto" />
-                    <p className="text-xs font-bold text-slate-600">{isTl ? 'Wala pang nagsu-submit ng entry!' : 'No entries submitted yet!'}</p>
-                    <button
-                      onClick={() => setShowSubmitModal(true)}
-                      className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-black text-xs cursor-pointer hover:bg-emerald-500 transition"
-                    >
-                      {isTl ? 'Maging Unang Kalahok 📹' : 'Be First to Submit 📹'}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {challengeLeaderboard.map((entry, idx) => {
-                      const isVoted = Array.isArray(entry.likes) && entry.likes.includes(user?.id || '');
-
-                      return (
-                        <div
-                          key={entry.id}
-                          className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:border-indigo-200 transition"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            {/* Rank Badge */}
-                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs shrink-0 shadow-xs ${
-                              idx === 0 
-                                ? 'bg-amber-400 text-slate-950 font-black' 
-                                : idx === 1 
-                                  ? 'bg-slate-300 text-slate-900 font-black' 
-                                  : idx === 2 
-                                    ? 'bg-amber-700 text-white font-black' 
-                                    : 'bg-white border border-slate-200 text-slate-600'
-                            }`}>
-                              #{idx + 1}
-                            </div>
-
-                            {/* Participant Avatar */}
-                            <div className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center text-lg shrink-0">
-                              {entry.participantAvatar || '👤'}
-                            </div>
-
-                            {/* Info */}
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="font-extrabold text-xs text-slate-900 truncate">{entry.participantName}</span>
-                                {idx === 0 && (
-                                  <span className="bg-amber-100 text-amber-800 text-[9px] font-black px-1.5 py-0.2 rounded-md">
-                                    👑 Rank #1
-                                  </span>
-                                )}
-                              </div>
-                              {entry.caption && (
-                                <p className="text-[11px] text-slate-600 truncate max-w-sm mt-0.5">
-                                  {entry.caption}
-                                </p>
-                              )}
-                            </div>
+                return (
+                  <div className="space-y-4">
+                    {/* User Existing Entry Notice Banner */}
+                    {myActiveEntry && (
+                      <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs max-w-full overflow-hidden">
+                        <div className="flex items-center gap-3 min-w-0 max-w-full overflow-hidden">
+                          <div className="w-10 h-10 rounded-xl bg-amber-200 border border-amber-300 flex items-center justify-center text-amber-900 shrink-0 font-black">
+                            <CheckCircle2 className="w-5 h-5 text-amber-700" />
                           </div>
-
-                          {/* Media Preview & Vote CTA */}
-                          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
-                            {/* Score & Votes */}
-                            <div className="text-right">
-                              <span className="text-[10px] text-slate-400 font-black uppercase block">Score</span>
-                              <span className="font-black text-indigo-600 font-mono text-sm">{entry.score || 0} pts</span>
+                          <div className="min-w-0 flex-1 overflow-hidden">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="text-xs font-black text-amber-950 truncate max-w-[200px] sm:max-w-sm">
+                                {isTl ? 'May Active Entry Ka Na sa Challenge na Ito' : 'You Have an Active Entry'}
+                              </h4>
+                              <span className="text-[10px] bg-amber-200/80 text-amber-900 font-black px-2 py-0.5 rounded-full shrink-0">
+                                {myActiveEntry.votesCount || 0} Votes • {myActiveEntry.score || 0} pts
+                              </span>
                             </div>
-
-                            {/* Media Link */}
-                            {entry.mediaUrl && (
-                              <a
-                                href={entry.mediaUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-black flex items-center gap-1 shrink-0"
-                              >
-                                <Play className="w-3 h-3 text-indigo-600" />
-                                <span>Panoorin</span>
-                              </a>
-                            )}
-
-                            {/* Vote Button */}
-                            <button
-                              onClick={() => handleVoteEntry(entry.id)}
-                              className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                                isVoted
-                                  ? 'bg-rose-500 text-white shadow-sm'
-                                  : 'bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200'
-                              }`}
-                            >
-                              <Heart className={`w-3.5 h-3.5 ${isVoted ? 'fill-white' : ''}`} />
-                              <span>{entry.votesCount || 0}</span>
-                            </button>
+                            <p className="text-[11px] text-amber-800 font-medium truncate mt-0.5 max-w-md">
+                              {isTl 
+                                ? 'One User = One Entry rule: Maaari mo itong i-edit o palitan anumang oras bago matapos ang palugit.'
+                                : 'One User = One Entry: You can edit or replace this entry before the deadline.'}
+                            </p>
                           </div>
                         </div>
-                      );
-                    })}
+                        {!isChallengeEnded && (
+                          <button
+                            onClick={() => openSubmitOrEditModal(selectedChallenge, myActiveEntry)}
+                            className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition cursor-pointer flex items-center gap-1.5 shrink-0 shadow-xs"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>{isTl ? 'I-edit / Palitan ang Entry' : 'Edit / Replace Entry'}</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                      <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                        <Trophy className="w-4 h-4 text-amber-500" />
+                        <span>{isTl ? 'Live Leaderboard at Entries' : 'Live Leaderboard & Entries'}</span>
+                      </h3>
+                      {!isChallengeEnded && (
+                        myActiveEntry ? (
+                          <button
+                            onClick={() => openSubmitOrEditModal(selectedChallenge, myActiveEntry)}
+                            className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>{isTl ? 'I-edit ang Aking Entry' : 'Edit My Entry'}</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => openSubmitOrEditModal(selectedChallenge, null)}
+                            className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs transition cursor-pointer flex items-center gap-1"
+                          >
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>{isTl ? 'Mag-submit ng Entry' : 'Submit Entry'}</span>
+                          </button>
+                        )
+                      )}
+                    </div>
+
+                    {loadingDetails ? (
+                      <div className="text-center py-8">
+                        <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                        <p className="text-xs text-slate-400 font-bold">{isTl ? 'Kinakarga ang leaderboard...' : 'Loading leaderboard...'}</p>
+                      </div>
+                    ) : challengeLeaderboard.length === 0 ? (
+                      <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                        <Video className="w-8 h-8 text-slate-300 mx-auto" />
+                        <p className="text-xs font-bold text-slate-600">{isTl ? 'Wala pang nagsu-submit ng entry!' : 'No entries submitted yet!'}</p>
+                        {!isChallengeEnded && (
+                          <button
+                            onClick={() => openSubmitOrEditModal(selectedChallenge, null)}
+                            className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-black text-xs cursor-pointer hover:bg-emerald-500 transition"
+                          >
+                            {isTl ? 'Maging Unang Kalahok 📹' : 'Be First to Submit 📹'}
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {challengeLeaderboard.map((entry, idx) => {
+                          const isVoted = Array.isArray(entry.likes) && entry.likes.includes(user?.id || '');
+                          const isMyOwnEntry = entry.participantId === user?.id;
+
+                          return (
+                            <div
+                              key={entry.id}
+                              className={`rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition max-w-full overflow-hidden ${
+                                isMyOwnEntry 
+                                  ? 'bg-amber-50/60 border-2 border-amber-300 shadow-xs' 
+                                  : 'bg-slate-50 border border-slate-200 hover:border-indigo-200'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3 min-w-0 max-w-full flex-1 overflow-hidden">
+                                {/* Rank Badge */}
+                                <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs shrink-0 shadow-xs ${
+                                  idx === 0 
+                                    ? 'bg-amber-400 text-slate-950 font-black' 
+                                    : idx === 1 
+                                      ? 'bg-slate-300 text-slate-900 font-black' 
+                                      : idx === 2 
+                                        ? 'bg-amber-700 text-white font-black' 
+                                        : 'bg-white border border-slate-200 text-slate-600'
+                                }`}>
+                                  #{idx + 1}
+                                </div>
+
+                                {/* Participant Avatar */}
+                                <div className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center overflow-hidden shrink-0 shadow-2xs">
+                                  <SafeAvatar
+                                    avatar={entry.participantAvatar}
+                                    fallbackEmoji="👤"
+                                    className="w-10 h-10 rounded-full"
+                                    alt={getSafeDisplayName(entry.participantName)}
+                                  />
+                                </div>
+
+                                {/* Info */}
+                                <div className="min-w-0 flex-1 overflow-hidden">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span
+                                      className="font-extrabold text-xs text-slate-900 truncate max-w-[150px] sm:max-w-[200px]"
+                                      title={getSafeDisplayName(entry.participantName)}
+                                    >
+                                      {getSafeDisplayName(entry.participantName, isTl ? 'Kalahok' : 'Participant')}
+                                    </span>
+                                    {isMyOwnEntry && (
+                                      <span className="bg-amber-400 text-slate-950 text-[9px] font-black px-2 py-0.5 rounded-full shrink-0">
+                                        👤 {isTl ? 'Iyong Entry' : 'Your Entry'}
+                                      </span>
+                                    )}
+                                    {idx === 0 && (
+                                      <span className="bg-amber-100 text-amber-800 text-[9px] font-black px-1.5 py-0.2 rounded-md shrink-0">
+                                        👑 Rank #1
+                                      </span>
+                                    )}
+                                  </div>
+                                  {getSafeCaption(entry.caption) && (
+                                    <p className="text-[11px] text-slate-600 truncate max-w-[240px] sm:max-w-md mt-0.5 break-words">
+                                      {getSafeCaption(entry.caption)}
+                                    </p>
+                                  )}
+                                  {(entry.updatedAt || entry.createdAt) && (
+                                    <span className="text-[9px] text-slate-400 font-bold block mt-0.5 truncate">
+                                      {entry.updatedAt 
+                                        ? (isTl ? 'Na-edit noong: ' : 'Updated: ') + new Date(entry.updatedAt).toLocaleDateString()
+                                        : (isTl ? 'Ipinasa: ' : 'Submitted: ') + new Date(entry.createdAt).toLocaleDateString()}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Media Preview & Vote CTA */}
+                              <div className="flex items-center gap-2.5 w-full sm:w-auto justify-between sm:justify-end shrink-0">
+                                {/* Score & Votes */}
+                                <div className="text-right shrink-0">
+                                  <span className="text-[10px] text-slate-400 font-black uppercase block">Score</span>
+                                  <span className="font-black text-indigo-600 font-mono text-sm">{entry.score || 0} pts</span>
+                                </div>
+
+                                {/* Media Preview (Thumbnail if image, Play link if video) */}
+                                {entry.mediaUrl && (
+                                  isImageMedia(entry.mediaUrl, entry.mediaType) ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setViewingMedia({
+                                        url: entry.mediaUrl,
+                                        type: 'image',
+                                        title: getSafeDisplayName(entry.participantName, isTl ? 'Kalahok' : 'Participant')
+                                      })}
+                                      className="relative w-11 h-11 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 shrink-0 group/media cursor-pointer hover:border-indigo-400 transition shadow-2xs"
+                                      title={isTl ? 'Tingnan ang Larawan' : 'View Image'}
+                                    >
+                                      <img
+                                        src={entry.mediaUrl}
+                                        alt="Entry media"
+                                        className="w-full h-full object-cover group-hover/media:scale-110 transition duration-300"
+                                        referrerPolicy="no-referrer"
+                                        onError={(e) => {
+                                          e.currentTarget.src = DEFAULT_ENTRY_PLACEHOLDER;
+                                        }}
+                                      />
+                                      <div className="absolute inset-0 bg-black/25 opacity-0 group-hover/media:opacity-100 transition flex items-center justify-center">
+                                        <Eye className="w-4 h-4 text-white drop-shadow" />
+                                      </div>
+                                    </button>
+                                  ) : (
+                                    <a
+                                      href={entry.mediaUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-black flex items-center gap-1 shrink-0 transition"
+                                    >
+                                      <Play className="w-3 h-3 text-indigo-600" />
+                                      <span>{isTl ? 'Panoorin' : 'Watch'}</span>
+                                    </a>
+                                  )
+                                )}
+
+                                {/* If own entry and challenge is active, allow quick edit */}
+                                {isMyOwnEntry && !isChallengeEnded && (
+                                  <button
+                                    onClick={() => openSubmitOrEditModal(selectedChallenge, entry)}
+                                    className="px-2.5 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-black transition cursor-pointer flex items-center gap-1 shrink-0 shadow-2xs"
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                    <span>{isTl ? 'I-edit' : 'Edit'}</span>
+                                  </button>
+                                )}
+
+                                {/* Vote Button */}
+                                <button
+                                  onClick={() => handleVoteEntry(entry.id)}
+                                  className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                                    isVoted
+                                      ? 'bg-rose-500 text-white shadow-sm'
+                                      : 'bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200'
+                                  }`}
+                                >
+                                  <Heart className={`w-3.5 h-3.5 ${isVoted ? 'fill-white' : ''}`} />
+                                  <span>{entry.votesCount || 0}</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                );
+              })()}
             </div>
 
             {/* Modal Footer */}
@@ -1200,36 +1528,103 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
         </div>
       )}
 
-      {/* MODAL 2: SUBMIT CHALLENGE ENTRY */}
+      {/* MODAL 2: SUBMIT / EDIT CHALLENGE ENTRY */}
       {showSubmitModal && selectedChallenge && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white rounded-3xl w-full max-w-md p-6 shadow-2xl border border-slate-200 space-y-5">
             <div className="flex items-center justify-between border-b border-slate-150 pb-3">
               <div className="flex items-center gap-2">
-                <Video className="w-5 h-5 text-indigo-600" />
-                <h3 className="font-black text-base text-slate-900">{isTl ? 'I-submit ang Iyong Entry' : 'Submit Entry'}</h3>
+                {editingEntryId ? (
+                  <Edit3 className="w-5 h-5 text-amber-600" />
+                ) : (
+                  <Video className="w-5 h-5 text-indigo-600" />
+                )}
+                <div>
+                  <h3 className="font-black text-base text-slate-900">
+                    {editingEntryId 
+                      ? (isTl ? 'I-edit o Palitan ang Iyong Entry' : 'Edit or Replace Your Entry') 
+                      : (isTl ? 'I-submit ang Iyong Entry' : 'Submit Entry')}
+                  </h3>
+                  <span className="text-[10px] text-slate-400 font-bold block">
+                    {selectedChallenge.title}
+                  </span>
+                </div>
               </div>
               <button
-                onClick={() => setShowSubmitModal(false)}
+                onClick={() => {
+                  setShowSubmitModal(false);
+                  setEditingEntryId(null);
+                }}
                 className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
+            {/* Explanatory Rule Banner */}
+            {editingEntryId ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 space-y-1 text-amber-900">
+                <span className="font-black text-xs flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-amber-700" />
+                  <span>{isTl ? 'One User = One Entry (Update Mode)' : 'One User = One Entry (Update Mode)'}</span>
+                </span>
+                <p className="text-[11px] font-medium leading-relaxed">
+                  {isTl 
+                    ? 'I-a-update lamang ang iyong kasalukuyang entry. Walang duplicate record na gagawin at mananatili ang iyong mga naipong score at boto.'
+                    : 'Your existing entry will be updated in place without creating duplicate records. Your votes and score remain intact.'}
+                </p>
+              </div>
+            ) : (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-3.5 space-y-1 text-indigo-900">
+                <span className="font-black text-xs flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-indigo-600" />
+                  <span>{isTl ? 'Patakaran: Isang Entry Bawat User' : 'Policy: One Entry Per User'}</span>
+                </span>
+                <p className="text-[11px] font-medium leading-relaxed">
+                  {isTl 
+                    ? 'Isang active entry lamang bawat user ang pinapayagan. Maaari mo itong i-edit o palitan anumang oras bago matapos ang deadline ng challenge.'
+                    : 'Only one active entry is allowed per user. You may edit or replace your submission anytime before the challenge ends.'}
+                </p>
+              </div>
+            )}
+
             <form onSubmit={handleSubmitEntry} className="space-y-4">
               <div className="space-y-1">
                 <label className="text-xs font-black text-slate-800">
-                  {isTl ? 'Video o Media URL (YouTube, TikTok, o direct link) *' : 'Video / Media URL *'}
+                  {isTl ? 'Video o Media URL (YouTube, TikTok, direct link, o data:image/...) *' : 'Video / Media URL *'}
                 </label>
                 <input
-                  type="url"
+                  type="text"
                   required
                   value={entryMediaUrl}
                   onChange={e => setEntryMediaUrl(e.target.value)}
-                  placeholder="https://..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-900 focus:bg-white focus:outline-indigo-600"
+                  placeholder="https://... o data:image/..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-900 focus:bg-white focus:outline-indigo-600 truncate"
                 />
+                {/* Live Image Preview if media is an image or base64 data URL */}
+                {entryMediaUrl && isImageMedia(entryMediaUrl, entryMediaType) && (
+                  <div className="mt-2 flex items-center gap-3 p-2 bg-slate-50 rounded-xl border border-slate-200">
+                    <div className="w-12 h-12 rounded-lg overflow-hidden bg-slate-200 shrink-0 border border-slate-300">
+                      <img
+                        src={entryMediaUrl}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          e.currentTarget.src = DEFAULT_ENTRY_PLACEHOLDER;
+                        }}
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[10px] font-black text-slate-700 block uppercase">
+                        {isTl ? 'Image Preview' : 'Image Preview'}
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-medium truncate block">
+                        {entryMediaUrl.startsWith('data:') ? 'Base64 Image Attached' : entryMediaUrl}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1">
@@ -1258,7 +1653,10 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
               <div className="pt-2 flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowSubmitModal(false)}
+                  onClick={() => {
+                    setShowSubmitModal(false);
+                    setEditingEntryId(null);
+                  }}
                   className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-xs transition cursor-pointer"
                 >
                   {isTl ? 'Kanselahin' : 'Cancel'}
@@ -1266,13 +1664,60 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                 <button
                   type="submit"
                   disabled={submittingEntry}
-                  className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs transition cursor-pointer shadow-md shadow-indigo-600/30 flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  className={`flex-1 py-2.5 rounded-xl font-black text-xs transition cursor-pointer shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50 ${
+                    editingEntryId 
+                      ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/20' 
+                      : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/30'
+                  }`}
                 >
                   <Send className="w-3.5 h-3.5" />
-                  <span>{submittingEntry ? (isTl ? 'Ipinapadala...' : 'Sending...') : (isTl ? 'I-submit Entry' : 'Submit Entry')}</span>
+                  <span>
+                    {submittingEntry 
+                      ? (isTl ? 'Ipinapadala...' : 'Sending...') 
+                      : editingEntryId 
+                        ? (isTl ? 'I-save ang Pagbabago' : 'Save Changes') 
+                        : (isTl ? 'I-submit Entry' : 'Submit Entry')}
+                  </span>
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* LIGHTBOX MEDIA VIEWER MODAL */}
+      {viewingMedia && (
+        <div 
+          className="fixed inset-0 z-60 bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn"
+          onClick={() => setViewingMedia(null)}
+        >
+          <div 
+            className="relative max-w-2xl w-full bg-slate-900 rounded-3xl overflow-hidden shadow-2xl border border-white/20 p-3"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-2 mb-1 border-b border-white/10">
+              <span className="text-white text-xs font-black truncate max-w-[80%]">
+                {viewingMedia.title} • {isTl ? 'Larawan ng Entry' : 'Entry Photo'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setViewingMedia(null)}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition cursor-pointer border border-white/10"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex items-center justify-center max-h-[75vh] overflow-hidden rounded-2xl bg-black">
+              <img
+                src={viewingMedia.url}
+                alt={viewingMedia.title || 'Entry Preview'}
+                className="max-w-full max-h-[75vh] object-contain"
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  e.currentTarget.src = DEFAULT_ENTRY_PLACEHOLDER;
+                }}
+              />
+            </div>
           </div>
         </div>
       )}
