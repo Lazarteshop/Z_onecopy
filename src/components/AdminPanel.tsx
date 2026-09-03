@@ -29,6 +29,7 @@ import {
   Trash2,
   UserX,
   ShieldAlert,
+  ShieldCheck,
   X,
   Video,
   Play,
@@ -51,7 +52,7 @@ import {
   Server,
   FileJson
 } from 'lucide-react';
-import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd, WebsiteCampaign } from '../types';
+import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd, WebsiteCampaign, CreatorChallenge, ChallengeEntry, SponsoredMission } from '../types';
 
 interface AdminDashboardData {
   users: {
@@ -94,7 +95,7 @@ export default function AdminPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'campaigns' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'shop_management' | 'settings' | 'database'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'campaigns' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'shop_management' | 'settings' | 'database' | 'challenges'>('overview');
   const [adminCampaigns, setAdminCampaigns] = useState<WebsiteCampaign[]>([]);
   const [showAddCampaignModal, setShowAddCampaignModal] = useState<boolean>(false);
   const [campaignSearch, setCampaignSearch] = useState<string>('');
@@ -104,6 +105,15 @@ export default function AdminPanel({
   const [showSuccessStoryModal, setShowSuccessStoryModal] = useState<boolean>(false);
   const [showRedemptionModal, setShowRedemptionModal] = useState<boolean>(false);
   const [activeRedemptionRecord, setActiveRedemptionRecord] = useState<RedemptionRecordItem | null>(null);
+
+  // Creator Challenges & Sponsored Missions States
+  const [adminChallenges, setAdminChallenges] = useState<CreatorChallenge[]>([]);
+  const [adminMissions, setAdminMissions] = useState<SponsoredMission[]>([]);
+  const [loadingChallenges, setLoadingChallenges] = useState<boolean>(false);
+  const [selectedAdminChallenge, setSelectedAdminChallenge] = useState<CreatorChallenge | null>(null);
+  const [adminChallengeEntries, setAdminChallengeEntries] = useState<ChallengeEntry[]>([]);
+  const [loadingChallengeEntries, setLoadingChallengeEntries] = useState<boolean>(false);
+  const [distributingPrizes, setDistributingPrizes] = useState<boolean>(false);
 
   // Database Management & Cloud Rebuild States
   const [showRebuildConfirmModal, setShowRebuildConfirmModal] = useState<boolean>(false);
@@ -174,6 +184,93 @@ export default function AdminPanel({
       }
     } catch (e) {
       console.error('Error fetching admin reels:', e);
+    }
+  };
+
+  const fetchAdminChallenges = async () => {
+    try {
+      setLoadingChallenges(true);
+      const [cRes, mRes] = await Promise.all([
+        fetch('/api/admin/challenges', { headers: { 'Authorization': token } }),
+        fetch('/api/sponsored-missions')
+      ]);
+      const cData = await cRes.json();
+      const mData = await mRes.json();
+      if (cData.success) setAdminChallenges(cData.challenges || []);
+      if (mData.success) setAdminMissions(mData.missions || []);
+    } catch (e) {
+      console.error('Error fetching admin challenges:', e);
+    } finally {
+      setLoadingChallenges(false);
+    }
+  };
+
+  const fetchAdminChallengeEntries = async (challenge: CreatorChallenge) => {
+    try {
+      setSelectedAdminChallenge(challenge);
+      setLoadingChallengeEntries(true);
+      const res = await fetch(`/api/challenges/${challenge.id}`);
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setAdminChallengeEntries(data.entries || []);
+      }
+    } catch (e) {
+      console.error('Error fetching challenge entries:', e);
+    } finally {
+      setLoadingChallengeEntries(false);
+    }
+  };
+
+  const handleDistributePrizes = async (challengeId: string, challengeTitle: string) => {
+    if (!window.confirm(`Sigurado ka bang ipapamahagi na ang prizes at host earnings para sa "${challengeTitle}"? Server-side authoritative distribution ito na magka-credit sa balances ng Top 3 winners at Host.`)) {
+      return;
+    }
+
+    setDistributingPrizes(true);
+    try {
+      const res = await fetch(`/api/admin/challenges/${challengeId}/distribute-prizes`, {
+        method: 'POST',
+        headers: { 'Authorization': token }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        triggerNotification(data.message || 'Tagumpay na naipamahagi ang premyo!', 'success');
+        fetchAdminChallenges();
+        if (selectedAdminChallenge && selectedAdminChallenge.id === challengeId) {
+          setSelectedAdminChallenge(prev => prev ? { ...prev, status: 'completed' } : null);
+        }
+      } else {
+        triggerNotification(data.error || 'Failed to distribute prizes', 'error');
+      }
+    } catch (e) {
+      triggerNotification('Error connecting to server', 'error');
+    } finally {
+      setDistributingPrizes(false);
+    }
+  };
+
+  const handleDeleteChallenge = async (challengeId: string, challengeTitle: string) => {
+    if (!window.confirm(`Sigurado ka bang nais mong kanselahin/tanggalin ang challenge na "${challengeTitle}"?`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/admin/challenges/${challengeId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': token }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        triggerNotification(data.message || 'Na-delete ang challenge', 'success');
+        fetchAdminChallenges();
+        if (selectedAdminChallenge?.id === challengeId) {
+          setSelectedAdminChallenge(null);
+        }
+      } else {
+        triggerNotification(data.error || 'Failed to delete challenge', 'error');
+      }
+    } catch (e) {
+      triggerNotification('Error deleting challenge', 'error');
     }
   };
 
@@ -1066,6 +1163,22 @@ export default function AdminPanel({
         >
           <ShoppingBag className="w-3.5 h-3.5 text-orange-500" />
           <span>🛍️ Z-oneShop & Orders</span>
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('challenges'); fetchAdminChallenges(); }}
+          className={`px-3.5 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            activeSubTab === 'challenges'
+              ? 'border-amber-500 text-amber-600 bg-white/70'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Trophy className="w-3.5 h-3.5 text-amber-500" />
+          <span>🏆 Challenges & Missions</span>
+          {adminChallenges.length > 0 && (
+            <span className="bg-amber-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">
+              {adminChallenges.length}
+            </span>
+          )}
         </button>
         <button
           onClick={() => { setActiveSubTab('settings'); }}
@@ -3096,6 +3209,312 @@ export default function AdminPanel({
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SECTION: CREATOR CHALLENGES & SPONSORED MISSIONS */}
+      {activeSubTab === 'challenges' && (
+        <div className="space-y-6">
+          {/* Header Banner & Stats */}
+          <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-purple-950 rounded-3xl p-6 text-white border border-indigo-500/30 shadow-xl space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-300 text-xs font-black uppercase">
+                  <Trophy className="w-3.5 h-3.5" />
+                  <span>Administrative Challenge Control & Authoritative Ledger</span>
+                </div>
+                <h2 className="text-xl font-black text-white">Creator Challenges + Sponsored Missions</h2>
+                <p className="text-xs text-slate-300 font-medium">
+                  Pamahalaan ang mga creator competitions, i-audit ang entries at community votes, at mag-execute ng authoritative server-side prize & host earnings distributions.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={fetchAdminChallenges}
+                disabled={loadingChallenges}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black text-xs flex items-center gap-1.5 transition cursor-pointer shrink-0 shadow-md"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingChallenges ? 'animate-spin' : ''}`} />
+                <span>I-refresh ang Data</span>
+              </button>
+            </div>
+
+            {/* Quick Stats Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+              <div className="bg-white/10 rounded-2xl p-3.5 border border-white/10">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">Total Challenges</span>
+                <span className="text-xl font-black text-white font-mono">{adminChallenges.length}</span>
+              </div>
+              <div className="bg-white/10 rounded-2xl p-3.5 border border-white/10">
+                <span className="text-[10px] font-black uppercase tracking-wider text-amber-300 block">Total Active Prize Pool</span>
+                <span className="text-xl font-black text-amber-400 font-mono">
+                  ₱{adminChallenges.filter(c => c.status === 'active').reduce((s, c) => s + (c.prizePool || 0), 0).toLocaleString()}
+                </span>
+              </div>
+              <div className="bg-white/10 rounded-2xl p-3.5 border border-white/10">
+                <span className="text-[10px] font-black uppercase tracking-wider text-purple-300 block">Sponsored Missions</span>
+                <span className="text-xl font-black text-purple-300 font-mono">{adminMissions.length}</span>
+              </div>
+              <div className="bg-white/10 rounded-2xl p-3.5 border border-white/10">
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 block">Total Sponsor Budget</span>
+                <span className="text-xl font-black text-emerald-400 font-mono">
+                  ₱{adminMissions.reduce((s, m) => s + (m.budget || 0), 0).toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* CHALLENGES TABLE / CARDS */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-black text-base text-slate-900 flex items-center gap-2">
+                <Trophy className="w-5 h-5 text-amber-500" />
+                <span>Lahat ng Creator Challenges ({adminChallenges.length})</span>
+              </h3>
+            </div>
+
+            {loadingChallenges ? (
+              <div className="text-center py-12">
+                <div className="w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                <p className="text-xs text-slate-400 font-bold">Kinakarga ang mga challenges...</p>
+              </div>
+            ) : adminChallenges.length === 0 ? (
+              <div className="text-center py-10 text-xs text-slate-400 font-bold">
+                Walang nahanap na challenges.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {adminChallenges.map(chal => (
+                  <div
+                    key={chal.id}
+                    className="border border-slate-200 rounded-2xl p-4.5 bg-slate-50/50 hover:bg-white hover:border-indigo-200 transition space-y-3"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <div className="w-12 h-12 rounded-xl bg-slate-900 overflow-hidden shrink-0 border border-slate-200">
+                          <img
+                            src={chal.coverImage || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=200&auto=format&fit=crop&q=60'}
+                            alt={chal.title}
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                        </div>
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                              chal.status === 'active' 
+                                ? 'bg-emerald-100 text-emerald-800' 
+                                : chal.status === 'completed' 
+                                  ? 'bg-blue-100 text-blue-800' 
+                                  : 'bg-rose-100 text-rose-800'
+                            }`}>
+                              {chal.status}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[9px] font-black uppercase">
+                              {chal.category}
+                            </span>
+                            {chal.sponsorName && (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[9px] font-black uppercase">
+                                💎 {chal.sponsorName}
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="font-extrabold text-sm text-slate-900 mt-1">{chal.title}</h4>
+                          <p className="text-xs text-slate-500 font-medium">
+                            Host: <span className="font-bold text-slate-800">{chal.hostName}</span> • Ends: {new Date(chal.endDate).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Prize and counts */}
+                      <div className="flex items-center gap-4 text-xs">
+                        <div className="text-right">
+                          <span className="text-[10px] uppercase font-black text-slate-400 block">Prize Pool</span>
+                          <span className="text-base font-black text-amber-600 font-mono">₱{(chal.prizePool || 0).toLocaleString()}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] uppercase font-black text-slate-400 block">Kalahok / Entries</span>
+                          <span className="font-black text-slate-800">{chal.participantsCount || chal.participants?.length || 0} / {chal.entriesCount || 0}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Action Controls */}
+                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => fetchAdminChallengeEntries(chal)}
+                        className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-slate-300" />
+                        <span>Suriin ang Entries & Scores</span>
+                      </button>
+
+                      {chal.status === 'active' && (
+                        <button
+                          type="button"
+                          onClick={() => handleDistributePrizes(chal.id, chal.title)}
+                          disabled={distributingPrizes}
+                          className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-black text-xs flex items-center gap-1.5 transition cursor-pointer shadow-sm"
+                        >
+                          <Trophy className="w-3.5 h-3.5" />
+                          <span>I-distribute ang Premyo (50/30/20 Payout)</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteChallenge(chal.id, chal.title)}
+                        className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 font-black text-xs flex items-center gap-1 transition cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>I-delete</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* SPONSORED MISSIONS TABLE */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-black text-base text-slate-900 flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-purple-600" />
+                <span>Sponsored Missions & Authoritative Budgets ({adminMissions.length})</span>
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {adminMissions.map(m => (
+                <div key={m.id} className="border border-slate-200 rounded-2xl p-4 bg-slate-50 space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <span className="text-[10px] font-black uppercase text-purple-600 block">{m.sponsorName}</span>
+                      <h4 className="font-extrabold text-sm text-slate-900">{m.title}</h4>
+                    </div>
+                    <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 font-black text-xs rounded-full font-mono">
+                      ₱{m.budget.toLocaleString()}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 bg-white p-2.5 rounded-xl text-center text-xs border border-slate-150">
+                    <div>
+                      <span className="text-[9px] font-black uppercase text-slate-400 block">Prizes (50%)</span>
+                      <span className="font-black text-amber-600 font-mono">₱{m.prizePool}</span>
+                    </div>
+                    <div>
+                      <span className="text-[9px] font-black uppercase text-slate-400 block">Host (25%)</span>
+                      <span className="font-black text-emerald-600 font-mono">₱{m.hostEarnings}</span>
+                    </div>
+                    <div>
+                      <span className="text-[9px] font-black uppercase text-slate-400 block">Platform (25%)</span>
+                      <span className="font-black text-slate-600 font-mono">₱{m.platformFee}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ADMIN ENTRIES REVIEW MODAL */}
+      {selectedAdminChallenge && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-3xl border border-slate-200 max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="p-5 bg-slate-900 text-white flex items-center justify-between shrink-0">
+              <div>
+                <h3 className="font-black text-base truncate">{selectedAdminChallenge.title}</h3>
+                <span className="text-xs text-amber-400 font-bold">
+                  Prize Pool: ₱{(selectedAdminChallenge.prizePool || 0).toLocaleString()} • Entries: {adminChallengeEntries.length}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedAdminChallenge(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4 flex-1">
+              {loadingChallengeEntries ? (
+                <div className="text-center py-8">
+                  <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                  <p className="text-xs text-slate-400 font-bold">Kinakarga ang entries...</p>
+                </div>
+              ) : adminChallengeEntries.length === 0 ? (
+                <div className="text-center py-8 text-xs text-slate-400 font-bold">
+                  Wala pang submitted entries para sa challenge na ito.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {adminChallengeEntries.map((entry, idx) => (
+                    <div
+                      key={entry.id}
+                      className="border border-slate-200 rounded-2xl p-4 bg-slate-50 flex items-center justify-between gap-4"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center font-black text-xs text-slate-700">
+                          #{idx + 1}
+                        </span>
+                        <div>
+                          <span className="font-extrabold text-xs text-slate-900 block">{entry.participantName}</span>
+                          {entry.caption && (
+                            <p className="text-[11px] text-slate-500 line-clamp-1">{entry.caption}</p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <span className="text-[9px] font-black uppercase text-slate-400 block">Score</span>
+                          <span className="font-black text-indigo-600 font-mono text-xs">{entry.score || 0} pts</span>
+                        </div>
+
+                        {entry.mediaUrl && (
+                          <a
+                            href={entry.mediaUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-black flex items-center gap-1"
+                          >
+                            <Play className="w-3 h-3 text-indigo-600" />
+                            <span>Panoorin</span>
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              {selectedAdminChallenge.status === 'active' && (
+                <button
+                  type="button"
+                  onClick={() => handleDistributePrizes(selectedAdminChallenge.id, selectedAdminChallenge.title)}
+                  disabled={distributingPrizes}
+                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  <Trophy className="w-3.5 h-3.5" />
+                  <span>I-distribute ang Premyo (50/30/20)</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setSelectedAdminChallenge(null)}
+                className="px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-black text-xs cursor-pointer ml-auto"
+              >
+                Isara
+              </button>
             </div>
           </div>
         </div>

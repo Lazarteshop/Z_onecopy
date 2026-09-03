@@ -83,6 +83,7 @@ import { AddCampaignModal } from './components/AddCampaignModal';
 import { BackgroundNotificationModal } from './components/BackgroundNotificationModal';
 import { DataSaverSettingsModal } from './components/DataSaverSettingsModal';
 import { KiddiePortal } from './components/KiddiePortal';
+import { CreatorChallengesView } from './components/CreatorChallengesView';
 import { VerificationFlowModal } from './components/VerificationFlowModal';
 import { DeviceTransferModal } from './components/DeviceTransferModal';
 import { getOrCreateDeviceKeyId, getDeviceSecurityHeaders } from './utils/deviceSecurity';
@@ -266,7 +267,7 @@ export default function App() {
   });
   const [referredFriends, setReferredFriends] = useState<ReferralFriend[]>([]);
   
-  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop' | 'kiddie' | null>(null);
+  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop' | 'kiddie' | 'challenges' | null>(null);
 
   const [showVerificationModal, setShowVerificationModal] = useState<boolean>(false);
   const [showDeviceTransferModal, setShowDeviceTransferModal] = useState<boolean>(false);
@@ -2337,6 +2338,7 @@ export default function App() {
                   <span className="font-extrabold text-white bg-slate-800 border border-slate-700 px-3 py-1 rounded-lg">
                     {activeTab === 'zone' && 'Z-one Social'}
                     {activeTab === 'kiddie' && 'Z-oneKiddie 🌟'}
+                    {activeTab === 'challenges' && 'Creator Challenges 🏆'}
                     {activeTab === 'va_shop' && 'VA & Shop'}
                     {activeTab === 'earn' && 'Mag-ipon'}
                     {activeTab === 'cashout' && 'GCash Cash-Out'}
@@ -2369,8 +2371,8 @@ export default function App() {
               )}
 
               {/* 🖥️ MAIN BODY WORKSPACE */}
-              <div id="main-content-layout" className={`flex-1 w-full mx-auto ${activeTab === 'zone' ? 'max-w-7xl px-2 sm:px-4 md:px-6 py-4 md:py-6' : 'max-w-7xl px-4 py-6 md:py-8'}`}>
-            {isSubscriptionExpired() && activeTab !== 'earn' && activeTab !== 'zone' && activeTab !== 'negosyo' && activeTab !== 'guide' && activeTab !== 'admin' && activeTab !== 'va_shop' ? (
+              <div id="main-content-layout" className={`flex-1 w-full mx-auto ${activeTab === 'zone' || activeTab === 'challenges' ? 'max-w-7xl px-2 sm:px-4 md:px-6 py-4 md:py-6' : 'max-w-7xl px-4 py-6 md:py-8'}`}>
+            {isSubscriptionExpired() && activeTab !== 'earn' && activeTab !== 'zone' && activeTab !== 'negosyo' && activeTab !== 'guide' && activeTab !== 'admin' && activeTab !== 'va_shop' && activeTab !== 'challenges' ? (
               <div id="renew-access-plan-section" className="max-w-2xl mx-auto space-y-6 animate-fadeIn py-6">
                 
                 {/* SYSTEM ALERT */}
@@ -2583,6 +2585,17 @@ export default function App() {
                   currentUser={user}
                   onLogout={handleLogout}
                   onBackToLauncher={() => setActiveTab(null)}
+                />
+              </div>
+            ) : activeTab === 'challenges' ? (
+              <div className="animate-fadeIn w-full">
+                <CreatorChallengesView
+                  token={token}
+                  user={user}
+                  language={language}
+                  onBackToLauncher={() => setActiveTab(null)}
+                  triggerNotification={triggerNotification}
+                  onRefreshProfile={() => fetchUserProfile(token || '')}
                 />
               </div>
             ) : activeTab === 'zone' && user ? (

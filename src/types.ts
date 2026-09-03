@@ -631,4 +631,83 @@ export interface KiddieContentItem {
   createdAt: string;
 }
 
+// ============================================================
+//   CREATOR CHALLENGES & SPONSORED MISSIONS TYPES
+// ============================================================
+
+export type ChallengeCategory = 'Singing' | 'Dancing' | 'Comedy' | 'Gaming' | 'Photography' | 'Fitness' | 'Education' | 'Other';
+export type ChallengeStatus = 'draft' | 'pending_review' | 'active' | 'completed' | 'cancelled';
+export type ChallengeEntryStatus = 'pending' | 'approved' | 'rejected';
+export type SponsoredMissionStatus = 'draft' | 'pending_review' | 'active' | 'completed' | 'cancelled';
+
+export interface CreatorChallenge {
+  id: string;
+  hostId: string;
+  hostName: string;
+  hostAvatar: string;
+  title: string;
+  description: string;
+  category: ChallengeCategory;
+  rules: string;
+  startDate: string;
+  endDate: string;
+  maxParticipants: number;
+  status: ChallengeStatus;
+  createdAt: string;
+  updatedAt: string;
+  prizePool?: number;
+  sponsorId?: string;
+  sponsorName?: string;
+  sponsorBudget?: number;
+  hostEarnings?: number;
+  platformFee?: number;
+  isSettled?: boolean;
+  settledAt?: string;
+  participants: string[];
+  participantsCount: number;
+  entriesCount: number;
+  viewsCount: number;
+  likes: string[];
+  likesCount: number;
+  coverImage?: string;
+}
+
+export interface ChallengeEntry {
+  id: string;
+  challengeId: string;
+  participantId: string;
+  participantName: string;
+  participantAvatar: string;
+  reelId?: string;
+  mediaUrl?: string;
+  mediaType?: 'video' | 'image' | 'text';
+  caption: string;
+  createdAt: string;
+  status: ChallengeEntryStatus;
+  score: number;
+  likes: string[];
+  votesCount: number;
+}
+
+export interface SponsoredMission {
+  id: string;
+  sponsorId: string;
+  sponsorName: string;
+  sponsorAvatar?: string;
+  title: string;
+  description: string;
+  challengeId?: string;
+  budget: number;
+  prizePool: number;
+  hostEarnings: number;
+  platformFee: number;
+  startDate: string;
+  endDate: string;
+  status: SponsoredMissionStatus;
+  createdAt: string;
+  approvedAt?: string;
+  settledAt?: string;
+}
+
+
 

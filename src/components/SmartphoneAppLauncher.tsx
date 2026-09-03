@@ -23,14 +23,15 @@ import {
   CreditCard,
   Building2,
   Bell,
-  Smartphone
+  Smartphone,
+  Trophy
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { soundEffects } from '../utils/audio';
 
 import { WithdrawalRequest, ActivityLog } from '../types';
 
-export type AppTabType = 'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop' | 'kiddie';
+export type AppTabType = 'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop' | 'kiddie' | 'challenges';
 
 export interface AppLauncherItem {
   id: AppTabType | 'spin' | 'referral' | 'myday' | 'commercials' | 'reels' | 'policy' | 'data_saver' | 'verify' | 'device_transfer';
@@ -173,6 +174,19 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
       badgeTextColor: 'text-blue-800',
       actionType: 'tab',
       tabTarget: 'zone'
+    },
+    {
+      id: 'challenges',
+      title: isTl ? 'Creator Challenges' : 'Creator Challenges',
+      subtitle: isTl ? 'Missions & Prizes' : 'Missions & Prizes',
+      icon: Trophy,
+      iconBg: 'bg-amber-50 text-amber-600',
+      iconColor: 'text-amber-600',
+      badge: '🏆 Premyo',
+      badgeBg: 'bg-amber-100',
+      badgeTextColor: 'text-amber-800',
+      actionType: 'tab',
+      tabTarget: 'challenges'
     },
     {
       id: 'referral',

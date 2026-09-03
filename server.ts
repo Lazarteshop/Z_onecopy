@@ -1488,6 +1488,75 @@ interface KiddieContentItem {
   createdAt: string;
 }
 
+interface CreatorChallenge {
+  id: string;
+  hostId: string;
+  hostName: string;
+  hostAvatar: string;
+  title: string;
+  description: string;
+  category: 'Singing' | 'Dancing' | 'Comedy' | 'Gaming' | 'Photography' | 'Fitness' | 'Education' | 'Other';
+  rules: string;
+  startDate: string;
+  endDate: string;
+  maxParticipants: number;
+  status: 'draft' | 'pending_review' | 'active' | 'completed' | 'cancelled';
+  createdAt: string;
+  updatedAt: string;
+  prizePool?: number;
+  sponsorId?: string;
+  sponsorName?: string;
+  sponsorBudget?: number;
+  hostEarnings?: number;
+  platformFee?: number;
+  isSettled?: boolean;
+  settledAt?: string;
+  participants: string[];
+  participantsCount: number;
+  entriesCount: number;
+  viewsCount: number;
+  likes: string[];
+  likesCount: number;
+  coverImage?: string;
+}
+
+interface ChallengeEntry {
+  id: string;
+  challengeId: string;
+  participantId: string;
+  participantName: string;
+  participantAvatar: string;
+  reelId?: string;
+  mediaUrl?: string;
+  mediaType?: 'video' | 'image' | 'text';
+  caption: string;
+  createdAt: string;
+  status: 'pending' | 'approved' | 'rejected';
+  score: number;
+  likes: string[];
+  votesCount: number;
+}
+
+interface SponsoredMission {
+  id: string;
+  sponsorId: string;
+  sponsorName: string;
+  sponsorAvatar?: string;
+  title: string;
+  description: string;
+  challengeId?: string;
+  budget: number;
+  prizePool: number;
+  hostEarnings: number;
+  platformFee: number;
+  startDate: string;
+  endDate: string;
+  status: 'draft' | 'pending_review' | 'active' | 'completed' | 'cancelled';
+  createdAt: string;
+  approvedAt?: string;
+  settledAt?: string;
+}
+
 interface DBStructure {
   users: UserSession[];
   campaigns?: any[];
@@ -1513,6 +1582,9 @@ interface DBStructure {
   userVerifications?: VerificationAuditRecord[];
   kiddieContent?: KiddieContentItem[];
   deviceTransfers?: DeviceTransferChallenge[];
+  creatorChallenges?: CreatorChallenge[];
+  challengeEntries?: ChallengeEntry[];
+  sponsoredMissions?: SponsoredMission[];
 }
 
 const INITIAL_KIDDIE_CONTENT: KiddieContentItem[] = [
@@ -1874,6 +1946,181 @@ function checkAndExpireBanners(db: DBStructure) {
   return changed;
 }
 
+const INITIAL_CREATOR_CHALLENGES: CreatorChallenge[] = [
+  {
+    id: 'chal-singing-pinoy-idol',
+    hostId: 'admin-rosco',
+    hostName: 'System Administrator',
+    hostAvatar: '👑',
+    title: '🎤 Z-One Pinoy Singing Idol 2026',
+    description: 'Ipakita ang iyong boses at talento sa pagkanta! Mag-upload ng 30-60 second acoustic o minus-one performance video/reel.',
+    category: 'Singing',
+    rules: 'Bawal ang copyrighted tracks na walang pahintulot. Orihinal o acoustic cover lamang. Isang video entry kada kalahok. Bawal ang auto-vote bots.',
+    startDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    endDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+    maxParticipants: 200,
+    status: 'active',
+    createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    prizePool: 5000,
+    sponsorId: 'spons-manila-beats',
+    sponsorName: 'Manila Beats Studio',
+    sponsorBudget: 10000,
+    hostEarnings: 2500,
+    platformFee: 2500,
+    participants: ['user-juan', 'user-clara'],
+    participantsCount: 2,
+    entriesCount: 2,
+    viewsCount: 1420,
+    likes: ['user-juan', 'user-clara'],
+    likesCount: 38,
+    coverImage: 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=800&auto=format&fit=crop&q=60'
+  },
+  {
+    id: 'chal-dance-tiktok-craze',
+    hostId: 'user-clara',
+    hostName: 'Maria Clara Santos',
+    hostAvatar: '👩‍⚕️',
+    title: '💃 Viral Pinoy Dance Craze 2026',
+    description: 'Sabayan ang pinaka-trending na dance challenge! I-tag ang inyong dance squad o mag-solo dance routine.',
+    category: 'Dancing',
+    rules: 'Kailangang buong katawan ang kuha sa video. May energetic choreography. Walang bastos na kasuotan.',
+    startDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    endDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString(),
+    maxParticipants: 150,
+    status: 'active',
+    createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    prizePool: 3000,
+    sponsorBudget: 5000,
+    hostEarnings: 1000,
+    platformFee: 1000,
+    participants: ['user-juan'],
+    participantsCount: 1,
+    entriesCount: 1,
+    viewsCount: 890,
+    likes: ['user-juan'],
+    likesCount: 24,
+    coverImage: 'https://images.unsplash.com/photo-1547153760-18fc86324498?w=800&auto=format&fit=crop&q=60'
+  },
+  {
+    id: 'chal-gaming-mlbb-savage',
+    hostId: 'user-juan',
+    hostName: 'Juan Dela Cruz',
+    hostAvatar: '👨‍💻',
+    title: '🎮 MLBB Savage & Epic Plays Highlight',
+    description: 'I-submit ang inyong pinakamalupit na Mobile Legends Savage, Maniac, o Clutch Lord steal moments!',
+    category: 'Gaming',
+    rules: 'Screen recorded gameplay mula sa current season. Kailangang kitang-kita ang in-game name.',
+    startDate: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    endDate: new Date(Date.now() + 12 * 24 * 60 * 60 * 1000).toISOString(),
+    maxParticipants: 300,
+    status: 'active',
+    createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    prizePool: 4000,
+    sponsorId: 'spons-techzone-ph',
+    sponsorName: 'TechZone PH',
+    sponsorBudget: 8000,
+    hostEarnings: 2000,
+    platformFee: 2000,
+    participants: ['user-juan'],
+    participantsCount: 1,
+    entriesCount: 1,
+    viewsCount: 1650,
+    likes: ['user-clara'],
+    likesCount: 52,
+    coverImage: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800&auto=format&fit=crop&q=60'
+  }
+];
+
+const INITIAL_CHALLENGE_ENTRIES: ChallengeEntry[] = [
+  {
+    id: 'entry-singing-juan',
+    challengeId: 'chal-singing-pinoy-idol',
+    participantId: 'user-juan',
+    participantName: 'Juan Dela Cruz',
+    participantAvatar: '👨‍💻',
+    mediaUrl: 'https://assets.mixkit.co/videos/preview/mixkit-hand-holding-smartphone-with-charts-on-screen-34442-large.mp4',
+    mediaType: 'video',
+    caption: 'Hawak Kamay Acoustic Cover para sa Z-One Singing Idol! Sana magustuhan ninyo mga Ka-Zone!',
+    createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    status: 'approved',
+    score: 120,
+    likes: ['admin-rosco', 'user-clara'],
+    votesCount: 12
+  },
+  {
+    id: 'entry-singing-clara',
+    challengeId: 'chal-singing-pinoy-idol',
+    participantId: 'user-clara',
+    participantName: 'Maria Clara Santos',
+    participantAvatar: '👩‍⚕️',
+    mediaUrl: 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=800&auto=format&fit=crop&q=60',
+    mediaType: 'image',
+    caption: 'My performance entry: OPM Classic Medley. Tulungan po tayo mga Ka-Zone!',
+    createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    status: 'approved',
+    score: 90,
+    likes: ['admin-rosco'],
+    votesCount: 9
+  },
+  {
+    id: 'entry-gaming-juan',
+    challengeId: 'chal-gaming-mlbb-savage',
+    participantId: 'user-juan',
+    participantName: 'Juan Dela Cruz',
+    participantAvatar: '👨‍💻',
+    mediaUrl: 'https://assets.mixkit.co/videos/preview/mixkit-holding-a-smartphone-with-a-green-screen-34440-large.mp4',
+    mediaType: 'video',
+    caption: 'Ling Clutch 1v4 Savage sa Rank Mythic Immortal! Vote ninyo po ako mga lods!',
+    createdAt: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString(),
+    status: 'approved',
+    score: 180,
+    likes: ['user-clara', 'admin-rosco'],
+    votesCount: 18
+  }
+];
+
+const INITIAL_SPONSORED_MISSIONS: SponsoredMission[] = [
+  {
+    id: 'spons-mission-gaming-1',
+    sponsorId: 'spons-techzone-ph',
+    sponsorName: 'TechZone PH',
+    sponsorAvatar: '🎮',
+    title: 'Complete this Gaming Challenge',
+    description: 'Sponsorship para sa mga mobile gamers at content creators na nagbabahagi ng highlight clips sa Z-one.',
+    challengeId: 'chal-gaming-mlbb-savage',
+    budget: 8000,
+    prizePool: 4000,
+    hostEarnings: 2000,
+    platformFee: 2000,
+    startDate: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    endDate: new Date(Date.now() + 12 * 24 * 60 * 60 * 1000).toISOString(),
+    status: 'active',
+    createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    approvedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
+  },
+  {
+    id: 'spons-mission-music-1',
+    sponsorId: 'spons-manila-beats',
+    sponsorName: 'Manila Beats Studio',
+    sponsorAvatar: '🎵',
+    title: 'Pinoy Idol Talent Hunt Mission',
+    description: 'Paghahanap ng mga bagong mang-aawit at manunugtog sa komunidad ng Z-one.',
+    challengeId: 'chal-singing-pinoy-idol',
+    budget: 10000,
+    prizePool: 5000,
+    hostEarnings: 2500,
+    platformFee: 2500,
+    startDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    endDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+    status: 'active',
+    createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    approvedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
+  }
+];
+
 // Helper to sync a single user's active shopping cart into unpaid shopBaskets (Active Leads for VAs)
 function syncUserCartToBasket(db: DBStructure, userId: string) {
   if (!db.shopBaskets) {
@@ -2115,6 +2362,15 @@ function loadDB(): DBStructure {
     if (!loaded.vaSubscriptions) {
       loaded.vaSubscriptions = [];
     }
+    if (!loaded.creatorChallenges) {
+      loaded.creatorChallenges = INITIAL_CREATOR_CHALLENGES;
+    }
+    if (!loaded.challengeEntries) {
+      loaded.challengeEntries = INITIAL_CHALLENGE_ENTRIES;
+    }
+    if (!loaded.sponsoredMissions) {
+      loaded.sponsoredMissions = INITIAL_SPONSORED_MISSIONS;
+    }
 
     // Run auto-expiration on banners & unpaid baskets
     checkAndExpireBanners(loaded);
@@ -2333,7 +2589,10 @@ function loadDB(): DBStructure {
         text: 'Magandang araw sa lahat ng Ka-Zone members! Napakabilis ng palitan ng mensahe dito.',
         createdAt: new Date(Date.now() - 3600000).toISOString()
       }
-    ]
+    ],
+    creatorChallenges: INITIAL_CREATOR_CHALLENGES,
+    challengeEntries: INITIAL_CHALLENGE_ENTRIES,
+    sponsoredMissions: INITIAL_SPONSORED_MISSIONS
   };
 
   // Add Maria Clara as admin's referred friend at the start
@@ -2376,7 +2635,10 @@ const lastSyncedCache = {
   vaSubscriptions: new Map<string, string>(),
   registeredDevices: new Map<string, string>(),
   userVerifications: new Map<string, string>(),
-  kiddieContent: new Map<string, string>()
+  kiddieContent: new Map<string, string>(),
+  creatorChallenges: new Map<string, string>(),
+  challengeEntries: new Map<string, string>(),
+  sponsoredMissions: new Map<string, string>()
 };
 
 function initLastSyncedCache(data: DBStructure) {
@@ -2473,6 +2735,21 @@ function initLastSyncedCache(data: DBStructure) {
   if (lastSyncedCache.kiddieContent.size === 0 && data.kiddieContent && data.kiddieContent.length > 0) {
     for (const kc of data.kiddieContent) {
       lastSyncedCache.kiddieContent.set(kc.id, JSON.stringify(kc));
+    }
+  }
+  if (lastSyncedCache.creatorChallenges.size === 0 && data.creatorChallenges && data.creatorChallenges.length > 0) {
+    for (const c of data.creatorChallenges) {
+      lastSyncedCache.creatorChallenges.set(c.id, JSON.stringify(c));
+    }
+  }
+  if (lastSyncedCache.challengeEntries.size === 0 && data.challengeEntries && data.challengeEntries.length > 0) {
+    for (const ce of data.challengeEntries) {
+      lastSyncedCache.challengeEntries.set(ce.id, JSON.stringify(ce));
+    }
+  }
+  if (lastSyncedCache.sponsoredMissions.size === 0 && data.sponsoredMissions && data.sponsoredMissions.length > 0) {
+    for (const sm of data.sponsoredMissions) {
+      lastSyncedCache.sponsoredMissions.set(sm.id, JSON.stringify(sm));
     }
   }
 }
@@ -3288,6 +3565,63 @@ async function uploadToFirestore(data: DBStructure) {
       }
     }
 
+    if (data.creatorChallenges) {
+      for (const ch of data.creatorChallenges) {
+        const chStr = JSON.stringify(ch);
+        if (lastSyncedCache.creatorChallenges.get(ch.id) !== chStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...chWithoutId } = ch;
+              await cloudDb.setDoc('challenges', ch.id, chWithoutId);
+              lastSyncedCache.creatorChallenges.set(ch.id, chStr);
+              dequeueFirestoreSync('challenges', ch.id);
+            } catch (chErr: any) {
+              console.error(`Error saving challenge ${ch.id} to Cloud DB:`, chErr);
+              enqueueFirestoreSync('set', 'challenges', ch.id, ch, chErr?.message || String(chErr));
+            }
+          })());
+        }
+      }
+    }
+
+    if (data.challengeEntries) {
+      for (const che of data.challengeEntries) {
+        const cheStr = JSON.stringify(che);
+        if (lastSyncedCache.challengeEntries.get(che.id) !== cheStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...cheWithoutId } = che;
+              await cloudDb.setDoc('challenge_entries', che.id, cheWithoutId);
+              lastSyncedCache.challengeEntries.set(che.id, cheStr);
+              dequeueFirestoreSync('challenge_entries', che.id);
+            } catch (cheErr: any) {
+              console.error(`Error saving challenge entry ${che.id} to Cloud DB:`, cheErr);
+              enqueueFirestoreSync('set', 'challenge_entries', che.id, che, cheErr?.message || String(cheErr));
+            }
+          })());
+        }
+      }
+    }
+
+    if (data.sponsoredMissions) {
+      for (const sm of data.sponsoredMissions) {
+        const smStr = JSON.stringify(sm);
+        if (lastSyncedCache.sponsoredMissions.get(sm.id) !== smStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...smWithoutId } = sm;
+              await cloudDb.setDoc('sponsored_missions', sm.id, smWithoutId);
+              lastSyncedCache.sponsoredMissions.set(sm.id, smStr);
+              dequeueFirestoreSync('sponsored_missions', sm.id);
+            } catch (smErr: any) {
+              console.error(`Error saving sponsored mission ${sm.id} to Cloud DB:`, smErr);
+              enqueueFirestoreSync('set', 'sponsored_missions', sm.id, sm, smErr?.message || String(smErr));
+            }
+          })());
+        }
+      }
+    }
+
     // Deletion syncs
     const currentStoryIds = new Set(data.stories ? data.stories.map(s => s.id) : []);
     for (const cachedId of lastSyncedCache.stories.keys()) {
@@ -3461,7 +3795,7 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
       return [];
     };
 
-    // Sequential paced fetching across all 18 collections to prevent RESOURCE_EXHAUSTED / rate-limit bursts
+    // Sequential paced fetching across all collections to prevent RESOURCE_EXHAUSTED / rate-limit bursts
     const collectionNames = [
       'users',
       'campaigns',
@@ -3480,7 +3814,10 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
       'va_banners',
       'registered_devices',
       'user_verifications',
-      'kiddie_content'
+      'kiddie_content',
+      'challenges',
+      'challenge_entries',
+      'sponsored_missions'
     ];
 
     // Completely isolated temporary recovery buffer
@@ -3520,11 +3857,15 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
     const dbRegisteredDevices = fetched['registered_devices'] || [];
     const dbUserVerifications = fetched['user_verifications'] || [];
     const dbKiddieContent = fetched['kiddie_content'] || [];
+    const dbChallenges = fetched['challenges'] || [];
+    const dbEntries = fetched['challenge_entries'] || [];
+    const dbMissions = fetched['sponsored_missions'] || [];
 
     const hasAnyCloudData = dbUsers.length > 0 || dbStories.length > 0 || dbAlbums.length > 0 || dbGroupChats.length > 0 || 
                             dbGroupMessages.length > 0 || dbDMs.length > 0 || dbPosts.length > 0 || 
                             dbReels.length > 0 || dbShopOrders.length > 0 || dbCampaigns.length > 0 || 
-                            dbMerchantAds.length > 0 || dbShopProducts.length > 0 || dbRegisteredDevices.length > 0;
+                            dbMerchantAds.length > 0 || dbShopProducts.length > 0 || dbRegisteredDevices.length > 0 ||
+                            dbChallenges.length > 0 || dbMissions.length > 0;
 
     const localDB = loadDB(); // Read current local records
 
@@ -3575,6 +3916,9 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
       const finalRegisteredDevices = mergeCloudFirst(localDB.registeredDevices || [], dbRegisteredDevices);
       const finalUserVerifications = mergeCloudFirst(localDB.userVerifications || [], dbUserVerifications);
       const finalKiddieContent = mergeCloudFirst(localDB.kiddieContent || INITIAL_KIDDIE_CONTENT, dbKiddieContent);
+      const finalChallenges = mergeCloudFirst(localDB.creatorChallenges || INITIAL_CREATOR_CHALLENGES, dbChallenges);
+      const finalEntries = mergeCloudFirst(localDB.challengeEntries || INITIAL_CHALLENGE_ENTRIES, dbEntries);
+      const finalMissions = mergeCloudFirst(localDB.sponsoredMissions || INITIAL_SPONSORED_MISSIONS, dbMissions);
 
       const mergedDB: DBStructure = {
         users: finalUsers.length > 0 ? finalUsers : localDB.users,
@@ -3597,7 +3941,10 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
         registeredDevices: finalRegisteredDevices,
         userVerifications: finalUserVerifications,
         kiddieContent: finalKiddieContent.length > 0 ? finalKiddieContent : INITIAL_KIDDIE_CONTENT,
-        deviceTransfers: localDB.deviceTransfers || []
+        deviceTransfers: localDB.deviceTransfers || [],
+        creatorChallenges: finalChallenges.length > 0 ? finalChallenges : INITIAL_CREATOR_CHALLENGES,
+        challengeEntries: finalEntries.length > 0 ? finalEntries : INITIAL_CHALLENGE_ENTRIES,
+        sponsoredMissions: finalMissions.length > 0 ? finalMissions : INITIAL_SPONSORED_MISSIONS
       };
 
       // Admin credential verification
@@ -7106,7 +7453,10 @@ app.post('/api/admin/db/rebuild-from-firestore', async (req, res) => {
       'va_banners',
       'registered_devices',
       'user_verifications',
-      'kiddie_content'
+      'kiddie_content',
+      'challenges',
+      'challenge_entries',
+      'sponsored_missions'
     ];
 
     let fetchErrors = 0;
@@ -7181,6 +7531,9 @@ app.post('/api/admin/db/rebuild-from-firestore', async (req, res) => {
     const rawRegisteredDevices = fetched['registered_devices'] || [];
     const rawUserVerifications = fetched['user_verifications'] || [];
     const rawKiddieContent = fetched['kiddie_content'] || [];
+    const rawChallenges = fetched['challenges'] || [];
+    const rawEntries = fetched['challenge_entries'] || [];
+    const rawMissions = fetched['sponsored_missions'] || [];
 
     if (!Array.isArray(rawUsers)) {
       return res.status(500).json({
@@ -7211,7 +7564,10 @@ app.post('/api/admin/db/rebuild-from-firestore', async (req, res) => {
       registeredDevices: rawRegisteredDevices,
       userVerifications: rawUserVerifications,
       kiddieContent: rawKiddieContent,
-      deviceTransfers: []
+      deviceTransfers: [],
+      creatorChallenges: rawChallenges,
+      challengeEntries: rawEntries,
+      sponsoredMissions: rawMissions
     };
 
     // Create safety timestamped backup of the CURRENT database BEFORE replacing
@@ -13073,6 +13429,596 @@ app.post('/api/admin/approve-va-subscription', (req, res) => {
     success: true,
     message: `Subscription ${decision === 'approve' ? 'approved' : 'declined'} successfully!`,
     subscription: sub
+  });
+});
+
+// ============================================
+//   CREATOR CHALLENGES & SPONSORED MISSIONS API
+// ============================================
+
+// 1. GET /api/challenges - List all challenges
+app.get('/api/challenges', (req, res) => {
+  const db = loadDB();
+  const { category, status } = req.query;
+  let challenges = (db.creatorChallenges || INITIAL_CREATOR_CHALLENGES);
+
+  if (category && typeof category === 'string' && category !== 'all') {
+    challenges = challenges.filter(c => c.category.toLowerCase() === category.toLowerCase());
+  }
+  if (status && typeof status === 'string') {
+    challenges = challenges.filter(c => c.status === status);
+  }
+
+  return res.json({
+    success: true,
+    challenges
+  });
+});
+
+// 2. GET /api/challenges/:id - Get challenge details with leaderboard
+app.get('/api/challenges/:id', (req, res) => {
+  const db = loadDB();
+  const { id } = req.params;
+  const challenge = (db.creatorChallenges || []).find(c => c.id === id);
+
+  if (!challenge) {
+    return res.status(404).json({ error: 'Challenge not found' });
+  }
+
+  const allEntries = (db.challengeEntries || []).filter(e => e.challengeId === id);
+  const approvedEntries = allEntries.filter(e => e.status !== 'rejected');
+  
+  // Sorted leaderboard by score and votes
+  const leaderboard = [...approvedEntries].sort((a, b) => (b.score || 0) - (a.score || 0) || (b.votesCount || 0) - (a.votesCount || 0));
+
+  return res.json({
+    success: true,
+    challenge,
+    entries: approvedEntries,
+    leaderboard
+  });
+});
+
+// 3. POST /api/challenges/:id/view - Quota-safe view counter (in-memory & local DB, no Firestore write per view)
+app.post('/api/challenges/:id/view', (req, res) => {
+  const db = loadDB();
+  const { id } = req.params;
+  const challenge = (db.creatorChallenges || []).find(c => c.id === id);
+
+  if (challenge) {
+    challenge.viewsCount = (challenge.viewsCount || 0) + 1;
+    // Fast in-memory update with throttled save, zero direct Firestore write per view
+    cachedDB = db;
+  }
+
+  return res.json({ success: true, viewsCount: challenge?.viewsCount || 0 });
+});
+
+// 4. POST /api/challenges/:id/like - Like/toggle challenge
+app.post('/api/challenges/:id/like', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const { id } = req.params;
+  const challenge = (db.creatorChallenges || []).find(c => c.id === id);
+  if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
+
+  if (!Array.isArray(challenge.likes)) challenge.likes = [];
+
+  const existingIndex = challenge.likes.indexOf(user.id);
+  let liked = false;
+  if (existingIndex >= 0) {
+    challenge.likes.splice(existingIndex, 1);
+  } else {
+    challenge.likes.push(user.id);
+    liked = true;
+  }
+  challenge.likesCount = challenge.likes.length;
+
+  saveDB(db);
+  safeCloudSync('update', 'challenges', challenge.id, { likes: challenge.likes, likesCount: challenge.likesCount });
+
+  return res.json({
+    success: true,
+    liked,
+    likesCount: challenge.likesCount
+  });
+});
+
+// 5. POST /api/challenges - Create a new Challenge
+app.post('/api/challenges', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const {
+    title,
+    description,
+    category,
+    rules,
+    startDate,
+    endDate,
+    maxParticipants,
+    prizePool,
+    coverImage,
+    sponsorId,
+    sponsorName,
+    sponsorBudget
+  } = req.body;
+
+  if (!title || !category || !rules) {
+    return res.status(400).json({ error: 'Title, category, at rules ay kailangan.' });
+  }
+
+  const now = new Date();
+  const end = endDate ? new Date(endDate) : new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+
+  const budget = Number(sponsorBudget) || 0;
+  const prize = Number(prizePool) || (budget > 0 ? Math.floor(budget * 0.5) : 1000);
+  const hostEarn = budget > 0 ? Math.floor(budget * 0.25) : 0;
+  const fee = budget > 0 ? budget - prize - hostEarn : 0;
+
+  const newChallenge: CreatorChallenge = {
+    id: 'chal-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    hostId: user.id,
+    hostName: user.name,
+    hostAvatar: user.avatar || '👤',
+    title: String(title).trim(),
+    description: String(description || '').trim(),
+    category: (category || 'Other') as CreatorChallenge['category'],
+    rules: String(rules).trim(),
+    startDate: startDate ? new Date(startDate).toISOString() : now.toISOString(),
+    endDate: end.toISOString(),
+    maxParticipants: Number(maxParticipants) || 100,
+    status: 'active',
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+    prizePool: prize,
+    sponsorId: sponsorId || undefined,
+    sponsorName: sponsorName || undefined,
+    sponsorBudget: budget > 0 ? budget : undefined,
+    hostEarnings: hostEarn > 0 ? hostEarn : undefined,
+    platformFee: fee > 0 ? fee : undefined,
+    participants: [user.id],
+    participantsCount: 1,
+    entriesCount: 0,
+    viewsCount: 1,
+    likes: [],
+    likesCount: 0,
+    coverImage: coverImage || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&auto=format&fit=crop&q=60'
+  };
+
+  if (!db.creatorChallenges) db.creatorChallenges = [];
+  db.creatorChallenges.unshift(newChallenge);
+
+  saveDB(db);
+  safeCloudSync('set', 'challenges', newChallenge.id, newChallenge);
+
+  return res.json({
+    success: true,
+    challenge: newChallenge
+  });
+});
+
+// 6. POST /api/challenges/:id/join - Join challenge
+app.post('/api/challenges/:id/join', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const { id } = req.params;
+  const challenge = (db.creatorChallenges || []).find(c => c.id === id);
+  if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
+
+  if (challenge.status !== 'active') {
+    return res.status(400).json({ error: 'Ang challenge na ito ay hindi na aktibo.' });
+  }
+
+  if (new Date(challenge.endDate).getTime() < Date.now()) {
+    return res.status(400).json({ error: 'Tapos na ang palugit ng challenge na ito.' });
+  }
+
+  if (!Array.isArray(challenge.participants)) challenge.participants = [];
+
+  if (challenge.participants.includes(user.id)) {
+    return res.json({
+      success: true,
+      alreadyJoined: true,
+      message: 'Kalahok ka na sa challenge na ito!',
+      participantsCount: challenge.participantsCount
+    });
+  }
+
+  if (challenge.maxParticipants && challenge.participants.length >= challenge.maxParticipants) {
+    return res.status(400).json({ error: 'Puno na ang slot para sa challenge na ito.' });
+  }
+
+  challenge.participants.push(user.id);
+  challenge.participantsCount = challenge.participants.length;
+
+  saveDB(db);
+  safeCloudSync('update', 'challenges', challenge.id, {
+    participants: challenge.participants,
+    participantsCount: challenge.participantsCount
+  });
+
+  return res.json({
+    success: true,
+    message: 'Matagumpay kang nakasali sa challenge!',
+    participantsCount: challenge.participantsCount
+  });
+});
+
+// 7. POST /api/challenges/:id/entries - Submit an entry
+app.post('/api/challenges/:id/entries', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const { id } = req.params;
+  const challenge = (db.creatorChallenges || []).find(c => c.id === id);
+  if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
+
+  if (challenge.status !== 'active') {
+    return res.status(400).json({ error: 'Ang challenge na ito ay hindi na aktibo.' });
+  }
+
+  const { mediaUrl, mediaType, caption } = req.body;
+  if (!mediaUrl) {
+    return res.status(400).json({ error: 'Kailangang mag-upload o maglagay ng video o image URL.' });
+  }
+
+  // Ensure user is in participants
+  if (!Array.isArray(challenge.participants)) challenge.participants = [];
+  if (!challenge.participants.includes(user.id)) {
+    challenge.participants.push(user.id);
+    challenge.participantsCount = challenge.participants.length;
+  }
+
+  const newEntry: ChallengeEntry = {
+    id: 'entry-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    challengeId: challenge.id,
+    participantId: user.id,
+    participantName: user.name,
+    participantAvatar: user.avatar || '👤',
+    mediaUrl: String(mediaUrl).trim(),
+    mediaType: mediaType === 'video' ? 'video' : 'image',
+    caption: String(caption || '').trim(),
+    createdAt: new Date().toISOString(),
+    status: 'approved',
+    score: 10,
+    likes: [user.id],
+    votesCount: 1
+  };
+
+  if (!db.challengeEntries) db.challengeEntries = [];
+  db.challengeEntries.unshift(newEntry);
+
+  challenge.entriesCount = (challenge.entriesCount || 0) + 1;
+
+  saveDB(db);
+  safeCloudSync('set', 'challenge_entries', newEntry.id, newEntry);
+  safeCloudSync('update', 'challenges', challenge.id, {
+    entriesCount: challenge.entriesCount,
+    participants: challenge.participants,
+    participantsCount: challenge.participantsCount
+  });
+
+  return res.json({
+    success: true,
+    message: 'Nai-submit na ang iyong entry sa challenge!',
+    entry: newEntry
+  });
+});
+
+// 8. POST /api/challenges/:id/entries/:entryId/vote - Vote/react to an entry
+app.post('/api/challenges/:id/entries/:entryId/vote', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const { id, entryId } = req.params;
+  const entry = (db.challengeEntries || []).find(e => e.id === entryId && e.challengeId === id);
+  if (!entry) return res.status(404).json({ error: 'Entry not found' });
+
+  if (!Array.isArray(entry.likes)) entry.likes = [];
+
+  const existingIndex = entry.likes.indexOf(user.id);
+  let voted = false;
+  if (existingIndex >= 0) {
+    entry.likes.splice(existingIndex, 1);
+  } else {
+    entry.likes.push(user.id);
+    voted = true;
+  }
+
+  entry.votesCount = entry.likes.length;
+  entry.score = entry.votesCount * 10;
+
+  saveDB(db);
+  safeCloudSync('update', 'challenge_entries', entry.id, {
+    likes: entry.likes,
+    votesCount: entry.votesCount,
+    score: entry.score
+  });
+
+  return res.json({
+    success: true,
+    voted,
+    votesCount: entry.votesCount,
+    score: entry.score
+  });
+});
+
+// 9. GET /api/sponsored-missions - List sponsored missions
+app.get('/api/sponsored-missions', (req, res) => {
+  const db = loadDB();
+  const missions = db.sponsoredMissions || INITIAL_SPONSORED_MISSIONS;
+  return res.json({
+    success: true,
+    missions
+  });
+});
+
+// 10. POST /api/sponsored-missions - Create a Sponsored Mission
+app.post('/api/sponsored-missions', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const {
+    title,
+    description,
+    challengeId,
+    budget,
+    startDate,
+    endDate
+  } = req.body;
+
+  if (!title || !budget) {
+    return res.status(400).json({ error: 'Title at budget ay kailangan.' });
+  }
+
+  const numBudget = Number(budget);
+  if (numBudget < 500) {
+    return res.status(400).json({ error: 'Minimum sponsor budget ay ₱500.' });
+  }
+
+  const prizePool = Math.floor(numBudget * 0.5);
+  const hostEarnings = Math.floor(numBudget * 0.25);
+  const platformFee = numBudget - prizePool - hostEarnings;
+
+  const now = new Date();
+  const end = endDate ? new Date(endDate) : new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+
+  const newMission: SponsoredMission = {
+    id: 'spons-mission-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    sponsorId: user.id,
+    sponsorName: user.name,
+    sponsorAvatar: user.avatar || '🏢',
+    title: String(title).trim(),
+    description: String(description || '').trim(),
+    challengeId: challengeId || undefined,
+    budget: numBudget,
+    prizePool,
+    hostEarnings,
+    platformFee,
+    startDate: startDate ? new Date(startDate).toISOString() : now.toISOString(),
+    endDate: end.toISOString(),
+    status: 'active',
+    createdAt: now.toISOString(),
+    approvedAt: now.toISOString()
+  };
+
+  if (!db.sponsoredMissions) db.sponsoredMissions = [];
+  db.sponsoredMissions.unshift(newMission);
+
+  // If connected to a challenge, update challenge financial fields
+  if (challengeId) {
+    const challenge = (db.creatorChallenges || []).find(c => c.id === challengeId);
+    if (challenge) {
+      challenge.sponsorId = user.id;
+      challenge.sponsorName = user.name;
+      challenge.sponsorBudget = (challenge.sponsorBudget || 0) + numBudget;
+      challenge.prizePool = (challenge.prizePool || 0) + prizePool;
+      challenge.hostEarnings = (challenge.hostEarnings || 0) + hostEarnings;
+      challenge.platformFee = (challenge.platformFee || 0) + platformFee;
+      safeCloudSync('update', 'challenges', challenge.id, {
+        sponsorId: challenge.sponsorId,
+        sponsorName: challenge.sponsorName,
+        sponsorBudget: challenge.sponsorBudget,
+        prizePool: challenge.prizePool,
+        hostEarnings: challenge.hostEarnings,
+        platformFee: challenge.platformFee
+      });
+    }
+  }
+
+  saveDB(db);
+  safeCloudSync('set', 'sponsored_missions', newMission.id, newMission);
+
+  return res.json({
+    success: true,
+    mission: newMission
+  });
+});
+
+// 11. ADMIN: GET /api/admin/challenges - Admin list all challenges with full entries and sponsor data
+app.get('/api/admin/challenges', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
+
+  const challenges = db.creatorChallenges || INITIAL_CREATOR_CHALLENGES;
+  const entries = db.challengeEntries || INITIAL_CHALLENGE_ENTRIES;
+  const missions = db.sponsoredMissions || INITIAL_SPONSORED_MISSIONS;
+
+  return res.json({
+    success: true,
+    challenges,
+    entries,
+    missions,
+    totalPrizePool: challenges.reduce((sum, c) => sum + (c.prizePool || 0), 0),
+    totalHostEarnings: challenges.reduce((sum, c) => sum + (c.hostEarnings || 0), 0),
+    totalPlatformFees: challenges.reduce((sum, c) => sum + (c.platformFee || 0), 0)
+  });
+});
+
+// 12. ADMIN: PATCH /api/admin/challenges/:id - Update challenge status (active, completed, cancelled)
+app.patch('/api/admin/challenges/:id', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
+
+  const { id } = req.params;
+  const challenge = (db.creatorChallenges || []).find(c => c.id === id);
+  if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
+
+  const { status, title, description, category, prizePool } = req.body;
+  if (status) challenge.status = status;
+  if (title) challenge.title = title;
+  if (description) challenge.description = description;
+  if (category) challenge.category = category;
+  if (prizePool !== undefined) challenge.prizePool = Number(prizePool);
+  challenge.updatedAt = new Date().toISOString();
+
+  saveDB(db);
+  safeCloudSync('update', 'challenges', challenge.id, challenge);
+
+  return res.json({
+    success: true,
+    challenge
+  });
+});
+
+// 13. ADMIN: POST /api/admin/challenges/:id/distribute-prizes - Server-side authoritative prize and host earnings disbursement
+app.post('/api/admin/challenges/:id/distribute-prizes', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
+
+  const { id } = req.params;
+  const challenge = (db.creatorChallenges || []).find(c => c.id === id);
+  if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
+
+  if (challenge.status === 'completed') {
+    return res.status(400).json({ error: 'Ang challenge na ito ay na-distribute na ang mga premyo.' });
+  }
+
+  const allEntries = (db.challengeEntries || []).filter(e => e.challengeId === id && e.status !== 'rejected');
+  const sorted = [...allEntries].sort((a, b) => (b.score || 0) - (a.score || 0) || (b.votesCount || 0) - (a.votesCount || 0));
+
+  const totalPrize = challenge.prizePool || 0;
+  const hostReward = challenge.hostEarnings || 0;
+
+  const distributions: { userId: string; name: string; role: string; rank?: number; amount: number }[] = [];
+
+  // Distribute prize pool to top 3
+  if (sorted.length > 0 && totalPrize > 0) {
+    if (sorted.length === 1) {
+      // 100% to lone winner
+      const w1 = sorted[0];
+      const user1 = db.users.find(u => u.id === w1.participantId);
+      if (user1) {
+        user1.stats.balance = (user1.stats.balance || 0) + totalPrize;
+        user1.stats.lifetimeEarnings = (user1.stats.lifetimeEarnings || 0) + totalPrize;
+        if (!user1.activityLogs) user1.activityLogs = [];
+        user1.activityLogs.unshift({
+          id: 'act-chal-win-' + Date.now(),
+          type: 'reward',
+          title: `🏆 1st Place Challenge Winner (${challenge.title})`,
+          amount: totalPrize,
+          timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+          details: `Napanalunan ang ₱${totalPrize.toFixed(2)} grand prize sa Z-One Challenge!`
+        });
+        distributions.push({ userId: user1.id, name: user1.name, role: 'Winner', rank: 1, amount: totalPrize });
+        safeCloudSync('update', 'users', user1.id, { stats: user1.stats, activityLogs: user1.activityLogs });
+      }
+    } else {
+      // 1st: 60%, 2nd: 40% (or 1st 50%, 2nd 30%, 3rd 20%)
+      const shares = sorted.length >= 3 ? [0.5, 0.3, 0.2] : [0.65, 0.35];
+      for (let i = 0; i < shares.length && i < sorted.length; i++) {
+        const entry = sorted[i];
+        const prizeAmount = Math.floor(totalPrize * shares[i]);
+        const user = db.users.find(u => u.id === entry.participantId);
+        if (user && prizeAmount > 0) {
+          user.stats.balance = (user.stats.balance || 0) + prizeAmount;
+          user.stats.lifetimeEarnings = (user.stats.lifetimeEarnings || 0) + prizeAmount;
+          if (!user.activityLogs) user.activityLogs = [];
+          user.activityLogs.unshift({
+            id: 'act-chal-win-' + Date.now() + '-' + i,
+            type: 'reward',
+            title: `🏆 Top ${i + 1} Challenge Winner (${challenge.title})`,
+            amount: prizeAmount,
+            timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+            details: `Napanalunan ang ₱${prizeAmount.toFixed(2)} bilang Top ${i + 1} sa challenge!`
+          });
+          distributions.push({ userId: user.id, name: user.name, role: 'Winner', rank: i + 1, amount: prizeAmount });
+          safeCloudSync('update', 'users', user.id, { stats: user.stats, activityLogs: user.activityLogs });
+        }
+      }
+    }
+  }
+
+  // Credit host earnings strictly from legitimate sponsor budget server-side
+  if (hostReward > 0) {
+    const hostUser = db.users.find(u => u.id === challenge.hostId);
+    if (hostUser) {
+      hostUser.stats.balance = (hostUser.stats.balance || 0) + hostReward;
+      hostUser.stats.lifetimeEarnings = (hostUser.stats.lifetimeEarnings || 0) + hostReward;
+      if (!hostUser.activityLogs) hostUser.activityLogs = [];
+      hostUser.activityLogs.unshift({
+        id: 'act-chal-host-' + Date.now(),
+        type: 'bonus',
+        title: `👑 Challenge Host Partner Earnings (${challenge.title})`,
+        amount: hostReward,
+        timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+        details: `Nakatanggap ng ₱${hostReward.toFixed(2)} host reward mula sa authorized sponsor partnership budget.`
+      });
+      distributions.push({ userId: hostUser.id, name: hostUser.name, role: 'Host Partner', amount: hostReward });
+      safeCloudSync('update', 'users', hostUser.id, { stats: hostUser.stats, activityLogs: hostUser.activityLogs });
+    }
+  }
+
+  challenge.status = 'completed';
+  challenge.updatedAt = new Date().toISOString();
+
+  saveDB(db);
+  safeCloudSync('update', 'challenges', challenge.id, { status: 'completed', updatedAt: challenge.updatedAt });
+
+  return res.json({
+    success: true,
+    message: `Matagumpay na na-disburse ang mga premyo sa ${distributions.length} kalahok at host!`,
+    challenge,
+    distributions
   });
 });
 
