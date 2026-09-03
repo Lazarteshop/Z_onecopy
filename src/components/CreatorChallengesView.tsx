@@ -33,6 +33,7 @@ import {
 import { CreatorChallenge, ChallengeEntry, SponsoredMission, UserSession } from '../types';
 import { DepositModal } from './DepositModal';
 import { ParticipantShareModal } from './ParticipantShareModal';
+import { ChallengeVideoPlayer } from './ChallengeVideoPlayer';
 
 interface CreatorChallengesViewProps {
   token: string | null;
@@ -1719,15 +1720,18 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                                       </div>
                                     </button>
                                   ) : (
-                                    <a
-                                      href={entry.mediaUrl}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-black flex items-center gap-1 shrink-0 transition"
+                                    <button
+                                      type="button"
+                                      onClick={() => setViewingMedia({
+                                        url: entry.mediaUrl,
+                                        type: 'video',
+                                        title: getSafeDisplayName(entry.participantName, isTl ? 'Kalahok' : 'Participant')
+                                      })}
+                                      className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-black flex items-center gap-1 shrink-0 transition cursor-pointer shadow-2xs"
                                     >
                                       <Play className="w-3 h-3 text-indigo-600" />
                                       <span>{isTl ? 'Panoorin' : 'Watch'}</span>
-                                    </a>
+                                    </button>
                                   )
                                 )}
 
@@ -1961,7 +1965,7 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
           >
             <div className="flex items-center justify-between p-2 mb-1 border-b border-white/10">
               <span className="text-white text-xs font-black truncate max-w-[80%]">
-                {viewingMedia.title} • {isTl ? 'Larawan ng Entry' : 'Entry Photo'}
+                {viewingMedia.title} • {viewingMedia.type === 'video' ? (isTl ? 'Video ng Entry' : 'Entry Video') : (isTl ? 'Larawan ng Entry' : 'Entry Photo')}
               </span>
               <button
                 type="button"
@@ -1971,16 +1975,25 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="flex items-center justify-center max-h-[75vh] overflow-hidden rounded-2xl bg-black">
-              <img
-                src={viewingMedia.url}
-                alt={viewingMedia.title || 'Entry Preview'}
-                className="max-w-full max-h-[75vh] object-contain"
-                referrerPolicy="no-referrer"
-                onError={(e) => {
-                  e.currentTarget.src = DEFAULT_ENTRY_PLACEHOLDER;
-                }}
-              />
+            <div className="flex items-center justify-center max-h-[80vh] overflow-hidden rounded-2xl bg-black">
+              {viewingMedia.type === 'video' ? (
+                <ChallengeVideoPlayer
+                  mediaUrl={viewingMedia.url}
+                  caption={viewingMedia.title}
+                  isTl={isTl}
+                  autoPlay={true}
+                />
+              ) : (
+                <img
+                  src={viewingMedia.url}
+                  alt={viewingMedia.title || 'Entry Preview'}
+                  className="max-w-full max-h-[75vh] object-contain"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    e.currentTarget.src = DEFAULT_ENTRY_PLACEHOLDER;
+                  }}
+                />
+              )}
             </div>
           </div>
         </div>

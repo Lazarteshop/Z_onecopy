@@ -15,6 +15,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { ChallengeEntry, CreatorChallenge, UserSession } from '../types';
+import { ChallengeVideoPlayer } from './ChallengeVideoPlayer';
 
 interface PublicEntryLandingModalProps {
   challengeId: string;
@@ -194,18 +195,22 @@ export const PublicEntryLandingModal: React.FC<PublicEntryLandingModalProps> = (
 
               {/* Entry Media Preview */}
               {entry.mediaUrl && (
-                <div className="rounded-2xl overflow-hidden bg-slate-950 border border-slate-200 relative group max-h-72 flex items-center justify-center">
+                <div className="rounded-2xl overflow-hidden bg-slate-950 border border-slate-200 relative group flex items-center justify-center">
                   {entry.mediaType === 'video' ? (
-                    <video
-                      src={entry.mediaUrl}
-                      controls
-                      className="max-h-72 w-full object-contain"
+                    <ChallengeVideoPlayer
+                      mediaUrl={entry.mediaUrl}
+                      caption={entry.caption || challenge?.title}
+                      isTl={isTl}
                     />
                   ) : (
                     <img
                       src={entry.mediaUrl}
                       alt={entry.caption || 'Challenge Entry Media'}
                       className="max-h-72 w-full object-contain"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        e.currentTarget.src = 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&auto=format&fit=crop&q=60';
+                      }}
                     />
                   )}
                 </div>
