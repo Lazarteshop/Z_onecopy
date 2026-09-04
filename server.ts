@@ -1510,7 +1510,7 @@ interface CreatorChallenge {
   startDate: string;
   endDate: string;
   maxParticipants: number;
-  status: 'draft' | 'pending_review' | 'active' | 'completed' | 'cancelled';
+  status: 'draft' | 'pending_review' | 'active' | 'completed' | 'cancelled' | 'archived';
   createdAt: string;
   updatedAt: string;
   prizePool?: number;
@@ -1528,6 +1528,19 @@ interface CreatorChallenge {
   likes: string[];
   likesCount: number;
   coverImage?: string;
+  endedAt?: string;
+  rewardDistributionStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'PARTIAL_FAILURE' | 'FAILED';
+  rewardDistributedAt?: string;
+  rewardsSummary?: {
+    totalDistributed: number;
+    winnersCount: number;
+    hostReward: number;
+    distributions: { userId: string; name: string; role: string; rank?: number; amount: number }[];
+  };
+  cleanupStatus?: 'active' | 'pending' | 'eligible' | 'archived';
+  cleanupEligibleAt?: string;
+  archivedAt?: string;
+  isArchived?: boolean;
 }
 
 interface ChallengeEntry {
@@ -13575,8 +13588,13 @@ app.post('/api/admin/approve-va-subscription', (req, res) => {
 // 1. GET /api/challenges - List all challenges
 app.get('/api/challenges', (req, res) => {
   const db = loadDB();
-  const { category, status } = req.query;
+  const { category, status, includeArchived } = req.query;
   let challenges = (db.creatorChallenges || INITIAL_CREATOR_CHALLENGES);
+
+  // AUTOMATIC 24-HOUR CLEANUP: By default, filter out archived/removed challenges from active listing
+  if (includeArchived !== 'true') {
+    challenges = challenges.filter(c => c.status !== 'archived' && !c.isArchived);
+  }
 
   if (category && typeof category === 'string' && category !== 'all') {
     challenges = challenges.filter(c => c.category.toLowerCase() === category.toLowerCase());
@@ -13601,6 +13619,11 @@ app.get('/api/challenges/:id', (req, res) => {
     return res.status(404).json({ error: 'Challenge not found' });
   }
 
+  const isEnded = challenge.status === 'completed' || 
+                  challenge.status === 'archived' || 
+                  challenge.status === 'cancelled' || 
+                  (challenge.endDate && new Date(challenge.endDate).getTime() <= Date.now());
+
   const allEntries = (db.challengeEntries || []).filter(e => e.challengeId === id);
   const approvedEntries = allEntries.filter(e => e.status !== 'rejected');
   
@@ -13609,7 +13632,11 @@ app.get('/api/challenges/:id', (req, res) => {
 
   return res.json({
     success: true,
-    challenge,
+    challenge: {
+      ...challenge,
+      isEnded,
+      votingClosed: isEnded
+    },
     entries: approvedEntries,
     leaderboard
   });
@@ -14013,7 +14040,10 @@ app.put('/api/challenges/:id/entries/:entryId', (req, res) => {
   });
 });
 
-// 8. POST /api/challenges/:id/entries/:entryId/vote - Vote/react to an entry
+// Active in-flight voting concurrency lock to prevent rapid multi-clicks or race conditions
+const activeVoteLocks = new Set<string>();
+
+// 8. POST /api/challenges/:id/entries/:entryId/vote - Authoritative Permanent Final Vote
 app.post('/api/challenges/:id/entries/:entryId/vote', (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Authentication required' });
@@ -14023,41 +14053,82 @@ app.post('/api/challenges/:id/entries/:entryId/vote', (req, res) => {
   if (!user) return res.status(401).json({ error: 'User not found' });
 
   const { id, entryId } = req.params;
+  const challenge = (db.creatorChallenges || []).find(c => c.id === id);
+  if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
+
+  // 1. Check if challenge is ended or voting is closed
+  const isChallengeEnded = challenge.status === 'completed' || 
+                          challenge.status === 'archived' || 
+                          challenge.status === 'cancelled' || 
+                          (challenge.endDate && new Date(challenge.endDate).getTime() <= Date.now());
+
+  if (isChallengeEnded) {
+    return res.status(400).json({ error: 'Ended na ang challenge. Hindi na maaaring bumoto.' });
+  }
+
   const entry = (db.challengeEntries || []).find(e => e.id === entryId && e.challengeId === id);
   if (!entry) return res.status(404).json({ error: 'Entry not found' });
 
-  // STRICT SERVER-SIDE SELF-VOTING PREVENTION
+  // 2. Strict server-side self-voting prevention
   if (entry.participantId === user.id) {
     return res.status(400).json({ error: 'Hindi maaaring bumoto sa sariling entry.' });
   }
 
-  if (!Array.isArray(entry.likes)) entry.likes = [];
-
-  const existingIndex = entry.likes.indexOf(user.id);
-  let voted = false;
-  if (existingIndex >= 0) {
-    entry.likes.splice(existingIndex, 1);
-  } else {
-    entry.likes.push(user.id);
-    voted = true;
+  // 3. Concurrency Lock: prevent duplicate concurrent vote submission from same user on same entry
+  const voteLockKey = `${user.id}:${entry.id}`;
+  if (activeVoteLocks.has(voteLockKey)) {
+    return res.status(409).json({
+      alreadyVoted: true,
+      voteLocked: true,
+      message: 'Kasalukuyang pinoproseso ang iyong boto. Mangyaring maghintay.',
+      votesCount: entry.votesCount || entry.likes?.length || 0,
+      score: entry.score || 0
+    });
   }
 
-  entry.votesCount = entry.likes.length;
-  entry.score = entry.votesCount * 10;
+  activeVoteLocks.add(voteLockKey);
 
-  saveDB(db);
-  safeCloudSync('update', 'challenge_entries', entry.id, {
-    likes: entry.likes,
-    votesCount: entry.votesCount,
-    score: entry.score
-  });
+  try {
+    if (!Array.isArray(entry.likes)) entry.likes = [];
 
-  return res.json({
-    success: true,
-    voted,
-    votesCount: entry.votesCount,
-    score: entry.score
-  });
+    // 4. PERMANENT / FINAL VOTE CHECK:
+    // Once submitted, one user = one final vote per entry.
+    // The user cannot unvote, remove, change, cancel, or withdraw that vote.
+    if (entry.likes.includes(user.id)) {
+      return res.status(409).json({
+        alreadyVoted: true,
+        voteLocked: true,
+        message: 'Nakaboto ka na sa entry na ito. Final na ang vote at hindi na ito maaaring bawiin.',
+        votesCount: entry.votesCount || entry.likes.length,
+        score: entry.score || (entry.likes.length * 10)
+      });
+    }
+
+    // Record the authoritative permanent vote
+    entry.likes.push(user.id);
+    entry.votesCount = entry.likes.length;
+    entry.score = entry.votesCount * 10;
+    entry.updatedAt = new Date().toISOString();
+
+    saveDB(db);
+    safeCloudSync('update', 'challenge_entries', entry.id, {
+      likes: entry.likes,
+      votesCount: entry.votesCount,
+      score: entry.score,
+      updatedAt: entry.updatedAt
+    });
+
+    return res.json({
+      success: true,
+      voted: true,
+      voteLocked: true,
+      votesCount: entry.votesCount,
+      score: entry.score,
+      message: 'Matagumpay na naitala ang iyong boto! Final na ang vote at hindi na maaaring bawiin.'
+    });
+  } finally {
+    activeVoteLocks.delete(voteLockKey);
+  }
 });
 
 // 9. GET /api/sponsored-missions - List sponsored missions
@@ -14238,6 +14309,132 @@ app.patch('/api/admin/challenges/:id', (req, res) => {
   });
 });
 
+// Helper function: Authoritative idempotent prize and host earnings disbursement
+function disburseChallengePrizesAndEarnings(
+  challenge: CreatorChallenge,
+  db: DBStructure
+): {
+  success: boolean;
+  error?: string;
+  distributions: { userId: string; name: string; role: string; rank?: number; amount: number }[];
+} {
+  const allEntries = (db.challengeEntries || []).filter(e => e.challengeId === challenge.id && e.status !== 'rejected');
+  const sorted = [...allEntries].sort((a, b) => (b.score || 0) - (a.score || 0) || (b.votesCount || 0) - (a.votesCount || 0));
+
+  const totalPrize = challenge.prizePool || 0;
+  const hostReward = challenge.hostEarnings || 0;
+
+  const distributions: { userId: string; name: string; role: string; rank?: number; amount: number }[] = [];
+
+  // Distribute prize pool to top winners
+  if (sorted.length > 0 && totalPrize > 0) {
+    if (sorted.length === 1) {
+      // 100% to lone winner
+      const w1 = sorted[0];
+      const user1 = db.users.find(u => u.id === w1.participantId);
+      if (user1) {
+        // IDEMPOTENCY CHECK: Ensure prize has not already been credited to user's wallet/ledger
+        const logId = `act-chal-win-${challenge.id}-${w1.id}`;
+        const alreadyCredited = (user1.activityLogs || []).some(log => 
+          log.id === logId || 
+          (log.type === 'reward' && log.title?.includes(challenge.title))
+        );
+
+        if (!alreadyCredited) {
+          user1.stats.balance = Number(((user1.stats.balance || 0) + totalPrize).toFixed(2));
+          user1.stats.lifetimeEarnings = Number(((user1.stats.lifetimeEarnings || 0) + totalPrize).toFixed(2));
+          if (!user1.activityLogs) user1.activityLogs = [];
+          user1.activityLogs.unshift({
+            id: logId,
+            type: 'reward',
+            title: `🏆 1st Place Challenge Winner (${challenge.title})`,
+            amount: totalPrize,
+            timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+            details: `Napanalunan ang ₱${totalPrize.toFixed(2)} grand prize sa Z-One Challenge!`
+          });
+          safeCloudSync('update', 'users', user1.id, { stats: user1.stats, activityLogs: user1.activityLogs });
+        }
+        distributions.push({ userId: user1.id, name: user1.name, role: 'Winner', rank: 1, amount: totalPrize });
+      }
+    } else {
+      // 1st: 60%, 2nd: 40% (or 1st 50%, 2nd 30%, 3rd 20%)
+      const shares = sorted.length >= 3 ? [0.5, 0.3, 0.2] : [0.65, 0.35];
+      for (let i = 0; i < shares.length && i < sorted.length; i++) {
+        const entry = sorted[i];
+        const prizeAmount = Math.floor(totalPrize * shares[i]);
+        const user = db.users.find(u => u.id === entry.participantId);
+        if (user && prizeAmount > 0) {
+          // IDEMPOTENCY CHECK: verify transaction uniqueness
+          const logId = `act-chal-win-${challenge.id}-${entry.id}`;
+          const alreadyCredited = (user.activityLogs || []).some(log => 
+            log.id === logId || 
+            (log.type === 'reward' && log.title?.includes(challenge.title) && log.details?.includes(`Top ${i + 1}`))
+          );
+
+          if (!alreadyCredited) {
+            user.stats.balance = Number(((user.stats.balance || 0) + prizeAmount).toFixed(2));
+            user.stats.lifetimeEarnings = Number(((user.stats.lifetimeEarnings || 0) + prizeAmount).toFixed(2));
+            if (!user.activityLogs) user.activityLogs = [];
+            user.activityLogs.unshift({
+              id: logId,
+              type: 'reward',
+              title: `🏆 Top ${i + 1} Challenge Winner (${challenge.title})`,
+              amount: prizeAmount,
+              timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+              details: `Napanalunan ang ₱${prizeAmount.toFixed(2)} bilang Top ${i + 1} sa challenge!`
+            });
+            safeCloudSync('update', 'users', user.id, { stats: user.stats, activityLogs: user.activityLogs });
+          }
+          distributions.push({ userId: user.id, name: user.name, role: 'Winner', rank: i + 1, amount: prizeAmount });
+        }
+      }
+    }
+  }
+
+  // Credit host earnings strictly from legitimate sponsor budget server-side
+  if (hostReward > 0) {
+    const hostUser = db.users.find(u => u.id === challenge.hostId);
+    if (hostUser) {
+      const hostLogId = `act-chal-host-${challenge.id}`;
+      const alreadyHostCredited = (hostUser.activityLogs || []).some(log => 
+        log.id === hostLogId || 
+        (log.type === 'bonus' && log.title?.includes(challenge.title))
+      );
+
+      if (!alreadyHostCredited) {
+        hostUser.stats.balance = Number(((hostUser.stats.balance || 0) + hostReward).toFixed(2));
+        hostUser.stats.lifetimeEarnings = Number(((hostUser.stats.lifetimeEarnings || 0) + hostReward).toFixed(2));
+        if (!hostUser.activityLogs) hostUser.activityLogs = [];
+        hostUser.activityLogs.unshift({
+          id: hostLogId,
+          type: 'bonus',
+          title: `👑 Challenge Host Partner Earnings (${challenge.title})`,
+          amount: hostReward,
+          timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+          details: `Nakatanggap ng ₱${hostReward.toFixed(2)} host reward mula sa authorized sponsor partnership budget.`
+        });
+        safeCloudSync('update', 'users', hostUser.id, { stats: hostUser.stats, activityLogs: hostUser.activityLogs });
+      }
+      distributions.push({ userId: hostUser.id, name: hostUser.name, role: 'Host Partner', amount: hostReward });
+    }
+  }
+
+  challenge.status = 'completed';
+  challenge.isSettled = true;
+  challenge.settledAt = challenge.settledAt || new Date().toISOString();
+  challenge.rewardDistributionStatus = 'COMPLETED';
+  challenge.rewardDistributedAt = challenge.rewardDistributedAt || new Date().toISOString();
+  challenge.rewardsSummary = {
+    totalDistributed: distributions.reduce((sum, d) => sum + d.amount, 0),
+    winnersCount: distributions.filter(d => d.role === 'Winner').length,
+    hostReward: distributions.find(d => d.role === 'Host Partner')?.amount || 0,
+    distributions
+  };
+  challenge.updatedAt = new Date().toISOString();
+
+  return { success: true, distributions };
+}
+
 // 13. ADMIN: POST /api/admin/challenges/:id/distribute-prizes - Server-side authoritative prize and host earnings disbursement
 app.post('/api/admin/challenges/:id/distribute-prizes', (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -14251,98 +14448,223 @@ app.post('/api/admin/challenges/:id/distribute-prizes', (req, res) => {
   const challenge = (db.creatorChallenges || []).find(c => c.id === id);
   if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
 
-  if (challenge.status === 'completed') {
+  if (challenge.rewardDistributionStatus === 'COMPLETED' && challenge.isSettled) {
     return res.status(400).json({ error: 'Ang challenge na ito ay na-distribute na ang mga premyo.' });
   }
 
-  const allEntries = (db.challengeEntries || []).filter(e => e.challengeId === id && e.status !== 'rejected');
-  const sorted = [...allEntries].sort((a, b) => (b.score || 0) - (a.score || 0) || (b.votesCount || 0) - (a.votesCount || 0));
-
-  const totalPrize = challenge.prizePool || 0;
-  const hostReward = challenge.hostEarnings || 0;
-
-  const distributions: { userId: string; name: string; role: string; rank?: number; amount: number }[] = [];
-
-  // Distribute prize pool to top 3
-  if (sorted.length > 0 && totalPrize > 0) {
-    if (sorted.length === 1) {
-      // 100% to lone winner
-      const w1 = sorted[0];
-      const user1 = db.users.find(u => u.id === w1.participantId);
-      if (user1) {
-        user1.stats.balance = (user1.stats.balance || 0) + totalPrize;
-        user1.stats.lifetimeEarnings = (user1.stats.lifetimeEarnings || 0) + totalPrize;
-        if (!user1.activityLogs) user1.activityLogs = [];
-        user1.activityLogs.unshift({
-          id: 'act-chal-win-' + Date.now(),
-          type: 'reward',
-          title: `🏆 1st Place Challenge Winner (${challenge.title})`,
-          amount: totalPrize,
-          timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
-          details: `Napanalunan ang ₱${totalPrize.toFixed(2)} grand prize sa Z-One Challenge!`
-        });
-        distributions.push({ userId: user1.id, name: user1.name, role: 'Winner', rank: 1, amount: totalPrize });
-        safeCloudSync('update', 'users', user1.id, { stats: user1.stats, activityLogs: user1.activityLogs });
-      }
-    } else {
-      // 1st: 60%, 2nd: 40% (or 1st 50%, 2nd 30%, 3rd 20%)
-      const shares = sorted.length >= 3 ? [0.5, 0.3, 0.2] : [0.65, 0.35];
-      for (let i = 0; i < shares.length && i < sorted.length; i++) {
-        const entry = sorted[i];
-        const prizeAmount = Math.floor(totalPrize * shares[i]);
-        const user = db.users.find(u => u.id === entry.participantId);
-        if (user && prizeAmount > 0) {
-          user.stats.balance = (user.stats.balance || 0) + prizeAmount;
-          user.stats.lifetimeEarnings = (user.stats.lifetimeEarnings || 0) + prizeAmount;
-          if (!user.activityLogs) user.activityLogs = [];
-          user.activityLogs.unshift({
-            id: 'act-chal-win-' + Date.now() + '-' + i,
-            type: 'reward',
-            title: `🏆 Top ${i + 1} Challenge Winner (${challenge.title})`,
-            amount: prizeAmount,
-            timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
-            details: `Napanalunan ang ₱${prizeAmount.toFixed(2)} bilang Top ${i + 1} sa challenge!`
-          });
-          distributions.push({ userId: user.id, name: user.name, role: 'Winner', rank: i + 1, amount: prizeAmount });
-          safeCloudSync('update', 'users', user.id, { stats: user.stats, activityLogs: user.activityLogs });
-        }
-      }
-    }
-  }
-
-  // Credit host earnings strictly from legitimate sponsor budget server-side
-  if (hostReward > 0) {
-    const hostUser = db.users.find(u => u.id === challenge.hostId);
-    if (hostUser) {
-      hostUser.stats.balance = (hostUser.stats.balance || 0) + hostReward;
-      hostUser.stats.lifetimeEarnings = (hostUser.stats.lifetimeEarnings || 0) + hostReward;
-      if (!hostUser.activityLogs) hostUser.activityLogs = [];
-      hostUser.activityLogs.unshift({
-        id: 'act-chal-host-' + Date.now(),
-        type: 'bonus',
-        title: `👑 Challenge Host Partner Earnings (${challenge.title})`,
-        amount: hostReward,
-        timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
-        details: `Nakatanggap ng ₱${hostReward.toFixed(2)} host reward mula sa authorized sponsor partnership budget.`
-      });
-      distributions.push({ userId: hostUser.id, name: hostUser.name, role: 'Host Partner', amount: hostReward });
-      safeCloudSync('update', 'users', hostUser.id, { stats: hostUser.stats, activityLogs: hostUser.activityLogs });
-    }
-  }
-
-  challenge.status = 'completed';
-  challenge.updatedAt = new Date().toISOString();
+  const result = disburseChallengePrizesAndEarnings(challenge, db);
 
   saveDB(db);
-  safeCloudSync('update', 'challenges', challenge.id, { status: 'completed', updatedAt: challenge.updatedAt });
+  safeCloudSync('update', 'challenges', challenge.id, challenge);
 
   return res.json({
     success: true,
-    message: `Matagumpay na na-disburse ang mga premyo sa ${distributions.length} kalahok at host!`,
+    message: `Matagumpay na na-disburse ang mga premyo sa ${result.distributions.length} kalahok at host!`,
     challenge,
-    distributions
+    distributions: result.distributions
   });
 });
+
+// 13b. ADMIN: DELETE /api/admin/challenges/:id - Safe cancellation & archiving without destroying ledger/audit
+app.delete('/api/admin/challenges/:id', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
+
+  const { id } = req.params;
+  const challenge = (db.creatorChallenges || []).find(c => c.id === id);
+  if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
+
+  challenge.status = 'cancelled';
+  challenge.isArchived = true;
+  challenge.cleanupStatus = 'archived';
+  challenge.archivedAt = new Date().toISOString();
+  challenge.updatedAt = new Date().toISOString();
+
+  saveDB(db);
+  safeCloudSync('update', 'challenges', challenge.id, challenge);
+
+  return res.json({
+    success: true,
+    message: 'Matagumpay na kinansela at inilipat sa archive ang challenge.',
+    challenge
+  });
+});
+
+// 13c. ADMIN: POST /api/admin/challenges/cleanup-run - Manual trigger for automatic 24-hour cleanup cycle
+app.post('/api/admin/challenges/cleanup-run', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
+
+  const results = runChallengeCleanupWorker();
+  return res.json({
+    success: true,
+    message: 'Matagumpay na na-execute ang automatic 24-hour cleanup cycle.',
+    results
+  });
+});
+
+// Automatic 24-Hour Creator Challenge Cleanup Worker
+let isChallengeCleanupWorkerRunning = false;
+
+function runChallengeCleanupWorker(): {
+  checkedCount: number;
+  endedCount: number;
+  archivedCount: number;
+  pendingCount: number;
+} {
+  if (isChallengeCleanupWorkerRunning) {
+    return { checkedCount: 0, endedCount: 0, archivedCount: 0, pendingCount: 0 };
+  }
+  isChallengeCleanupWorkerRunning = true;
+
+  try {
+    const db = loadDB();
+    if (!Array.isArray(db.creatorChallenges)) {
+      return { checkedCount: 0, endedCount: 0, archivedCount: 0, pendingCount: 0 };
+    }
+
+    const now = Date.now();
+    let hasChanges = false;
+    let checkedCount = 0;
+    let endedCount = 0;
+    let archivedCount = 0;
+    let pendingCount = 0;
+
+    for (const challenge of db.creatorChallenges) {
+      checkedCount++;
+      const isPastEndDate = challenge.endDate && new Date(challenge.endDate).getTime() <= now;
+      const isMarkedCompleted = challenge.status === 'completed';
+      const isMarkedCancelled = challenge.status === 'cancelled';
+      const isMarkedArchived = challenge.status === 'archived' || challenge.isArchived;
+
+      // 1. If challenge reached its endDate and is still active, transition to completed
+      if (isPastEndDate && challenge.status === 'active') {
+        challenge.status = 'completed';
+        if (!challenge.endedAt) {
+          challenge.endedAt = challenge.endDate;
+        }
+        challenge.updatedAt = new Date().toISOString();
+        hasChanges = true;
+      }
+
+      // Ensure endedAt is recorded if challenge has ended
+      if ((isPastEndDate || isMarkedCompleted || isMarkedCancelled || isMarkedArchived) && !challenge.endedAt) {
+        challenge.endedAt = (isPastEndDate && challenge.endDate) ? challenge.endDate : (challenge.createdAt || new Date().toISOString());
+        hasChanges = true;
+      }
+
+      // Set cleanupEligibleAt = exactly 24 hours after authoritative endedAt
+      if (challenge.endedAt && !challenge.cleanupEligibleAt) {
+        const endedMs = new Date(challenge.endedAt).getTime();
+        challenge.cleanupEligibleAt = new Date(endedMs + 24 * 60 * 60 * 1000).toISOString();
+        hasChanges = true;
+      }
+
+      // Already archived challenges are preserved as-is
+      if (isMarkedArchived) {
+        archivedCount++;
+        continue;
+      }
+
+      // If challenge is not ended yet, keep cleanupStatus as 'active'
+      if (!isPastEndDate && !isMarkedCompleted && !isMarkedCancelled) {
+        if (challenge.cleanupStatus !== 'active') {
+          challenge.cleanupStatus = 'active';
+          hasChanges = true;
+        }
+        continue;
+      }
+
+      endedCount++;
+
+      // 2. REWARD STATUS INITIALIZATION & SAFETY CHECKS
+      if (!challenge.rewardDistributionStatus) {
+        if (challenge.isSettled) {
+          challenge.rewardDistributionStatus = 'COMPLETED';
+          hasChanges = true;
+        } else {
+          const prize = challenge.prizePool || 0;
+          const hostEarn = challenge.hostEarnings || 0;
+          const approvedEntries = (db.challengeEntries || []).filter(e => e.challengeId === challenge.id && e.status !== 'rejected');
+
+          if (prize <= 0 && hostEarn <= 0) {
+            // No financial rewards owed
+            challenge.rewardDistributionStatus = 'COMPLETED';
+            challenge.isSettled = true;
+            hasChanges = true;
+          } else if (approvedEntries.length === 0) {
+            // No participant submitted an entry
+            challenge.rewardDistributionStatus = 'COMPLETED';
+            challenge.isSettled = true;
+            hasChanges = true;
+          } else {
+            challenge.rewardDistributionStatus = 'PENDING';
+            hasChanges = true;
+          }
+        }
+      }
+
+      // 3. AUTO-REWARD SETTLEMENT: If ended and rewards are PENDING, disburse idempotently
+      if (challenge.rewardDistributionStatus === 'PENDING') {
+        const settleResult = disburseChallengePrizesAndEarnings(challenge, db);
+        if (settleResult.success) {
+          hasChanges = true;
+        }
+      }
+
+      // 4. 24-HOUR ELIGIBILITY & REWARD COMPLETION VERIFICATION
+      const endedMs = new Date(challenge.endedAt!).getTime();
+      const has24HoursPassed = (now - endedMs) >= 24 * 60 * 60 * 1000;
+      const isRewardsCompleted = challenge.rewardDistributionStatus === 'COMPLETED';
+
+      if (!has24HoursPassed) {
+        // Still inside the 24-hour grace/results viewing period
+        if (challenge.cleanupStatus !== 'pending') {
+          challenge.cleanupStatus = 'pending';
+          hasChanges = true;
+        }
+        pendingCount++;
+      } else if (!isRewardsCompleted) {
+        // 24 hours have elapsed, BUT rewards are NOT completed -> NEVER REMOVE!
+        if (challenge.cleanupStatus !== 'pending') {
+          challenge.cleanupStatus = 'pending';
+          hasChanges = true;
+        }
+        pendingCount++;
+      } else {
+        // Both conditions strictly met: 24 hours passed AND rewards completed!
+        // REMOVE FROM ACTIVE (mark as archived)
+        challenge.cleanupStatus = 'archived';
+        challenge.status = 'archived';
+        challenge.isArchived = true;
+        challenge.archivedAt = new Date().toISOString();
+        challenge.updatedAt = new Date().toISOString();
+        hasChanges = true;
+        archivedCount++;
+        safeCloudSync('update', 'challenges', challenge.id, challenge);
+      }
+    }
+
+    if (hasChanges) {
+      saveDB(db);
+    }
+
+    return { checkedCount, endedCount, archivedCount, pendingCount };
+  } catch (err) {
+    console.error('Error in runChallengeCleanupWorker:', err);
+    return { checkedCount: 0, endedCount: 0, archivedCount: 0, pendingCount: 0 };
+  } finally {
+    isChallengeCleanupWorkerRunning = false;
+  }
+}
 
 // ============================================
 //      WALLET FUNDING & DEPOSIT REQUESTS
@@ -14601,8 +14923,15 @@ app.get('/api/public/challenges/:challengeId/entries/:entryId', (req, res) => {
   entry.linkOpensCount = (entry.linkOpensCount || 0) + 1;
   saveDB(db);
 
+  const isEnded = challenge.status === 'completed' || 
+                  challenge.status === 'archived' || 
+                  challenge.status === 'cancelled' || 
+                  (challenge.endDate && new Date(challenge.endDate).getTime() <= Date.now());
+
   return res.json({
     success: true,
+    isEnded,
+    votingClosed: isEnded,
     challenge: {
       id: challenge.id,
       title: challenge.title,
@@ -14613,6 +14942,10 @@ app.get('/api/public/challenges/:challengeId/entries/:entryId', (req, res) => {
       sponsorName: challenge.sponsorName,
       status: challenge.status,
       endDate: challenge.endDate,
+      endedAt: challenge.endedAt,
+      isArchived: !!challenge.isArchived,
+      isEnded,
+      votingClosed: isEnded,
       participantsCount: challenge.participantsCount
     },
     entry: {
@@ -14740,6 +15073,23 @@ async function startServer() {
       ? 'Authoritative Database Ready'
       : `RECOVERY MODE – Writes Locked (${recoveryFailureReason || 'database recovery incomplete'})`;
     console.log(`🚀 GCash Click-Earn running on http://0.0.0.0:${PORT} (${status})`);
+
+    // Automatic 24-Hour Creator Challenge Cleanup: run on startup and every 10 minutes
+    setTimeout(() => {
+      try {
+        runChallengeCleanupWorker();
+      } catch (err) {
+        console.error('Initial challenge cleanup check failed:', err);
+      }
+    }, 5000);
+
+    setInterval(() => {
+      try {
+        runChallengeCleanupWorker();
+      } catch (err) {
+        console.error('Periodic challenge cleanup check failed:', err);
+      }
+    }, 10 * 60 * 1000);
   });
 }
 

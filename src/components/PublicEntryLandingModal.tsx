@@ -12,7 +12,9 @@ import {
   CheckCircle2,
   Calendar,
   Eye,
-  ArrowRight
+  ArrowRight,
+  Lock,
+  Loader2
 } from 'lucide-react';
 import { ChallengeEntry, CreatorChallenge, UserSession } from '../types';
 import { ChallengeVideoPlayer } from './ChallengeVideoPlayer';
@@ -59,6 +61,9 @@ export const PublicEntryLandingModal: React.FC<PublicEntryLandingModalProps> = (
         if (res.ok && data.success) {
           setChallenge(data.challenge);
           setEntry(data.entry);
+          if (user && Array.isArray(data.entry?.likes) && data.entry.likes.includes(user.id)) {
+            setHasVoted(true);
+          }
         }
       } catch (err) {
         console.error('Error loading shared entry:', err);
@@ -68,7 +73,16 @@ export const PublicEntryLandingModal: React.FC<PublicEntryLandingModalProps> = (
     };
 
     fetchEntryDetails();
-  }, [challengeId, entryId]);
+  }, [challengeId, entryId, user]);
+
+  const isChallengeEnded = Boolean(
+    challenge?.isEnded ||
+    challenge?.votingClosed ||
+    challenge?.status === 'completed' ||
+    challenge?.status === 'archived' ||
+    challenge?.status === 'cancelled' ||
+    (challenge?.endDate && new Date(challenge.endDate).getTime() <= Date.now())
+  );
 
   const handleVote = async () => {
     if (!token || !user) {
@@ -76,8 +90,23 @@ export const PublicEntryLandingModal: React.FC<PublicEntryLandingModalProps> = (
       return;
     }
 
+    if (isChallengeEnded) {
+      triggerNotification?.(isTl ? 'Tapos na ang challenge. Sarado na ang botohan.' : 'Challenge has ended. Voting is closed.', 'error');
+      return;
+    }
+
     if (user.id === entry?.participantId) {
       triggerNotification?.(isTl ? 'Hindi maaaring bumoto sa sariling entry.' : 'Cannot vote for your own entry.', 'error');
+      return;
+    }
+
+    if (hasVoted) {
+      triggerNotification?.(
+        isTl 
+          ? 'Nakaboto ka na sa entry na ito. Final na ang vote at hindi na ito maaaring bawiin.' 
+          : 'You have already voted. Your vote is final and permanent.', 
+        'info'
+      );
       return;
     }
 
@@ -91,21 +120,34 @@ export const PublicEntryLandingModal: React.FC<PublicEntryLandingModalProps> = (
         }
       });
       const data = await res.json();
+
+      if (res.status === 409 || data.alreadyVoted) {
+        setHasVoted(true);
+        triggerNotification?.(
+          data.message || (isTl ? 'Nakaboto ka na sa entry na ito. Final na ang vote.' : 'Already voted. Vote is final.'),
+          'info'
+        );
+        return;
+      }
+
       if (res.ok && data.success) {
         setHasVoted(true);
         if (entry) {
           setEntry({
             ...entry,
-            votesCount: (entry.votesCount || 0) + 1,
-            score: (entry.score || 0) + (data.addedScore || 10)
+            votesCount: data.votesCount || (entry.votesCount || 0) + 1,
+            score: data.score || (entry.score || 0) + (data.addedScore || 10)
           });
         }
-        triggerNotification?.(data.message || 'Salamat sa iyong boto!', 'success');
+        triggerNotification?.(
+          isTl ? '✅ Matagumpay na naitala ang iyong boto! (Final Vote • Bawal Bawiin)' : '✅ Vote successfully recorded! (Final Vote • Permanent)',
+          'success'
+        );
       } else {
-        triggerNotification?.(data.error || 'Hindi ma-proseso ang boto', 'error');
+        triggerNotification?.(data.error || (isTl ? 'Hindi ma-proseso ang boto' : 'Could not process vote'), 'error');
       }
     } catch (err) {
-      triggerNotification?.('Network error voting', 'error');
+      triggerNotification?.(isTl ? 'Network error sa pag-vote' : 'Network error voting', 'error');
     } finally {
       setVoting(false);
     }
@@ -169,6 +211,24 @@ export const PublicEntryLandingModal: React.FC<PublicEntryLandingModalProps> = (
             </div>
           ) : (
             <>
+              {/* Challenge Ended Banner if voting closed */}
+              {isChallengeEnded && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3.5 flex items-center gap-3 text-amber-900">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                    <Trophy className="w-4 h-4 text-amber-700" />
+                  </div>
+                  <div className="text-left min-w-0 flex-1">
+                    <div className="text-xs font-black flex items-center gap-1.5 text-amber-950">
+                      <span>🏆 CHALLENGE ENDED</span>
+                      <span className="text-[10px] bg-amber-200 text-amber-900 font-bold px-1.5 py-0.5 rounded-md">Voting Closed</span>
+                    </div>
+                    <p className="text-[11px] text-amber-800 font-medium mt-0.5">
+                      Ang challenge na ito ay tapos na at hindi na tumatanggap ng bagong votes.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Participant Profile Card */}
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-3">
@@ -226,27 +286,45 @@ export const PublicEntryLandingModal: React.FC<PublicEntryLandingModalProps> = (
               {/* Call to Actions based on authentication status */}
               {user ? (
                 <div className="space-y-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={handleVote}
-                    disabled={voting || hasVoted || user.id === entry.participantId}
-                    className={`w-full py-3 rounded-2xl font-black text-xs flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer ${
-                      hasVoted
-                        ? 'bg-emerald-600 text-white'
-                        : user.id === entry.participantId
-                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                        : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                    }`}
-                  >
-                    <Heart className={`w-4 h-4 ${hasVoted ? 'fill-white' : ''}`} />
-                    <span>
-                      {hasVoted 
-                        ? 'Naboto Mo Na ang Entry na Ito! 🎉' 
-                        : user.id === entry.participantId
-                        ? 'Iyong Sariling Entry'
-                        : 'Bumoto sa Entry na Ito (+10 Pts)'}
-                    </span>
-                  </button>
+                  {isChallengeEnded ? (
+                    <div className="w-full py-3 px-4 rounded-2xl bg-slate-100 border border-slate-200 text-slate-500 font-black text-xs flex items-center justify-center gap-2 select-none">
+                      <Lock className="w-4 h-4 text-slate-400" />
+                      <span>Ended na ang Botohan (Voting Closed)</span>
+                    </div>
+                  ) : hasVoted ? (
+                    <div className="space-y-1">
+                      <div className="w-full py-3 px-4 rounded-2xl bg-emerald-600 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs select-none">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-200" />
+                        <span>✅ BUMOTO KA NA • 🔒 FINAL VOTE</span>
+                      </div>
+                      <p className="text-[10px] text-center text-slate-400 font-semibold">
+                        Final na ang iyong boto at hindi na maaaring bawiin o baguhin.
+                      </p>
+                    </div>
+                  ) : user.id === entry.participantId ? (
+                    <div className="w-full py-3 px-4 rounded-2xl bg-slate-100 border border-slate-200 text-slate-400 font-bold text-xs flex items-center justify-center gap-2 select-none">
+                      <span>Iyong Sariling Entry (Bawal bumoto sa sarili)</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <button
+                        type="button"
+                        onClick={handleVote}
+                        disabled={voting}
+                        className="w-full py-3 rounded-2xl font-black text-xs flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer bg-rose-600 hover:bg-rose-700 text-white active:scale-98 disabled:opacity-50"
+                      >
+                        {voting ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-white" />
+                        ) : (
+                          <Heart className="w-4 h-4 fill-white" />
+                        )}
+                        <span>{voting ? 'Itinatala ang boto...' : 'Bumoto sa Entry na Ito (+10 Pts)'}</span>
+                      </button>
+                      <p className="text-[10px] text-center text-slate-400 font-medium">
+                        1 vote lang bawat user • Final at permanent ang boto
+                      </p>
+                    </div>
+                  )}
 
                   <button
                     type="button"
@@ -265,22 +343,26 @@ export const PublicEntryLandingModal: React.FC<PublicEntryLandingModalProps> = (
                   <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-4 rounded-2xl border border-indigo-100 text-center space-y-2">
                     <div className="flex items-center justify-center gap-1.5 font-black text-xs text-indigo-900">
                       <Sparkles className="w-4 h-4 text-indigo-600" />
-                      <span>Gusto mo bang bumoto at manalo rin ng premyo?</span>
+                      <span>{isChallengeEnded ? 'Tingnan ang mga Aktibong Challenges!' : 'Gusto mo bang bumoto at manalo rin ng premyo?'}</span>
                     </div>
                     <p className="text-[11px] text-slate-600 leading-relaxed max-w-sm mx-auto">
-                      Gumawa ng libreng Z-OneApp account para bumoto sa entry ni <b>{entry.participantName}</b> at mag-host din ng sarili mong challenges!
+                      {isChallengeEnded 
+                        ? 'Tapos na ang challenge na ito, ngunit maaari kang sumali sa ibang mga bagong challenge o mag-host ng sarili mo!'
+                        : `Gumawa ng libreng Z-OneApp account para bumoto sa entry ni ${entry.participantName} at mag-host din ng sarili mong challenges!`}
                     </p>
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleRegisterClick}
-                      className="flex-1 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs cursor-pointer transition-all"
-                    >
-                      <UserPlus className="w-4 h-4" />
-                      <span>Mag-register para Bumoto</span>
-                    </button>
+                    {!isChallengeEnded && (
+                      <button
+                        type="button"
+                        onClick={handleRegisterClick}
+                        className="flex-1 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs cursor-pointer transition-all"
+                      >
+                        <UserPlus className="w-4 h-4" />
+                        <span>Mag-register para Bumoto</span>
+                      </button>
+                    )}
 
                     <button
                       type="button"
@@ -288,7 +370,7 @@ export const PublicEntryLandingModal: React.FC<PublicEntryLandingModalProps> = (
                         onOpenLogin();
                         onClose();
                       }}
-                      className="py-3 px-4 rounded-2xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                      className={`${isChallengeEnded ? 'flex-1' : 'py-3 px-4'} rounded-2xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer py-3`}
                     >
                       <LogIn className="w-4 h-4" />
                       <span>Mag-login</span>

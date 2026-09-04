@@ -123,6 +123,13 @@ export default function AdminPanel({
   const [adminChallengeEntries, setAdminChallengeEntries] = useState<ChallengeEntry[]>([]);
   const [loadingChallengeEntries, setLoadingChallengeEntries] = useState<boolean>(false);
   const [distributingPrizes, setDistributingPrizes] = useState<boolean>(false);
+  const [triggeringCleanup, setTriggeringCleanup] = useState<boolean>(false);
+  const [cleanupResult, setCleanupResult] = useState<{
+    checkedCount: number;
+    endedCount: number;
+    archivedCount: number;
+    pendingCount: number;
+  } | null>(null);
 
   // Database Management & Cloud Rebuild States
   const [showRebuildConfirmModal, setShowRebuildConfirmModal] = useState<boolean>(false);
@@ -280,6 +287,28 @@ export default function AdminPanel({
       }
     } catch (e) {
       triggerNotification('Error deleting challenge', 'error');
+    }
+  };
+
+  const handleTriggerCleanupWorker = async () => {
+    setTriggeringCleanup(true);
+    try {
+      const res = await fetch('/api/admin/challenges/cleanup-run', {
+        method: 'POST',
+        headers: { 'Authorization': token }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCleanupResult(data.results);
+        triggerNotification(data.message || 'Tagumpay na na-execute ang 24-hour cleanup cycle!', 'success');
+        fetchAdminChallenges();
+      } else {
+        triggerNotification(data.error || 'Bigo sa pagpatakbo ng cleanup worker', 'error');
+      }
+    } catch (e) {
+      triggerNotification('Error connecting to server', 'error');
+    } finally {
+      setTriggeringCleanup(false);
     }
   };
 
@@ -3365,6 +3394,94 @@ export default function AdminPanel({
             </div>
           </div>
 
+          {/* AUTOMATIC 24-HOUR CLEANUP & REWARD AUDIT WORKER CARD */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="p-2 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-100">
+                    <Clock className="w-5 h-5" />
+                  </span>
+                  <div>
+                    <h3 className="font-black text-base text-slate-900 flex items-center gap-2">
+                      <span>Automatic 24-Hour Cleanup & Reward Worker</span>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Running (10m Cycle)
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Inaalis sa pampublikong feed ang mga natapos na challenges 24 oras matapos ang deadline, matapos tiyakin na kumpleto ang lahat ng participation rewards at top prize distributions.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleTriggerCleanupWorker}
+                  disabled={triggeringCleanup}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl font-black text-xs flex items-center gap-2 transition cursor-pointer shadow-xs"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${triggeringCleanup ? 'animate-spin' : ''}`} />
+                  <span>{triggeringCleanup ? 'Pinapatakbo ang Cycle...' : 'Patakbuhin ang Cleanup Worker Ngayon'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Worker Rules & Status Matrix */}
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <span className="text-[10px] uppercase font-black text-slate-400 block">Active Feed</span>
+                <span className="text-base font-black text-emerald-600 font-mono">
+                  {adminChallenges.filter(c => c.status === 'active' && !c.isArchived).length}
+                </span>
+                <span className="text-[10px] text-slate-500 block mt-0.5">Bukas pa ang botohan</span>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <span className="text-[10px] uppercase font-black text-slate-400 block">Ended (24h Buffer)</span>
+                <span className="text-base font-black text-amber-600 font-mono">
+                  {adminChallenges.filter(c => (c.status === 'completed' || (c.endDate && new Date(c.endDate).getTime() <= Date.now())) && !c.isArchived).length}
+                </span>
+                <span className="text-[10px] text-slate-500 block mt-0.5">Naka-hold para sa 24h grace</span>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <span className="text-[10px] uppercase font-black text-slate-400 block">Prize Verified</span>
+                <span className="text-base font-black text-indigo-600 font-mono">
+                  {adminChallenges.filter(c => c.rewardDistributionStatus === 'COMPLETED').length}
+                </span>
+                <span className="text-[10px] text-slate-500 block mt-0.5">Naipamahagi sa mga nanalo</span>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <span className="text-[10px] uppercase font-black text-slate-400 block">Safely Archived</span>
+                <span className="text-base font-black text-slate-700 font-mono">
+                  {adminChallenges.filter(c => c.isArchived || c.status === 'archived').length}
+                </span>
+                <span className="text-[10px] text-slate-500 block mt-0.5">Nakatago sa feed • Ligtas sa audit</span>
+              </div>
+            </div>
+
+            {/* Live execution feedback */}
+            {cleanupResult && (
+              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-900 space-y-1">
+                <div className="font-black flex items-center gap-1.5 text-emerald-950">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>Huling Ulat ng Cleanup Worker:</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-medium pt-1">
+                  <div>Sinuri: <b className="font-mono">{cleanupResult.checkedCount}</b></div>
+                  <div>Ended: <b className="font-mono">{cleanupResult.endedCount}</b></div>
+                  <div>In-Archive (24h+): <b className="font-mono">{cleanupResult.archivedCount}</b></div>
+                  <div>Pending: <b className="font-mono">{cleanupResult.pendingCount}</b></div>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* CHALLENGES TABLE / CARDS */}
           <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -3401,16 +3518,45 @@ export default function AdminPanel({
                           />
                         </div>
                         <div>
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                              chal.status === 'active' 
-                                ? 'bg-emerald-100 text-emerald-800' 
-                                : chal.status === 'completed' 
-                                  ? 'bg-blue-100 text-blue-800' 
-                                  : 'bg-rose-100 text-rose-800'
+                              chal.isArchived || chal.status === 'archived'
+                                ? 'bg-slate-800 text-slate-200'
+                                : chal.status === 'active' 
+                                  ? 'bg-emerald-100 text-emerald-800' 
+                                  : chal.status === 'completed' 
+                                    ? 'bg-blue-100 text-blue-800' 
+                                    : 'bg-rose-100 text-rose-800'
                             }`}>
-                              {chal.status}
+                              {chal.isArchived || chal.status === 'archived' ? '📦 Archived' : chal.status}
                             </span>
+
+                            {/* Reward Distribution Badge */}
+                            {chal.rewardDistributionStatus === 'COMPLETED' ? (
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase">
+                                ✅ Prizes Disbursed
+                              </span>
+                            ) : (chal.status === 'completed' || (chal.endDate && new Date(chal.endDate).getTime() <= Date.now())) ? (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[9px] font-black uppercase">
+                                ⏳ Payout Pending
+                              </span>
+                            ) : null}
+
+                            {/* 24-Hour Cleanup Status Badge */}
+                            {chal.cleanupStatus === 'archived' || chal.isArchived ? (
+                              <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[9px] font-black uppercase">
+                                🔒 24h Cleaned
+                              </span>
+                            ) : chal.cleanupStatus === 'eligible' ? (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[9px] font-black uppercase">
+                                ⏳ 24h Buffer Reached
+                              </span>
+                            ) : chal.cleanupStatus === 'pending' ? (
+                              <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[9px] font-black uppercase">
+                                ⏱️ 24h Grace
+                              </span>
+                            ) : null}
+
                             <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[9px] font-black uppercase">
                               {chal.category}
                             </span>
@@ -3451,7 +3597,7 @@ export default function AdminPanel({
                         <span>Suriin ang Entries & Scores</span>
                       </button>
 
-                      {chal.status === 'active' && (
+                      {chal.rewardDistributionStatus !== 'COMPLETED' && (
                         <button
                           type="button"
                           onClick={() => handleDistributePrizes(chal.id, chal.title)}

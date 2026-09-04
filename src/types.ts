@@ -647,7 +647,7 @@ export interface KiddieContentItem {
 // ============================================================
 
 export type ChallengeCategory = 'Singing' | 'Dancing' | 'Comedy' | 'Gaming' | 'Photography' | 'Fitness' | 'Education' | 'Other';
-export type ChallengeStatus = 'draft' | 'pending_review' | 'active' | 'completed' | 'cancelled';
+export type ChallengeStatus = 'draft' | 'pending_review' | 'active' | 'completed' | 'cancelled' | 'archived';
 export type ChallengeEntryStatus = 'pending' | 'approved' | 'rejected';
 export type SponsoredMissionStatus = 'draft' | 'pending_review' | 'active' | 'completed' | 'cancelled';
 
@@ -681,6 +681,19 @@ export interface CreatorChallenge {
   likes: string[];
   likesCount: number;
   coverImage?: string;
+  endedAt?: string;
+  rewardDistributionStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'PARTIAL_FAILURE' | 'FAILED';
+  rewardDistributedAt?: string;
+  rewardsSummary?: {
+    totalDistributed: number;
+    winnersCount: number;
+    hostReward: number;
+    distributions: { userId: string; name: string; role: string; rank?: number; amount: number }[];
+  };
+  cleanupStatus?: 'active' | 'pending' | 'eligible' | 'archived';
+  cleanupEligibleAt?: string;
+  archivedAt?: string;
+  isArchived?: boolean;
 }
 
 export interface ChallengeEntry {

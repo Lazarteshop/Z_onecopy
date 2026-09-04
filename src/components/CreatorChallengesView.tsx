@@ -28,7 +28,9 @@ import {
   Edit3,
   Wallet,
   AlertCircle,
-  QrCode
+  QrCode,
+  Lock,
+  Loader2
 } from 'lucide-react';
 import { CreatorChallenge, ChallengeEntry, SponsoredMission, UserSession } from '../types';
 import { DepositModal } from './DepositModal';
@@ -208,6 +210,7 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
   const [challengeEntries, setChallengeEntries] = useState<ChallengeEntry[]>([]);
   const [challengeLeaderboard, setChallengeLeaderboard] = useState<ChallengeEntry[]>([]);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [votingEntryId, setVotingEntryId] = useState<string | null>(null);
   const [viewingMedia, setViewingMedia] = useState<{ url: string; type: 'image' | 'video'; title: string } | null>(null);
 
   // Submit / Edit Entry Modal
@@ -373,7 +376,7 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
     }
   };
 
-  // Vote for an Entry
+  // Authoritative Permanent / Final Vote for an Entry (Strict One User = One Final Vote)
   const handleVoteEntry = async (entryId: string) => {
     if (!token) {
       triggerNotification?.(isTl ? 'Mag-login muna para makaboto.' : 'Please login to vote.', 'info');
@@ -382,48 +385,109 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
 
     if (!selectedChallenge) return;
 
+    // Check if challenge is ended or voting is closed
+    const isEnded = selectedChallenge.status === 'completed' || 
+                    selectedChallenge.status === 'archived' || 
+                    selectedChallenge.status === 'cancelled' ||
+                    (selectedChallenge.endDate && new Date(selectedChallenge.endDate).getTime() <= Date.now());
+    if (isEnded) {
+      triggerNotification?.(isTl ? 'Tapos na ang challenge na ito. Sarado na ang botohan.' : 'This challenge has ended. Voting is closed.', 'error');
+      return;
+    }
+
+    // Find the target entry for client-side pre-flight checks
+    const targetEntry = challengeEntries.find(e => e.id === entryId);
+
+    // Strict self-voting prevention check
+    if (targetEntry && targetEntry.participantId === user?.id) {
+      triggerNotification?.(isTl ? 'Bawal bumoto sa sariling entry.' : 'You cannot vote for your own entry.', 'error');
+      return;
+    }
+
+    // Strict Permanent Check: if already voted, vote cannot be unvoted or withdrawn
+    if (targetEntry && Array.isArray(targetEntry.likes) && targetEntry.likes.includes(user?.id || '')) {
+      triggerNotification?.(
+        isTl 
+          ? 'Nakaboto ka na sa entry na ito. Final na ang vote at hindi na ito maaaring bawiin.' 
+          : 'You have already voted on this entry. Your vote is final and cannot be withdrawn.', 
+        'info'
+      );
+      return;
+    }
+
+    setVotingEntryId(entryId);
+
     try {
       const res = await fetch(`/api/challenges/${selectedChallenge.id}/entries/${entryId}/vote`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
-      if (res.ok && data.success) {
-        // Update entry locally
+
+      if (res.status === 409 || data.alreadyVoted) {
+        // Vote already recorded and locked
+        triggerNotification?.(
+          data.message || (isTl ? 'Nakaboto ka na sa entry na ito. Final na ang vote.' : 'You have already voted. Your vote is final.'),
+          'info'
+        );
+
+        // Synchronize local likes state so button locks immediately
         setChallengeEntries(prev => prev.map(e => {
           if (e.id === entryId) {
             const currentLikes = e.likes || [];
-            const newLikes = data.voted 
-              ? (currentLikes.includes(user?.id || '') ? currentLikes : [...currentLikes, user?.id || ''])
-              : currentLikes.filter(id => id !== user?.id);
+            const newLikes = currentLikes.includes(user?.id || '') ? currentLikes : [...currentLikes, user?.id || ''];
             return {
               ...e,
               likes: newLikes,
-              votesCount: data.votesCount,
-              score: data.score
+              votesCount: data.votesCount || currentLikes.length,
+              score: data.score || (data.votesCount ? data.votesCount * 10 : e.score)
             };
           }
           return e;
         }));
-
-        setChallengeLeaderboard(prev => {
-          const updated = prev.map(e => {
-            if (e.id === entryId) {
-              const currentLikes = e.likes || [];
-              const newLikes = data.voted 
-                ? (currentLikes.includes(user?.id || '') ? currentLikes : [...currentLikes, user?.id || ''])
-                : currentLikes.filter(id => id !== user?.id);
-              return { ...e, likes: newLikes, votesCount: data.votesCount, score: data.score };
-            }
-            return e;
-          });
-          return updated.sort((a, b) => (b.score || 0) - (a.score || 0) || (b.votesCount || 0) - (a.votesCount || 0));
-        });
-
-        triggerNotification?.(data.voted ? (isTl ? '❤️ Naitala ang iyong boto!' : 'Vote recorded!') : (isTl ? 'Tinanggal ang boto.' : 'Vote removed.'), 'success');
+        return;
       }
+
+      if (!res.ok || !data.success) {
+        triggerNotification?.(data.error || (isTl ? 'Hindi naitala ang boto.' : 'Failed to record vote.'), 'error');
+        return;
+      }
+
+      // Update entry locally with permanent locked vote
+      setChallengeEntries(prev => prev.map(e => {
+        if (e.id === entryId) {
+          const currentLikes = e.likes || [];
+          const newLikes = currentLikes.includes(user?.id || '') ? currentLikes : [...currentLikes, user?.id || ''];
+          return {
+            ...e,
+            likes: newLikes,
+            votesCount: data.votesCount,
+            score: data.score
+          };
+        }
+        return e;
+      }));
+
+      setChallengeLeaderboard(prev => {
+        const updated = prev.map(e => {
+          if (e.id === entryId) {
+            const currentLikes = e.likes || [];
+            const newLikes = currentLikes.includes(user?.id || '') ? currentLikes : [...currentLikes, user?.id || ''];
+            return { ...e, likes: newLikes, votesCount: data.votesCount, score: data.score };
+          }
+          return e;
+        });
+        return updated.sort((a, b) => (b.score || 0) - (a.score || 0) || (b.votesCount || 0) - (a.votesCount || 0));
+      });
+
+      triggerNotification?.(
+        isTl ? '✅ Matagumpay na naitala ang iyong boto! (Final Vote • Bawal Bawiin)' : '✅ Vote successfully recorded! (Final Vote • Permanent)',
+        'success'
+      );
     } catch (e) {
-      triggerNotification?.('Error updating vote', 'error');
+      triggerNotification?.(isTl ? 'May error sa pag-vote. Pakisubukan muli.' : 'Error updating vote. Please try again.', 'error');
+    } finally {
+      setVotingEntryId(null);
     }
   };
 
@@ -668,8 +732,9 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
     }
   };
 
-  // Filtered challenges
+  // Filtered challenges (excludes safely archived challenges from active feed)
   const filteredChallenges = challenges.filter(c => {
+    if (c.status === 'archived' || c.isArchived) return false;
     const matchesCat = selectedCategory === 'all' || c.category.toLowerCase() === selectedCategory.toLowerCase();
     const matchesQuery = !searchQuery.trim() || 
       c.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -1757,18 +1822,60 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                                   </button>
                                 )}
 
-                                {/* Vote Button */}
-                                <button
-                                  onClick={() => handleVoteEntry(entry.id)}
-                                  className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                                    isVoted
-                                      ? 'bg-rose-500 text-white shadow-sm'
-                                      : 'bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200'
-                                  }`}
-                                >
-                                  <Heart className={`w-3.5 h-3.5 ${isVoted ? 'fill-white' : ''}`} />
-                                  <span>{entry.votesCount || 0}</span>
-                                </button>
+                                {/* Permanent / Final Vote Button */}
+                                {isMyOwnEntry ? (
+                                  <div className="flex flex-col items-end shrink-0" title={isTl ? 'Bawal bumoto sa sariling entry.' : 'Cannot vote for your own entry.'}>
+                                    <div className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-400 border border-slate-200 flex items-center gap-1.5 cursor-not-allowed select-none">
+                                      <Heart className="w-3.5 h-3.5 text-slate-400" />
+                                      <span>{isTl ? 'Sarili' : 'Own'}</span>
+                                      <span className="bg-slate-200/80 px-1.5 py-0.5 rounded-md text-[10px] text-slate-500 font-bold">{entry.votesCount || 0}</span>
+                                    </div>
+                                  </div>
+                                ) : isChallengeEnded ? (
+                                  <div className="flex flex-col items-end shrink-0" title={isTl ? 'Ended na ang challenge. Sarado na ang botohan.' : 'Challenge ended. Voting closed.'}>
+                                    <div className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-400 border border-slate-200 flex items-center gap-1.5 cursor-not-allowed select-none">
+                                      <Lock className="w-3.5 h-3.5 text-slate-400" />
+                                      <span>{isTl ? 'Sarado' : 'Closed'}</span>
+                                      <span className="bg-slate-200/80 px-1.5 py-0.5 rounded-md text-[10px] text-slate-500 font-bold">{entry.votesCount || 0}</span>
+                                    </div>
+                                  </div>
+                                ) : isVoted ? (
+                                  <div className="flex flex-col items-end shrink-0">
+                                    <div
+                                      className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-black flex items-center gap-1.5 shadow-2xs select-none"
+                                      title={isTl ? 'Bumoto ka na. Final na ang iyong boto at hindi na maaaring bawiin.' : 'You have voted. Your vote is final and cannot be withdrawn.'}
+                                    >
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-100" />
+                                      <span>{isTl ? 'BUMOTO KA NA' : 'VOTED'}</span>
+                                      <span className="bg-emerald-700/80 px-1.5 py-0.5 rounded-md text-[10px]">{entry.votesCount || 0}</span>
+                                    </div>
+                                    <span className="text-[9px] text-slate-400 font-bold mt-0.5 flex items-center gap-0.5">
+                                      <Lock className="w-2.5 h-2.5 text-slate-400" />
+                                      {isTl ? 'Final Vote • Bawal Bawiin' : 'Final Vote • Permanent'}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="flex flex-col items-end shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleVoteEntry(entry.id)}
+                                      disabled={votingEntryId === entry.id}
+                                      className="px-3.5 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 hover:border-rose-300 shadow-2xs active:scale-95 disabled:opacity-50"
+                                      title={isTl ? 'Bumoto sa entry na ito (Permanent at Final)' : 'Vote for this entry (Permanent & Final)'}
+                                    >
+                                      {votingEntryId === entry.id ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-600" />
+                                      ) : (
+                                        <Heart className="w-3.5 h-3.5" />
+                                      )}
+                                      <span>{isTl ? 'BUMOTO' : 'VOTE'}</span>
+                                      <span className="bg-rose-200/60 text-rose-700 px-1.5 py-0.5 rounded-md text-[10px] font-bold">{entry.votesCount || 0}</span>
+                                    </button>
+                                    <span className="text-[9px] text-slate-400 font-semibold mt-0.5">
+                                      {isTl ? '1 vote lang • Final' : '1 vote only • Final'}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           );
