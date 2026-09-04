@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Trophy, 
   Sparkles, 
@@ -30,9 +30,14 @@ import {
   AlertCircle,
   QrCode,
   Lock,
-  Loader2
+  Loader2,
+  Camera,
+  Film,
+  FolderOpen,
+  FileVideo,
+  Image as ImageIcon
 } from 'lucide-react';
-import { CreatorChallenge, ChallengeEntry, SponsoredMission, UserSession } from '../types';
+import { CreatorChallenge, ChallengeEntry, SponsoredMission, UserSession, UserChallengeVotingStats, calculateMaxVotesPerUser } from '../types';
 import { DepositModal } from './DepositModal';
 import { ParticipantShareModal } from './ParticipantShareModal';
 import { ChallengeVideoPlayer } from './ChallengeVideoPlayer';
@@ -221,21 +226,131 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
   const [entryCaption, setEntryCaption] = useState('');
   const [submittingEntry, setSubmittingEntry] = useState(false);
 
+  // Gallery / File Upload states
+  const [submissionTab, setSubmissionTab] = useState<'upload' | 'url'>('upload');
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadedFileDetails, setUploadedFileDetails] = useState<{ name: string; size: string } | null>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Dynamic voting stats
+  const [userVotingStats, setUserVotingStats] = useState<UserChallengeVotingStats | null>(null);
+
   // Helper to open submit or edit modal with prefilled data
   const openSubmitOrEditModal = (chal: CreatorChallenge, existingEntry?: ChallengeEntry | null) => {
     setSelectedChallenge(chal);
+    setUploadedFileDetails(null);
     if (existingEntry) {
       setEditingEntryId(existingEntry.id);
       setEntryMediaUrl(existingEntry.mediaUrl || '');
       setEntryMediaType(existingEntry.mediaType === 'image' ? 'image' : 'video');
       setEntryCaption(existingEntry.caption || '');
+      if (existingEntry.mediaUrl && (existingEntry.mediaUrl.startsWith('http://') || existingEntry.mediaUrl.startsWith('https://')) && !existingEntry.mediaUrl.includes('cloudflare') && !existingEntry.mediaUrl.includes('r2')) {
+        setSubmissionTab('url');
+      } else {
+        setSubmissionTab('upload');
+      }
     } else {
       setEditingEntryId(null);
       setEntryMediaUrl('');
       setEntryMediaType('video');
       setEntryCaption('');
+      setSubmissionTab('upload');
     }
     setShowSubmitModal(true);
+  };
+
+  // Gallery / File selection & upload handler
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, preferredType?: 'image' | 'video') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Reset input so the user can re-select the same file if needed
+    e.target.value = '';
+
+    if (!token) {
+      triggerNotification?.(isTl ? 'Mag-login muna bago mag-upload ng media.' : 'Please login before uploading media.', 'error');
+      return;
+    }
+
+    // MIME type check
+    const isImage = file.type.startsWith('image/');
+    const isVideo = file.type.startsWith('video/');
+
+    if (!isImage && !isVideo) {
+      triggerNotification?.(
+        isTl 
+          ? 'Hindi suportadong uri ng file. Tanging mga larawan (JPG, PNG, WebP) o video (MP4, WebM, MOV) lamang ang pinapayagan.' 
+          : 'Unsupported file type. Only images (JPG, PNG, WebP) and videos (MP4, WebM, MOV) are allowed.',
+        'error'
+      );
+      return;
+    }
+
+    // Size limit check: max 15MB for photo, max 60MB for video
+    const maxSizeBytes = isImage ? 15 * 1024 * 1024 : 60 * 1024 * 1024;
+    const maxSizeMB = isImage ? 15 : 60;
+    if (file.size > maxSizeBytes) {
+      triggerNotification?.(
+        isTl 
+          ? `Masyadong malaki ang file (${(file.size / (1024 * 1024)).toFixed(1)}MB). Ang limitasyon ay ${maxSizeMB}MB.` 
+          : `File is too large (${(file.size / (1024 * 1024)).toFixed(1)}MB). Limit is ${maxSizeMB}MB.`,
+        'error'
+      );
+      return;
+    }
+
+    setUploadingMedia(true);
+    setUploadProgress(15);
+
+    try {
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
+      });
+
+      setUploadProgress(50);
+
+      const res = await fetch('/api/challenges/upload-media', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          dataUrl,
+          filename: file.name,
+          mediaType: isVideo ? 'video' : 'image'
+        })
+      });
+
+      const data = await res.json();
+      setUploadProgress(100);
+
+      if (res.ok && data.success) {
+        setEntryMediaUrl(data.url);
+        setEntryMediaType(data.mediaType === 'video' ? 'video' : 'image');
+        setUploadedFileDetails({
+          name: file.name,
+          size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+        });
+        triggerNotification?.(
+          isTl ? '✅ Matagumpay na nai-upload ang media!' : '✅ Media uploaded successfully!',
+          'success'
+        );
+      } else {
+        triggerNotification?.(data.error || (isTl ? 'Bigo ang pag-upload ng media.' : 'Upload failed.'), 'error');
+      }
+    } catch (err) {
+      triggerNotification?.(isTl ? 'May error sa pag-upload ng media.' : 'Error uploading media.', 'error');
+    } finally {
+      setUploadingMedia(false);
+      setUploadProgress(0);
+    }
   };
 
   // Host Challenge Form
@@ -335,12 +450,17 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
     fetch(`/api/challenges/${challenge.id}/view`, { method: 'POST' }).catch(() => {});
 
     try {
-      const res = await fetch(`/api/challenges/${challenge.id}`);
+      const res = await fetch(`/api/challenges/${challenge.id}`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
       const data = await res.json();
       if (res.ok && data.success) {
         setSelectedChallenge(data.challenge);
         setChallengeEntries(data.entries || []);
         setChallengeLeaderboard(data.leaderboard || []);
+        if (data.userVotingStats) {
+          setUserVotingStats(data.userVotingStats);
+        }
       }
     } catch (e) {
       console.error('Error loading challenge details:', e);
@@ -376,7 +496,7 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
     }
   };
 
-  // Authoritative Permanent / Final Vote for an Entry (Strict One User = One Final Vote)
+  // Authoritative Permanent / Final Vote for an Entry (Strict One User = One Final Vote & Dynamic Limit)
   const handleVoteEntry = async (entryId: string) => {
     if (!token) {
       triggerNotification?.(isTl ? 'Mag-login muna para makaboto.' : 'Please login to vote.', 'info');
@@ -415,6 +535,20 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
       return;
     }
 
+    // Client-side voting limit pre-flight check
+    const validCount = challengeEntries.filter(e => e.status !== 'rejected').length;
+    const maxVotes = userVotingStats?.maxAllowedVotes ?? calculateMaxVotesPerUser(validCount);
+    const votesUsed = userVotingStats?.votesUsed ?? challengeEntries.filter(e => Array.isArray(e.likes) && e.likes.includes(user?.id || '')).length;
+    if (votesUsed >= maxVotes && maxVotes > 0) {
+      triggerNotification?.(
+        isTl 
+          ? `Naabot mo na ang maximum voting limit (${maxVotes} ${maxVotes === 1 ? 'entry' : 'entries'}) para sa challenge na ito.`
+          : `You have reached the maximum voting limit (${maxVotes} ${maxVotes === 1 ? 'entry' : 'entries'}) for this challenge.`,
+        'error'
+      );
+      return;
+    }
+
     setVotingEntryId(entryId);
 
     try {
@@ -445,6 +579,31 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
           }
           return e;
         }));
+        if (data.votesRemaining !== undefined) {
+          setUserVotingStats(prev => prev ? {
+            ...prev,
+            votesUsed: data.votesUsed,
+            votesRemaining: data.votesRemaining,
+            canVoteMore: data.votesRemaining > 0
+          } : null);
+        }
+        return;
+      }
+
+      if (res.status === 403 || data.code === 'VOTE_LIMIT_REACHED') {
+        triggerNotification?.(
+          data.error || (isTl ? 'Naabot mo na ang maximum voting limit para sa challenge na ito.' : 'Maximum voting limit reached for this challenge.'),
+          'error'
+        );
+        if (data.maxAllowedVotes !== undefined) {
+          setUserVotingStats(prev => prev ? {
+            ...prev,
+            maxAllowedVotes: data.maxAllowedVotes,
+            votesUsed: data.votesUsed,
+            votesRemaining: 0,
+            canVoteMore: false
+          } : null);
+        }
         return;
       }
 
@@ -479,6 +638,15 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
         });
         return updated.sort((a, b) => (b.score || 0) - (a.score || 0) || (b.votesCount || 0) - (a.votesCount || 0));
       });
+
+      // Update voting stats
+      setUserVotingStats(prev => prev ? {
+        ...prev,
+        votesUsed: data.votesUsed ?? (prev.votesUsed + 1),
+        votesRemaining: data.votesRemaining ?? Math.max(0, prev.votesRemaining - 1),
+        canVoteMore: (data.votesRemaining ?? Math.max(0, prev.votesRemaining - 1)) > 0,
+        votedEntryIds: [...(prev.votedEntryIds || []), entryId]
+      } : null);
 
       triggerNotification?.(
         isTl ? '✅ Matagumpay na naitala ang iyong boto! (Final Vote • Bawal Bawiin)' : '✅ Vote successfully recorded! (Final Vote • Permanent)',
@@ -1584,6 +1752,13 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                 const myActiveEntry = challengeEntries.find(e => e.participantId === user?.id);
                 const isChallengeEnded = selectedChallenge.status !== 'active' || (selectedChallenge.endDate && new Date(selectedChallenge.endDate).getTime() < Date.now());
 
+                const validApprovedEntriesCount = challengeEntries.filter(e => e.status !== 'rejected').length;
+                const dynamicMaxVotes = userVotingStats?.maxAllowedVotes ?? calculateMaxVotesPerUser(validApprovedEntriesCount);
+                const myVotedEntriesCount = challengeEntries.filter(e => Array.isArray(e.likes) && e.likes.includes(user?.id || '')).length;
+                const votesUsedCount = userVotingStats?.votesUsed ?? myVotedEntriesCount;
+                const votesRemainingCount = userVotingStats !== null ? userVotingStats.votesRemaining : Math.max(0, dynamicMaxVotes - votesUsedCount);
+                const isVoteLimitReached = votesRemainingCount <= 0 && dynamicMaxVotes > 0 && votesUsedCount >= dynamicMaxVotes;
+
                 return (
                   <div className="space-y-4">
                     {/* User Existing Entry Notice Banner */}
@@ -1631,6 +1806,62 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                         </div>
                       </div>
                     )}
+
+                    {/* DYNAMIC VOTING LIMIT INDICATOR */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black text-sm shadow-xs shrink-0">
+                            🗳️
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-black text-slate-900 flex items-center gap-2">
+                              <span>{isTl ? 'Dynamic Voting Limit' : 'Dynamic Voting Limit'}</span>
+                              <span className="text-[10px] font-extrabold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">
+                                {validApprovedEntriesCount} {validApprovedEntriesCount === 1 ? 'Valid Entry' : 'Valid Entries'}
+                              </span>
+                            </h4>
+                            <p className="text-[11px] text-slate-500 font-medium">
+                              {isTl 
+                                ? 'Awtomatikong umaakma ang limitasyon sa dami ng entries sa challenge (1 boto kada 25-50 entries).' 
+                                : 'Allowed voteable entries scale dynamically based on total entries in this challenge.'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Metric Badges */}
+                        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0">
+                          <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 text-[11px] font-bold text-slate-700 shadow-2xs">
+                            <span className="text-slate-400 mr-1.5">{isTl ? 'Voting Limit:' : 'Voting Limit:'}</span>
+                            <span className="font-black text-indigo-700">{dynamicMaxVotes} {dynamicMaxVotes === 1 ? 'entry' : 'entries'}</span>
+                          </div>
+                          <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 text-[11px] font-bold text-slate-700 shadow-2xs">
+                            <span className="text-slate-400 mr-1.5">{isTl ? 'Votes Used:' : 'Votes Used:'}</span>
+                            <span className="font-black text-slate-900">{votesUsedCount}/{dynamicMaxVotes}</span>
+                          </div>
+                          <div className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold shadow-2xs ${
+                            votesRemainingCount > 0 
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+                              : 'bg-amber-50 border-amber-200 text-amber-800'
+                          }`}>
+                            <span className="mr-1.5">{isTl ? 'Votes Remaining:' : 'Votes Remaining:'}</span>
+                            <span className="font-black">{votesRemainingCount}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Alert banner when maximum voting limit is reached */}
+                      {isVoteLimitReached && (
+                        <div className="bg-amber-50 border border-amber-300 rounded-xl px-3.5 py-2.5 text-xs text-amber-900 font-bold flex items-center gap-2">
+                          <Lock className="w-4 h-4 text-amber-700 shrink-0" />
+                          <span>
+                            {isTl 
+                              ? '🔒 Naabot mo na ang maximum voting limit para sa challenge na ito.' 
+                              : '🔒 You have reached the maximum voting limit for this challenge.'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
 
                     <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                       <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
@@ -1854,6 +2085,18 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
                                       {isTl ? 'Final Vote • Bawal Bawiin' : 'Final Vote • Permanent'}
                                     </span>
                                   </div>
+                                ) : isVoteLimitReached ? (
+                                  <div className="flex flex-col items-end shrink-0" title={isTl ? 'Naabot mo na ang maximum voting limit para sa challenge na ito.' : 'Maximum voting limit reached.'}>
+                                    <div className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-400 border border-slate-200 flex items-center gap-1.5 cursor-not-allowed select-none">
+                                      <Lock className="w-3.5 h-3.5 text-slate-400" />
+                                      <span>{isTl ? 'Limit Naabot' : 'Limit Reached'}</span>
+                                      <span className="bg-slate-200/80 px-1.5 py-0.5 rounded-md text-[10px] text-slate-500 font-bold">{entry.votesCount || 0}</span>
+                                    </div>
+                                    <span className="text-[9px] text-amber-600 font-bold mt-0.5 flex items-center gap-0.5">
+                                      <Lock className="w-2.5 h-2.5 text-amber-600" />
+                                      {isTl ? 'Max votes naabot' : 'Max votes reached'}
+                                    </span>
+                                  </div>
                                 ) : (
                                   <div className="flex flex-col items-end shrink-0">
                                     <button
@@ -1964,55 +2207,224 @@ export const CreatorChallengesView: React.FC<CreatorChallengesViewProps> = ({
             )}
 
             <form onSubmit={handleSubmitEntry} className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-xs font-black text-slate-800">
-                  {isTl ? 'Video o Media URL (YouTube, TikTok, direct link, o data:image/...) *' : 'Video / Media URL *'}
+              {/* Media Submission Mode Tabs */}
+              <div className="space-y-2">
+                <label className="text-xs font-black text-slate-800 block">
+                  {isTl ? 'Paraan ng Pag-submit ng Media *' : 'Media Submission Method *'}
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={entryMediaUrl}
-                  onChange={e => setEntryMediaUrl(e.target.value)}
-                  placeholder="https://... o data:image/..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-900 focus:bg-white focus:outline-indigo-600 truncate"
-                />
-                {/* Live Image Preview if media is an image or base64 data URL */}
-                {entryMediaUrl && isImageMedia(entryMediaUrl, entryMediaType) && (
-                  <div className="mt-2 flex items-center gap-3 p-2 bg-slate-50 rounded-xl border border-slate-200">
-                    <div className="w-12 h-12 rounded-lg overflow-hidden bg-slate-200 shrink-0 border border-slate-300">
-                      <img
-                        src={entryMediaUrl}
-                        alt="Preview"
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                        onError={(e) => {
-                          e.currentTarget.src = DEFAULT_ENTRY_PLACEHOLDER;
-                        }}
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-black text-slate-700 block uppercase">
-                        {isTl ? 'Image Preview' : 'Image Preview'}
-                      </span>
-                      <span className="text-[10px] text-slate-400 font-medium truncate block">
-                        {entryMediaUrl.startsWith('data:') ? 'Base64 Image Attached' : entryMediaUrl}
-                      </span>
-                    </div>
-                  </div>
-                )}
+                <div className="flex items-center p-1 bg-slate-100 rounded-xl gap-1 border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setSubmissionTab('upload')}
+                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-black transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                      submissionTab === 'upload'
+                        ? 'bg-white text-indigo-700 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>{isTl ? 'Upload Media (Gallery / Files)' : 'Upload Media (Gallery / Files)'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSubmissionTab('url')}
+                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-black transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                      submissionTab === 'url'
+                        ? 'bg-white text-indigo-700 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    <span>{isTl ? 'Media URL (TikTok / Links)' : 'Media URL (TikTok / Links)'}</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-black text-slate-800">{isTl ? 'Media Type' : 'Media Type'}</label>
-                <select
-                  value={entryMediaType}
-                  onChange={e => setEntryMediaType(e.target.value as any)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-900 focus:bg-white focus:outline-indigo-600"
-                >
-                  <option value="video">Video Performance (MP4, YouTube, TikTok)</option>
-                  <option value="image">Photo / Artwork Entry</option>
-                </select>
-              </div>
+              {/* Hidden File Inputs */}
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="hidden"
+                onChange={(e) => handleFileSelect(e, 'image')}
+              />
+              <input
+                ref={videoInputRef}
+                type="file"
+                accept="video/mp4,video/webm,video/quicktime,video/x-matroska"
+                className="hidden"
+                onChange={(e) => handleFileSelect(e, 'video')}
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,video/*"
+                className="hidden"
+                onChange={(e) => handleFileSelect(e)}
+              />
+
+              {/* TAB 1: UPLOAD FROM DEVICE GALLERY / FILES */}
+              {submissionTab === 'upload' ? (
+                <div className="space-y-3">
+                  {/* Upload Action Buttons */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => photoInputRef.current?.click()}
+                      disabled={uploadingMedia}
+                      className="p-3 rounded-xl border border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100 text-indigo-900 flex flex-col items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                    >
+                      <Camera className="w-5 h-5 text-indigo-600" />
+                      <span className="text-xs font-black">{isTl ? 'Photo Gallery' : 'Photo Gallery'}</span>
+                      <span className="text-[10px] text-indigo-600 font-medium">JPEG, PNG (Max 15MB)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => videoInputRef.current?.click()}
+                      disabled={uploadingMedia}
+                      className="p-3 rounded-xl border border-purple-200 bg-purple-50/70 hover:bg-purple-100 text-purple-900 flex flex-col items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                    >
+                      <Film className="w-5 h-5 text-purple-600" />
+                      <span className="text-xs font-black">{isTl ? 'Video Gallery' : 'Video Gallery'}</span>
+                      <span className="text-[10px] text-purple-600 font-medium">MP4, MOV (Max 60MB)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingMedia}
+                      className="p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 flex flex-col items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                    >
+                      <FolderOpen className="w-5 h-5 text-slate-600" />
+                      <span className="text-xs font-black">{isTl ? 'Choose Files' : 'Choose Files'}</span>
+                      <span className="text-[10px] text-slate-500 font-medium">{isTl ? 'Lahat ng Media' : 'Any Media'}</span>
+                    </button>
+                  </div>
+
+                  {/* Uploading In-Progress State */}
+                  {uploadingMedia && (
+                    <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl space-y-2 text-center">
+                      <div className="flex items-center justify-center gap-2 text-indigo-800 font-black text-xs">
+                        <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+                        <span>{isTl ? 'Ligtas na ini-a-upload ang media...' : 'Safely uploading media...'}</span>
+                      </div>
+                      <div className="w-full bg-indigo-200 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className="bg-indigo-600 h-1.5 rounded-full transition-all duration-300"
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] text-indigo-600 font-bold block">{uploadProgress}% Complete</span>
+                    </div>
+                  )}
+
+                  {/* Uploaded Media Live Preview */}
+                  {entryMediaUrl && !uploadingMedia && (
+                    <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-black text-slate-800 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>{isTl ? 'Nai-attach na Media:' : 'Attached Media:'}</span>
+                          <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[10px] font-extrabold uppercase">
+                            {entryMediaType}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEntryMediaUrl('');
+                            setUploadedFileDetails(null);
+                          }}
+                          className="text-[11px] text-rose-600 hover:text-rose-700 font-black cursor-pointer"
+                        >
+                          {isTl ? 'Palitan / Alisin' : 'Replace / Remove'}
+                        </button>
+                      </div>
+
+                      {entryMediaType === 'image' ? (
+                        <div className="flex items-center gap-3 p-2 bg-white rounded-xl border border-slate-200">
+                          <div className="w-16 h-16 rounded-lg overflow-hidden bg-slate-100 shrink-0 border border-slate-200">
+                            <img
+                              src={entryMediaUrl}
+                              alt="Preview"
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                              onError={(e) => { e.currentTarget.src = DEFAULT_ENTRY_PLACEHOLDER; }}
+                            />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <span className="text-xs font-bold text-slate-900 truncate block">
+                              {uploadedFileDetails?.name || 'Uploaded Photo Entry'}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-medium block">
+                              {uploadedFileDetails?.size || 'Secure Media Storage'}
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="rounded-xl overflow-hidden border border-slate-200 bg-black">
+                          <video
+                            src={entryMediaUrl}
+                            controls
+                            className="w-full max-h-48 object-contain mx-auto"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* TAB 2: SUBMIT MEDIA URL */
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-black text-slate-800">
+                      {isTl ? 'Video o Media URL (YouTube, TikTok, direct link) *' : 'Video / Media URL *'}
+                    </label>
+                    <input
+                      type="text"
+                      required={submissionTab === 'url'}
+                      value={entryMediaUrl}
+                      onChange={e => setEntryMediaUrl(e.target.value)}
+                      placeholder="https://... (TikTok, YouTube, MP4, etc.)"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-900 focus:bg-white focus:outline-indigo-600 truncate"
+                    />
+                    {entryMediaUrl && isImageMedia(entryMediaUrl, entryMediaType) && (
+                      <div className="mt-2 flex items-center gap-3 p-2 bg-slate-50 rounded-xl border border-slate-200">
+                        <div className="w-12 h-12 rounded-lg overflow-hidden bg-slate-200 shrink-0 border border-slate-300">
+                          <img
+                            src={entryMediaUrl}
+                            alt="Preview"
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => { e.currentTarget.src = DEFAULT_ENTRY_PLACEHOLDER; }}
+                          />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-[10px] font-black text-slate-700 block uppercase">
+                            {isTl ? 'Image Preview' : 'Image Preview'}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-medium truncate block">
+                            {entryMediaUrl}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-black text-slate-800">{isTl ? 'Uri ng Media' : 'Media Type'}</label>
+                    <select
+                      value={entryMediaType}
+                      onChange={e => setEntryMediaType(e.target.value as any)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-900 focus:bg-white focus:outline-indigo-600"
+                    >
+                      <option value="video">Video Performance (MP4, YouTube, TikTok)</option>
+                      <option value="image">Photo / Artwork Entry</option>
+                    </select>
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-1">
                 <label className="text-xs font-black text-slate-800">{isTl ? 'Caption o Mensahe' : 'Caption'}</label>

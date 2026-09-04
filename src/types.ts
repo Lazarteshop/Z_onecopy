@@ -716,6 +716,28 @@ export interface ChallengeEntry {
   referralRegistrationsCount?: number;
 }
 
+export interface ChallengeVotingRules {
+  currentEntryCount: number;
+  maxAllowedVotes: number;
+}
+
+export interface UserChallengeVotingStats {
+  currentEntryCount: number;
+  maxAllowedVotes: number;
+  votesUsed: number;
+  votesRemaining: number;
+  canVoteMore: boolean;
+  votedEntryIds: string[];
+}
+
+export function calculateMaxVotesPerUser(entryCount: number): number {
+  if (entryCount <= 0) return 0;
+  if (entryCount <= 25) return 1;
+  if (entryCount <= 50) return 2;
+  if (entryCount <= 100) return 3;
+  return 3 + Math.ceil((entryCount - 100) / 50);
+}
+
 export interface SponsoredMission {
   id: string;
   sponsorId: string;

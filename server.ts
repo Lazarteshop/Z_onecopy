@@ -13609,7 +13609,22 @@ app.get('/api/challenges', (req, res) => {
   });
 });
 
-// 2. GET /api/challenges/:id - Get challenge details with leaderboard
+// Dynamic Voting Limit Calculator:
+// 1–25 entries: max 1 entry
+// 26–50 entries: max 2 entries
+// 51–100 entries: max 3 entries
+// 101–150 entries: max 4 entries
+// 151–200 entries: max 5 entries
+// Each additional 50 entries after 100 adds +1 voteable entry (201-250: 6, 251-300: 7, etc.)
+function calculateMaxVotesPerUser(entryCount: number): number {
+  if (entryCount <= 0) return 0;
+  if (entryCount <= 25) return 1;
+  if (entryCount <= 50) return 2;
+  if (entryCount <= 100) return 3;
+  return 3 + Math.ceil((entryCount - 100) / 50);
+}
+
+// 2. GET /api/challenges/:id - Get challenge details with leaderboard and dynamic voting rules
 app.get('/api/challenges/:id', (req, res) => {
   const db = loadDB();
   const { id } = req.params;
@@ -13630,6 +13645,37 @@ app.get('/api/challenges/:id', (req, res) => {
   // Sorted leaderboard by score and votes
   const leaderboard = [...approvedEntries].sort((a, b) => (b.score || 0) - (a.score || 0) || (b.votesCount || 0) - (a.votesCount || 0));
 
+  // Dynamic voting limit calculation
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = token ? db.users.find(u => u.id === token) : null;
+  const validEntryCount = approvedEntries.length;
+  const maxAllowedVotes = calculateMaxVotesPerUser(validEntryCount);
+
+  let userVotingStats = {
+    currentEntryCount: validEntryCount,
+    maxAllowedVotes,
+    votesUsed: 0,
+    votesRemaining: maxAllowedVotes,
+    canVoteMore: maxAllowedVotes > 0 && !isEnded,
+    votedEntryIds: [] as string[]
+  };
+
+  if (user) {
+    const votedEntryIds = approvedEntries
+      .filter(e => Array.isArray(e.likes) && e.likes.includes(user.id))
+      .map(e => e.id);
+    const votesUsed = votedEntryIds.length;
+    const votesRemaining = Math.max(0, maxAllowedVotes - votesUsed);
+    userVotingStats = {
+      currentEntryCount: validEntryCount,
+      maxAllowedVotes,
+      votesUsed,
+      votesRemaining,
+      canVoteMore: votesRemaining > 0 && !isEnded,
+      votedEntryIds
+    };
+  }
+
   return res.json({
     success: true,
     challenge: {
@@ -13638,7 +13684,12 @@ app.get('/api/challenges/:id', (req, res) => {
       votingClosed: isEnded
     },
     entries: approvedEntries,
-    leaderboard
+    leaderboard,
+    votingRules: {
+      currentEntryCount: validEntryCount,
+      maxAllowedVotes
+    },
+    userVotingStats
   });
 });
 
@@ -14066,7 +14117,11 @@ app.post('/api/challenges/:id/entries/:entryId/vote', (req, res) => {
     return res.status(400).json({ error: 'Ended na ang challenge. Hindi na maaaring bumoto.' });
   }
 
-  const entry = (db.challengeEntries || []).find(e => e.id === entryId && e.challengeId === id);
+  const allChallengeEntries = (db.challengeEntries || []).filter(e => e.challengeId === id && e.status !== 'rejected');
+  const validEntryCount = allChallengeEntries.length;
+  const maxAllowedVotes = calculateMaxVotesPerUser(validEntryCount);
+
+  const entry = allChallengeEntries.find(e => e.id === entryId);
   if (!entry) return res.status(404).json({ error: 'Entry not found' });
 
   // 2. Strict server-side self-voting prevention
@@ -14091,6 +14146,11 @@ app.post('/api/challenges/:id/entries/:entryId/vote', (req, res) => {
   try {
     if (!Array.isArray(entry.likes)) entry.likes = [];
 
+    // Count how many different entries this user has already voted for in this challenge
+    const userVotedEntries = allChallengeEntries.filter(e => Array.isArray(e.likes) && e.likes.includes(user.id));
+    const votesUsed = userVotedEntries.length;
+    const votesRemaining = Math.max(0, maxAllowedVotes - votesUsed);
+
     // 4. PERMANENT / FINAL VOTE CHECK:
     // Once submitted, one user = one final vote per entry.
     // The user cannot unvote, remove, change, cancel, or withdraw that vote.
@@ -14100,7 +14160,24 @@ app.post('/api/challenges/:id/entries/:entryId/vote', (req, res) => {
         voteLocked: true,
         message: 'Nakaboto ka na sa entry na ito. Final na ang vote at hindi na ito maaaring bawiin.',
         votesCount: entry.votesCount || entry.likes.length,
-        score: entry.score || (entry.likes.length * 10)
+        score: entry.score || (entry.likes.length * 10),
+        currentEntryCount: validEntryCount,
+        maxAllowedVotes,
+        votesUsed,
+        votesRemaining
+      });
+    }
+
+    // 5. DYNAMIC VOTING LIMIT PER CHALLENGE CHECK:
+    // Block if user has reached the maximum allowed different entries for this challenge
+    if (votesUsed >= maxAllowedVotes) {
+      return res.status(403).json({
+        code: 'VOTE_LIMIT_REACHED',
+        error: `Naabot mo na ang maximum voting limit (${maxAllowedVotes} ${maxAllowedVotes === 1 ? 'entry' : 'entries'}) para sa challenge na ito.`,
+        currentEntryCount: validEntryCount,
+        maxAllowedVotes,
+        votesUsed,
+        votesRemaining: 0
       });
     }
 
@@ -14109,6 +14186,9 @@ app.post('/api/challenges/:id/entries/:entryId/vote', (req, res) => {
     entry.votesCount = entry.likes.length;
     entry.score = entry.votesCount * 10;
     entry.updatedAt = new Date().toISOString();
+
+    const newVotesUsed = votesUsed + 1;
+    const newVotesRemaining = Math.max(0, maxAllowedVotes - newVotesUsed);
 
     saveDB(db);
     safeCloudSync('update', 'challenge_entries', entry.id, {
@@ -14124,10 +14204,153 @@ app.post('/api/challenges/:id/entries/:entryId/vote', (req, res) => {
       voteLocked: true,
       votesCount: entry.votesCount,
       score: entry.score,
+      currentEntryCount: validEntryCount,
+      maxAllowedVotes,
+      votesUsed: newVotesUsed,
+      votesRemaining: newVotesRemaining,
       message: 'Matagumpay na naitala ang iyong boto! Final na ang vote at hindi na maaaring bawiin.'
     });
   } finally {
     activeVoteLocks.delete(voteLockKey);
+  }
+});
+
+// 8b. POST /api/challenges/upload-media - Gallery / File upload for Challenge Entries
+app.post('/api/challenges/upload-media', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ error: 'Kailangan ng login upang mag-upload ng media para sa challenge.' });
+  }
+
+  const token = authHeader.replace('Bearer ', '');
+  const db = loadDB();
+  const user = db.users.find(u => u.id === token || u.id === authHeader);
+  if (!user) {
+    return res.status(401).json({ error: 'Unauthorized: Hindi nahanap ang authenticated user.' });
+  }
+
+  const { dataUrl, filename: originalFilename, mediaType: requestedMediaType } = req.body;
+
+  if (!dataUrl || typeof dataUrl !== 'string') {
+    return res.status(400).json({ error: 'Walang valid media data na natanggap.' });
+  }
+
+  if (!dataUrl.startsWith('data:')) {
+    // If it's already an external or remote URL, return directly
+    return res.json({
+      success: true,
+      url: dataUrl,
+      mediaType: requestedMediaType === 'video' || dataUrl.match(/\.(mp4|webm|mov|mkv)($|\?)/i) ? 'video' : 'image'
+    });
+  }
+
+  // Parse base64 and MIME type
+  const commaIdx = dataUrl.indexOf(',');
+  if (commaIdx === -1) {
+    return res.status(400).json({ error: 'Malformed base64 data URL.' });
+  }
+
+  const metaPart = dataUrl.substring(0, commaIdx);
+  const base64Data = dataUrl.substring(commaIdx + 1);
+  const mimeMatch = metaPart.match(/data:([^;]+)/);
+  const mimeType = mimeMatch ? mimeMatch[1].toLowerCase() : '';
+
+  // Whitelist check
+  const allowedImageMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+  const allowedVideoMimes = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska', 'video/3gpp', 'video/ogg'];
+  const isImage = allowedImageMimes.includes(mimeType);
+  const isVideo = allowedVideoMimes.includes(mimeType);
+
+  if (!isImage && !isVideo) {
+    return res.status(400).json({
+      error: 'Hindi pinapayagan ang uri ng file na ito. Tanging mga larawan (JPEG, PNG, WEBP, GIF) at video (MP4, WEBM, MOV) lamang ang pinapayagan.'
+    });
+  }
+
+  // Check file size: max 15MB for image, max 60MB for video
+  const buffer = Buffer.from(base64Data, 'base64');
+  const sizeBytes = buffer.length;
+  const maxImageBytes = 15 * 1024 * 1024;
+  const maxVideoBytes = 60 * 1024 * 1024;
+
+  if (isImage && sizeBytes > maxImageBytes) {
+    return res.status(400).json({
+      error: `Masyadong malaki ang larawan (${(sizeBytes / (1024 * 1024)).toFixed(1)}MB). Ang maximum size para sa larawan ay 15MB.`
+    });
+  }
+
+  if (isVideo && sizeBytes > maxVideoBytes) {
+    return res.status(400).json({
+      error: `Masyadong malaki ang video (${(sizeBytes / (1024 * 1024)).toFixed(1)}MB). Ang maximum size para sa video ay 60MB.`
+    });
+  }
+
+  // Determine safe extension
+  let extension = 'bin';
+  if (mimeType.includes('/')) {
+    extension = mimeType.split('/')[1];
+  }
+  if (extension.includes('+')) extension = extension.split('+')[0];
+  if (extension.includes(';')) extension = extension.split(';')[0];
+  if (extension === 'jpeg') extension = 'jpg';
+  if (extension === 'quicktime') extension = 'mov';
+  if (extension === 'x-matroska') extension = 'mkv';
+
+  // Forbid dangerous / script extensions
+  const dangerousExts = ['exe', 'sh', 'bat', 'cmd', 'js', 'mjs', 'ts', 'html', 'php', 'phtml', 'py', 'pl'];
+  if (dangerousExts.includes(extension.toLowerCase())) {
+    return res.status(400).json({ error: 'Bawal ang executable o script files para sa security.' });
+  }
+
+  const safeFilename = `chal-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${extension}`;
+
+  try {
+    let uploadedUrl: string | null = null;
+
+    // 1. Try Cloudflare R2 upload if configured
+    try {
+      const r2Result = await uploadMediaToCloudflareR2Detailed(buffer, 'challenge-entries', user.id, mimeType);
+      if (r2Result && r2Result.result && r2Result.result.url) {
+        uploadedUrl = r2Result.result.url;
+      }
+    } catch (r2Err) {
+      console.warn('⚠️ Cloudflare R2 upload skipped or failed, falling back to safe local storage:', r2Err);
+    }
+
+    // 2. Fallback to local uploads directory if R2 did not produce a URL
+    if (!uploadedUrl) {
+      const uploadDir = path.join(process.cwd(), 'uploads');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      const localFilePath = path.join(uploadDir, safeFilename);
+      fs.writeFileSync(localFilePath, buffer);
+      uploadedUrl = `/uploads/${safeFilename}`;
+
+      // Metadata-only index sync in Firestore (strictly zero binary data in Firestore)
+      safeCloudSync('set', 'media_storage', safeFilename, {
+        filename: safeFilename,
+        downloadUrl: uploadedUrl,
+        category: 'challenge-entries',
+        userId: user.id,
+        size: sizeBytes,
+        mimeType,
+        uploadedAt: new Date().toISOString()
+      });
+    }
+
+    return res.json({
+      success: true,
+      url: uploadedUrl,
+      mediaType: isVideo ? 'video' : 'image',
+      filename: safeFilename,
+      size: sizeBytes,
+      mimeType,
+      message: 'Matagumpay na nai-upload ang media mula sa iyong device!'
+    });
+  } catch (err: any) {
+    console.error('❌ Error in /api/challenges/upload-media:', err);
+    return res.status(500).json({ error: 'Bigo sa pag-proseso ng media upload. Pakisubukan muli.' });
   }
 });
 

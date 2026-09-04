@@ -130,6 +130,14 @@ export const PublicEntryLandingModal: React.FC<PublicEntryLandingModalProps> = (
         return;
       }
 
+      if (res.status === 403 || data.code === 'VOTE_LIMIT_REACHED') {
+        triggerNotification?.(
+          data.error || (isTl ? 'Naabot mo na ang maximum voting limit para sa challenge na ito.' : 'Maximum voting limit reached for this challenge.'),
+          'error'
+        );
+        return;
+      }
+
       if (res.ok && data.success) {
         setHasVoted(true);
         if (entry) {
