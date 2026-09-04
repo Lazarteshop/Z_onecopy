@@ -30,10 +30,12 @@ export function formatEmbedUrl(rawUrl: string): FormattedReelUrl {
   }
 
   // 3. TikTok
-  const tiktokMatch = url.match(/video\/(\d+)/i) || url.match(/v\/(\d+)/i) || url.match(/player\/v1\/(\d+)/i);
+  const tiktokMatch = url.match(/(?:video|v|player\/v1|embed\/v2|embed)\/(\d{10,25})/i) ||
+                      url.match(/tiktok\.com\/.*\/(\d{10,25})/i) ||
+                      url.match(/[?&]v=(\d{10,25})/i);
   if (tiktokMatch && tiktokMatch[1]) {
     return {
-      embedUrl: `https://www.tiktok.com/embed/v2/${tiktokMatch[1]}`,
+      embedUrl: `https://www.tiktok.com/player/v1/${tiktokMatch[1]}?autoplay=1`,
       platform: 'tiktok'
     };
   }

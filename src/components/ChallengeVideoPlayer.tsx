@@ -37,6 +37,10 @@ export function getTikTokVideoId(url: string): string | null {
   const paramMatch = clean.match(/[?&]v=(\d+)/i);
   if (paramMatch && paramMatch[1]) return paramMatch[1];
 
+  // Pattern 4: /player/v1/(\d+) or /embed/v2/(\d+)
+  const playerMatch = clean.match(/\/(?:player\/v1|embed\/v2|embed)\/(\d+)/i);
+  if (playerMatch && playerMatch[1]) return playerMatch[1];
+
   return null;
 }
 
@@ -109,7 +113,7 @@ export const ChallengeVideoPlayer: React.FC<ChallengeVideoPlayerProps> = ({
           <div className="w-full flex justify-center bg-black min-h-[360px] sm:min-h-[440px] relative">
             <iframe
               key={`tiktok-${tiktokId}-${retryKey}`}
-              src={`https://www.tiktok.com/embed/v2/${tiktokId}`}
+              src={`https://www.tiktok.com/player/v1/${tiktokId}?autoplay=${autoPlay ? 1 : 0}`}
               title={caption || 'TikTok Video Player'}
               className="w-full max-w-[420px] h-[440px] sm:h-[480px] border-0 rounded-2xl"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"

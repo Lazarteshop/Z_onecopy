@@ -67,15 +67,17 @@ export function parseVideoUrl(inputUrl: string): { embedUrl: string; platform: '
   
   // 1. TikTok URL parsing
   if (url.includes('tiktok.com')) {
-    const match = url.match(/video\/(\d+)/) || url.match(/\/v\/(\d+)/);
+    const match = url.match(/(?:video|v|player\/v1|embed\/v2|embed)\/(\d{10,25})/) ||
+                  url.match(/tiktok\.com\/.*\/(\d{10,25})/) ||
+                  url.match(/[?&]v=(\d{10,25})/);
     if (match && match[1]) {
       return {
-        embedUrl: `https://www.tiktok.com/embed/v2/${match[1]}`,
+        embedUrl: `https://www.tiktok.com/player/v1/${match[1]}?autoplay=1`,
         platform: 'tiktok'
       };
     }
     return {
-      embedUrl: url.includes('/embed/') ? url : `https://www.tiktok.com/embed/v2/${url.split('/').pop()?.split('?')[0]}`,
+      embedUrl: url,
       platform: 'tiktok'
     };
   }
@@ -493,6 +495,9 @@ export default function ReelsFloatingWidget({
           setIsOpen(false);
         }
         if (target && (target.id === 'reels-widget-open-btn' || target.closest('#reels-widget-open-btn'))) {
+          try {
+            sessionStorage.setItem('zone_reels_audio_enabled', '1');
+          } catch {}
           setIsOpen(true);
         }
       }
@@ -575,6 +580,9 @@ export default function ReelsFloatingWidget({
     if (height > 0) {
       const newIndex = Math.round(el.scrollTop / height);
       if (newIndex !== currentIndex && newIndex >= 0 && newIndex < activeReels.length) {
+        try {
+          sessionStorage.setItem('zone_reels_audio_enabled', '1');
+        } catch {}
         setCurrentIndex(newIndex);
       }
     }
@@ -809,6 +817,9 @@ export default function ReelsFloatingWidget({
               isDraggingRef.current = false;
               return;
             }
+            try {
+              sessionStorage.setItem('zone_reels_audio_enabled', '1');
+            } catch {}
             setIsOpen(true);
           }}
           className="bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black px-5 py-3.5 rounded-full shadow-[0_12px_35px_rgba(225,29,72,0.75)] border-2 border-white flex items-center gap-2.5 transition-transform duration-150 hover:scale-105 active:scale-95 cursor-grab active:cursor-grabbing select-none"

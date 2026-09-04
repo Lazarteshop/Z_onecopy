@@ -11,7 +11,9 @@ import {
   Check, 
   TrendingUp, 
   AlertCircle,
-  Plus
+  Plus,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { ReelVideo } from '../types';
 import { formatEmbedUrl } from '../utils/reels';
@@ -58,10 +60,152 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
   triggerNotification
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [expandedDesc, setExpandedDesc] = useState<boolean>(false);
   const [showHeartBurst, setShowHeartBurst] = useState<boolean>(false);
   const [heartBurstPos, setHeartBurstPos] = useState<{ x: number; y: number }>({ x: 50, y: 50 });
   const lastTapRef = useRef<number>(0);
+
+  // TikTok Audio State Management
+  const [isTikTokMuted, setIsTikTokMuted] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem('zone_reels_audio_enabled') !== '1';
+    }
+    return true;
+  });
+
+  const sendTikTokCommand = useCallback((type: 'unmute' | 'mute' | 'play' | 'pause') => {
+    if (!iframeRef.current?.contentWindow) return;
+    try {
+      iframeRef.current.contentWindow.postMessage(
+        {
+          'x-tiktok-player': true,
+          type
+        },
+        '*'
+      );
+    } catch {
+      // Safe cross-origin handling
+    }
+  }, []);
+
+  const handleUnmuteTikTok = useCallback((e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    sendTikTokCommand('unmute');
+    sendTikTokCommand('play');
+    setIsTikTokMuted(false);
+    try {
+      sessionStorage.setItem('zone_reels_audio_enabled', '1');
+    } catch {}
+    if (triggerNotification) {
+      triggerNotification(
+        language === 'tl' ? '🔊 Naka-on na ang sound ng TikTok!' : '🔊 TikTok audio enabled!',
+        'success'
+      );
+    }
+  }, [sendTikTokCommand, triggerNotification, language]);
+
+  const handleToggleTikTokMute = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (isTikTokMuted) {
+      handleUnmuteTikTok(e);
+    } else {
+      sendTikTokCommand('mute');
+      setIsTikTokMuted(true);
+      try {
+        sessionStorage.removeItem('zone_reels_audio_enabled');
+      } catch {}
+    }
+  }, [isTikTokMuted, handleUnmuteTikTok, sendTikTokCommand]);
+
+  const formatted = formatEmbedUrl(reel.embedUrl || reel.url || '');
+
+  // Listen for TikTok embed player postMessage events
+  useEffect(() => {
+    if (!isActive || formatted.platform !== 'tiktok') return;
+
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        let data = event.data;
+        if (typeof data === 'string' && data.includes('x-tiktok-player')) {
+          try {
+            data = JSON.parse(data);
+          } catch {}
+        }
+        if (typeof data === 'object' && data !== null && data['x-tiktok-player']) {
+          if (data.type === 'onPlayerReady') {
+            sendTikTokCommand('unmute');
+            if (isPlaying) {
+              sendTikTokCommand('play');
+            }
+          } else if (data.type === 'onMute') {
+            const hasSessionAudio = typeof window !== 'undefined' && sessionStorage.getItem('zone_reels_audio_enabled') === '1';
+            if (hasSessionAudio) {
+              sendTikTokCommand('unmute');
+            } else {
+              setIsTikTokMuted(true);
+            }
+          } else if (data.type === 'onUnmute') {
+            setIsTikTokMuted(false);
+            try {
+              sessionStorage.setItem('zone_reels_audio_enabled', '1');
+            } catch {}
+          }
+        }
+      } catch {
+        // Safe cross-origin handling
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [isActive, formatted.platform, isPlaying, sendTikTokCommand]);
+
+  // Synchronize play/pause commands with TikTok player
+  useEffect(() => {
+    if (!isActive || formatted.platform !== 'tiktok') return;
+    if (isPlaying) {
+      sendTikTokCommand('play');
+      const hasSessionAudio = typeof window !== 'undefined' && sessionStorage.getItem('zone_reels_audio_enabled') === '1';
+      if (hasSessionAudio || !isTikTokMuted) {
+        sendTikTokCommand('unmute');
+      }
+    } else {
+      sendTikTokCommand('pause');
+    }
+  }, [isPlaying, isActive, formatted.platform, isTikTokMuted, sendTikTokCommand]);
+
+  // Proactively attempt automatic audio activation whenever allowed by browser/TikTok
+  useEffect(() => {
+    if (!isActive || formatted.platform !== 'tiktok') return;
+
+    // Dispatch immediate unmute and play attempts
+    sendTikTokCommand('unmute');
+    if (isPlaying) {
+      sendTikTokCommand('play');
+    }
+
+    // Staggered attempts to ensure commands catch the iframe as its internal scripts ready
+    const delays = [150, 450, 900, 1500, 2200];
+    const timers = delays.map((delay) =>
+      setTimeout(() => {
+        sendTikTokCommand('unmute');
+        if (isPlaying) {
+          sendTikTokCommand('play');
+        }
+      }, delay)
+    );
+
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+    };
+  }, [isActive, formatted.platform, isPlaying, sendTikTokCommand]);
 
   // Sync HTML5 video play/pause
   useEffect(() => {
@@ -90,17 +234,34 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
       }
       setTimeout(() => setShowHeartBurst(false), 800);
     } else {
-      // Single tap -> toggle play/pause
-      onTogglePlay();
+      // Single tap -> toggle play/pause or unmute TikTok if muted
+      if (formatted.platform === 'tiktok' && isTikTokMuted) {
+        handleUnmuteTikTok();
+      } else {
+        onTogglePlay();
+      }
     }
     lastTapRef.current = now;
   };
 
-  const formatted = formatEmbedUrl(reel.embedUrl || reel.url || '');
   const isDirectVideo = formatted.platform === 'direct' && (
     formatted.embedUrl.match(/\.(mp4|webm|mov|ogg)($|\?)/i) || 
     reel.url?.match(/\.(mp4|webm|mov|ogg)($|\?)/i)
   );
+
+  const getIframeSrc = () => {
+    if (formatted.platform === 'youtube') {
+      return formatted.embedUrl.includes('?') 
+        ? `${formatted.embedUrl}&autoplay=${isPlaying ? 1 : 0}` 
+        : `${formatted.embedUrl}?autoplay=${isPlaying ? 1 : 0}`;
+    }
+    if (formatted.platform === 'tiktok') {
+      let cleanUrl = formatted.embedUrl.replace(/[?&]autoplay=\d+/i, '');
+      const sep = cleanUrl.includes('?') ? '&' : '?';
+      return `${cleanUrl}${sep}autoplay=${isPlaying ? 1 : 0}`;
+    }
+    return formatted.embedUrl;
+  };
 
   const radius = 18;
   const circumference = 2 * Math.PI * radius; // ~113.1
@@ -171,19 +332,22 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
           ) : (
             <div className="relative z-10 w-full h-full flex items-center justify-center">
               <iframe
-                src={
-                  formatted.platform === 'youtube'
-                    ? (formatted.embedUrl.includes('?') 
-                        ? `${formatted.embedUrl}&autoplay=${isPlaying ? 1 : 0}` 
-                        : `${formatted.embedUrl}?autoplay=${isPlaying ? 1 : 0}`)
-                    : formatted.embedUrl
-                }
+                ref={iframeRef}
+                src={getIframeSrc()}
                 title={reel.title || `Reel Video ${index + 1}`}
                 className={`w-full h-full border-0 bg-slate-950 transition-all duration-300 ${
                   fitMode === 'contain' ? 'max-h-[85vh] object-contain' : 'object-cover'
                 }`}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
+                onLoad={() => {
+                  if (formatted.platform === 'tiktok') {
+                    sendTikTokCommand('unmute');
+                    if (isPlaying) {
+                      sendTikTokCommand('play');
+                    }
+                  }
+                }}
               />
             </div>
           )
@@ -199,6 +363,31 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
             <p className="text-xs text-slate-400 mt-1 max-w-xs line-clamp-1">
               {reel.title || 'I-scroll para i-play'}
             </p>
+          </div>
+        )}
+
+        {/* ================= TIKTOK 1-TAP AUDIO ACTIVATION TAP ZONE ================= */}
+        {formatted.platform === 'tiktok' && isActive && isTikTokMuted && (
+          <div
+            id={`tiktok-tap-to-unmute-overlay-${reel.id}`}
+            onClick={handleUnmuteTikTok}
+            className="absolute inset-0 z-20 cursor-pointer flex flex-col items-center justify-center bg-black/25 hover:bg-black/15 backdrop-blur-[0.5px] transition-all duration-200 select-none group"
+            title={language === 'tl' ? 'I-tap saanman upang i-on ang audio' : 'Tap anywhere to enable sound'}
+          >
+            {/* Center Pulsing Audio Badge */}
+            <div className="px-4 py-2.5 rounded-full bg-slate-950/90 border border-rose-500/60 shadow-[0_0_30px_rgba(244,63,94,0.4)] flex items-center gap-2.5 text-white transform transition duration-150 group-hover:scale-105 active:scale-95 animate-pulse">
+              <div className="w-8 h-8 rounded-full bg-rose-600 flex items-center justify-center text-white shadow">
+                <VolumeX className="w-4 h-4 fill-current" />
+              </div>
+              <div className="flex flex-col text-left">
+                <span className="text-xs font-black tracking-wide text-rose-300 flex items-center gap-1">
+                  🔊 {language === 'tl' ? 'I-tap para sa Sound' : 'Tap for Sound'}
+                </span>
+                <span className="text-[10px] text-slate-300 font-medium">
+                  {language === 'tl' ? '1-tap audio activation' : '1-tap audio activation'}
+                </span>
+              </div>
+            </div>
           </div>
         )}
 
@@ -293,6 +482,26 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
           </div>
         </div>
       </div>
+
+      {/* ================= TIKTOK AUDIO UNMUTE FLOATING BADGE ================= */}
+      {formatted.platform === 'tiktok' && isActive && isTikTokMuted && (
+        <div className="absolute top-16 right-3 sm:right-auto sm:left-1/2 sm:-translate-x-1/2 z-30 pointer-events-auto">
+          <button
+            type="button"
+            id={`tiktok-unmute-pill-${reel.id}`}
+            onClick={handleUnmuteTikTok}
+            className="group px-3.5 py-2 rounded-full bg-slate-950/90 hover:bg-rose-600 text-white font-black text-xs shadow-2xl flex items-center gap-2 border border-rose-500/40 backdrop-blur-md active:scale-95 transition-all duration-200 cursor-pointer animate-pulse"
+            title={language === 'tl' ? 'I-tap upang i-on ang sound ng TikTok' : 'Tap to enable TikTok audio'}
+          >
+            <div className="w-5 h-5 rounded-full bg-rose-500 flex items-center justify-center text-white group-hover:bg-white group-hover:text-rose-600 transition shadow">
+              <VolumeX className="w-3 h-3 fill-current" />
+            </div>
+            <span className="tracking-wide">
+              {language === 'tl' ? '🔊 I-tap para sa Sound' : '🔊 Tap to Unmute'}
+            </span>
+          </button>
+        </div>
+      )}
 
       {/* ================= RIGHT SIDEBAR ACTION BUTTONS (TikTok Style) ================= */}
       <aside className="absolute right-3.5 bottom-24 z-30 flex flex-col items-center gap-3.5 pointer-events-auto">
@@ -419,6 +628,30 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
             {fitMode === 'contain' ? 'Fit' : 'Fill'}
           </span>
         </div>
+
+        {/* 5.5 TikTok Audio Mute/Unmute Toggle */}
+        {formatted.platform === 'tiktok' && (
+          <div className="flex flex-col items-center gap-0.5">
+            <button
+              type="button"
+              id={`tiktok-sidebar-audio-toggle-${reel.id}`}
+              onClick={handleToggleTikTokMute}
+              className={`p-1.5 active:scale-125 transition duration-200 cursor-pointer ${
+                isTikTokMuted ? 'text-amber-300' : 'text-emerald-400'
+              }`}
+              title={isTikTokMuted ? 'I-on ang audio (Unmute)' : 'Naka-on ang audio (I-mute)'}
+            >
+              {isTikTokMuted ? (
+                <VolumeX className="w-6 h-6 drop-shadow-md text-amber-400 animate-pulse" />
+              ) : (
+                <Volume2 className="w-6 h-6 drop-shadow-md text-emerald-400" />
+              )}
+            </button>
+            <span className="text-[9px] font-bold text-slate-300">
+              {isTikTokMuted ? 'Muted' : 'Sound'}
+            </span>
+          </div>
+        )}
 
         {/* 6. Admin Delete Option */}
         {isAdmin && onDelete && (
