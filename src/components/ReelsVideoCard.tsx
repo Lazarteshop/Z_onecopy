@@ -74,9 +74,10 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
     return true;
   });
 
-  const sendTikTokCommand = useCallback((type: 'unmute' | 'mute' | 'play' | 'pause') => {
+  const sendTikTokCommand = useCallback((type: 'unMute' | 'mute' | 'play' | 'pause') => {
     if (!iframeRef.current?.contentWindow) return;
     try {
+      // Official TikTok EmbeddedPlayerMessage method name ('unMute', 'mute', 'play', 'pause')
       iframeRef.current.contentWindow.postMessage(
         {
           'x-tiktok-player': true,
@@ -84,6 +85,16 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
         },
         '*'
       );
+      // Also send lowercase variant for unMute for backwards compatibility across player revisions
+      if (type === 'unMute') {
+        iframeRef.current.contentWindow.postMessage(
+          {
+            'x-tiktok-player': true,
+            type: 'unmute'
+          },
+          '*'
+        );
+      }
     } catch {
       // Safe cross-origin handling
     }
@@ -94,7 +105,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
       e.stopPropagation();
       e.preventDefault();
     }
-    sendTikTokCommand('unmute');
+    sendTikTokCommand('unMute');
     sendTikTokCommand('play');
     setIsTikTokMuted(false);
     try {
@@ -138,18 +149,22 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
         }
         if (typeof data === 'object' && data !== null && data['x-tiktok-player']) {
           if (data.type === 'onPlayerReady') {
-            sendTikTokCommand('unmute');
+            const hasSessionAudio = typeof window !== 'undefined' && sessionStorage.getItem('zone_reels_audio_enabled') === '1';
+            if (hasSessionAudio) {
+              sendTikTokCommand('unMute');
+              setIsTikTokMuted(false);
+            }
             if (isPlaying) {
               sendTikTokCommand('play');
             }
           } else if (data.type === 'onMute') {
             const hasSessionAudio = typeof window !== 'undefined' && sessionStorage.getItem('zone_reels_audio_enabled') === '1';
             if (hasSessionAudio) {
-              sendTikTokCommand('unmute');
+              sendTikTokCommand('unMute');
             } else {
               setIsTikTokMuted(true);
             }
-          } else if (data.type === 'onUnmute') {
+          } else if (data.type === 'onUnmute' || data.type === 'onUnMute') {
             setIsTikTokMuted(false);
             try {
               sessionStorage.setItem('zone_reels_audio_enabled', '1');
@@ -174,37 +189,39 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
       sendTikTokCommand('play');
       const hasSessionAudio = typeof window !== 'undefined' && sessionStorage.getItem('zone_reels_audio_enabled') === '1';
       if (hasSessionAudio || !isTikTokMuted) {
-        sendTikTokCommand('unmute');
+        sendTikTokCommand('unMute');
       }
     } else {
       sendTikTokCommand('pause');
     }
   }, [isPlaying, isActive, formatted.platform, isTikTokMuted, sendTikTokCommand]);
 
-  // Proactively attempt automatic audio activation whenever allowed by browser/TikTok
+  // Proactively attempt audio activation whenever session permits
   useEffect(() => {
     if (!isActive || formatted.platform !== 'tiktok') return;
 
-    // Dispatch immediate unmute and play attempts
-    sendTikTokCommand('unmute');
-    if (isPlaying) {
-      sendTikTokCommand('play');
+    const hasSessionAudio = typeof window !== 'undefined' && sessionStorage.getItem('zone_reels_audio_enabled') === '1';
+    if (hasSessionAudio) {
+      sendTikTokCommand('unMute');
+      if (isPlaying) {
+        sendTikTokCommand('play');
+      }
+
+      // Staggered attempts to ensure commands catch the iframe as its internal scripts ready
+      const delays = [150, 450, 900, 1500, 2200];
+      const timers = delays.map((delay) =>
+        setTimeout(() => {
+          sendTikTokCommand('unMute');
+          if (isPlaying) {
+            sendTikTokCommand('play');
+          }
+        }, delay)
+      );
+
+      return () => {
+        timers.forEach((t) => clearTimeout(t));
+      };
     }
-
-    // Staggered attempts to ensure commands catch the iframe as its internal scripts ready
-    const delays = [150, 450, 900, 1500, 2200];
-    const timers = delays.map((delay) =>
-      setTimeout(() => {
-        sendTikTokCommand('unmute');
-        if (isPlaying) {
-          sendTikTokCommand('play');
-        }
-      }, delay)
-    );
-
-    return () => {
-      timers.forEach((t) => clearTimeout(t));
-    };
   }, [isActive, formatted.platform, isPlaying, sendTikTokCommand]);
 
   // Sync HTML5 video play/pause
@@ -342,7 +359,10 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                 allowFullScreen
                 onLoad={() => {
                   if (formatted.platform === 'tiktok') {
-                    sendTikTokCommand('unmute');
+                    const hasSessionAudio = typeof window !== 'undefined' && sessionStorage.getItem('zone_reels_audio_enabled') === '1';
+                    if (hasSessionAudio) {
+                      sendTikTokCommand('unMute');
+                    }
                     if (isPlaying) {
                       sendTikTokCommand('play');
                     }
@@ -483,23 +503,51 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
         </div>
       </div>
 
-      {/* ================= TIKTOK AUDIO UNMUTE FLOATING BADGE ================= */}
-      {formatted.platform === 'tiktok' && isActive && isTikTokMuted && (
-        <div className="absolute top-16 right-3 sm:right-auto sm:left-1/2 sm:-translate-x-1/2 z-30 pointer-events-auto">
-          <button
-            type="button"
-            id={`tiktok-unmute-pill-${reel.id}`}
-            onClick={handleUnmuteTikTok}
-            className="group px-3.5 py-2 rounded-full bg-slate-950/90 hover:bg-rose-600 text-white font-black text-xs shadow-2xl flex items-center gap-2 border border-rose-500/40 backdrop-blur-md active:scale-95 transition-all duration-200 cursor-pointer animate-pulse"
-            title={language === 'tl' ? 'I-tap upang i-on ang sound ng TikTok' : 'Tap to enable TikTok audio'}
+      {/* ================= TIKTOK AUDIO UNMUTE & DIRECT LINK FLOATING CONTROLS ================= */}
+      {formatted.platform === 'tiktok' && isActive && (
+        <div className="absolute top-16 right-3 sm:right-auto sm:left-1/2 sm:-translate-x-1/2 z-30 pointer-events-auto flex items-center gap-2">
+          {isTikTokMuted ? (
+            <button
+              type="button"
+              id={`tiktok-unmute-pill-${reel.id}`}
+              onClick={handleUnmuteTikTok}
+              className="group px-3.5 py-1.5 rounded-full bg-slate-950/90 hover:bg-rose-600 text-white font-black text-xs shadow-2xl flex items-center gap-2 border border-rose-500/50 backdrop-blur-md active:scale-95 transition-all duration-200 cursor-pointer animate-pulse"
+              title={language === 'tl' ? 'I-tap upang i-on ang sound ng TikTok' : 'Tap to enable TikTok audio'}
+            >
+              <div className="w-5 h-5 rounded-full bg-rose-500 flex items-center justify-center text-white group-hover:bg-white group-hover:text-rose-600 transition shadow">
+                <VolumeX className="w-3 h-3 fill-current" />
+              </div>
+              <span className="tracking-wide">
+                {language === 'tl' ? '🔊 I-on ang Sound' : '🔊 Tap for Sound'}
+              </span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleToggleTikTokMute}
+              className="px-3 py-1.5 rounded-full bg-slate-950/90 hover:bg-slate-900 text-emerald-300 font-bold text-xs shadow-xl flex items-center gap-1.5 border border-emerald-500/40 backdrop-blur-md active:scale-95 transition cursor-pointer"
+              title={language === 'tl' ? 'Naka-on ang audio (I-click para i-mute)' : 'Audio active (Click to mute)'}
+            >
+              <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{language === 'tl' ? 'Sound On' : 'Sound On'}</span>
+            </button>
+          )}
+
+          {/* Dedicated "Panoorin na may Sound sa TikTok" fallback link */}
+          <a
+            href={reel.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="px-3 py-1.5 rounded-full bg-black/80 hover:bg-slate-900 text-slate-200 hover:text-cyan-300 font-bold text-xs shadow-xl flex items-center gap-1.5 border border-white/20 backdrop-blur-md transition active:scale-95"
+            title={language === 'tl' ? 'Panoorin na may Sound sa TikTok app / site' : 'Watch with Sound on TikTok'}
           >
-            <div className="w-5 h-5 rounded-full bg-rose-500 flex items-center justify-center text-white group-hover:bg-white group-hover:text-rose-600 transition shadow">
-              <VolumeX className="w-3 h-3 fill-current" />
-            </div>
-            <span className="tracking-wide">
-              {language === 'tl' ? '🔊 I-tap para sa Sound' : '🔊 Tap to Unmute'}
+            <ExternalLink className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden xs:inline">
+              {language === 'tl' ? 'Panoorin sa TikTok' : 'Open in TikTok'}
             </span>
-          </button>
+            <span className="xs:hidden">TikTok</span>
+          </a>
         </div>
       )}
 
@@ -603,12 +651,18 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="p-1.5 active:scale-125 transition duration-200 text-white/90 hover:text-indigo-300"
-            title="Buksan ang original source link"
+            className="p-1.5 active:scale-125 transition duration-200 text-white/90 hover:text-cyan-300"
+            title={
+              formatted.platform === 'tiktok'
+                ? (language === 'tl' ? 'Panoorin na may Sound sa TikTok' : 'Watch with Sound on TikTok')
+                : 'Buksan ang original source link'
+            }
           >
             <ExternalLink className="w-6 h-6 drop-shadow-md" />
           </a>
-          <span className="text-[9px] font-bold text-slate-300">Link</span>
+          <span className="text-[9px] font-bold text-slate-300">
+            {formatted.platform === 'tiktok' ? 'TikTok' : 'Link'}
+          </span>
         </div>
 
         {/* 5. Fit / Fill Screen Mode Toggle */}
