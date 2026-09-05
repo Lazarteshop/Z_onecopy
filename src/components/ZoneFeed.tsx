@@ -50,12 +50,14 @@ import {
   ExternalLink,
   User
 } from 'lucide-react';
-import { ZonePost, GroupChat, GroupMessage, ZoneStory, DirectMessage } from '../types';
+import { ZonePost, GroupChat, GroupMessage, ZoneStory, DirectMessage, BilibiliFeedItem, BilibiliFeedConfig } from '../types';
 import { ZoneStories } from './ZoneStories';
 import { dataSaver } from '../utils/dataSaver';
 import { idbStorage } from '../utils/idbStorage';
 import { DataSaverSettingsModal } from './DataSaverSettingsModal';
 import { UserProfileModal } from './UserProfileModal';
+import { BilibiliCard } from './BilibiliCard';
+import { BilibiliPlayerModal } from './BilibiliPlayerModal';
 
 interface ZoneFeedProps {
   token: string;
@@ -304,13 +306,93 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     ];
   });
   const [loadingPosts, setLoadingPosts] = useState(false);
-  const [postFilter, setPostFilter] = useState<'all' | 'news' | 'community' | 'teleserye'>('all');
+  const [postFilter, setPostFilter] = useState<'all' | 'news' | 'community' | 'teleserye' | 'bilibili'>('all');
   const [teleseryeStreamFilter, setTeleseryeStreamFilter] = useState<'all' | 'playable' | 'pending'>('all');
   const [selectedServerMap, setSelectedServerMap] = useState<Record<string, string>>({});
   const [teleseryeSearch, setTeleseryeSearch] = useState<string>('');
   const [isRefreshingRss, setIsRefreshingRss] = useState(false);
   const [checkingStreamPostId, setCheckingStreamPostId] = useState<string | null>(null);
   const [visiblePostLimit, setVisiblePostLimit] = useState<number>(24);
+
+  // --- 🎬 BILIBILI FLIX FEED STATES & HANDLERS ---
+  const [bilibiliItems, setBilibiliItems] = useState<BilibiliFeedItem[]>(() => {
+    try {
+      const cached = localStorage.getItem('zone_bilibili_feed_cache');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const [loadingBilibili, setLoadingBilibili] = useState(false);
+  const [isRefreshingBilibili, setIsRefreshingBilibili] = useState(false);
+  const [bilibiliActiveModalItem, setBilibiliActiveModalItem] = useState<BilibiliFeedItem | null>(null);
+  const [bilibiliCreatorFilter, setBilibiliCreatorFilter] = useState<string>('all');
+  const [bilibiliSearch, setBilibiliSearch] = useState<string>('');
+
+  const fetchBilibiliFeed = async (silent = false) => {
+    if (!silent) setLoadingBilibili(true);
+    try {
+      const res = await fetch('/api/zone/bilibili-feed');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.items)) {
+          setBilibiliItems(data.items);
+          try {
+            localStorage.setItem('zone_bilibili_feed_cache', JSON.stringify(data.items));
+          } catch {}
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to fetch Bilibili feed:', err);
+    } finally {
+      if (!silent) setLoadingBilibili(false);
+    }
+  };
+
+  const handleRefreshBilibili = async () => {
+    setIsRefreshingBilibili(true);
+    try {
+      const res = await fetch('/api/zone/bilibili-feed/refresh', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.items) {
+        setBilibiliItems(data.items);
+        try {
+          localStorage.setItem('zone_bilibili_feed_cache', JSON.stringify(data.items));
+        } catch {}
+        triggerNotification(
+          language === 'tl' ? `🎬 Na-refresh ang BiliBili FLIX! (${data.items.length} mga video)` : `🎬 BiliBili FLIX refreshed! (${data.items.length} videos)`,
+          'success'
+        );
+      } else {
+        triggerNotification(data.error || 'Hindi ma-refresh ang BiliBili feed.', 'error');
+      }
+    } catch (err) {
+      triggerNotification('Error sa pag-refresh ng BiliBili feed.', 'error');
+    } finally {
+      setIsRefreshingBilibili(false);
+    }
+  };
+
+  const handleShareBilibili = async (item: BilibiliFeedItem) => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: item.title,
+          text: `Panoorin ang "${item.title}" mula kay ${item.creatorName} sa BiliBili:`,
+          url: item.videoUrl
+        });
+        return;
+      } catch {}
+    }
+    try {
+      await navigator.clipboard.writeText(item.videoUrl);
+      triggerNotification(language === 'tl' ? '📋 Nakopya ang link ng BiliBili video!' : '📋 BiliBili video link copied!', 'success');
+    } catch {
+      triggerNotification(item.videoUrl, 'info');
+    }
+  };
 
   const handleCheckVideoSource = async (postId: string) => {
     setCheckingStreamPostId(postId);
@@ -2004,9 +2086,22 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     return filteredPosts.slice(0, visiblePostLimit);
   }, [filteredPosts, visiblePostLimit]);
 
+  // Memoized BiliBili FLIX filtered list
+  const filteredBilibiliItems = React.useMemo(() => {
+    return bilibiliItems.filter(item => {
+      if (bilibiliCreatorFilter !== 'all' && item.creatorId !== bilibiliCreatorFilter) return false;
+      if (bilibiliSearch.trim()) {
+        const q = bilibiliSearch.toLowerCase().trim();
+        return item.title.toLowerCase().includes(q) || item.creatorName.toLowerCase().includes(q);
+      }
+      return true;
+    });
+  }, [bilibiliItems, bilibiliCreatorFilter, bilibiliSearch]);
+
   useEffect(() => {
     // Zero Waiting: Always fetch silently in the background so the user never sees any loading blocks
     fetchPosts(true);
+    fetchBilibiliFeed(true);
     if (user.isAdmin) {
       fetchModUsers();
     }
@@ -3323,7 +3418,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 </div>
 
                 {/* 🏷️ Interactive Post Filter Tabs */}
-                <div className="bg-slate-150/60 p-1.5 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-1.5 border border-slate-200/50">
+                <div className="bg-slate-150/60 p-1.5 rounded-2xl grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-1.5 border border-slate-200/50">
                   <button
                     onClick={() => setPostFilter('all')}
                     className={`py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
@@ -3338,6 +3433,23 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                       postFilter === 'all' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-200/60 text-slate-550'
                     }`}>
                       {visiblePosts.length}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setPostFilter('bilibili')}
+                    className={`py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                      postFilter === 'bilibili'
+                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40 ring-1 ring-pink-500/30'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                    }`}
+                  >
+                    <Film className={`w-3.5 h-3.5 ${postFilter === 'bilibili' ? 'text-pink-600' : 'text-slate-400'}`} />
+                    <span className="truncate">🎬 BiliBili FLIX</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                      postFilter === 'bilibili' ? 'bg-pink-50 text-pink-700' : 'bg-slate-200/60 text-slate-550'
+                    }`}>
+                      {bilibiliItems.length}
                     </span>
                   </button>
 
@@ -3377,7 +3489,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
                   <button
                     onClick={() => setPostFilter('community')}
-                    className={`py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                    className={`py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none col-span-2 sm:col-span-1 ${
                       postFilter === 'community'
                         ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
                         : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
@@ -3392,6 +3504,84 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                     </span>
                   </button>
                 </div>
+
+                {/* 🎬 BiliBili FLIX Discovery & Search Toolbar */}
+                {postFilter === 'bilibili' && (
+                  <div className="mt-3 pt-3 border-t border-slate-100/80 flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
+                        <span className="inline-block w-2 h-2 rounded-full bg-pink-500 animate-ping"></span>
+                        <span className="font-extrabold text-slate-900">🎬 BiliBili FLIX • Creator Feed</span>
+                        <span className="text-[11px] text-slate-500 font-medium">({filteredBilibiliItems.length} videos available)</span>
+                      </div>
+                      <button
+                        onClick={handleRefreshBilibili}
+                        disabled={isRefreshingBilibili}
+                        className="bg-white hover:bg-slate-50 disabled:opacity-50 text-pink-600 border border-pink-200/80 text-[11px] font-bold px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
+                        title="I-refresh mula sa BiliBili"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isRefreshingBilibili ? 'animate-spin' : ''}`} />
+                        <span>{isRefreshingBilibili ? (language === 'tl' ? 'Kinukuha...' : 'Syncing...') : (language === 'tl' ? 'I-refresh Feed' : 'Refresh Feed')}</span>
+                      </button>
+                    </div>
+
+                    {/* Search Input for BiliBili Videos */}
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={bilibiliSearch}
+                        onChange={(e) => setBilibiliSearch(e.target.value)}
+                        placeholder={language === 'tl' ? 'Maghanap ng BiliBili video o pamagat...' : 'Search BiliBili video title...'}
+                        className="w-full bg-slate-100/80 focus:bg-white text-xs pl-8 pr-8 py-2 rounded-xl border border-slate-200/80 focus:border-pink-500 focus:ring-1 focus:ring-pink-500 outline-none transition font-medium"
+                      />
+                      {bilibiliSearch && (
+                        <button
+                          onClick={() => setBilibiliSearch('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Creator Filter Chips */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-[11px]">
+                      <button
+                        onClick={() => setBilibiliCreatorFilter('all')}
+                        className={`px-3 py-1 rounded-full font-bold whitespace-nowrap transition cursor-pointer ${
+                          bilibiliCreatorFilter === 'all'
+                            ? 'bg-pink-600 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
+                        }`}
+                      >
+                        Lahat ng Creators ({bilibiliItems.length})
+                      </button>
+                      <button
+                        onClick={() => setBilibiliCreatorFilter('1001429262')}
+                        className={`px-3 py-1 rounded-full font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                          bilibiliCreatorFilter === '1001429262'
+                            ? 'bg-pink-600 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
+                        }`}
+                      >
+                        <span>jjkjeontime_97</span>
+                        <span className="text-[10px] opacity-80">({bilibiliItems.filter(i => i.creatorId === '1001429262').length})</span>
+                      </button>
+                      <button
+                        onClick={() => setBilibiliCreatorFilter('1369433121')}
+                        className={`px-3 py-1 rounded-full font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                          bilibiliCreatorFilter === '1369433121'
+                            ? 'bg-pink-600 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
+                        }`}
+                      >
+                        <span>SERIES_MOVIES</span>
+                        <span className="text-[10px] opacity-80">({bilibiliItems.filter(i => i.creatorId === '1369433121').length})</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Teleserye Discovery & Search Toolbar */}
                 {postFilter === 'teleserye' && (
@@ -3533,7 +3723,109 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 </div>
               )}
 
-              {loadingPosts && filteredPosts.length === 0 ? (
+              {postFilter === 'bilibili' ? (
+                <div className="space-y-4">
+                  {loadingBilibili && bilibiliItems.length === 0 ? (
+                    <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-500 text-xs font-bold">
+                      {language === 'tl' ? 'Kinukuha ang pinakabagong BiliBili videos...' : 'Fetching latest BiliBili videos...'}
+                    </div>
+                  ) : filteredBilibiliItems.length === 0 ? (
+                    <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-400 text-xs font-bold space-y-2">
+                      <p className="text-sm font-black text-slate-700">🎬 {language === 'tl' ? 'Walang nahanap na BiliBili video' : 'No BiliBili videos found'}</p>
+                      <p className="text-[11px] text-slate-500 font-medium">
+                        {bilibiliSearch
+                          ? (language === 'tl' ? 'Walang video na tumutugma sa iyong paghahanap.' : 'No videos match your search.')
+                          : (language === 'tl' ? 'Maaaring i-click ang Refresh upang kumuha ng mga bagong video mula sa creator space.' : 'Click Refresh to sync the latest public videos from creator spaces.')}
+                      </p>
+                      <button
+                        onClick={handleRefreshBilibili}
+                        className="mt-2 bg-pink-600 hover:bg-pink-700 text-white font-bold text-xs py-2 px-4 rounded-xl inline-flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>{language === 'tl' ? 'I-refresh Ngayon' : 'Refresh Now'}</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {filteredBilibiliItems.map((item) => (
+                        <BilibiliCard
+                          key={item.id}
+                          item={item}
+                          onPreview={setBilibiliActiveModalItem}
+                          language={language}
+                          onNotification={triggerNotification}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <>
+                  {postFilter === 'all' && bilibiliItems.length > 0 && (
+                    <div className="bg-gradient-to-br from-slate-900 via-purple-950 to-slate-950 text-white rounded-3xl p-4 sm:p-5 border border-purple-900/50 shadow-md">
+                      <div className="flex items-center justify-between gap-3 mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-pink-500 animate-pulse"></span>
+                          <h4 className="font-black text-sm sm:text-base text-white flex items-center gap-1.5">
+                            🎬 BiliBili FLIX • Creator Feed
+                          </h4>
+                        </div>
+                        <button
+                          onClick={() => setPostFilter('bilibili')}
+                          className="text-[11px] font-black text-pink-300 hover:text-pink-100 flex items-center gap-1 transition cursor-pointer bg-white/10 hover:bg-white/20 px-2.5 py-1 rounded-full border border-white/10"
+                        >
+                          <span>Tingnan Lahat ({bilibiliItems.length})</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </button>
+                      </div>
+
+                      {/* Horizontal Scroll Carousel */}
+                      <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-thin">
+                        {bilibiliItems.slice(0, 6).map((item) => (
+                          <div
+                            key={item.id}
+                            onClick={() => setBilibiliActiveModalItem(item)}
+                            className="shrink-0 w-48 sm:w-56 bg-slate-800/80 hover:bg-slate-800 rounded-2xl overflow-hidden border border-slate-700/80 cursor-pointer group transition hover:border-pink-500/60"
+                          >
+                            <div className="relative aspect-video bg-black overflow-hidden">
+                              {item.thumbnailUrl ? (
+                                <img
+                                  src={item.thumbnailUrl}
+                                  alt={item.title}
+                                  referrerPolicy="no-referrer"
+                                  className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-slate-500">
+                                  <Film className="w-8 h-8" />
+                                </div>
+                              )}
+                              {item.duration && (
+                                <span className="absolute bottom-1.5 right-1.5 bg-black/80 text-[10px] font-bold px-1.5 py-0.5 rounded text-white">
+                                  {item.duration}
+                                </span>
+                              )}
+                              <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
+                                <Play className="w-6 h-6 fill-white text-white" />
+                              </div>
+                            </div>
+                            <div className="p-2.5">
+                              <p className="text-xs font-bold text-slate-200 line-clamp-1 group-hover:text-pink-300 transition">
+                                {item.title}
+                              </p>
+                              <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1">
+                                <span className="truncate max-w-[100px]">{item.creatorName}</span>
+                                {item.views && <span>{item.views}</span>}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {loadingPosts && filteredPosts.length === 0 ? (
                 <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-500 text-xs font-bold">
                   Kinukuha ang pinakabagong posts sa Z-one...
                 </div>
@@ -4409,6 +4701,8 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
               )}
             </div>
           )}
+                </>
+              )}
             </div>
 
           {/* PH LIVE TV STREAMS DELETED */}
@@ -6715,6 +7009,14 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         isOpen={showDataSaverModal}
         onClose={() => setShowDataSaverModal(false)}
         language={language}
+      />
+
+      {/* 🎬 BILIBILI FLIX PLAYER PREVIEW MODAL */}
+      <BilibiliPlayerModal
+        item={bilibiliActiveModalItem}
+        onClose={() => setBilibiliActiveModalItem(null)}
+        language={language}
+        onNotification={triggerNotification}
       />
 
     </div>

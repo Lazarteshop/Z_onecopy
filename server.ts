@@ -22,6 +22,8 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { INITIAL_CAMPAIGNS } from './src/data/campaigns';
 import { GoogleGenAI } from '@google/genai';
 import webpush from 'web-push';
+import vm from 'vm';
+import { BilibiliFeedItem, BilibiliFeedConfig } from './src/types';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -1612,6 +1614,8 @@ interface DBStructure {
   challengeEntries?: ChallengeEntry[];
   sponsoredMissions?: SponsoredMission[];
   depositRequests?: DepositRequest[];
+  bilibiliFeedItems?: BilibiliFeedItem[];
+  bilibiliFeedConfig?: BilibiliFeedConfig;
 }
 
 interface DepositRequest {
@@ -2463,6 +2467,18 @@ function loadDB(): DBStructure {
     }
     if (!loaded.depositRequests) {
       loaded.depositRequests = [];
+    }
+    if (!loaded.bilibiliFeedItems) {
+      loaded.bilibiliFeedItems = [];
+    }
+    if (!loaded.bilibiliFeedConfig) {
+      loaded.bilibiliFeedConfig = {
+        enabled: true,
+        sourceSpaces: ['1001429262', '1369433121'],
+        lastSyncTime: 0,
+        lastError: null,
+        itemCount: 0
+      };
     }
 
     // Run auto-expiration on banners & unpaid baskets
@@ -9112,6 +9128,326 @@ app.get('/api/zone/teleserye-diagnostics', (_req, res) => {
     };
 
     res.json({ success: true, diagnostics });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =========================================================================
+// 🎬 BILIBILI FLIX — CONTROLLED BACKGROUND SYNC & LOCAL-FIRST FEED API
+// =========================================================================
+let lastBilibiliSyncTime = 0;
+let isBilibiliSyncing = false;
+
+// Security-hardened, timeout-controlled parser for public BiliBili creator spaces
+async function fetchBilibiliSpaceVideos(spaceId: string): Promise<{ creator: { id: string; name: string; avatar: string }; videos: BilibiliFeedItem[] }> {
+  const sanitizedSpaceId = String(spaceId).trim().replace(/[^0-9]/g, '');
+  if (!sanitizedSpaceId) {
+    throw new Error('Invalid BiliBili Space ID');
+  }
+
+  const url = `https://www.bilibili.tv/en/space/${sanitizedSpaceId}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000); // 8 second timeout safe for Render
+
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,tl;q=0.8'
+      }
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      throw new Error(`BiliBili HTTP status ${res.status}`);
+    }
+
+    const html = await res.text();
+    const scripts = html.match(/<script>([\s\S]*?)<\/script>/g) || [];
+    let state: any = null;
+
+    for (const s of scripts) {
+      if (s.includes('spaceVideo')) {
+        const code = s.replace(/<script>|<\/script>/g, '');
+        const sandbox = { window: {}, document: { getElementsByTagName: () => [] } };
+        vm.createContext(sandbox);
+        try {
+          vm.runInContext(code, sandbox, { timeout: 1500 });
+          if ((sandbox.window as any)?.__initialState) {
+            state = (sandbox.window as any).__initialState;
+            break;
+          }
+        } catch (err) {
+          console.warn('BiliBili sandbox extraction warning:', err);
+        }
+      }
+    }
+
+    let creatorName = sanitizedSpaceId === '1001429262' ? 'jjkjeontime_97' : (sanitizedSpaceId === '1369433121' ? 'SERIES_MOVIES' : 'BiliBili Creator');
+    let creatorAvatar = '';
+    const videos: BilibiliFeedItem[] = [];
+
+    if (state && state.space) {
+      const userInfo = state.space.userInfo || {};
+      if (userInfo.nickname) creatorName = userInfo.nickname;
+      if (userInfo.avatar) creatorAvatar = userInfo.avatar;
+
+      const rawVideos = state.space.list?.spaceVideo || [];
+      for (const v of rawVideos) {
+        const aid = String(v.aid || '').trim();
+        if (!aid) continue;
+        const cover = typeof v.cover === 'string' ? v.cover.replace(/\\u002F/g, '/') : '';
+        videos.push({
+          id: `bilibili:${aid}`,
+          source: 'bilibili' as const,
+          creatorId: sanitizedSpaceId,
+          creatorName: v.author?.nickname || creatorName,
+          creatorAvatar: v.author?.avatar || creatorAvatar,
+          title: v.title || 'Untitled Video',
+          thumbnailUrl: cover,
+          videoUrl: `https://www.bilibili.tv/en/video/${aid}`,
+          embedUrl: `https://www.bilibili.tv/en/video/${aid}`,
+          publishedAt: v.view_at || new Date().toISOString(),
+          duration: v.duration || '',
+          views: v.view || '',
+          fetchedAt: new Date().toISOString()
+        });
+      }
+    } else {
+      // Fallback: Safe regex parser if SSR structure shifts
+      const regex = /aid:"(\d+)",(?:[^}]*?)title:"([^"]+)"(?:[^}]*?)cover:("https:[^"]+"|[a-z]+)(?:[^}]*?)view:("?[^",}]+"?)?(?:[^}]*?)duration:("?[^",}]+"?)?/g;
+      let match;
+      while ((match = regex.exec(html)) !== null) {
+        const aid = match[1];
+        const title = match[2];
+        let cover = match[3] || '';
+        if (cover.startsWith('"') && cover.endsWith('"')) {
+          cover = cover.slice(1, -1).replace(/\\u002F/g, '/');
+        } else if (!cover.startsWith('http')) {
+          cover = '';
+        }
+        let views = match[4] || '';
+        if (views.startsWith('"') && views.endsWith('"')) views = views.slice(1, -1);
+        let duration = match[5] || '';
+        if (duration.startsWith('"') && duration.endsWith('"')) duration = duration.slice(1, -1);
+
+        videos.push({
+          id: `bilibili:${aid}`,
+          source: 'bilibili' as const,
+          creatorId: sanitizedSpaceId,
+          creatorName,
+          creatorAvatar,
+          title,
+          thumbnailUrl: cover,
+          videoUrl: `https://www.bilibili.tv/en/video/${aid}`,
+          embedUrl: `https://www.bilibili.tv/en/video/${aid}`,
+          publishedAt: new Date().toISOString(),
+          duration,
+          views,
+          fetchedAt: new Date().toISOString()
+        });
+      }
+    }
+
+    return {
+      creator: {
+        id: sanitizedSpaceId,
+        name: creatorName,
+        avatar: creatorAvatar
+      },
+      videos
+    };
+  } catch (err: any) {
+    clearTimeout(timeout);
+    throw err;
+  }
+}
+
+// Controlled background sync to local db.json with deterministic deduplication
+async function syncBilibiliFeedToDatabase(force = false): Promise<{ success: boolean; count: number; error?: string }> {
+  if (isBilibiliSyncing) {
+    const db = loadDB();
+    return { success: true, count: db.bilibiliFeedItems?.length || 0 };
+  }
+  isBilibiliSyncing = true;
+  try {
+    const db = loadDB();
+    if (!db.bilibiliFeedConfig) {
+      db.bilibiliFeedConfig = {
+        enabled: true,
+        sourceSpaces: ['1001429262', '1369433121'],
+        lastSyncTime: 0,
+        lastError: null,
+        itemCount: 0
+      };
+    }
+
+    if (!db.bilibiliFeedConfig.enabled && !force) {
+      return { success: true, count: db.bilibiliFeedItems?.length || 0 };
+    }
+
+    if (!db.bilibiliFeedItems) {
+      db.bilibiliFeedItems = [];
+    }
+
+    const spaces = db.bilibiliFeedConfig.sourceSpaces || ['1001429262', '1369433121'];
+    let anyError: string | null = null;
+    let hasUpdates = false;
+
+    for (const spaceId of spaces) {
+      try {
+        const { videos } = await fetchBilibiliSpaceVideos(spaceId);
+        for (const item of videos) {
+          const existingIdx = db.bilibiliFeedItems.findIndex(x => x.id === item.id);
+          if (existingIdx === -1) {
+            // New item! Insert deterministically
+            db.bilibiliFeedItems.unshift(item);
+            hasUpdates = true;
+          } else {
+            // Update metadata without duplicating
+            let modified = false;
+            if (item.title && db.bilibiliFeedItems[existingIdx].title !== item.title) {
+              db.bilibiliFeedItems[existingIdx].title = item.title;
+              modified = true;
+            }
+            if (item.thumbnailUrl && db.bilibiliFeedItems[existingIdx].thumbnailUrl !== item.thumbnailUrl) {
+              db.bilibiliFeedItems[existingIdx].thumbnailUrl = item.thumbnailUrl;
+              modified = true;
+            }
+            if (item.views && db.bilibiliFeedItems[existingIdx].views !== item.views) {
+              db.bilibiliFeedItems[existingIdx].views = item.views;
+              modified = true;
+            }
+            if (item.duration && db.bilibiliFeedItems[existingIdx].duration !== item.duration) {
+              db.bilibiliFeedItems[existingIdx].duration = item.duration;
+              modified = true;
+            }
+            if (modified) hasUpdates = true;
+          }
+        }
+      } catch (spaceErr: any) {
+        console.warn(`BiliBili space ${spaceId} sync notice:`, spaceErr.message);
+        anyError = spaceErr.message;
+      }
+    }
+
+    // Keep max 100 recent items to protect memory and storage
+    if (db.bilibiliFeedItems.length > 100) {
+      db.bilibiliFeedItems = db.bilibiliFeedItems.slice(0, 100);
+      hasUpdates = true;
+    }
+
+    lastBilibiliSyncTime = Date.now();
+    db.bilibiliFeedConfig.lastSyncTime = lastBilibiliSyncTime;
+    db.bilibiliFeedConfig.lastError = anyError;
+    db.bilibiliFeedConfig.itemCount = db.bilibiliFeedItems.length;
+
+    saveDB(db);
+    console.log(`🎬 BiliBili FLIX: Synced ${db.bilibiliFeedItems.length} videos from creator space.`);
+
+    return {
+      success: true,
+      count: db.bilibiliFeedItems.length,
+      error: anyError || undefined
+    };
+  } catch (err: any) {
+    console.error('BiliBili sync error:', err);
+    return { success: false, count: 0, error: err.message };
+  } finally {
+    isBilibiliSyncing = false;
+  }
+}
+
+// 1. GET BILIBILI FEED ITEMS (Zero-wait cached feed; triggers background sync only if stale)
+app.get('/api/zone/bilibili-feed', (_req, res) => {
+  const db = loadDB();
+  const items = db.bilibiliFeedItems || [];
+  const config = db.bilibiliFeedConfig || {
+    enabled: true,
+    sourceSpaces: ['1001429262', '1369433121'],
+    lastSyncTime: 0,
+    itemCount: 0
+  };
+
+  // Controlled asynchronous background sync if cache is older than 20 minutes
+  const now = Date.now();
+  if (config.enabled && (now - lastBilibiliSyncTime > 20 * 60 * 1000 || items.length === 0)) {
+    lastBilibiliSyncTime = now;
+    syncBilibiliFeedToDatabase().catch(err => console.warn('Background BiliBili sync notice:', err.message));
+  }
+
+  res.json({
+    success: true,
+    items,
+    config
+  });
+});
+
+// 2. FORCE REFRESH BILIBILI FEED ON DEMAND
+app.post('/api/zone/bilibili-feed/refresh', async (_req, res) => {
+  try {
+    const result = await syncBilibiliFeedToDatabase(true);
+    const db = loadDB();
+    res.json({
+      success: result.success,
+      count: result.count,
+      error: result.error,
+      items: db.bilibiliFeedItems || [],
+      config: db.bilibiliFeedConfig
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. ADMIN CONFIG & TELEMETRY FOR BILIBILI FEED
+app.get('/api/admin/bilibili-feed/config', (_req, res) => {
+  const db = loadDB();
+  res.json({
+    success: true,
+    config: db.bilibiliFeedConfig,
+    cachedCount: (db.bilibiliFeedItems || []).length
+  });
+});
+
+app.post('/api/admin/bilibili-feed/config', async (req, res) => {
+  try {
+    const { enabled, sourceSpaces, action } = req.body;
+    const db = loadDB();
+    if (!db.bilibiliFeedConfig) {
+      db.bilibiliFeedConfig = {
+        enabled: true,
+        sourceSpaces: ['1001429262', '1369433121'],
+        lastSyncTime: 0,
+        itemCount: 0
+      };
+    }
+
+    if (action === 'clear_cache') {
+      db.bilibiliFeedItems = [];
+      db.bilibiliFeedConfig.itemCount = 0;
+      saveDB(db);
+      return res.json({ success: true, message: 'BiliBili feed cache cleared successfully.', config: db.bilibiliFeedConfig, cachedCount: 0 });
+    }
+
+    if (action === 'refresh') {
+      const result = await syncBilibiliFeedToDatabase(true);
+      return res.json({ success: true, message: 'BiliBili feed refreshed successfully.', result, config: db.bilibiliFeedConfig, cachedCount: (db.bilibiliFeedItems || []).length });
+    }
+
+    if (typeof enabled === 'boolean') {
+      db.bilibiliFeedConfig.enabled = enabled;
+    }
+
+    if (Array.isArray(sourceSpaces) && sourceSpaces.length > 0) {
+      db.bilibiliFeedConfig.sourceSpaces = sourceSpaces.map((s: string) => String(s).trim().replace(/[^0-9]/g, '')).filter(Boolean);
+    }
+
+    saveDB(db);
+    res.json({ success: true, config: db.bilibiliFeedConfig, cachedCount: (db.bilibiliFeedItems || []).length });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

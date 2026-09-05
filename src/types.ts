@@ -788,5 +788,29 @@ export interface WalletSummary {
   activeMissionsCount?: number;
 }
 
+export interface BilibiliFeedItem {
+  id: string; // Deterministic "bilibili:{videoId}"
+  source: 'bilibili';
+  creatorId: string;
+  creatorName: string;
+  creatorAvatar?: string;
+  title: string;
+  thumbnailUrl: string;
+  videoUrl: string;
+  embedUrl?: string;
+  publishedAt?: string;
+  duration?: string;
+  views?: string;
+  fetchedAt: string;
+}
+
+export interface BilibiliFeedConfig {
+  enabled: boolean;
+  sourceSpaces: string[];
+  lastSyncTime?: number;
+  lastError?: string | null;
+  itemCount?: number;
+}
+
 
 
