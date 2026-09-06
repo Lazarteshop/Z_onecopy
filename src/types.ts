@@ -312,7 +312,8 @@ export interface ShopProduct {
   price: number;
   originalPrice?: number;
   image: string;
-  category: 'Gadgets' | 'Fashion' | 'Beauty' | 'Home' | 'Lifestyle';
+  images?: string[];
+  category: 'Gadgets' | 'Fashion' | 'Beauty' | 'Home' | 'Lifestyle' | string;
   description: string;
   stock: number;
   rating: number;
@@ -321,6 +322,9 @@ export interface ShopProduct {
   tags?: string[];
   createdAt?: string;
   updatedAt?: string;
+  isAffiliate?: boolean;
+  affiliateUrl?: string;
+  platform?: 'Shopee' | 'TikTok Shop' | 'Lazada' | 'Other' | string;
 }
 
 export interface ShopCartItem {

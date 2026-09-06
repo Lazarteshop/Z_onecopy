@@ -20,7 +20,14 @@ import {
   ChevronRight,
   Phone,
   Tag,
-  Filter
+  Filter,
+  ArrowUp,
+  ArrowDown,
+  Sparkles,
+  ExternalLink,
+  Image as ImageIcon,
+  Plus,
+  Star
 } from 'lucide-react';
 import { ShopProduct, ShopOrder, ShopOrderStatus } from '../types';
 
@@ -50,9 +57,15 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
   const [pOriginalPrice, setPOriginalPrice] = useState<string>('');
   const [pStock, setPStock] = useState<string>('50');
   const [pImage, setPImage] = useState<string>('');
+  const [pImages, setPImages] = useState<string[]>([]);
+  const [newImageUrl, setNewImageUrl] = useState<string>('');
   const [pDescription, setPDescription] = useState<string>('');
   const [pTags, setPTags] = useState<string>('Best Seller, Free Shipping');
   const [pIsActive, setPIsActive] = useState<boolean>(true);
+  const [pIsAffiliate, setPIsAffiliate] = useState<boolean>(false);
+  const [pAffiliateUrl, setPAffiliateUrl] = useState<string>('');
+  const [pPlatform, setPPlatform] = useState<string>('Shopee');
+  const [fetchingPreview, setFetchingPreview] = useState<boolean>(false);
   const [savingProduct, setSavingProduct] = useState<boolean>(false);
 
   // Orders state
@@ -110,9 +123,14 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
     setPOriginalPrice('');
     setPStock('50');
     setPImage('https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&auto=format&fit=crop&q=60');
+    setPImages([]);
+    setNewImageUrl('');
     setPDescription('');
     setPTags('Best Seller, Hot Deal');
     setPIsActive(true);
+    setPIsAffiliate(false);
+    setPAffiliateUrl('');
+    setPPlatform('Shopee');
     setShowProductModal(true);
   };
 
@@ -125,22 +143,131 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
     setPOriginalPrice(prod.originalPrice ? String(prod.originalPrice) : '');
     setPStock(String(prod.stock || 50));
     setPImage(prod.image);
+    
+    // Separate main image from additional images
+    if (Array.isArray(prod.images) && prod.images.length > 0) {
+      const additional = prod.images.filter(img => img.trim() && img.trim() !== prod.image.trim());
+      setPImages(additional);
+    } else {
+      setPImages([]);
+    }
+    setNewImageUrl('');
+
     setPDescription(prod.description || '');
     setPTags(Array.isArray(prod.tags) ? prod.tags.join(', ') : 'Hot Deal');
     setPIsActive(prod.isActive !== false);
+    setPIsAffiliate(Boolean(prod.isAffiliate));
+    setPAffiliateUrl(prod.affiliateUrl || '');
+    setPPlatform(prod.platform || 'Shopee');
     setShowProductModal(true);
+  };
+
+  // Add Additional Image to Product Gallery
+  const handleAddAdditionalImage = () => {
+    const url = newImageUrl.trim();
+    if (!url) {
+      triggerNotification('Maglagay ng valid na image URL.', 'error');
+      return;
+    }
+    if (url === pImage.trim() || pImages.includes(url)) {
+      triggerNotification('Nasa gallery na ang larawang ito.', 'info');
+      return;
+    }
+    setPImages(prev => [...prev, url]);
+    setNewImageUrl('');
+  };
+
+  // Remove Image from Additional Gallery
+  const handleRemoveAdditionalImage = (index: number) => {
+    setPImages(prev => prev.filter((_, idx) => idx !== index));
+  };
+
+  // Set Image from Gallery as Main Image
+  const handleSetAsMainImage = (index: number) => {
+    const selected = pImages[index];
+    if (!selected) return;
+    const oldMain = pImage.trim();
+    const remaining = pImages.filter((_, idx) => idx !== index);
+    if (oldMain) {
+      remaining.unshift(oldMain);
+    }
+    setPImage(selected);
+    setPImages(remaining);
+    triggerNotification('Itinalaga bilang Main Product Image.', 'success');
+  };
+
+  // Reorder Images (Move Up or Down)
+  const handleMoveImage = (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= pImages.length) return;
+    setPImages(prev => {
+      const copy = [...prev];
+      const temp = copy[index];
+      copy[index] = copy[targetIndex];
+      copy[targetIndex] = temp;
+      return copy;
+    });
+  };
+
+  // Auto-Detect Affiliate Metadata with graceful fallback
+  const handleAutoDetectAffiliate = async () => {
+    if (!pAffiliateUrl.trim()) {
+      triggerNotification('Pakilagay muna ang Affiliate URL bago mag-detect.', 'error');
+      return;
+    }
+
+    try {
+      setFetchingPreview(true);
+      const res = await fetch('/api/admin/shop/affiliate/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: token },
+        body: JSON.stringify({ affiliateUrl: pAffiliateUrl.trim() })
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Hindi nakuha ang metadata.');
+      }
+
+      const { data } = json;
+      if (data.title && !pName.trim()) setPName(data.title);
+      if (data.image && (!pImage.trim() || pImage.includes('unsplash'))) setPImage(data.image);
+      if (data.description && !pDescription.trim()) setPDescription(data.description);
+      if (data.platform) setPPlatform(data.platform);
+
+      triggerNotification(
+        data.title ? '✓ Nakuha ang product preview metadata!' : 'Manual fallback: Maaari mong ilagay ang detalye nang manual.',
+        data.title ? 'success' : 'info'
+      );
+    } catch (err: any) {
+      triggerNotification(`Hindi ma-auto-detect: ${err.message}. Pakilagay nang manual ang detalye.`, 'info');
+    } finally {
+      setFetchingPreview(false);
+    }
   };
 
   // Save Product (Create or Edit)
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pName.trim() || !pPrice || !pImage.trim()) {
-      triggerNotification('Kailangan ang Pangalan, Presyo, at Image URL.', 'error');
+      triggerNotification('Kailangan ang Pangalan, Presyo, at Main Image URL.', 'error');
       return;
+    }
+
+    if (pIsAffiliate && pAffiliateUrl.trim()) {
+      if (!/^https?:\/\//i.test(pAffiliateUrl.trim())) {
+        triggerNotification('Ang Affiliate URL ay dapat magsimula sa http:// o https://', 'error');
+        return;
+      }
     }
 
     try {
       setSavingProduct(true);
+      const allImagesList = [
+        pImage.trim(),
+        ...pImages.map(i => i.trim()).filter(i => i && i !== pImage.trim())
+      ];
+
       const payload = {
         name: pName.trim(),
         category: pCategory,
@@ -148,9 +275,13 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
         originalPrice: pOriginalPrice ? Number(pOriginalPrice) : undefined,
         stock: Number(pStock) || 50,
         image: pImage.trim(),
+        images: allImagesList,
         description: pDescription.trim(),
         tags: pTags.split(',').map(t => t.trim()).filter(Boolean),
-        isActive: pIsActive
+        isActive: pIsActive,
+        isAffiliate: pIsAffiliate,
+        affiliateUrl: pIsAffiliate ? pAffiliateUrl.trim() : undefined,
+        platform: pIsAffiliate ? pPlatform : undefined
       };
 
       let res;
@@ -612,10 +743,20 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
                   <div className="space-y-2">
                     <div className="relative rounded-xl overflow-hidden aspect-video bg-slate-100">
                       <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
-                      <div className="absolute top-2 left-2 flex gap-1">
+                      <div className="absolute top-2 left-2 flex flex-wrap gap-1">
                         <span className="text-[9px] bg-slate-950/80 text-white font-black px-2 py-0.5 rounded-md uppercase">
                           {product.category}
                         </span>
+                        {product.isAffiliate && (
+                          <span className="text-[9px] bg-amber-500 text-slate-950 font-black px-2 py-0.5 rounded-md uppercase flex items-center gap-0.5 shadow-xs">
+                            🛍️ {product.platform || 'Affiliate'}
+                          </span>
+                        )}
+                        {Array.isArray(product.images) && product.images.length > 1 && (
+                          <span className="text-[9px] bg-indigo-600 text-white font-black px-1.5 py-0.5 rounded-md">
+                            📷 {product.images.length}
+                          </span>
+                        )}
                         {isInactive && (
                           <span className="text-[9px] bg-rose-600 text-white font-black px-2 py-0.5 rounded-md uppercase">
                             Hidden / Inactive
@@ -694,6 +835,81 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
             </div>
 
             <form onSubmit={handleSaveProduct} className="p-4 sm:p-6 overflow-y-auto space-y-4 text-xs">
+              {/* Product Type / Affiliate Selector */}
+              <div className="bg-slate-50 border border-slate-200 p-3 rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-800 font-black text-xs flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-orange-500" />
+                    Uri ng Produkto (Product Type)
+                  </label>
+                  <div className="flex bg-slate-200 p-0.5 rounded-xl text-[11px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setPIsAffiliate(false)}
+                      className={`px-3 py-1 rounded-lg transition ${
+                        !pIsAffiliate ? 'bg-white text-slate-900 shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Regular Product
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPIsAffiliate(true)}
+                      className={`px-3 py-1 rounded-lg transition ${
+                        pIsAffiliate ? 'bg-orange-500 text-slate-950 shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      🛍️ Affiliate Product
+                    </button>
+                  </div>
+                </div>
+
+                {pIsAffiliate && (
+                  <div className="pt-2 border-t border-slate-200/80 space-y-2.5 animate-fadeIn">
+                    <p className="text-[11px] text-slate-600">
+                      Ang mga affiliate product ay magre-redirect sa external platform (e.g. Shopee o TikTok Shop) kapag kinlick ng mamimili.
+                    </p>
+
+                    <div>
+                      <label className="block text-slate-700 font-bold mb-1">Affiliate Destination URL*</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="url"
+                          required={pIsAffiliate}
+                          value={pAffiliateUrl}
+                          onChange={(e) => setPAffiliateUrl(e.target.value)}
+                          placeholder="https://shopee.ph/product/... o TikTok Shop link"
+                          className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:border-orange-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAutoDetectAffiliate}
+                          disabled={fetchingPreview || !pAffiliateUrl.trim()}
+                          className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl flex items-center gap-1 border border-indigo-200 transition disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>{fetchingPreview ? 'Detecting...' : 'Auto-Detect'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-700 font-bold mb-1">Affiliate Platform Partner</label>
+                      <select
+                        value={pPlatform}
+                        onChange={(e) => setPPlatform(e.target.value)}
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:border-orange-500"
+                      >
+                        <option value="Shopee">Shopee</option>
+                        <option value="TikTok Shop">TikTok Shop</option>
+                        <option value="Lazada">Lazada</option>
+                        <option value="Other">Other Partner</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="block text-slate-700 font-bold mb-1">Product Name*</label>
                 <input
@@ -760,25 +976,136 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
                 </div>
               </div>
 
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">Image URL*</label>
-                <input
-                  type="url"
-                  required
-                  value={pImage}
-                  onChange={(e) => setPImage(e.target.value)}
-                  placeholder="https://..."
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:border-orange-500"
-                />
+              {/* MULTI-IMAGE GALLERY MANAGER */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <ImageIcon className="w-4 h-4 text-orange-500" />
+                    <span className="text-slate-900 font-black text-xs">Product Image Gallery</span>
+                  </div>
+                  <span className="text-[10px] font-bold bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full">
+                    {1 + pImages.length} {1 + pImages.length === 1 ? 'image' : 'images'}
+                  </span>
+                </div>
+
+                {/* Primary / Main Image */}
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Main Cover Photo URL*</label>
+                  <div className="flex items-center gap-2">
+                    <div className="w-12 h-12 rounded-xl bg-slate-200 border border-slate-300 overflow-hidden shrink-0 flex items-center justify-center">
+                      {pImage ? (
+                        <img src={pImage} alt="Main Cover" className="w-full h-full object-cover" />
+                      ) : (
+                        <ImageIcon className="w-5 h-5 text-slate-400" />
+                      )}
+                    </div>
+                    <input
+                      type="url"
+                      required
+                      value={pImage}
+                      onChange={(e) => setPImage(e.target.value)}
+                      placeholder="https://images.unsplash.com/..."
+                      className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Additional Images */}
+                <div className="space-y-2 pt-1 border-t border-slate-200">
+                  <label className="block text-slate-700 font-bold">Magdagdag ng Extra Photos sa Gallery</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      value={newImageUrl}
+                      onChange={(e) => setNewImageUrl(e.target.value)}
+                      placeholder="Mag-paste ng karagdagang photo URL..."
+                      className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:border-orange-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddAdditionalImage}
+                      className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-3 py-2 rounded-xl flex items-center gap-1 cursor-pointer transition whitespace-nowrap"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Idagdag</span>
+                    </button>
+                  </div>
+
+                  {/* Additional Images Thumbnails & Order Controls */}
+                  {pImages.length > 0 && (
+                    <div className="space-y-2 pt-2">
+                      <p className="text-[11px] text-slate-500 font-semibold">
+                        Naka-save na mga dagdag na litrato (Maaaring i-reorder o i-set as main):
+                      </p>
+                      <div className="grid grid-cols-1 gap-2">
+                        {pImages.map((imgUrl, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between p-2 bg-white rounded-xl border border-slate-200 shadow-2xs gap-2"
+                          >
+                            <div className="flex items-center gap-2 overflow-hidden">
+                              <img
+                                src={imgUrl}
+                                alt={`Gallery ${idx + 1}`}
+                                className="w-10 h-10 rounded-lg object-cover bg-slate-100 shrink-0 border border-slate-200"
+                              />
+                              <span className="text-[11px] text-slate-600 truncate font-mono max-w-[150px] sm:max-w-[220px]">
+                                {imgUrl}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleSetAsMainImage(idx)}
+                                title="Gawing Main Cover Photo"
+                                className="text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2 py-1 rounded-lg transition cursor-pointer flex items-center gap-0.5"
+                              >
+                                <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
+                                <span className="hidden sm:inline">Set Main</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={idx === 0}
+                                onClick={() => handleMoveImage(idx, 'up')}
+                                title="Ilipat pataas"
+                                className="p-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 disabled:opacity-30 cursor-pointer transition"
+                              >
+                                <ArrowUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={idx === pImages.length - 1}
+                                onClick={() => handleMoveImage(idx, 'down')}
+                                title="Ilipat pababa"
+                                className="p-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 disabled:opacity-30 cursor-pointer transition"
+                              >
+                                <ArrowDown className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveAdditionalImage(idx)}
+                                title="Tanggalin"
+                                className="p-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 cursor-pointer transition"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div>
-                <label className="block text-slate-700 font-bold mb-1">Description</label>
+                <label className="block text-slate-700 font-bold mb-1">Description (Buong Detalye ng Produkto)</label>
                 <textarea
-                  rows={3}
+                  rows={4}
                   value={pDescription}
                   onChange={(e) => setPDescription(e.target.value)}
-                  placeholder="Isalaysay ang mga features at benepisyo ng produkto..."
+                  placeholder="Isalaysay ang kumpletong specs, mga materyales, laki, warranty, at gabay sa paggamit..."
                   className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-medium text-slate-900 focus:outline-none focus:border-orange-500"
                 />
               </div>

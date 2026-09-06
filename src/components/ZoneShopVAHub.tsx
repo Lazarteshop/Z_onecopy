@@ -31,7 +31,8 @@ import {
   Truck,
   Search,
   QrCode,
-  Download
+  Download,
+  Eye
 } from 'lucide-react';
 import { 
   UserSession, 
@@ -49,6 +50,8 @@ import { ZoneShopCart } from './ZoneShopCart';
 import { ZoneShopCheckoutModal } from './ZoneShopCheckoutModal';
 import { ZoneShopOrders } from './ZoneShopOrders';
 import { ZoneShopOrderTrackingModal } from './ZoneShopOrderTrackingModal';
+import { ZoneShopProductDetailsModal } from './ZoneShopProductDetailsModal';
+import { ZoneShopSocialShareModal } from './ZoneShopSocialShareModal';
 
 interface ZoneShopVAHubProps {
   token: string;
@@ -56,6 +59,8 @@ interface ZoneShopVAHubProps {
   onRefreshProfile: () => void;
   triggerNotification: (title: string, message: string, type?: 'success' | 'warning' | 'info' | 'error') => void;
   language: 'tl' | 'en';
+  initialProductId?: string;
+  sharedByUsername?: string;
 }
 
 export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
@@ -63,7 +68,9 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
   user,
   onRefreshProfile,
   triggerNotification,
-  language
+  language,
+  initialProductId,
+  sharedByUsername
 }) => {
   // Detect if user is already known to be a Virtual Assistant
   const isInitialVA = Boolean(
@@ -73,8 +80,9 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
   );
 
   // Default: Non-VA sees 'shop' (Z-oneShop Catalogue) immediately; VA sees 'banners' (VA Marketing Banners & Commissions)
+  // If initialProductId is provided via deep link, force to 'shop' catalogue
   const [activeSubTab, setActiveSubTab] = useState<'hiring' | 'banners' | 'shop' | 'cart' | 'orders' | 'leaderboard'>(
-    isInitialVA ? 'banners' : 'shop'
+    initialProductId ? 'shop' : (isInitialVA ? 'banners' : 'shop')
   );
   const [hasUserManuallySwitchedTab, setHasUserManuallySwitchedTab] = useState<boolean>(false);
   const initialTabEvaluatedRef = useRef<boolean>(false);
@@ -93,6 +101,10 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
   const [shopSearch, setShopSearch] = useState<string>('');
   const [shopCategory, setShopCategory] = useState<string>('All');
+
+  // Multi-Image Product Details & Social Share Modals
+  const [selectedProductForDetails, setSelectedProductForDetails] = useState<ShopProduct | null>(null);
+  const [sharingProduct, setSharingProduct] = useState<ShopProduct | null>(null);
 
   // Modals & Action States
   const [showPlaceBannerModal, setShowPlaceBannerModal] = useState<boolean>(false);
@@ -239,7 +251,7 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
       // Only set initial subtab once on first load if user has not manually switched
       if (!initialTabEvaluatedRef.current) {
         initialTabEvaluatedRef.current = true;
-        if (!hasUserManuallySwitchedTab) {
+        if (!hasUserManuallySwitchedTab && !initialProductId) {
           const isConfirmedVA = Boolean(
             user?.isAdmin ||
             statusRes?.vaStats?.vaSubscription?.status === 'active' ||
@@ -296,6 +308,30 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
       fetchData(true);
     }
   }, [activeSubTab]);
+
+  // Deep linking: Open product modal if initialProductId is present
+  useEffect(() => {
+    if (!initialProductId) return;
+
+    setActiveSubTab('shop');
+
+    const found = products.find(p => p.id === initialProductId);
+    if (found) {
+      setSelectedProductForDetails(found);
+    } else {
+      const url = `/api/shop/products/${initialProductId}${sharedByUsername ? `?sharedBy=${encodeURIComponent(sharedByUsername)}` : ''}`;
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          if (data.success && data.product) {
+            setSelectedProductForDetails(data.product);
+          }
+        })
+        .catch(err => {
+          console.error('Failed to fetch deep-linked product:', err);
+        });
+    }
+  }, [initialProductId, products, sharedByUsername]);
 
   // Copy Referral/Hiring link
   const handleCopyHiringLink = () => {
@@ -498,12 +534,12 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
   };
 
   // Add product to cart (API)
-  const handleAddToCart = async (product: ShopProduct) => {
+  const handleAddToCart = async (product: ShopProduct, quantity: number = 1) => {
     try {
       const res = await fetch('/api/shop/cart/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ productId: product.id, quantity: 1 })
+        body: JSON.stringify({ productId: product.id, quantity })
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -511,7 +547,7 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
       }
       const rawCart = Array.isArray(data.cart) ? data.cart : (data.cart?.items || []);
       setCartItems(rawCart);
-      triggerNotification('🛒 Naidagdag sa Cart!', `Naidagdag ang "${product.name}" sa iyong shopping basket.`, 'success');
+      triggerNotification('🛒 Naidagdag sa Cart!', `Naidagdag ang (${quantity}) "${product.name}" sa iyong shopping basket.`, 'success');
     } catch (err: any) {
       triggerNotification('Cart Error', err.message, 'error');
     }
@@ -1543,11 +1579,15 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                   {filtered.map((prod) => {
                     const inCartCount = cartItems.find(i => i.productId === prod.id)?.quantity || 0;
+                    const hasMultipleImages = Array.isArray(prod.images) && prod.images.length > 1;
+
                     return (
                       <div 
                         key={prod.id}
-                        className="border border-slate-200 rounded-2xl overflow-hidden hover:shadow-lg transition duration-200 flex flex-col justify-between bg-white group hover:border-blue-200"
+                        onClick={() => setSelectedProductForDetails(prod)}
+                        className="border border-slate-200 rounded-2xl overflow-hidden hover:shadow-xl transition duration-200 flex flex-col justify-between bg-white group hover:border-blue-300 cursor-pointer"
                       >
+                        {/* PRODUCT IMAGE & BADGES */}
                         <div className="aspect-video w-full bg-slate-100 relative overflow-hidden">
                           <img 
                             src={prod.image} 
@@ -1555,26 +1595,63 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
                             className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
                             referrerPolicy="no-referrer"
                           />
-                          <span className="absolute top-2 left-2 bg-slate-950/80 backdrop-blur-xs text-white text-[10px] font-black uppercase px-2.5 py-0.5 rounded-md">
-                            {prod.category}
-                          </span>
-                          <span className="absolute top-2 right-2 bg-yellow-400 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-md flex items-center gap-0.5 shadow-xs">
-                            ★ {prod.rating}
-                          </span>
+
+                          {/* Top-left Badges */}
+                          <div className="absolute top-2 left-2 flex flex-wrap items-center gap-1.5 z-10">
+                            <span className="bg-slate-950/85 backdrop-blur-xs text-white text-[10px] font-black uppercase px-2 py-0.5 rounded-md shadow-xs">
+                              {prod.category}
+                            </span>
+                            {prod.isAffiliate && (
+                              <span className="bg-amber-500 text-slate-950 text-[10px] font-black uppercase px-2 py-0.5 rounded-md shadow-xs flex items-center gap-0.5">
+                                🛍️ {prod.platform || 'Affiliate'}
+                              </span>
+                            )}
+                            {hasMultipleImages && (
+                              <span className="bg-indigo-600/90 backdrop-blur-xs text-white text-[10px] font-black px-1.5 py-0.5 rounded-md shadow-xs">
+                                📷 {prod.images!.length}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Top-right Actions: Share & Rating */}
+                          <div className="absolute top-2 right-2 flex items-center gap-1 z-10">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSharingProduct(prod);
+                              }}
+                              title="I-share ang produktong ito"
+                              className="w-7 h-7 rounded-full bg-white/90 hover:bg-white text-slate-700 hover:text-blue-600 shadow-md flex items-center justify-center transition cursor-pointer"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                            </button>
+                            <span className="bg-yellow-400 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-md flex items-center gap-0.5 shadow-xs">
+                              ★ {prod.rating || 5.0}
+                            </span>
+                          </div>
+
                           {inCartCount > 0 && (
-                            <span className="absolute bottom-2 right-2 bg-blue-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-md">
+                            <span className="absolute bottom-2 right-2 bg-blue-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full shadow-md z-10">
                               {inCartCount} sa Cart
                             </span>
                           )}
                         </div>
 
+                        {/* PRODUCT DETAILS & ACTIONS */}
                         <div className="p-4 space-y-2.5 flex-1 flex flex-col justify-between">
                           <div className="space-y-1">
-                            <h4 className="font-extrabold text-xs text-slate-900 line-clamp-2 leading-snug">{prod.name}</h4>
-                            <p className="text-[11px] text-slate-500 line-clamp-2 font-medium leading-relaxed">{prod.description}</p>
+                            <div className="flex items-center justify-between gap-1">
+                              <h4 className="font-extrabold text-xs text-slate-900 line-clamp-2 leading-snug group-hover:text-blue-700 transition">
+                                {prod.name}
+                              </h4>
+                            </div>
+                            <p className="text-[11px] text-slate-500 line-clamp-2 font-medium leading-relaxed">
+                              {prod.description}
+                            </p>
                           </div>
 
-                          <div className="space-y-3 pt-2 border-t border-slate-100">
+                          <div className="space-y-2.5 pt-2 border-t border-slate-100">
                             <div className="flex items-baseline justify-between">
                               <div className="flex items-baseline gap-2">
                                 <span className="text-base font-black text-indigo-700 font-mono">₱{prod.price.toFixed(2)}</span>
@@ -1585,13 +1662,50 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
                               <span className="text-[10px] text-slate-400 font-semibold">{prod.stock} stocks</span>
                             </div>
 
-                            <button
-                              onClick={() => handleAddToCart(prod)}
-                              className="w-full bg-slate-900 hover:bg-blue-600 active:scale-95 text-white font-black text-xs py-2.5 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
-                            >
-                              <PlusCircle className="w-3.5 h-3.5" />
-                              <span>{inCartCount > 0 ? `Magdagdag Pa (+1) [${inCartCount}]` : 'Ilagay sa Cart (Add to Cart)'}</span>
-                            </button>
+                            {/* Action Buttons */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedProductForDetails(prod);
+                                }}
+                                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[11px] py-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Tingnan Gallery</span>
+                              </button>
+
+                              {prod.isAffiliate ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (prod.affiliateUrl) {
+                                      window.open(prod.affiliateUrl, '_blank', 'noopener,noreferrer');
+                                    } else {
+                                      setSelectedProductForDetails(prod);
+                                    }
+                                  }}
+                                  className="w-full bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black text-[11px] py-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1 shadow-xs"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                  <span>{prod.platform || 'Partner'} ➔</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAddToCart(prod, 1);
+                                  }}
+                                  className="w-full bg-slate-900 hover:bg-blue-600 active:scale-95 text-white font-black text-[11px] py-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1 shadow-xs"
+                                >
+                                  <PlusCircle className="w-3.5 h-3.5" />
+                                  <span>{inCartCount > 0 ? `+1 (${inCartCount})` : 'Add to Cart'}</span>
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -2128,6 +2242,32 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
         onRefreshOrders={fetchOrdersOnly}
         triggerNotification={triggerNotification}
       />
+
+      {/* ========================================================================= */}
+      {/* 🚀 MODAL 6: MULTI-IMAGE PRODUCT DETAILS MODAL */}
+      {/* ========================================================================= */}
+      <ZoneShopProductDetailsModal
+        isOpen={Boolean(selectedProductForDetails)}
+        onClose={() => setSelectedProductForDetails(null)}
+        product={selectedProductForDetails}
+        currentUser={user}
+        onAddToCart={(prod, qty) => handleAddToCart(prod, qty)}
+        triggerNotification={(msg, type) => triggerNotification('Z-oneShop', msg, type === 'error' ? 'error' : 'success')}
+        sharedByUserId={sharedByUsername}
+      />
+
+      {/* ========================================================================= */}
+      {/* 🚀 MODAL 7: STANDALONE SOCIAL SHARE MODAL */}
+      {/* ========================================================================= */}
+      {sharingProduct && (
+        <ZoneShopSocialShareModal
+          isOpen={Boolean(sharingProduct)}
+          onClose={() => setSharingProduct(null)}
+          product={sharingProduct}
+          currentUserId={user?.referralCode || user?.id}
+          triggerNotification={(msg, type) => triggerNotification('Z-oneShop', msg, type === 'error' ? 'error' : 'success')}
+        />
+      )}
 
     </div>
   );

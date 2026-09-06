@@ -61,7 +61,7 @@ import {
   Receipt
 } from 'lucide-react';
 import { INITIAL_CAMPAIGNS } from './data/campaigns';
-import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend, ReelVideo } from './types';
+import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend, ReelVideo, ShopProduct } from './types';
 import BrowserSimulator from './components/BrowserSimulator';
 import GCashCashout from './components/GCashCashout';
 import ReferralPanel from './components/ReferralPanel';
@@ -69,6 +69,7 @@ import AdminPanel from './components/AdminPanel';
 import ZoneFeed from './components/ZoneFeed';
 import MerchantPortal from './components/MerchantPortal';
 import { ZoneShopVAHub } from './components/ZoneShopVAHub';
+import { ZoneShopProductDetailsModal } from './components/ZoneShopProductDetailsModal';
 import AICommercialPlayer from './components/AICommercialPlayer';
 import SpinWheel from './components/SpinWheel';
 import PayoutMarquee from './components/PayoutMarquee';
@@ -268,7 +269,15 @@ export default function App() {
   });
   const [referredFriends, setReferredFriends] = useState<ReferralFriend[]>([]);
   
-  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop' | 'kiddie' | 'challenges' | null>(null);
+  const [activeTab, setActiveTab] = useState<'earn' | 'cashout' | 'zone' | 'guide' | 'admin' | 'negosyo' | 'va_shop' | 'kiddie' | 'challenges' | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const p = new URLSearchParams(window.location.search);
+        if (p.get('shopProduct') || p.get('product') || p.get('shop')) return 'va_shop';
+      } catch (e) {}
+    }
+    return null;
+  });
 
   const [showVerificationModal, setShowVerificationModal] = useState<boolean>(false);
   const [showDeviceTransferModal, setShowDeviceTransferModal] = useState<boolean>(false);
@@ -337,6 +346,39 @@ export default function App() {
     } catch (e) {}
     return null;
   });
+
+  // 🛍️ Public Z-oneShop Product Viral Landing State (?shopProduct=prod-1&sharedBy=username)
+  const [publicShopProductParam, setPublicShopProductParam] = useState<{
+    productId: string;
+    sharedBy?: string;
+  } | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const prod = p.get('shopProduct') || p.get('product') || p.get('shop');
+      if (prod) {
+        return {
+          productId: prod,
+          sharedBy: p.get('sharedBy') || p.get('ref') || undefined
+        };
+      }
+    } catch (e) {}
+    return null;
+  });
+
+  const [guestShopProduct, setGuestShopProduct] = useState<ShopProduct | null>(null);
+
+  useEffect(() => {
+    if (!publicShopProductParam?.productId) return;
+    fetch(`/api/shop/products/${publicShopProductParam.productId}${publicShopProductParam.sharedBy ? `?sharedBy=${encodeURIComponent(publicShopProductParam.sharedBy)}` : ''}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.success && d.product) {
+          setGuestShopProduct(d.product);
+        }
+      })
+      .catch(() => {});
+  }, [publicShopProductParam]);
 
   // Viral registration attribution tracker
   const [pendingAttribution, setPendingAttribution] = useState<{
@@ -3008,6 +3050,8 @@ export default function App() {
                       onRefreshProfile={() => fetchUserProfile(token)}
                       triggerNotification={triggerNotification}
                       language={language}
+                      initialProductId={publicShopProductParam?.productId}
+                      sharedByUsername={publicShopProductParam?.sharedBy}
                     />
                   </div>
                 )}
@@ -3397,6 +3441,23 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
           }}
           triggerNotification={triggerNotification}
           isTl={language === 'tl'}
+        />
+      )}
+
+      {/* 🛍️ GUEST/UNAUTHENTICATED PRODUCT DETAILS MODAL */}
+      {!user && guestShopProduct && (
+        <ZoneShopProductDetailsModal
+          isOpen={Boolean(!user && guestShopProduct)}
+          onClose={() => setGuestShopProduct(null)}
+          product={guestShopProduct}
+          currentUser={null}
+          onRequestLogin={() => {
+            setAuthMode('register');
+            setGuestShopProduct(null);
+            triggerNotification('Mag-register o mag-login muna upang makabili sa Z-oneShop COD.', 'info');
+          }}
+          triggerNotification={(msg, type) => triggerNotification(msg, type === 'error' ? 'error' : 'success')}
+          sharedByUserId={publicShopProductParam?.sharedBy}
         />
       )}
 

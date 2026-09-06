@@ -1803,8 +1803,13 @@ const INITIAL_SHOP_PRODUCTS = [
     price: 1499.00,
     originalPrice: 2999.00,
     image: 'https://images.unsplash.com/photo-1579586337278-3befd40fd17a?w=600&auto=format&fit=crop&q=60',
+    images: [
+      'https://images.unsplash.com/photo-1579586337278-3befd40fd17a?w=600&auto=format&fit=crop&q=60',
+      'https://images.unsplash.com/photo-1508685096489-7aacd43bd3b1?w=600&auto=format&fit=crop&q=60',
+      'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop&q=60'
+    ],
     category: 'Gadgets',
-    description: 'High-definition AMOLED Bluetooth smartwatch with waterproof casing, fitness tracking, and 7-day battery life.',
+    description: 'High-definition AMOLED Bluetooth smartwatch with waterproof casing, fitness tracking, and 7-day battery life. Features blood oxygen monitoring, 100+ sports modes, customizable watch faces, and real-time smartphone notification sync.',
     stock: 45,
     rating: 4.9,
     isActive: true,
@@ -1817,13 +1822,38 @@ const INITIAL_SHOP_PRODUCTS = [
     price: 850.00,
     originalPrice: 1699.00,
     image: 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=600&auto=format&fit=crop&q=60',
+    images: [
+      'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=600&auto=format&fit=crop&q=60',
+      'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&auto=format&fit=crop&q=60'
+    ],
     category: 'Gadgets',
-    description: 'Active Noise Cancellation Bluetooth 5.3 earbuds with low-latency gaming mode and crystal-clear calls.',
+    description: 'Active Noise Cancellation Bluetooth 5.3 earbuds with low-latency gaming mode and crystal-clear calls. Ergonomic secure fit with IPX5 water resistance for workouts and rain.',
     stock: 80,
     rating: 4.8,
     isActive: true,
     salesCount: 620,
     tags: ['Popular', 'Flash Sale']
+  },
+  {
+    id: 'prod-affiliate-1',
+    name: 'Shopee Official: Anti-Radiation Photochromic Transition Eyeglasses',
+    price: 299.00,
+    originalPrice: 799.00,
+    image: 'https://images.unsplash.com/photo-1572635196237-14b3f281503f?w=600&auto=format&fit=crop&q=60',
+    images: [
+      'https://images.unsplash.com/photo-1572635196237-14b3f281503f?w=600&auto=format&fit=crop&q=60',
+      'https://images.unsplash.com/photo-1511499767150-a48a237f0083?w=600&auto=format&fit=crop&q=60'
+    ],
+    category: 'Fashion',
+    description: 'Magandang eyeglass frame na may anti-blue light filter at photochromic lens. Nagiging madilim kapag naarawan upang protektahan ang mata sa UV rays at nakakabawas ng eye strain sa computer at smartphone screens.',
+    stock: 250,
+    rating: 4.9,
+    isActive: true,
+    salesCount: 1540,
+    tags: ['Affiliate', 'Shopee Pick', 'Trending'],
+    isAffiliate: true,
+    affiliateUrl: 'https://shopee.ph',
+    platform: 'Shopee'
   },
   {
     id: 'prod-3',
@@ -12816,6 +12846,190 @@ app.get('/api/shop/products', (req, res) => {
   });
 });
 
+// 11a. GET /api/shop/products/:id - Get single product details (Public, supports share attribution)
+app.get('/api/shop/products/:id', (req, res) => {
+  const db = loadDB();
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const currentUser = token ? db.users.find(u => u.id === token) : null;
+  const isAdmin = currentUser?.isAdmin || false;
+
+  const productId = req.params.id;
+  const productList = db.shopProducts || INITIAL_SHOP_PRODUCTS;
+  const product = productList.find(p => p.id === productId);
+
+  if (!product) {
+    return res.status(404).json({ error: 'Product not found' });
+  }
+
+  if (product.isActive === false && !isAdmin) {
+    return res.status(404).json({ error: 'Product not currently available' });
+  }
+
+  // Optional Share Attribution check (metadata only, no auto-credit or firestore write)
+  let attribution: { valid: boolean; sharedBy?: string; referrerName?: string } = { valid: false };
+  const rawSharedBy = typeof req.query.sharedBy === 'string' ? req.query.sharedBy.trim() : '';
+
+  if (rawSharedBy) {
+    const referrerUser = db.users.find(u => u.id === rawSharedBy || u.referralCode === rawSharedBy);
+    if (referrerUser && (!currentUser || (currentUser.id !== referrerUser.id && currentUser.referralCode !== rawSharedBy))) {
+      attribution = {
+        valid: true,
+        sharedBy: referrerUser.referralCode || referrerUser.id,
+        referrerName: referrerUser.name
+      };
+    }
+  }
+
+  return res.json({
+    success: true,
+    product,
+    attribution
+  });
+});
+
+// Cache map for affiliate URL metadata preview (In-memory, bounded to 500 items, zero Firestore usage)
+const AFFILIATE_CACHE_MAX_ENTRIES = 500;
+const affiliatePreviewCache = new Map<string, { data: any; expiresAt: number }>();
+const affiliatePreviewInFlight = new Map<string, Promise<any>>();
+
+// 11a-2. POST /api/admin/shop/affiliate/preview - Fetch affiliate metadata safely with cache & deduplication
+app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const db = loadDB();
+  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  if (!admin) return res.status(403).json({ error: 'Admin access required' });
+
+  const { affiliateUrl } = req.body;
+  if (!affiliateUrl || typeof affiliateUrl !== 'string') {
+    return res.status(400).json({ error: 'Affiliate URL is required.' });
+  }
+
+  const rawUrl = affiliateUrl.trim();
+  if (!/^https?:\/\//i.test(rawUrl)) {
+    return res.status(400).json({ error: 'Invalid URL scheme. Must start with http:// or https://' });
+  }
+
+  // SSRF protection: prevent calling local or private networks
+  try {
+    const parsed = new URL(rawUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname === '169.254.169.254' ||
+      hostname.startsWith('10.') ||
+      hostname.startsWith('192.168.') ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+      hostname.endsWith('.internal') ||
+      hostname.endsWith('.local')
+    ) {
+      return res.status(400).json({ error: 'Prohibited target host address.' });
+    }
+
+    // Detect platform
+    let detectedPlatform = 'Other';
+    if (hostname.includes('shopee')) detectedPlatform = 'Shopee';
+    else if (hostname.includes('tiktok')) detectedPlatform = 'TikTok Shop';
+    else if (hostname.includes('lazada')) detectedPlatform = 'Lazada';
+    else if (hostname.includes('amazon')) detectedPlatform = 'Amazon';
+
+    // 1. Check in-memory cache (24 hours TTL, zero DB / Firestore write)
+    const cached = affiliatePreviewCache.get(rawUrl);
+    if (cached && cached.expiresAt > Date.now()) {
+      return res.json({
+        success: true,
+        cached: true,
+        data: cached.data
+      });
+    }
+
+    // 2. In-flight request deduplication: if identical URL fetch is already running, await it
+    let previewData: any;
+    if (affiliatePreviewInFlight.has(rawUrl)) {
+      previewData = await affiliatePreviewInFlight.get(rawUrl);
+    } else {
+      const fetchPromise = (async () => {
+        let metaTitle = '';
+        let metaImage = '';
+        let metaDescription = '';
+
+        try {
+          const response = await fetch(rawUrl, {
+            signal: AbortSignal.timeout(4000),
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            }
+          });
+
+          if (response.ok) {
+            const text = await response.text();
+            const titleMatch = text.match(/<meta\s+property=["']og:title["']\s+content=["'](.*?)["']/i) ||
+                               text.match(/<meta\s+name=["']twitter:title["']\s+content=["'](.*?)["']/i) ||
+                               text.match(/<title[^>]*>(.*?)<\/title>/i);
+            if (titleMatch && titleMatch[1]) {
+              metaTitle = titleMatch[1].trim().replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+            }
+
+            const imageMatch = text.match(/<meta\s+property=["']og:image["']\s+content=["'](.*?)["']/i) ||
+                               text.match(/<meta\s+name=["']twitter:image["']\s+content=["'](.*?)["']/i);
+            if (imageMatch && imageMatch[1]) {
+              metaImage = imageMatch[1].trim();
+            }
+
+            const descMatch = text.match(/<meta\s+property=["']og:description["']\s+content=["'](.*?)["']/i) ||
+                              text.match(/<meta\s+name=["']description["']\s+content=["'](.*?)["']/i);
+            if (descMatch && descMatch[1]) {
+              metaDescription = descMatch[1].trim().replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+            }
+          }
+        } catch (fetchErr) {
+          // Non-fatal: if external platform times out or blocks, we smoothly offer manual entry
+        }
+
+        const data = {
+          title: metaTitle || '',
+          image: metaImage || '',
+          description: metaDescription || '',
+          platform: detectedPlatform,
+          affiliateUrl: rawUrl
+        };
+
+        // Cache result with eviction if over max entries limit
+        if (affiliatePreviewCache.size >= AFFILIATE_CACHE_MAX_ENTRIES) {
+          const firstKey = affiliatePreviewCache.keys().next().value;
+          if (firstKey) affiliatePreviewCache.delete(firstKey);
+        }
+
+        affiliatePreviewCache.set(rawUrl, {
+          data,
+          expiresAt: Date.now() + 24 * 60 * 60 * 1000
+        });
+
+        return data;
+      })();
+
+      affiliatePreviewInFlight.set(rawUrl, fetchPromise);
+      try {
+        previewData = await fetchPromise;
+      } finally {
+        affiliatePreviewInFlight.delete(rawUrl);
+      }
+    }
+
+    return res.json({
+      success: true,
+      data: previewData,
+      note: previewData.title ? 'Extracted preview metadata.' : 'Manual entry fallback available.'
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: 'Failed to parse URL: ' + err.message });
+  }
+});
+
 // 11b. POST /api/admin/shop/products - Admin add new product to catalogue
 app.post('/api/admin/shop/products', (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -12825,9 +13039,23 @@ app.post('/api/admin/shop/products', (req, res) => {
   const admin = db.users.find(u => u.id === token && u.isAdmin);
   if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
-  const { name, price, originalPrice, image, category, description, stock, tags } = req.body;
-  if (!name || price === undefined || !image) {
+  const { name, price, originalPrice, image, images, category, description, stock, tags, isAffiliate, affiliateUrl, platform } = req.body;
+  
+  // Clean images array
+  const cleanImages: string[] = Array.isArray(images)
+    ? images.map(i => String(i).trim()).filter(Boolean)
+    : [];
+
+  const mainImageUrl = image ? String(image).trim() : (cleanImages[0] || '');
+
+  if (!name || price === undefined || !mainImageUrl) {
     return res.status(400).json({ error: 'Product name, price, and image URL are required.' });
+  }
+
+  if (isAffiliate && affiliateUrl) {
+    if (!/^https?:\/\//i.test(String(affiliateUrl).trim())) {
+      return res.status(400).json({ error: 'Affiliate URL must start with http:// or https://' });
+    }
   }
 
   const newProduct = {
@@ -12835,7 +13063,8 @@ app.post('/api/admin/shop/products', (req, res) => {
     name: name.trim(),
     price: Number(price),
     originalPrice: originalPrice ? Number(originalPrice) : Math.round(Number(price) * 1.5),
-    image: image.trim(),
+    image: mainImageUrl,
+    images: cleanImages.length > 0 ? cleanImages : (mainImageUrl ? [mainImageUrl] : []),
     category: category || 'Gadgets',
     description: (description || '').trim(),
     stock: Number(stock) || 50,
@@ -12843,6 +13072,9 @@ app.post('/api/admin/shop/products', (req, res) => {
     isActive: true,
     salesCount: 0,
     tags: Array.isArray(tags) ? tags : ['New Arrival'],
+    isAffiliate: Boolean(isAffiliate),
+    affiliateUrl: affiliateUrl ? String(affiliateUrl).trim() : undefined,
+    platform: platform ? String(platform).trim() : (isAffiliate ? 'Shopee' : undefined),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -12872,20 +13104,42 @@ app.put('/api/admin/shop/products/:id', (req, res) => {
   const prodIndex = (db.shopProducts || []).findIndex(p => p.id === productId);
   if (prodIndex === -1) return res.status(404).json({ error: 'Product not found' });
 
-  const { name, price, originalPrice, image, category, description, stock, tags, isActive } = req.body;
+  const { name, price, originalPrice, image, images, category, description, stock, tags, isActive, isAffiliate, affiliateUrl, platform } = req.body;
 
   const existing = db.shopProducts![prodIndex];
+
+  let cleanImages: string[] | undefined = undefined;
+  if (images !== undefined) {
+    cleanImages = Array.isArray(images)
+      ? images.map(i => String(i).trim()).filter(Boolean)
+      : [];
+  }
+
+  const resolvedMainImage = image !== undefined 
+    ? image.trim() 
+    : (cleanImages && cleanImages.length > 0 ? cleanImages[0] : existing.image);
+
+  if (isAffiliate && affiliateUrl) {
+    if (!/^https?:\/\//i.test(String(affiliateUrl).trim())) {
+      return res.status(400).json({ error: 'Affiliate URL must start with http:// or https://' });
+    }
+  }
+
   db.shopProducts![prodIndex] = {
     ...existing,
     name: name !== undefined ? name.trim() : existing.name,
     price: price !== undefined ? Number(price) : existing.price,
     originalPrice: originalPrice !== undefined ? Number(originalPrice) : existing.originalPrice,
-    image: image !== undefined ? image.trim() : existing.image,
+    image: resolvedMainImage,
+    images: cleanImages !== undefined ? cleanImages : existing.images,
     category: category !== undefined ? category : existing.category,
     description: description !== undefined ? description.trim() : existing.description,
     stock: stock !== undefined ? Number(stock) : existing.stock,
     tags: tags !== undefined ? tags : existing.tags,
     isActive: isActive !== undefined ? Boolean(isActive) : (existing.isActive !== false),
+    isAffiliate: isAffiliate !== undefined ? Boolean(isAffiliate) : existing.isAffiliate,
+    affiliateUrl: affiliateUrl !== undefined ? String(affiliateUrl).trim() : existing.affiliateUrl,
+    platform: platform !== undefined ? String(platform).trim() : existing.platform,
     updatedAt: new Date().toISOString()
   };
 
