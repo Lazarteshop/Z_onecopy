@@ -309,12 +309,16 @@ export interface VALeaderboardWinner {
 export interface ShopProduct {
   id: string;
   name: string;
+  title?: string;
   price: number;
   originalPrice?: number;
   image: string;
+  primaryImage?: string;
   images?: string[];
   category: 'Gadgets' | 'Fashion' | 'Beauty' | 'Home' | 'Lifestyle' | string;
   description: string;
+  sourceDescription?: string;
+  aiNormalizedDescription?: string;
   stock: number;
   rating: number;
   isActive?: boolean;
@@ -324,13 +328,22 @@ export interface ShopProduct {
   updatedAt?: string;
   isAffiliate?: boolean;
   affiliateUrl?: string;
+  originalAffiliateUrl?: string;
+  resolvedUrl?: string;
+  resolvedProductUrl?: string;
   platform?: 'Shopee' | 'TikTok Shop' | 'Lazada' | 'Amazon' | 'Shopify' | 'Etsy' | 'Other' | string;
+  platformName?: string;
+  affiliatePlatform?: string;
   seller?: string;
+  sellerName?: string;
   brand?: string;
   specifications?: { label: string; value: string }[] | Record<string, string>;
   keyFeatures?: string[];
-  resolvedUrl?: string;
   availability?: string;
+  currency?: string;
+  priceStatus?: 'available' | 'unavailable' | string;
+  importSource?: string;
+  importedAt?: string;
 }
 
 export interface ShopCartItem {

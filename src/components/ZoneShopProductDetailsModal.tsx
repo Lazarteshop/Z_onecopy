@@ -44,6 +44,7 @@ export const ZoneShopProductDetailsModal: React.FC<ZoneShopProductDetailsModalPr
   const [quantity, setQuantity] = useState<number>(1);
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
   const [addedSuccess, setAddedSuccess] = useState<boolean>(false);
+  const [showFullDesc, setShowFullDesc] = useState<boolean>(false);
 
   // Support Escape key to close modal
   useEffect(() => {
@@ -219,22 +220,64 @@ export const ZoneShopProductDetailsModal: React.FC<ZoneShopProductDetailsModalPr
             {/* PRICE BLOCK */}
             <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-baseline justify-between">
               <div className="flex items-baseline gap-2.5">
-                <span className="text-2xl sm:text-3xl font-black font-mono text-indigo-700">
-                  ₱{product.price.toFixed(2)}
-                </span>
-                {product.originalPrice && (
-                  <span className="text-sm font-mono text-slate-400 line-through">
-                    ₱{product.originalPrice.toFixed(2)}
+                {typeof product.price === 'number' && product.price > 0 ? (
+                  <>
+                    <span className="text-2xl sm:text-3xl font-black font-mono text-indigo-700">
+                      ₱{product.price.toFixed(2)}
+                    </span>
+                    {product.originalPrice && product.originalPrice > product.price && (
+                      <span className="text-sm font-mono text-slate-400 line-through">
+                        ₱{product.originalPrice.toFixed(2)}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-sm font-bold text-amber-700 bg-amber-50 px-3 py-1 rounded-xl border border-amber-200">
+                    Presyo: I-check sa Partner Store
                   </span>
                 )}
               </div>
-              {discountPercent > 0 && (
+              {discountPercent > 0 && typeof product.price === 'number' && product.price > 0 && (
                 <span className="bg-rose-500 text-white text-xs font-black px-2.5 py-1 rounded-xl shadow-xs">
                   -{discountPercent}% OFF
                 </span>
               )}
             </div>
           </div>
+
+          {/* KEY FEATURES (IF AVAILABLE) */}
+          {Array.isArray(product.keyFeatures) && product.keyFeatures.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-500">
+                Mga Pangunahing Katangian (Key Features)
+              </h4>
+              <ul className="space-y-1.5 bg-slate-50/70 p-3.5 rounded-2xl border border-slate-200 text-xs text-slate-700">
+                {product.keyFeatures.map((feat, fIdx) => (
+                  <li key={fIdx} className="flex items-start gap-2">
+                    <span className="text-emerald-600 font-bold shrink-0">✓</span>
+                    <span className="leading-snug">{feat}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* SPECIFICATIONS (IF AVAILABLE) */}
+          {Array.isArray(product.specifications) && product.specifications.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-500">
+                Mga Espesipikasyon (Specifications)
+              </h4>
+              <div className="rounded-2xl border border-slate-200 overflow-hidden divide-y divide-slate-100 bg-white">
+                {product.specifications.map((sp, sIdx) => (
+                  <div key={sIdx} className="flex text-xs p-2.5 hover:bg-slate-50">
+                    <span className="w-1/3 font-bold text-slate-600">{sp.label}</span>
+                    <span className="w-2/3 text-slate-800">{sp.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* COMPLETE PRODUCT DESCRIPTION (UNTRUNCATED, PRESERVES LINE BREAKS) */}
           <div className="space-y-2 pt-2 border-t border-slate-100">
@@ -243,7 +286,22 @@ export const ZoneShopProductDetailsModal: React.FC<ZoneShopProductDetailsModalPr
             </h4>
             <div className="bg-slate-50/70 p-4 rounded-2xl border border-slate-200 text-xs sm:text-sm text-slate-700 font-normal leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto">
               {product.description && product.description.trim() ? (
-                product.description
+                <div>
+                  <p>
+                    {showFullDesc || product.description.length <= 300
+                      ? product.description
+                      : `${product.description.slice(0, 300)}...`}
+                  </p>
+                  {product.description.length > 300 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowFullDesc(!showFullDesc)}
+                      className="mt-2 text-xs font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer block"
+                    >
+                      {showFullDesc ? 'Ipakita nang Mas Maikli (Read Less ▲)' : 'Basahin ang Buo (Read More ▼)'}
+                    </button>
+                  )}
+                </div>
               ) : (
                 <p className="text-slate-400 italic">Walang detalyadong deskripsyon na inilagay para sa produktong ito.</p>
               )}
@@ -294,7 +352,10 @@ export const ZoneShopProductDetailsModal: React.FC<ZoneShopProductDetailsModalPr
                 onClick={handleOpenAffiliateLink}
                 className="w-full sm:w-auto bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black text-xs py-3 px-6 rounded-2xl transition flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 cursor-pointer"
               >
-                <span>BUMILI SA {product.platform ? product.platform.toUpperCase() : 'STORE'} (₱{product.price.toFixed(2)})</span>
+                <span>
+                  BUMILI SA {product.platform ? product.platform.toUpperCase() : 'STORE'}
+                  {typeof product.price === 'number' && product.price > 0 ? ` (₱${product.price.toFixed(2)})` : ''}
+                </span>
                 <ExternalLink className="w-4 h-4" />
               </button>
             </div>

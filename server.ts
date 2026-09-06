@@ -12917,34 +12917,83 @@ function decodeHtmlEntities(str: string): string {
 }
 
 // Helper: Detect ecommerce platform from hostname and HTML markers
-function detectEcommercePlatform(url: string, htmlContent?: string): string {
+function detectEcommercePlatform(url: string, htmlContent?: string): { platform: string; platformName: string } {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
 
-    if (host.includes('tiktok') || host.includes('musical.ly') || host.includes('tiktokv.com')) return 'TikTok Shop';
-    if (host.includes('shopee') || host.includes('shp.ee')) return 'Shopee';
-    if (host.includes('lazada') || host.includes('laz.app')) return 'Lazada';
-    if (host.includes('amazon') || host.includes('amzn.to') || host.includes('a.co')) return 'Amazon';
-    if (host.includes('shopify') || host.includes('myshopify.com')) return 'Shopify';
-    if (host.includes('etsy') || host.includes('etsy.me')) return 'Etsy';
-    if (host.includes('shein')) return 'Shein';
-    if (host.includes('temu')) return 'Temu';
-    if (host.includes('aliexpress') || host.includes('alix.to')) return 'AliExpress';
-    if (host.includes('zalora')) return 'Zalora';
-    if (host.includes('ebay')) return 'eBay';
+    if (host.includes('tiktok') || host.includes('musical.ly') || host.includes('tiktokv.com')) {
+      return { platform: 'TikTok Shop', platformName: 'TikTok Shop' };
+    }
+    if (host.includes('shopee') || host.includes('shp.ee')) {
+      return { platform: 'Shopee', platformName: 'Shopee' };
+    }
+    if (host.includes('lazada') || host.includes('laz.app')) {
+      return { platform: 'Lazada', platformName: 'Lazada' };
+    }
+    if (host.includes('amazon') || host.includes('amzn.to') || host.includes('a.co')) {
+      return { platform: 'Amazon', platformName: 'Amazon' };
+    }
+    if (host.includes('shopify') || host.includes('myshopify.com')) {
+      return { platform: 'Shopify', platformName: 'Shopify' };
+    }
+    if (host.includes('etsy') || host.includes('etsy.me')) {
+      return { platform: 'Etsy', platformName: 'Etsy' };
+    }
+    if (host.includes('shein')) {
+      return { platform: 'Shein', platformName: 'Shein' };
+    }
+    if (host.includes('temu')) {
+      return { platform: 'Temu', platformName: 'Temu' };
+    }
+    if (host.includes('aliexpress') || host.includes('alix.to')) {
+      return { platform: 'AliExpress', platformName: 'AliExpress' };
+    }
+    if (host.includes('zalora')) {
+      return { platform: 'Zalora', platformName: 'Zalora' };
+    }
+    if (host.includes('ebay')) {
+      return { platform: 'eBay', platformName: 'eBay' };
+    }
 
     if (htmlContent) {
       const lowerHtml = htmlContent.slice(0, 50000).toLowerCase();
-      if (lowerHtml.includes('tiktok shop') || lowerHtml.includes('shop.tiktok.com')) return 'TikTok Shop';
-      if (lowerHtml.includes('shopee') || lowerHtml.includes('cdn.shopee')) return 'Shopee';
-      if (lowerHtml.includes('lazada') || lowerHtml.includes('lzd-') || lowerHtml.includes('lazada.com')) return 'Lazada';
-      if (lowerHtml.includes('amazon') || lowerHtml.includes('amazon.com')) return 'Amazon';
-      if (lowerHtml.includes('shopify') || lowerHtml.includes('cdn.shopify.com')) return 'Shopify';
-      if (lowerHtml.includes('etsy')) return 'Etsy';
+      if (lowerHtml.includes('tiktok shop') || lowerHtml.includes('shop.tiktok.com')) {
+        return { platform: 'TikTok Shop', platformName: 'TikTok Shop' };
+      }
+      if (lowerHtml.includes('shopee') || lowerHtml.includes('cdn.shopee')) {
+        return { platform: 'Shopee', platformName: 'Shopee' };
+      }
+      if (lowerHtml.includes('lazada') || lowerHtml.includes('lzd-') || lowerHtml.includes('lazada.com')) {
+        return { platform: 'Lazada', platformName: 'Lazada' };
+      }
+      if (lowerHtml.includes('amazon') || lowerHtml.includes('amazon.com')) {
+        return { platform: 'Amazon', platformName: 'Amazon' };
+      }
+      if (lowerHtml.includes('shopify') || lowerHtml.includes('cdn.shopify.com') || lowerHtml.includes('window.shopify')) {
+        return { platform: 'Shopify', platformName: 'Shopify' };
+      }
+      if (lowerHtml.includes('etsy')) {
+        return { platform: 'Etsy', platformName: 'Etsy' };
+      }
+      if (lowerHtml.includes('shein')) {
+        return { platform: 'Shein', platformName: 'Shein' };
+      }
+      if (lowerHtml.includes('temu')) {
+        return { platform: 'Temu', platformName: 'Temu' };
+      }
+      if (lowerHtml.includes('aliexpress')) {
+        return { platform: 'AliExpress', platformName: 'AliExpress' };
+      }
+      if (lowerHtml.includes('zalora')) {
+        return { platform: 'Zalora', platformName: 'Zalora' };
+      }
+      if (lowerHtml.includes('ebay')) {
+        return { platform: 'eBay', platformName: 'eBay' };
+      }
     }
   } catch {}
-  return 'Other';
+  return { platform: 'Other', platformName: 'Other Partner' };
 }
 
 // Helper: AI Product Understanding and Normalization (Strictly non-hallucinatory)
@@ -12953,6 +13002,8 @@ async function cleanProductWithAI(raw: {
   description: string;
   brand?: string;
   seller?: string;
+  price?: number | null;
+  platform?: string;
   specs?: { label: string; value: string }[];
   features?: string[];
 }): Promise<{
@@ -12969,7 +13020,7 @@ async function cleanProductWithAI(raw: {
     cleanTitle = cleanTitle
       .replace(/^\[[^\]]+\]\s*/g, '')
       .replace(/^【[^】]+】\s*/g, '')
-      .replace(/^(?:HOT SALE!?|BEST SELLER!?|NEW ARRIVAL!?|100% ORIGINAL!?|BUY \d TAKE \d!?|ORIGINAL!?)\s*[-|:]?\s*/i, '')
+      .replace(/^(?:HOT SALE!?|BEST SELLER!?|NEW ARRIVAL!?|100% ORIGINAL!?|BUY \d TAKE \d!?|ORIGINAL!?|READY STOCK!?)\s*[-|:]?\s*/i, '')
       .trim();
 
     // Strip boilerplate phrases from description
@@ -12980,9 +13031,10 @@ async function cleanProductWithAI(raw: {
              !lower.includes('privacy policy') &&
              !lower.includes('terms of service') &&
              !lower.includes('all rights reserved') &&
-             !lower.includes('customer service hours');
+             !lower.includes('customer service hours') &&
+             !lower.includes('return policy');
     });
-    const cleanDescription = filteredLines.join('\n\n').slice(0, 2000).trim();
+    const cleanDescription = filteredLines.join('\n\n').slice(0, 2500).trim();
 
     // Extract bullet points for key features
     const keyFeatures: string[] = [];
@@ -13014,11 +13066,14 @@ async function cleanProductWithAI(raw: {
     const prompt = `You are a strict, objective ecommerce catalog normalizer for Z-oneShop.
 Your task is to organize and normalize the following raw extracted product information from an ecommerce page.
 
+PLATFORM: ${raw.platform || 'Unknown'}
+DETECTED PRICE: ${raw.price ? `₱${raw.price}` : 'None'}
+
 RAW TITLE:
 ${raw.title || 'None'}
 
 RAW DESCRIPTION & PAGE TEXT:
-${(raw.description || '').slice(0, 2500) || 'None'}
+${(raw.description || '').slice(0, 3000) || 'None'}
 
 RAW BRAND / SELLER:
 Brand: ${raw.brand || 'None'} | Seller: ${raw.seller || 'None'}
@@ -13026,13 +13081,16 @@ Brand: ${raw.brand || 'None'} | Seller: ${raw.seller || 'None'}
 RAW SPECIFICATIONS (IF FOUND):
 ${(raw.specs || []).map(s => `${s.label}: ${s.value}`).join('\n') || 'None'}
 
-STRICT NEGATIVE CONSTRAINTS:
-- You MUST NOT invent, guess, hallucinate, or extrapolate ANY price, specifications, medical/performance claims, brand, seller, or availability.
+RAW KEY FEATURES (IF FOUND):
+${(raw.features || []).join('\n') || 'None'}
+
+STRICT NEGATIVE CONSTRAINTS (CRITICAL - NO HALLUCINATION):
+- You MUST NOT invent, guess, hallucinate, or extrapolate ANY price, specifications, medical/performance claims, brand, seller, warranty, shipping claims, discounts, availability, ratings, or reviews.
 - Only use factual details explicitly present in the provided source text.
 - If a detail is missing or not mentioned in the source, leave it empty or omit it. DO NOT make up generic specs.
 
 TASKS:
-1. cleanTitle: Make the title concise, clean, and professional (max 85 chars). Remove spammy SEO keywords, emoji spam, repetitive merchant slogans (e.g. 'HOT SALE', 'BUY 1 TAKE 1'). Keep the actual product name and core model.
+1. cleanTitle: Make the title concise, clean, and professional (max 85 chars). Remove spammy SEO keywords, emoji spam, repetitive merchant slogans (e.g. 'HOT SALE', 'BUY 1 TAKE 1', 'READY STOCK'). Keep the actual product name and core model.
 2. cleanDescription: Format the actual product details into clean, cohesive, professional product copy. Remove broken HTML tags, customer service boilerplate, shipping return policies, warranty disclaimers, or cookie notices.
 3. keyFeatures: Extract 3 to 5 concise bullet points highlighting key features found directly in the text. Return as an array of strings. If no distinct features are found in the text, return [].
 4. specifications: Extract key technical or physical specifications found directly in the text (e.g., Material, Color, Size, Dimensions, Weight, Model, Connectivity). Return as an array of { "label": string, "value": string }. If none are found, return [].
@@ -13162,7 +13220,7 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
         };
 
         try {
-          // Follow HTTP redirects server-side
+          // Follow HTTP redirects server-side with 6-second timeout
           const response = await fetch(rawUrl, {
             redirect: 'follow',
             signal: AbortSignal.timeout(6000),
@@ -13183,13 +13241,27 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
             if (isProhibited(resolvedHost)) {
               throw new Error('Redirected to prohibited target host address.');
             }
-          } catch {}
+          } catch (e: any) {
+            return res.status(400).json({ error: e.message || 'Target resolved to prohibited host' });
+          }
+
+          // Validate MIME type & Content-Length for security
+          const contentType = (response.headers.get('content-type') || '').toLowerCase();
+          if (contentType && !contentType.includes('text') && !contentType.includes('html') && !contentType.includes('xml') && !contentType.includes('json')) {
+            throw new Error('Destination is not an HTML/text product page.');
+          }
+
+          const contentLength = parseInt(response.headers.get('content-length') || '0', 10);
+          if (contentLength > 5 * 1024 * 1024) {
+            throw new Error('Product page exceeds safe response size limit (5MB).');
+          }
 
           if (response.status === 403 || response.status === 429 || response.status === 503) {
             isBlockedOrRequiresManual = true;
           }
 
-          const htmlText = await response.text();
+          const rawHtml = await response.text();
+          const htmlText = rawHtml.slice(0, 3000000); // 3MB safe read ceiling
           detectedPlatform = detectEcommercePlatform(finalResolvedProductUrl, htmlText);
 
           // Check if page returned a challenge or captcha page
@@ -13433,6 +13505,8 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
             description: metaDescription,
             brand: metaBrand,
             seller: metaSeller,
+            price: metaPrice,
+            platform: detectedPlatform.platformName,
             specs: rawSpecs,
             features: rawFeatures
           });
@@ -13443,31 +13517,50 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
           aiCleaned = aiResult.aiCleaned;
         }
 
+        const isPriceValid = priceAvailable && typeof metaPrice === 'number' && metaPrice > 0;
+
         const data = {
           productName: cleanTitle || metaTitle || '',
           title: cleanTitle || metaTitle || '',
           name: cleanTitle || metaTitle || '',
           productDescription: cleanDescription || metaDescription || '',
           description: cleanDescription || metaDescription || '',
-          price: metaPrice,
-          priceAvailable,
+          sourceDescription: metaDescription || '',
+          aiNormalizedDescription: cleanDescription || '',
+          price: isPriceValid ? metaPrice : null,
+          priceAvailable: isPriceValid,
+          priceStatus: isPriceValid ? 'available' : 'unavailable',
           currency: metaCurrency,
+          primaryImage: mainProductImage,
           mainProductImage,
           image: mainProductImage,
           galleryImages: rawImages,
           images: rawImages,
           brand: metaBrand,
           seller: metaSeller,
+          sellerName: metaSeller,
           specifications: finalSpecs,
           keyFeatures: finalFeatures,
           availability: metaAvailability,
-          platform: detectedPlatform,
+          platform: detectedPlatform.platform,
+          platformName: detectedPlatform.platformName,
+          affiliatePlatform: detectedPlatform.platformName,
           originalAffiliateUrl: rawUrl,
           affiliateUrl: rawUrl,
           finalResolvedProductUrl,
+          resolvedProductUrl: finalResolvedProductUrl,
           resolvedUrl: finalResolvedProductUrl,
           aiCleaned,
           isBlockedOrRequiresManual,
+          extractionStatus: {
+            productName: Boolean((cleanTitle || metaTitle || '').trim()),
+            productImage: Boolean(mainProductImage),
+            galleryCount: rawImages.length,
+            price: isPriceValid,
+            description: Boolean((cleanDescription || metaDescription || '').trim()),
+            seller: Boolean(metaSeller),
+            brand: Boolean(metaBrand)
+          },
           note: isBlockedOrRequiresManual
             ? '⚠️ Unable to automatically read this product page. (Manual entry fallback available.)'
             : (metaTitle ? 'Extracted complete product information.' : 'Manual entry fallback available.')
@@ -13514,48 +13607,97 @@ app.post('/api/admin/shop/products', (req, res) => {
   const admin = db.users.find(u => u.id === token && u.isAdmin);
   if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
-  const { name, price, originalPrice, image, images, category, description, stock, tags, isAffiliate, affiliateUrl, platform, seller, brand, specifications, keyFeatures, resolvedUrl, availability } = req.body;
+  const {
+    name,
+    title,
+    price,
+    originalPrice,
+    image,
+    primaryImage,
+    images,
+    category,
+    description,
+    sourceDescription,
+    aiNormalizedDescription,
+    stock,
+    tags,
+    isAffiliate,
+    affiliateUrl,
+    originalAffiliateUrl,
+    platform,
+    platformName,
+    seller,
+    sellerName,
+    brand,
+    specifications,
+    keyFeatures,
+    resolvedUrl,
+    resolvedProductUrl,
+    availability,
+    currency,
+    priceStatus,
+    importSource,
+    importedAt
+  } = req.body;
   
   // Clean images array
   const cleanImages: string[] = Array.isArray(images)
     ? images.map(i => String(i).trim()).filter(Boolean)
     : [];
 
-  const mainImageUrl = image ? String(image).trim() : (cleanImages[0] || '');
+  const mainImageUrl = image ? String(image).trim() : (primaryImage ? String(primaryImage).trim() : (cleanImages[0] || ''));
 
-  if (!name || price === undefined || !mainImageUrl) {
+  const finalName = (name || title || '').trim();
+
+  if (!finalName || price === undefined || !mainImageUrl) {
     return res.status(400).json({ error: 'Product name, price, and image URL are required.' });
   }
 
-  if (isAffiliate && affiliateUrl) {
-    if (!/^https?:\/\//i.test(String(affiliateUrl).trim())) {
+  const finalAffiliateUrl = affiliateUrl ? String(affiliateUrl).trim() : (originalAffiliateUrl ? String(originalAffiliateUrl).trim() : undefined);
+
+  if (isAffiliate && finalAffiliateUrl) {
+    if (!/^https?:\/\//i.test(finalAffiliateUrl)) {
       return res.status(400).json({ error: 'Affiliate URL must start with http:// or https://' });
     }
   }
 
+  const finalResolvedUrl = resolvedUrl ? String(resolvedUrl).trim() : (resolvedProductUrl ? String(resolvedProductUrl).trim() : undefined);
+
   const newProduct = {
     id: 'prod-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-    name: name.trim(),
+    name: finalName,
+    title: finalName,
     price: Number(price),
     originalPrice: originalPrice ? Number(originalPrice) : Math.round(Number(price) * 1.5),
     image: mainImageUrl,
+    primaryImage: mainImageUrl,
     images: cleanImages.length > 0 ? cleanImages : (mainImageUrl ? [mainImageUrl] : []),
     category: category || 'Gadgets',
-    description: (description || '').trim(),
+    description: (description || aiNormalizedDescription || sourceDescription || '').trim(),
+    sourceDescription: sourceDescription ? String(sourceDescription).trim() : undefined,
+    aiNormalizedDescription: aiNormalizedDescription ? String(aiNormalizedDescription).trim() : undefined,
     stock: Number(stock) || 50,
     rating: 5.0,
     isActive: true,
     salesCount: 0,
     tags: Array.isArray(tags) ? tags : ['New Arrival'],
     isAffiliate: Boolean(isAffiliate),
-    affiliateUrl: affiliateUrl ? String(affiliateUrl).trim() : undefined,
+    affiliateUrl: finalAffiliateUrl,
+    originalAffiliateUrl: finalAffiliateUrl,
     platform: platform ? String(platform).trim() : (isAffiliate ? 'Shopee' : undefined),
-    seller: seller ? String(seller).trim() : undefined,
+    platformName: platformName ? String(platformName).trim() : undefined,
+    seller: seller ? String(seller).trim() : (sellerName ? String(sellerName).trim() : undefined),
+    sellerName: sellerName ? String(sellerName).trim() : (seller ? String(seller).trim() : undefined),
     brand: brand ? String(brand).trim() : undefined,
     specifications: Array.isArray(specifications) ? specifications : undefined,
     keyFeatures: Array.isArray(keyFeatures) ? keyFeatures : undefined,
-    resolvedUrl: resolvedUrl ? String(resolvedUrl).trim() : undefined,
+    resolvedUrl: finalResolvedUrl,
+    resolvedProductUrl: finalResolvedUrl,
     availability: availability ? String(availability).trim() : undefined,
+    currency: currency ? String(currency).trim().toUpperCase() : 'PHP',
+    priceStatus: priceStatus || (Number(price) > 0 ? 'available' : 'unavailable'),
+    importSource: importSource || (isAffiliate ? 'auto-import' : 'manual'),
+    importedAt: importedAt || (isAffiliate ? new Date().toISOString() : undefined),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -13585,7 +13727,37 @@ app.put('/api/admin/shop/products/:id', (req, res) => {
   const prodIndex = (db.shopProducts || []).findIndex(p => p.id === productId);
   if (prodIndex === -1) return res.status(404).json({ error: 'Product not found' });
 
-  const { name, price, originalPrice, image, images, category, description, stock, tags, isActive, isAffiliate, affiliateUrl, platform, seller, brand, specifications, keyFeatures, resolvedUrl, availability } = req.body;
+  const {
+    name,
+    title,
+    price,
+    originalPrice,
+    image,
+    primaryImage,
+    images,
+    category,
+    description,
+    sourceDescription,
+    aiNormalizedDescription,
+    stock,
+    tags,
+    isActive,
+    isAffiliate,
+    affiliateUrl,
+    originalAffiliateUrl,
+    platform,
+    platformName,
+    seller,
+    sellerName,
+    brand,
+    specifications,
+    keyFeatures,
+    resolvedUrl,
+    resolvedProductUrl,
+    availability,
+    currency,
+    priceStatus
+  } = req.body;
 
   const existing = db.shopProducts![prodIndex];
 
@@ -13598,35 +13770,55 @@ app.put('/api/admin/shop/products/:id', (req, res) => {
 
   const resolvedMainImage = image !== undefined 
     ? image.trim() 
-    : (cleanImages && cleanImages.length > 0 ? cleanImages[0] : existing.image);
+    : (primaryImage !== undefined ? primaryImage.trim() : (cleanImages && cleanImages.length > 0 ? cleanImages[0] : existing.image));
 
-  if (isAffiliate && affiliateUrl) {
-    if (!/^https?:\/\//i.test(String(affiliateUrl).trim())) {
+  const finalAffiliateUrl = affiliateUrl !== undefined 
+    ? String(affiliateUrl).trim() 
+    : (originalAffiliateUrl !== undefined ? String(originalAffiliateUrl).trim() : existing.affiliateUrl);
+
+  if (isAffiliate && finalAffiliateUrl) {
+    if (!/^https?:\/\//i.test(finalAffiliateUrl)) {
       return res.status(400).json({ error: 'Affiliate URL must start with http:// or https://' });
     }
   }
 
+  const finalResolvedUrl = resolvedUrl !== undefined 
+    ? (resolvedUrl ? String(resolvedUrl).trim() : undefined) 
+    : (resolvedProductUrl !== undefined ? (resolvedProductUrl ? String(resolvedProductUrl).trim() : undefined) : existing.resolvedUrl);
+
+  const updatedName = name !== undefined ? name.trim() : (title !== undefined ? title.trim() : existing.name);
+
   db.shopProducts![prodIndex] = {
     ...existing,
-    name: name !== undefined ? name.trim() : existing.name,
+    name: updatedName,
+    title: updatedName,
     price: price !== undefined ? Number(price) : existing.price,
     originalPrice: originalPrice !== undefined ? Number(originalPrice) : existing.originalPrice,
     image: resolvedMainImage,
+    primaryImage: resolvedMainImage,
     images: cleanImages !== undefined ? cleanImages : existing.images,
     category: category !== undefined ? category : existing.category,
     description: description !== undefined ? description.trim() : existing.description,
+    sourceDescription: sourceDescription !== undefined ? (sourceDescription ? String(sourceDescription).trim() : undefined) : existing.sourceDescription,
+    aiNormalizedDescription: aiNormalizedDescription !== undefined ? (aiNormalizedDescription ? String(aiNormalizedDescription).trim() : undefined) : existing.aiNormalizedDescription,
     stock: stock !== undefined ? Number(stock) : existing.stock,
     tags: tags !== undefined ? tags : existing.tags,
     isActive: isActive !== undefined ? Boolean(isActive) : (existing.isActive !== false),
     isAffiliate: isAffiliate !== undefined ? Boolean(isAffiliate) : existing.isAffiliate,
-    affiliateUrl: affiliateUrl !== undefined ? String(affiliateUrl).trim() : existing.affiliateUrl,
+    affiliateUrl: finalAffiliateUrl,
+    originalAffiliateUrl: finalAffiliateUrl,
     platform: platform !== undefined ? String(platform).trim() : existing.platform,
-    seller: seller !== undefined ? (seller ? String(seller).trim() : undefined) : existing.seller,
+    platformName: platformName !== undefined ? String(platformName).trim() : existing.platformName,
+    seller: seller !== undefined ? (seller ? String(seller).trim() : undefined) : (sellerName !== undefined ? (sellerName ? String(sellerName).trim() : undefined) : existing.seller),
+    sellerName: sellerName !== undefined ? (sellerName ? String(sellerName).trim() : undefined) : (seller !== undefined ? (seller ? String(seller).trim() : undefined) : existing.sellerName),
     brand: brand !== undefined ? (brand ? String(brand).trim() : undefined) : existing.brand,
     specifications: specifications !== undefined ? (Array.isArray(specifications) ? specifications : undefined) : existing.specifications,
     keyFeatures: keyFeatures !== undefined ? (Array.isArray(keyFeatures) ? keyFeatures : undefined) : existing.keyFeatures,
-    resolvedUrl: resolvedUrl !== undefined ? (resolvedUrl ? String(resolvedUrl).trim() : undefined) : existing.resolvedUrl,
+    resolvedUrl: finalResolvedUrl,
+    resolvedProductUrl: finalResolvedUrl,
     availability: availability !== undefined ? (availability ? String(availability).trim() : undefined) : existing.availability,
+    currency: currency !== undefined ? String(currency).trim().toUpperCase() : existing.currency,
+    priceStatus: priceStatus !== undefined ? priceStatus : existing.priceStatus,
     updatedAt: new Date().toISOString()
   };
 
