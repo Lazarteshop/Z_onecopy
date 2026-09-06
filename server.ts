@@ -12931,10 +12931,15 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
 
     // Detect platform
     let detectedPlatform = 'Other';
-    if (hostname.includes('shopee')) detectedPlatform = 'Shopee';
-    else if (hostname.includes('tiktok')) detectedPlatform = 'TikTok Shop';
-    else if (hostname.includes('lazada')) detectedPlatform = 'Lazada';
-    else if (hostname.includes('amazon')) detectedPlatform = 'Amazon';
+    if (hostname.includes('tiktok')) detectedPlatform = 'TikTok Shop';
+    else if (hostname.includes('shopee') || hostname.includes('shp.ee')) detectedPlatform = 'Shopee';
+    else if (hostname.includes('lazada') || hostname.includes('laz.app')) detectedPlatform = 'Lazada';
+    else if (hostname.includes('amazon') || hostname.includes('amzn.to') || hostname.includes('a.co')) detectedPlatform = 'Amazon';
+    else if (hostname.includes('shein')) detectedPlatform = 'Shein';
+    else if (hostname.includes('temu')) detectedPlatform = 'Temu';
+    else if (hostname.includes('aliexpress') || hostname.includes('alix.to')) detectedPlatform = 'AliExpress';
+    else if (hostname.includes('zalora')) detectedPlatform = 'Zalora';
+    else if (hostname.includes('ebay')) detectedPlatform = 'eBay';
 
     // 1. Check in-memory cache (24 hours TTL, zero DB / Firestore write)
     const cached = affiliatePreviewCache.get(rawUrl);
@@ -12961,98 +12966,207 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
         let metaSeller = '';
         let metaCurrency = 'PHP';
 
+        // Helper to sanitize text and decode HTML entities
+        const decodeHtml = (str: string): string => {
+          if (!str) return '';
+          return str
+            .replace(/<br\s*[\/]?>/gi, '\n')
+            .replace(/<\/p>/gi, '\n\n')
+            .replace(/<[^>]*>/g, ' ')
+            .replace(/&amp;/gi, '&')
+            .replace(/&quot;/gi, '"')
+            .replace(/&#39;/gi, "'")
+            .replace(/&apos;/gi, "'")
+            .replace(/&lt;/gi, '<')
+            .replace(/&gt;/gi, '>')
+            .replace(/&nbsp;/gi, ' ')
+            .replace(/&#8369;/gi, '₱')
+            .replace(/&#x20B1;/gi, '₱')
+            .replace(/[ \t]+/g, ' ')
+            .replace(/\n\s+\n/g, '\n\n')
+            .trim();
+        };
+
+        const addValidImage = (candidate: string) => {
+          if (!candidate || typeof candidate !== 'string') return;
+          let cleaned = candidate.trim();
+          if (cleaned.startsWith('//')) cleaned = 'https:' + cleaned;
+          if (!/^https?:\/\//i.test(cleaned)) return;
+          if (cleaned.includes('<script') || cleaned.includes('.js') || cleaned.includes('.svg') || cleaned.includes('favicon')) return;
+          // Filter tiny spacer gifs / tracking pixels
+          if (cleaned.includes('1x1') || cleaned.includes('tracking') || cleaned.includes('pixel')) return;
+          if (!metaImages.includes(cleaned)) {
+            metaImages.push(cleaned);
+          }
+        };
+
         try {
           const response = await fetch(rawUrl, {
-            signal: AbortSignal.timeout(4000),
+            signal: AbortSignal.timeout(5000),
             headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.9,fil;q=0.8'
             }
           });
 
           if (response.ok) {
             const text = await response.text();
 
-            // 1. Title
-            const titleMatch = text.match(/<meta\s+property=["'](?:og:title|twitter:title)["']\s+content=["'](.*?)["']/i) ||
-                               text.match(/<meta\s+name=["'](?:twitter:title|title)["']\s+content=["'](.*?)["']/i) ||
-                               text.match(/<title[^>]*>(.*?)<\/title>/i);
-            if (titleMatch && titleMatch[1]) {
-              metaTitle = titleMatch[1].trim()
-                .replace(/<[^>]*>/g, '')
-                .replace(/&amp;/g, '&')
-                .replace(/&quot;/g, '"')
-                .replace(/&#39;/g, "'")
-                .replace(/&lt;/g, '<')
-                .replace(/&gt;/g, '>');
+            // A. JSON-LD / Structured Product Data (Deep schema parsing)
+            const jsonLdRegex = /<script\s+[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+            let jsonLdMatch: RegExpExecArray | null;
+            while ((jsonLdMatch = jsonLdRegex.exec(text)) !== null) {
+              try {
+                const rawJson = jsonLdMatch[1].trim();
+                const parsed = JSON.parse(rawJson);
+                const items = Array.isArray(parsed)
+                  ? parsed
+                  : (Array.isArray(parsed['@graph']) ? parsed['@graph'] : [parsed]);
+
+                for (const item of items) {
+                  if (!item || typeof item !== 'object') continue;
+                  const itemType = String(item['@type'] || '').toLowerCase();
+                  const isProduct = itemType.includes('product') || itemType.includes('itempage') || itemType.includes('offer');
+
+                  // Title / Name from JSON-LD
+                  if (item.name && (!metaTitle || metaTitle.length < 15)) {
+                    metaTitle = decodeHtml(String(item.name));
+                  }
+
+                  // Description from JSON-LD (often full product specs)
+                  if (item.description) {
+                    const descCandidate = decodeHtml(String(item.description));
+                    if (descCandidate.length > metaDescription.length) {
+                      metaDescription = descCandidate;
+                    }
+                  }
+
+                  // Brand / Seller from JSON-LD
+                  if (item.brand) {
+                    if (typeof item.brand === 'string') metaSeller = decodeHtml(item.brand);
+                    else if (item.brand.name) metaSeller = decodeHtml(String(item.brand.name));
+                  }
+                  if (!metaSeller && item.seller?.name) {
+                    metaSeller = decodeHtml(String(item.seller.name));
+                  }
+
+                  // Images from JSON-LD (string, array of strings, or ImageObjects)
+                  if (item.image) {
+                    const extractImg = (val: any) => {
+                      if (typeof val === 'string') addValidImage(val);
+                      else if (Array.isArray(val)) val.forEach(extractImg);
+                      else if (val && typeof val === 'object') {
+                        if (typeof val.url === 'string') addValidImage(val.url);
+                        if (typeof val.contentUrl === 'string') addValidImage(val.contentUrl);
+                      }
+                    };
+                    extractImg(item.image);
+                  }
+
+                  // Offers / Displayed Price
+                  if (item.offers) {
+                    const offerList = Array.isArray(item.offers) ? item.offers : [item.offers];
+                    for (const off of offerList) {
+                      if (!off || typeof off !== 'object') continue;
+                      const candidatePrice = parseFloat(String(off.price || off.lowPrice || off.priceSpecification?.price || '').replace(/,/g, ''));
+                      if (!isNaN(candidatePrice) && candidatePrice > 0 && (!metaPrice || !priceAvailable)) {
+                        metaPrice = candidatePrice;
+                        priceAvailable = true;
+                      }
+                      if (off.priceCurrency && typeof off.priceCurrency === 'string') {
+                        metaCurrency = off.priceCurrency.trim().toUpperCase();
+                      }
+                      if (off.seller?.name && !metaSeller) {
+                        metaSeller = decodeHtml(String(off.seller.name));
+                      }
+                    }
+                  }
+                }
+              } catch (ldErr) {
+                // Non-fatal if JSON-LD block has parsing quirks
+              }
             }
 
-            // 2. Images (Multiple permitted images extraction)
-            const imgRegex = /<meta\s+(?:property|name)=["'](?:og:image|og:image:secure_url|twitter:image|twitter:image:src)["']\s+content=["'](.*?)["']/gi;
+            // B. Open Graph & Twitter Card Metadata
+            // 1. Title
+            if (!metaTitle) {
+              const titleMatch = text.match(/<meta\s+(?:property|name)=["'](?:og:title|twitter:title)["']\s+content=["'](.*?)["']/i) ||
+                                 text.match(/<title[^>]*>(.*?)<\/title>/i) ||
+                                 text.match(/<meta\s+name=["']title["']\s+content=["'](.*?)["']/i);
+              if (titleMatch && titleMatch[1]) {
+                metaTitle = decodeHtml(titleMatch[1]);
+              }
+            }
+
+            // 2. Images (OG, Twitter, and itemprop)
+            const imgRegex = /<meta\s+(?:property|name|itemprop)=["'](?:og:image|og:image:secure_url|og:image:url|twitter:image|twitter:image:src|image)["']\s+content=["'](.*?)["']/gi;
             let m: RegExpExecArray | null;
             while ((m = imgRegex.exec(text)) !== null) {
-              const urlCandidate = m[1]?.trim();
-              if (urlCandidate && /^https?:\/\//i.test(urlCandidate) && !urlCandidate.includes('<script') && !urlCandidate.includes('.js')) {
-                if (!metaImages.includes(urlCandidate)) {
-                  metaImages.push(urlCandidate);
-                }
+              addValidImage(m[1]);
+            }
+
+            // 3. Description
+            if (!metaDescription) {
+              const descMatch = text.match(/<meta\s+(?:property|name)=["'](?:og:description|twitter:description|description)["']\s+content=["'](.*?)["']/i) ||
+                                text.match(/<meta\s+itemprop=["']description["']\s+content=["'](.*?)["']/i);
+              if (descMatch && descMatch[1]) {
+                metaDescription = decodeHtml(descMatch[1]);
               }
             }
 
-            if (metaImages.length > 0) {
-              metaImage = metaImages[0];
-            }
-
-            // 3. Description (Sanitized)
-            const descMatch = text.match(/<meta\s+property=["'](?:og:description|twitter:description)["']\s+content=["'](.*?)["']/i) ||
-                              text.match(/<meta\s+name=["'](?:description|twitter:description)["']\s+content=["'](.*?)["']/i);
-            if (descMatch && descMatch[1]) {
-              metaDescription = descMatch[1].trim()
-                .replace(/<[^>]*>/g, '')
-                .replace(/&amp;/g, '&')
-                .replace(/&quot;/g, '"')
-                .replace(/&#39;/g, "'")
-                .replace(/&lt;/g, '<')
-                .replace(/&gt;/g, '>');
-            }
-
-            // 4. Price Extraction (Reliable Public Metadata or JSON-LD)
-            const priceMetaMatch = text.match(/<meta\s+property=["'](?:product:price:amount|og:price:amount)["']\s+content=["'](.*?)["']/i) ||
-                                   text.match(/<meta\s+name=["'](?:price|product_price)["']\s+content=["'](.*?)["']/i);
-            if (priceMetaMatch && priceMetaMatch[1]) {
-              const rawP = parseFloat(priceMetaMatch[1].replace(/,/g, '').trim());
-              if (!isNaN(rawP) && rawP > 0) {
-                metaPrice = rawP;
-                priceAvailable = true;
-              }
-            }
-
-            // Optional: check JSON-LD schema if meta tag missing
+            // 4. Displayed Price
             if (!priceAvailable) {
-              const jsonLdMatch = text.match(/"price"\s*:\s*"?([0-9]+(?:\.[0-9]{1,2})?)"?/i) ||
-                                  text.match(/"lowPrice"\s*:\s*"?([0-9]+(?:\.[0-9]{1,2})?)"?/i);
-              if (jsonLdMatch && jsonLdMatch[1]) {
-                const parsed = parseFloat(jsonLdMatch[1]);
-                if (!isNaN(parsed) && parsed > 0) {
-                  metaPrice = parsed;
+              const priceMetaMatch = text.match(/<meta\s+(?:property|name|itemprop)=["'](?:product:price:amount|og:price:amount|price|product_price)["']\s+content=["'](.*?)["']/i);
+              if (priceMetaMatch && priceMetaMatch[1]) {
+                const rawP = parseFloat(priceMetaMatch[1].replace(/,/g, '').trim());
+                if (!isNaN(rawP) && rawP > 0) {
+                  metaPrice = rawP;
                   priceAvailable = true;
                 }
               }
             }
 
-            // 5. Currency & Seller
-            const currMatch = text.match(/<meta\s+property=["'](?:product:price:currency|og:price:currency)["']\s+content=["'](.*?)["']/i);
-            if (currMatch && currMatch[1]) {
-              metaCurrency = currMatch[1].trim();
+            // 5. Fallback Regex for Price in accessible page source
+            if (!priceAvailable) {
+              const pricePatterns = [
+                /"(?:current_price|displayedPrice|salePrice|lowPrice|price)"\s*:\s*"?([0-9]+(?:\.[0-9]{1,2})?)"?/i,
+                /data-price=["']([0-9]+(?:\.[0-9]{1,2})?)["']/i,
+                /itemprop=["']price["']\s+content=["']([0-9]+(?:\.[0-9]{1,2})?)["']/i
+              ];
+              for (const pat of pricePatterns) {
+                const pMatch = text.match(pat);
+                if (pMatch && pMatch[1]) {
+                  const val = parseFloat(pMatch[1]);
+                  if (!isNaN(val) && val > 0) {
+                    metaPrice = val;
+                    priceAvailable = true;
+                    break;
+                  }
+                }
+              }
             }
 
-            const siteNameMatch = text.match(/<meta\s+property=["']og:site_name["']\s+content=["'](.*?)["']/i);
-            if (siteNameMatch && siteNameMatch[1]) {
-              metaSeller = siteNameMatch[1].trim();
+            // 6. Currency
+            const currMatch = text.match(/<meta\s+(?:property|name)=["'](?:product:price:currency|og:price:currency)["']\s+content=["'](.*?)["']/i);
+            if (currMatch && currMatch[1]) {
+              metaCurrency = currMatch[1].trim().toUpperCase();
+            }
+
+            // 7. Seller / Store Site Name
+            if (!metaSeller) {
+              const siteNameMatch = text.match(/<meta\s+property=["']og:site_name["']\s+content=["'](.*?)["']/i);
+              if (siteNameMatch && siteNameMatch[1]) {
+                metaSeller = decodeHtml(siteNameMatch[1]);
+              }
             }
           }
         } catch (fetchErr) {
-          // Non-fatal: if external platform times out or blocks, we smoothly offer manual entry
+          // Non-fatal: if external platform blocks or times out, smoothly offer manual entry fallback
+        }
+
+        if (metaImages.length > 0) {
+          metaImage = metaImages[0];
         }
 
         const data = {
@@ -13069,7 +13183,7 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
           currency: metaCurrency
         };
 
-        // Cache result with eviction if over max entries limit
+        // Cache result with bounded capacity (zero Firestore writes)
         if (affiliatePreviewCache.size >= AFFILIATE_CACHE_MAX_ENTRIES) {
           const firstKey = affiliatePreviewCache.keys().next().value;
           if (firstKey) affiliatePreviewCache.delete(firstKey);

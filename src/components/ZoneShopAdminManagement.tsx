@@ -225,13 +225,14 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
   };
 
   // Auto-Detect Affiliate Metadata with graceful fallback and preview modal
-  const handleAutoDetectAffiliate = async () => {
-    if (!pAffiliateUrl.trim()) {
+  const handleAutoDetectAffiliate = async (urlOverride?: string) => {
+    const targetUrl = (typeof urlOverride === 'string' ? urlOverride : pAffiliateUrl).trim();
+    if (!targetUrl) {
       triggerNotification('Pakilagay muna ang Affiliate Product Link bago mag-import.', 'error');
       return;
     }
 
-    if (!/^https?:\/\//i.test(pAffiliateUrl.trim())) {
+    if (!/^https?:\/\//i.test(targetUrl)) {
       triggerNotification('Ang Affiliate Product Link ay dapat magsimula sa http:// o https://', 'error');
       return;
     }
@@ -241,7 +242,7 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
       const res = await fetch('/api/admin/shop/affiliate/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: token },
-        body: JSON.stringify({ affiliateUrl: pAffiliateUrl.trim() })
+        body: JSON.stringify({ affiliateUrl: targetUrl })
       });
 
       const json = await res.json();
@@ -267,7 +268,7 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
         price: typeof data.price === 'number' && !isNaN(data.price) ? data.price : null,
         priceAvailable: Boolean(data.priceAvailable && typeof data.price === 'number'),
         platform: data.platform || 'Other',
-        affiliateUrl: data.affiliateUrl || pAffiliateUrl.trim(),
+        affiliateUrl: data.affiliateUrl || targetUrl,
         seller: data.seller,
         currency: data.currency || 'PHP'
       };
@@ -286,9 +287,13 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
   const handleUseImportedProduct = () => {
     if (!importedPreview) return;
     if (importedPreview.name) setPName(importedPreview.name);
-    if (importedPreview.image) setPImage(importedPreview.image);
+    const primaryImg = importedPreview.image || (importedPreview.images?.[0] || '');
+    if (primaryImg) setPImage(primaryImg);
     if (importedPreview.images && importedPreview.images.length > 0) {
-      setPImages(importedPreview.images);
+      const additional = importedPreview.images.filter(img => img !== primaryImg);
+      setPImages(additional);
+    } else {
+      setPImages([]);
     }
     if (importedPreview.description) setPDescription(importedPreview.description);
     if (importedPreview.priceAvailable && importedPreview.price !== null) {
@@ -946,12 +951,18 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
                           required={pIsAffiliate}
                           value={pAffiliateUrl}
                           onChange={(e) => setPAffiliateUrl(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAutoDetectAffiliate();
+                            }
+                          }}
                           placeholder="Hal. https://vt.tiktok.com/... o Shopee/Lazada/Amazon link"
                           className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:border-orange-500"
                         />
                         <button
                           type="button"
-                          onClick={handleAutoDetectAffiliate}
+                          onClick={() => handleAutoDetectAffiliate()}
                           disabled={fetchingPreview || !pAffiliateUrl.trim()}
                           className="px-3.5 py-2.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-black rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition active:scale-98 disabled:opacity-50 cursor-pointer whitespace-nowrap text-xs"
                           title="Auto-import product details from affiliate link"
@@ -973,6 +984,11 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
                         <option value="TikTok Shop">TikTok Shop</option>
                         <option value="Lazada">Lazada</option>
                         <option value="Amazon">Amazon</option>
+                        <option value="Shein">Shein</option>
+                        <option value="Temu">Temu</option>
+                        <option value="AliExpress">AliExpress</option>
+                        <option value="Zalora">Zalora</option>
+                        <option value="eBay">eBay</option>
                         <option value="Other">Other Partner</option>
                       </select>
                     </div>
