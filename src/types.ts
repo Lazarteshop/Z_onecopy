@@ -324,7 +324,13 @@ export interface ShopProduct {
   updatedAt?: string;
   isAffiliate?: boolean;
   affiliateUrl?: string;
-  platform?: 'Shopee' | 'TikTok Shop' | 'Lazada' | 'Other' | string;
+  platform?: 'Shopee' | 'TikTok Shop' | 'Lazada' | 'Amazon' | 'Shopify' | 'Etsy' | 'Other' | string;
+  seller?: string;
+  brand?: string;
+  specifications?: { label: string; value: string }[] | Record<string, string>;
+  keyFeatures?: string[];
+  resolvedUrl?: string;
+  availability?: string;
 }
 
 export interface ShopCartItem {

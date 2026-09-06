@@ -12892,7 +12892,184 @@ const AFFILIATE_CACHE_MAX_ENTRIES = 500;
 const affiliatePreviewCache = new Map<string, { data: any; expiresAt: number }>();
 const affiliatePreviewInFlight = new Map<string, Promise<any>>();
 
-// 11a-2. POST /api/admin/shop/affiliate/preview - Fetch affiliate metadata safely with cache & deduplication
+// Helper: Decode HTML entities and sanitize text
+function decodeHtmlEntities(str: string): string {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .replace(/<br\s*[\/]?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<li[^>]*>/gi, '\n• ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&#8369;/gi, '₱')
+    .replace(/&#x20B1;/gi, '₱')
+    .replace(/&bull;/gi, '•')
+    .replace(/&middot;/gi, '·')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s+\n/g, '\n\n')
+    .trim();
+}
+
+// Helper: Detect ecommerce platform from hostname and HTML markers
+function detectEcommercePlatform(url: string, htmlContent?: string): string {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+
+    if (host.includes('tiktok') || host.includes('musical.ly') || host.includes('tiktokv.com')) return 'TikTok Shop';
+    if (host.includes('shopee') || host.includes('shp.ee')) return 'Shopee';
+    if (host.includes('lazada') || host.includes('laz.app')) return 'Lazada';
+    if (host.includes('amazon') || host.includes('amzn.to') || host.includes('a.co')) return 'Amazon';
+    if (host.includes('shopify') || host.includes('myshopify.com')) return 'Shopify';
+    if (host.includes('etsy') || host.includes('etsy.me')) return 'Etsy';
+    if (host.includes('shein')) return 'Shein';
+    if (host.includes('temu')) return 'Temu';
+    if (host.includes('aliexpress') || host.includes('alix.to')) return 'AliExpress';
+    if (host.includes('zalora')) return 'Zalora';
+    if (host.includes('ebay')) return 'eBay';
+
+    if (htmlContent) {
+      const lowerHtml = htmlContent.slice(0, 50000).toLowerCase();
+      if (lowerHtml.includes('tiktok shop') || lowerHtml.includes('shop.tiktok.com')) return 'TikTok Shop';
+      if (lowerHtml.includes('shopee') || lowerHtml.includes('cdn.shopee')) return 'Shopee';
+      if (lowerHtml.includes('lazada') || lowerHtml.includes('lzd-') || lowerHtml.includes('lazada.com')) return 'Lazada';
+      if (lowerHtml.includes('amazon') || lowerHtml.includes('amazon.com')) return 'Amazon';
+      if (lowerHtml.includes('shopify') || lowerHtml.includes('cdn.shopify.com')) return 'Shopify';
+      if (lowerHtml.includes('etsy')) return 'Etsy';
+    }
+  } catch {}
+  return 'Other';
+}
+
+// Helper: AI Product Understanding and Normalization (Strictly non-hallucinatory)
+async function cleanProductWithAI(raw: {
+  title: string;
+  description: string;
+  brand?: string;
+  seller?: string;
+  specs?: { label: string; value: string }[];
+  features?: string[];
+}): Promise<{
+  cleanTitle: string;
+  cleanDescription: string;
+  keyFeatures: string[];
+  specifications: { label: string; value: string }[];
+  aiCleaned: boolean;
+}> {
+  // Deterministic rule-based fallback
+  const fallbackClean = () => {
+    let cleanTitle = raw.title.trim();
+    // Strip common spam prefixes / merchant slogans
+    cleanTitle = cleanTitle
+      .replace(/^\[[^\]]+\]\s*/g, '')
+      .replace(/^【[^】]+】\s*/g, '')
+      .replace(/^(?:HOT SALE!?|BEST SELLER!?|NEW ARRIVAL!?|100% ORIGINAL!?|BUY \d TAKE \d!?|ORIGINAL!?)\s*[-|:]?\s*/i, '')
+      .trim();
+
+    // Strip boilerplate phrases from description
+    const descLines = raw.description.split('\n').map(l => l.trim()).filter(Boolean);
+    const filteredLines = descLines.filter(line => {
+      const lower = line.toLowerCase();
+      return !lower.includes('cookie') &&
+             !lower.includes('privacy policy') &&
+             !lower.includes('terms of service') &&
+             !lower.includes('all rights reserved') &&
+             !lower.includes('customer service hours');
+    });
+    const cleanDescription = filteredLines.join('\n\n').slice(0, 2000).trim();
+
+    // Extract bullet points for key features
+    const keyFeatures: string[] = [];
+    for (const line of descLines) {
+      if (/^[•\-\*]\s+/i.test(line) || /^\d+\.\s+/i.test(line)) {
+        const feat = line.replace(/^[•\-\*]\s+/i, '').replace(/^\d+\.\s+/i, '').trim();
+        if (feat.length >= 8 && feat.length <= 150 && !keyFeatures.includes(feat)) {
+          keyFeatures.push(feat);
+          if (keyFeatures.length >= 5) break;
+        }
+      }
+    }
+
+    return {
+      cleanTitle: cleanTitle || raw.title,
+      cleanDescription: cleanDescription || raw.description,
+      keyFeatures: raw.features && raw.features.length > 0 ? raw.features : keyFeatures,
+      specifications: raw.specs || [],
+      aiCleaned: false
+    };
+  };
+
+  const aiClient = getGeminiClient();
+  if (!aiClient) {
+    return fallbackClean();
+  }
+
+  try {
+    const prompt = `You are a strict, objective ecommerce catalog normalizer for Z-oneShop.
+Your task is to organize and normalize the following raw extracted product information from an ecommerce page.
+
+RAW TITLE:
+${raw.title || 'None'}
+
+RAW DESCRIPTION & PAGE TEXT:
+${(raw.description || '').slice(0, 2500) || 'None'}
+
+RAW BRAND / SELLER:
+Brand: ${raw.brand || 'None'} | Seller: ${raw.seller || 'None'}
+
+RAW SPECIFICATIONS (IF FOUND):
+${(raw.specs || []).map(s => `${s.label}: ${s.value}`).join('\n') || 'None'}
+
+STRICT NEGATIVE CONSTRAINTS:
+- You MUST NOT invent, guess, hallucinate, or extrapolate ANY price, specifications, medical/performance claims, brand, seller, or availability.
+- Only use factual details explicitly present in the provided source text.
+- If a detail is missing or not mentioned in the source, leave it empty or omit it. DO NOT make up generic specs.
+
+TASKS:
+1. cleanTitle: Make the title concise, clean, and professional (max 85 chars). Remove spammy SEO keywords, emoji spam, repetitive merchant slogans (e.g. 'HOT SALE', 'BUY 1 TAKE 1'). Keep the actual product name and core model.
+2. cleanDescription: Format the actual product details into clean, cohesive, professional product copy. Remove broken HTML tags, customer service boilerplate, shipping return policies, warranty disclaimers, or cookie notices.
+3. keyFeatures: Extract 3 to 5 concise bullet points highlighting key features found directly in the text. Return as an array of strings. If no distinct features are found in the text, return [].
+4. specifications: Extract key technical or physical specifications found directly in the text (e.g., Material, Color, Size, Dimensions, Weight, Model, Connectivity). Return as an array of { "label": string, "value": string }. If none are found, return [].
+
+Respond with ONLY a valid JSON object matching this schema:
+{
+  "cleanTitle": "string",
+  "cleanDescription": "string",
+  "keyFeatures": ["string"],
+  "specifications": [{"label": "string", "value": "string"}]
+}`;
+
+    const aiRes = await aiClient.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json'
+      }
+    });
+
+    const outText = aiRes.text?.trim();
+    if (!outText) return fallbackClean();
+
+    const parsed = JSON.parse(outText);
+    return {
+      cleanTitle: typeof parsed.cleanTitle === 'string' && parsed.cleanTitle.trim() ? parsed.cleanTitle.trim() : raw.title,
+      cleanDescription: typeof parsed.cleanDescription === 'string' && parsed.cleanDescription.trim() ? parsed.cleanDescription.trim() : raw.description,
+      keyFeatures: Array.isArray(parsed.keyFeatures) ? parsed.keyFeatures.map((f: any) => String(f).trim()).filter(Boolean) : (raw.features || []),
+      specifications: Array.isArray(parsed.specifications) ? parsed.specifications.filter((s: any) => s && s.label && s.value) : (raw.specs || []),
+      aiCleaned: true
+    };
+  } catch (err) {
+    return fallbackClean();
+  }
+}
+
+// 11a-2. POST /api/admin/shop/affiliate/preview - Full URL-to-Product resolver with multi-layer extraction & AI cleanup
 app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -12913,33 +13090,22 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
 
   // SSRF protection: prevent calling local or private networks
   try {
-    const parsed = new URL(rawUrl);
-    const hostname = parsed.hostname.toLowerCase();
-    if (
-      hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
-      hostname === '0.0.0.0' ||
-      hostname === '169.254.169.254' ||
-      hostname.startsWith('10.') ||
-      hostname.startsWith('192.168.') ||
-      /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
-      hostname.endsWith('.internal') ||
-      hostname.endsWith('.local')
-    ) {
+    const parsedInitial = new URL(rawUrl);
+    const initialHost = parsedInitial.hostname.toLowerCase();
+    const isProhibited = (h: string) =>
+      h === 'localhost' ||
+      h === '127.0.0.1' ||
+      h === '0.0.0.0' ||
+      h === '169.254.169.254' ||
+      h.startsWith('10.') ||
+      h.startsWith('192.168.') ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(h) ||
+      h.endsWith('.internal') ||
+      h.endsWith('.local');
+
+    if (isProhibited(initialHost)) {
       return res.status(400).json({ error: 'Prohibited target host address.' });
     }
-
-    // Detect platform
-    let detectedPlatform = 'Other';
-    if (hostname.includes('tiktok')) detectedPlatform = 'TikTok Shop';
-    else if (hostname.includes('shopee') || hostname.includes('shp.ee')) detectedPlatform = 'Shopee';
-    else if (hostname.includes('lazada') || hostname.includes('laz.app')) detectedPlatform = 'Lazada';
-    else if (hostname.includes('amazon') || hostname.includes('amzn.to') || hostname.includes('a.co')) detectedPlatform = 'Amazon';
-    else if (hostname.includes('shein')) detectedPlatform = 'Shein';
-    else if (hostname.includes('temu')) detectedPlatform = 'Temu';
-    else if (hostname.includes('aliexpress') || hostname.includes('alix.to')) detectedPlatform = 'AliExpress';
-    else if (hostname.includes('zalora')) detectedPlatform = 'Zalora';
-    else if (hostname.includes('ebay')) detectedPlatform = 'eBay';
 
     // 1. Check in-memory cache (24 hours TTL, zero DB / Firestore write)
     const cached = affiliatePreviewCache.get(rawUrl);
@@ -12957,230 +13123,354 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
       previewData = await affiliatePreviewInFlight.get(rawUrl);
     } else {
       const fetchPromise = (async () => {
+        let finalResolvedProductUrl = rawUrl;
+        let detectedPlatform = detectEcommercePlatform(rawUrl);
         let metaTitle = '';
-        let metaImage = '';
-        const metaImages: string[] = [];
         let metaDescription = '';
         let metaPrice: number | null = null;
         let priceAvailable = false;
-        let metaSeller = '';
         let metaCurrency = 'PHP';
+        let metaBrand = '';
+        let metaSeller = '';
+        let metaAvailability = 'In Stock';
+        const rawImages: string[] = [];
+        const rawSpecs: { label: string; value: string }[] = [];
+        const rawFeatures: string[] = [];
+        let isBlockedOrRequiresManual = false;
 
-        // Helper to sanitize text and decode HTML entities
-        const decodeHtml = (str: string): string => {
-          if (!str) return '';
-          return str
-            .replace(/<br\s*[\/]?>/gi, '\n')
-            .replace(/<\/p>/gi, '\n\n')
-            .replace(/<[^>]*>/g, ' ')
-            .replace(/&amp;/gi, '&')
-            .replace(/&quot;/gi, '"')
-            .replace(/&#39;/gi, "'")
-            .replace(/&apos;/gi, "'")
-            .replace(/&lt;/gi, '<')
-            .replace(/&gt;/gi, '>')
-            .replace(/&nbsp;/gi, ' ')
-            .replace(/&#8369;/gi, '₱')
-            .replace(/&#x20B1;/gi, '₱')
-            .replace(/[ \t]+/g, ' ')
-            .replace(/\n\s+\n/g, '\n\n')
-            .trim();
-        };
-
-        const addValidImage = (candidate: string) => {
+        // Image helper: strict filtering & deduplication
+        const addValidImage = (candidate: any) => {
           if (!candidate || typeof candidate !== 'string') return;
           let cleaned = candidate.trim();
           if (cleaned.startsWith('//')) cleaned = 'https:' + cleaned;
           if (!/^https?:\/\//i.test(cleaned)) return;
-          if (cleaned.includes('<script') || cleaned.includes('.js') || cleaned.includes('.svg') || cleaned.includes('favicon')) return;
-          // Filter tiny spacer gifs / tracking pixels
-          if (cleaned.includes('1x1') || cleaned.includes('tracking') || cleaned.includes('pixel')) return;
-          if (!metaImages.includes(cleaned)) {
-            metaImages.push(cleaned);
+
+          const lower = cleaned.toLowerCase();
+          // Filter out scripts, code, svgs
+          if (lower.includes('<script') || lower.includes('.js') || lower.includes('.svg')) return;
+          // Filter out tracking pixels and spacers
+          if (lower.includes('1x1') || lower.includes('pixel') || lower.includes('tracking') || lower.includes('beacon')) return;
+          if (lower.includes('spacer') || lower.includes('blank.gif') || lower.includes('transparent.png')) return;
+          // Filter out logos / icons / cart / rating
+          if (lower.includes('favicon') || lower.includes('avatar') || lower.includes('logo-') || lower.includes('badge') || lower.includes('rating')) return;
+
+          // Normalize resizing tokens if applicable to avoid low-res duplicates
+          const normalized = cleaned.replace(/\._AC_[A-Z0-9_,]+_\./i, '.');
+          if (!rawImages.includes(normalized) && !rawImages.includes(cleaned)) {
+            rawImages.push(cleaned);
           }
         };
 
         try {
+          // Follow HTTP redirects server-side
           const response = await fetch(rawUrl, {
-            signal: AbortSignal.timeout(5000),
+            redirect: 'follow',
+            signal: AbortSignal.timeout(6000),
             headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-              'Accept-Language': 'en-US,en;q=0.9,fil;q=0.8'
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.9,fil;q=0.8',
+              'Sec-Fetch-Dest': 'document',
+              'Sec-Fetch-Mode': 'navigate',
+              'Sec-Fetch-Site': 'none'
             }
           });
 
-          if (response.ok) {
-            const text = await response.text();
+          finalResolvedProductUrl = response.url || rawUrl;
+          // SSRF check on resolved destination
+          try {
+            const resolvedHost = new URL(finalResolvedProductUrl).hostname.toLowerCase();
+            if (isProhibited(resolvedHost)) {
+              throw new Error('Redirected to prohibited target host address.');
+            }
+          } catch {}
 
-            // A. JSON-LD / Structured Product Data (Deep schema parsing)
-            const jsonLdRegex = /<script\s+[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-            let jsonLdMatch: RegExpExecArray | null;
-            while ((jsonLdMatch = jsonLdRegex.exec(text)) !== null) {
-              try {
-                const rawJson = jsonLdMatch[1].trim();
-                const parsed = JSON.parse(rawJson);
-                const items = Array.isArray(parsed)
-                  ? parsed
-                  : (Array.isArray(parsed['@graph']) ? parsed['@graph'] : [parsed]);
+          if (response.status === 403 || response.status === 429 || response.status === 503) {
+            isBlockedOrRequiresManual = true;
+          }
 
-                for (const item of items) {
-                  if (!item || typeof item !== 'object') continue;
-                  const itemType = String(item['@type'] || '').toLowerCase();
-                  const isProduct = itemType.includes('product') || itemType.includes('itempage') || itemType.includes('offer');
+          const htmlText = await response.text();
+          detectedPlatform = detectEcommercePlatform(finalResolvedProductUrl, htmlText);
 
-                  // Title / Name from JSON-LD
-                  if (item.name && (!metaTitle || metaTitle.length < 15)) {
-                    metaTitle = decodeHtml(String(item.name));
+          // Check if page returned a challenge or captcha page
+          if (
+            htmlText.includes('cf-browser-verification') ||
+            htmlText.includes('challenge-running') ||
+            htmlText.includes('robot check') ||
+            htmlText.includes('verify you are human') ||
+            htmlText.includes('Please verify you are a human')
+          ) {
+            isBlockedOrRequiresManual = true;
+          }
+
+          // LAYER 1: JSON-LD / Schema.org Structured Data
+          const jsonLdRegex = /<script\s+[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+          let jsonLdMatch: RegExpExecArray | null;
+          while ((jsonLdMatch = jsonLdRegex.exec(htmlText)) !== null) {
+            try {
+              const rawJson = jsonLdMatch[1].trim();
+              const parsed = JSON.parse(rawJson);
+              const items = Array.isArray(parsed)
+                ? parsed
+                : (Array.isArray(parsed['@graph']) ? parsed['@graph'] : [parsed]);
+
+              for (const item of items) {
+                if (!item || typeof item !== 'object') continue;
+                const itemType = String(item['@type'] || '').toLowerCase();
+                const isProduct = itemType.includes('product') || itemType.includes('itempage') || itemType.includes('offer');
+
+                // Name
+                if (item.name && (!metaTitle || metaTitle.length < 15)) {
+                  metaTitle = decodeHtmlEntities(String(item.name));
+                }
+
+                // Description
+                if (item.description) {
+                  const descCandidate = decodeHtmlEntities(String(item.description));
+                  if (descCandidate.length > metaDescription.length) {
+                    metaDescription = descCandidate;
                   }
+                }
 
-                  // Description from JSON-LD (often full product specs)
-                  if (item.description) {
-                    const descCandidate = decodeHtml(String(item.description));
-                    if (descCandidate.length > metaDescription.length) {
-                      metaDescription = descCandidate;
+                // Brand
+                if (item.brand) {
+                  if (typeof item.brand === 'string') metaBrand = decodeHtmlEntities(item.brand);
+                  else if (item.brand.name) metaBrand = decodeHtmlEntities(String(item.brand.name));
+                }
+
+                // Seller
+                if (item.seller?.name) {
+                  metaSeller = decodeHtmlEntities(String(item.seller.name));
+                }
+
+                // Images
+                if (item.image) {
+                  const extractImg = (val: any) => {
+                    if (typeof val === 'string') addValidImage(val);
+                    else if (Array.isArray(val)) val.forEach(extractImg);
+                    else if (val && typeof val === 'object') {
+                      if (typeof val.url === 'string') addValidImage(val.url);
+                      if (typeof val.contentUrl === 'string') addValidImage(val.contentUrl);
+                    }
+                  };
+                  extractImg(item.image);
+                }
+
+                // Specifications / Additional Property
+                if (Array.isArray(item.additionalProperty)) {
+                  for (const prop of item.additionalProperty) {
+                    if (prop && prop.name && prop.value) {
+                      rawSpecs.push({
+                        label: decodeHtmlEntities(String(prop.name)),
+                        value: decodeHtmlEntities(String(prop.value))
+                      });
                     }
                   }
+                }
 
-                  // Brand / Seller from JSON-LD
-                  if (item.brand) {
-                    if (typeof item.brand === 'string') metaSeller = decodeHtml(item.brand);
-                    else if (item.brand.name) metaSeller = decodeHtml(String(item.brand.name));
-                  }
-                  if (!metaSeller && item.seller?.name) {
-                    metaSeller = decodeHtml(String(item.seller.name));
-                  }
-
-                  // Images from JSON-LD (string, array of strings, or ImageObjects)
-                  if (item.image) {
-                    const extractImg = (val: any) => {
-                      if (typeof val === 'string') addValidImage(val);
-                      else if (Array.isArray(val)) val.forEach(extractImg);
-                      else if (val && typeof val === 'object') {
-                        if (typeof val.url === 'string') addValidImage(val.url);
-                        if (typeof val.contentUrl === 'string') addValidImage(val.contentUrl);
-                      }
-                    };
-                    extractImg(item.image);
-                  }
-
-                  // Offers / Displayed Price
-                  if (item.offers) {
-                    const offerList = Array.isArray(item.offers) ? item.offers : [item.offers];
-                    for (const off of offerList) {
-                      if (!off || typeof off !== 'object') continue;
-                      const candidatePrice = parseFloat(String(off.price || off.lowPrice || off.priceSpecification?.price || '').replace(/,/g, ''));
-                      if (!isNaN(candidatePrice) && candidatePrice > 0 && (!metaPrice || !priceAvailable)) {
-                        metaPrice = candidatePrice;
-                        priceAvailable = true;
-                      }
-                      if (off.priceCurrency && typeof off.priceCurrency === 'string') {
-                        metaCurrency = off.priceCurrency.trim().toUpperCase();
-                      }
-                      if (off.seller?.name && !metaSeller) {
-                        metaSeller = decodeHtml(String(off.seller.name));
+                // Offers & Displayed Price & Availability
+                if (item.offers) {
+                  const offerList = Array.isArray(item.offers) ? item.offers : [item.offers];
+                  for (const off of offerList) {
+                    if (!off || typeof off !== 'object') continue;
+                    const candidatePrice = parseFloat(String(off.price || off.lowPrice || off.priceSpecification?.price || '').replace(/,/g, ''));
+                    if (!isNaN(candidatePrice) && candidatePrice > 0 && (!metaPrice || !priceAvailable)) {
+                      metaPrice = candidatePrice;
+                      priceAvailable = true;
+                    }
+                    if (off.priceCurrency && typeof off.priceCurrency === 'string') {
+                      metaCurrency = off.priceCurrency.trim().toUpperCase();
+                    }
+                    if (off.seller?.name && !metaSeller) {
+                      metaSeller = decodeHtmlEntities(String(off.seller.name));
+                    }
+                    if (off.availability) {
+                      const availStr = String(off.availability).toLowerCase();
+                      if (availStr.includes('outofstock') || availStr.includes('discontinued')) {
+                        metaAvailability = 'Out of Stock';
+                      } else if (availStr.includes('instock')) {
+                        metaAvailability = 'In Stock';
                       }
                     }
                   }
                 }
-              } catch (ldErr) {
-                // Non-fatal if JSON-LD block has parsing quirks
               }
-            }
+            } catch {}
+          }
 
-            // B. Open Graph & Twitter Card Metadata
-            // 1. Title
-            if (!metaTitle) {
-              const titleMatch = text.match(/<meta\s+(?:property|name)=["'](?:og:title|twitter:title)["']\s+content=["'](.*?)["']/i) ||
-                                 text.match(/<title[^>]*>(.*?)<\/title>/i) ||
-                                 text.match(/<meta\s+name=["']title["']\s+content=["'](.*?)["']/i);
-              if (titleMatch && titleMatch[1]) {
-                metaTitle = decodeHtml(titleMatch[1]);
-              }
-            }
-
-            // 2. Images (OG, Twitter, and itemprop)
-            const imgRegex = /<meta\s+(?:property|name|itemprop)=["'](?:og:image|og:image:secure_url|og:image:url|twitter:image|twitter:image:src|image)["']\s+content=["'](.*?)["']/gi;
-            let m: RegExpExecArray | null;
-            while ((m = imgRegex.exec(text)) !== null) {
-              addValidImage(m[1]);
-            }
-
-            // 3. Description
-            if (!metaDescription) {
-              const descMatch = text.match(/<meta\s+(?:property|name)=["'](?:og:description|twitter:description|description)["']\s+content=["'](.*?)["']/i) ||
-                                text.match(/<meta\s+itemprop=["']description["']\s+content=["'](.*?)["']/i);
-              if (descMatch && descMatch[1]) {
-                metaDescription = decodeHtml(descMatch[1]);
-              }
-            }
-
-            // 4. Displayed Price
-            if (!priceAvailable) {
-              const priceMetaMatch = text.match(/<meta\s+(?:property|name|itemprop)=["'](?:product:price:amount|og:price:amount|price|product_price)["']\s+content=["'](.*?)["']/i);
-              if (priceMetaMatch && priceMetaMatch[1]) {
-                const rawP = parseFloat(priceMetaMatch[1].replace(/,/g, '').trim());
-                if (!isNaN(rawP) && rawP > 0) {
-                  metaPrice = rawP;
-                  priceAvailable = true;
-                }
-              }
-            }
-
-            // 5. Fallback Regex for Price in accessible page source
-            if (!priceAvailable) {
-              const pricePatterns = [
-                /"(?:current_price|displayedPrice|salePrice|lowPrice|price)"\s*:\s*"?([0-9]+(?:\.[0-9]{1,2})?)"?/i,
-                /data-price=["']([0-9]+(?:\.[0-9]{1,2})?)["']/i,
-                /itemprop=["']price["']\s+content=["']([0-9]+(?:\.[0-9]{1,2})?)["']/i
-              ];
-              for (const pat of pricePatterns) {
-                const pMatch = text.match(pat);
-                if (pMatch && pMatch[1]) {
-                  const val = parseFloat(pMatch[1]);
-                  if (!isNaN(val) && val > 0) {
-                    metaPrice = val;
+          // LAYER 2: Embedded Platform Scripts (Shopify / Next / Initial State)
+          // Shopify Product JSON
+          const shopifyMetaMatch = htmlText.match(/var\s+meta\s*=\s*(\{[\s\S]*?\});/i) ||
+                                   htmlText.match(/ShopifyAnalytics\.meta\s*=\s*(\{[\s\S]*?\});/i);
+          if (shopifyMetaMatch) {
+            try {
+              const shopifyObj = JSON.parse(shopifyMetaMatch[1]);
+              if (shopifyObj.product) {
+                const sp = shopifyObj.product;
+                if (sp.type && !metaBrand) metaBrand = decodeHtmlEntities(String(sp.vendor || sp.type));
+                if (sp.price && (!metaPrice || !priceAvailable)) {
+                  const rawP = parseFloat(sp.price) / (parseFloat(sp.price) > 10000 ? 100 : 1);
+                  if (!isNaN(rawP) && rawP > 0) {
+                    metaPrice = rawP;
                     priceAvailable = true;
-                    break;
                   }
                 }
               }
-            }
+            } catch {}
+          }
 
-            // 6. Currency
-            const currMatch = text.match(/<meta\s+(?:property|name)=["'](?:product:price:currency|og:price:currency)["']\s+content=["'](.*?)["']/i);
-            if (currMatch && currMatch[1]) {
-              metaCurrency = currMatch[1].trim().toUpperCase();
-            }
+          // LAYER 3: Open Graph & Twitter Card Metadata
+          if (!metaTitle) {
+            const ogTitle = htmlText.match(/<meta\s+(?:property|name)=["'](?:og:title|twitter:title)["']\s+content=["'](.*?)["']/i);
+            if (ogTitle && ogTitle[1]) metaTitle = decodeHtmlEntities(ogTitle[1]);
+          }
 
-            // 7. Seller / Store Site Name
-            if (!metaSeller) {
-              const siteNameMatch = text.match(/<meta\s+property=["']og:site_name["']\s+content=["'](.*?)["']/i);
-              if (siteNameMatch && siteNameMatch[1]) {
-                metaSeller = decodeHtml(siteNameMatch[1]);
+          // OG Images
+          const ogImgRegex = /<meta\s+(?:property|name|itemprop)=["'](?:og:image|og:image:secure_url|og:image:url|twitter:image|twitter:image:src|image)["']\s+content=["'](.*?)["']/gi;
+          let ogm: RegExpExecArray | null;
+          while ((ogm = ogImgRegex.exec(htmlText)) !== null) {
+            addValidImage(ogm[1]);
+          }
+
+          // Description
+          if (!metaDescription) {
+            const ogDesc = htmlText.match(/<meta\s+(?:property|name)=["'](?:og:description|twitter:description|description)["']\s+content=["'](.*?)["']/i);
+            if (ogDesc && ogDesc[1]) metaDescription = decodeHtmlEntities(ogDesc[1]);
+          }
+
+          // Price from OG
+          if (!priceAvailable) {
+            const ogPrice = htmlText.match(/<meta\s+(?:property|name)=["'](?:product:price:amount|og:price:amount|product:sale_price:amount)["']\s+content=["'](.*?)["']/i);
+            if (ogPrice && ogPrice[1]) {
+              const pVal = parseFloat(ogPrice[1].replace(/,/g, ''));
+              if (!isNaN(pVal) && pVal > 0) {
+                metaPrice = pVal;
+                priceAvailable = true;
               }
             }
           }
+
+          // Currency & Site Name / Brand from OG
+          const ogCurr = htmlText.match(/<meta\s+(?:property|name)=["'](?:product:price:currency|og:price:currency)["']\s+content=["'](.*?)["']/i);
+          if (ogCurr && ogCurr[1]) metaCurrency = ogCurr[1].trim().toUpperCase();
+
+          const ogSite = htmlText.match(/<meta\s+property=["']og:site_name["']\s+content=["'](.*?)["']/i);
+          if (ogSite && ogSite[1] && !metaSeller) metaSeller = decodeHtmlEntities(ogSite[1]);
+
+          const ogBrand = htmlText.match(/<meta\s+(?:property|name)=["'](?:product:brand|og:brand)["']\s+content=["'](.*?)["']/i);
+          if (ogBrand && ogBrand[1] && !metaBrand) metaBrand = decodeHtmlEntities(ogBrand[1]);
+
+          // LAYER 4: HTML Elements (Amazon / Shopee / Lazada / Microdata)
+          // Amazon specific title
+          if (!metaTitle || metaTitle.length < 10) {
+            const azTitleMatch = htmlText.match(/<span\s+id=["']productTitle["'][^>]*>([\s\S]*?)<\/span>/i) ||
+                                 htmlText.match(/<h1[^>]*class=["'][^"']*product-title[^"']*["'][^>]*>([\s\S]*?)<\/h1>/i) ||
+                                 htmlText.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i) ||
+                                 htmlText.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+            if (azTitleMatch && azTitleMatch[1]) {
+              metaTitle = decodeHtmlEntities(azTitleMatch[1]);
+            }
+          }
+
+          // Amazon specific price & offscreen price
+          if (!priceAvailable) {
+            const azPriceMatch = htmlText.match(/class=["']a-price-whole["']>([0-9,]+)<\/span>/i) ||
+                                 htmlText.match(/class=["']a-offscreen["']>([^<]+)<\/span>/i) ||
+                                 htmlText.match(/id=["']priceblock_ourprice["'][^>]*>([^<]+)<\/span>/i) ||
+                                 htmlText.match(/id=["']priceblock_dealprice["'][^>]*>([^<]+)<\/span>/i);
+            if (azPriceMatch && azPriceMatch[1]) {
+              const cleanedP = azPriceMatch[1].replace(/[^0-9.]/g, '');
+              const pVal = parseFloat(cleanedP);
+              if (!isNaN(pVal) && pVal > 0) {
+                metaPrice = pVal;
+                priceAvailable = true;
+              }
+            }
+          }
+
+          // Amazon feature bullets
+          const azBulletsMatch = htmlText.match(/<div\s+id=["']feature-bullets["'][^>]*>([\s\S]*?)<\/div>/i);
+          if (azBulletsMatch && azBulletsMatch[1]) {
+            const bulletLiRegex = /<li[^>]*><span[^>]*class=["']a-list-item["'][^>]*>([\s\S]*?)<\/span><\/li>/gi;
+            let bm: RegExpExecArray | null;
+            while ((bm = bulletLiRegex.exec(azBulletsMatch[1])) !== null) {
+              const cleanedBullet = decodeHtmlEntities(bm[1]);
+              if (cleanedBullet && cleanedBullet.length > 5 && !rawFeatures.includes(cleanedBullet)) {
+                rawFeatures.push(cleanedBullet);
+              }
+            }
+          }
+
+          // High-res gallery image extraction from HTML tags
+          const htmlImgRegex = /<img[^>]+(?:data-old-hires|data-zoom-image|data-large-image|data-src|data-origin-src)=["'](https?:\/\/[^"'\s]+)["']/gi;
+          let him: RegExpExecArray | null;
+          while ((him = htmlImgRegex.exec(htmlText)) !== null) {
+            addValidImage(him[1]);
+          }
+
+          // If no title was found at all and response failed or anti-bot was hit
+          if (!metaTitle && (htmlText.length < 500 || isBlockedOrRequiresManual)) {
+            isBlockedOrRequiresManual = true;
+          }
         } catch (fetchErr) {
-          // Non-fatal: if external platform blocks or times out, smoothly offer manual entry fallback
+          isBlockedOrRequiresManual = true;
         }
 
-        if (metaImages.length > 0) {
-          metaImage = metaImages[0];
+        // LAYER 5: Gallery Images Organization
+        const mainProductImage = rawImages.length > 0 ? rawImages[0] : '';
+        const galleryImages = rawImages.length > 1 ? rawImages.slice(1) : [];
+
+        // LAYER 6: AI Product Understanding / Cleanup
+        let cleanTitle = metaTitle;
+        let cleanDescription = metaDescription;
+        let finalFeatures = rawFeatures;
+        let finalSpecs = rawSpecs;
+        let aiCleaned = false;
+
+        if (metaTitle || metaDescription) {
+          const aiResult = await cleanProductWithAI({
+            title: metaTitle,
+            description: metaDescription,
+            brand: metaBrand,
+            seller: metaSeller,
+            specs: rawSpecs,
+            features: rawFeatures
+          });
+          cleanTitle = aiResult.cleanTitle;
+          cleanDescription = aiResult.cleanDescription;
+          finalFeatures = aiResult.keyFeatures;
+          finalSpecs = aiResult.specifications;
+          aiCleaned = aiResult.aiCleaned;
         }
 
         const data = {
-          title: metaTitle || '',
-          name: metaTitle || '',
-          image: metaImage || '',
-          images: metaImages,
-          description: metaDescription || '',
+          productName: cleanTitle || metaTitle || '',
+          title: cleanTitle || metaTitle || '',
+          name: cleanTitle || metaTitle || '',
+          productDescription: cleanDescription || metaDescription || '',
+          description: cleanDescription || metaDescription || '',
           price: metaPrice,
           priceAvailable,
-          platform: detectedPlatform,
-          affiliateUrl: rawUrl,
+          currency: metaCurrency,
+          mainProductImage,
+          image: mainProductImage,
+          galleryImages: rawImages,
+          images: rawImages,
+          brand: metaBrand,
           seller: metaSeller,
-          currency: metaCurrency
+          specifications: finalSpecs,
+          keyFeatures: finalFeatures,
+          availability: metaAvailability,
+          platform: detectedPlatform,
+          originalAffiliateUrl: rawUrl,
+          affiliateUrl: rawUrl,
+          finalResolvedProductUrl,
+          resolvedUrl: finalResolvedProductUrl,
+          aiCleaned,
+          isBlockedOrRequiresManual,
+          note: isBlockedOrRequiresManual
+            ? '⚠️ Unable to automatically read this product page. (Manual entry fallback available.)'
+            : (metaTitle ? 'Extracted complete product information.' : 'Manual entry fallback available.')
         };
 
         // Cache result with bounded capacity (zero Firestore writes)
@@ -13208,7 +13498,7 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
     return res.json({
       success: true,
       data: previewData,
-      note: previewData.title ? 'Extracted preview metadata.' : 'Manual entry fallback available.'
+      note: previewData.note
     });
   } catch (err: any) {
     return res.status(400).json({ error: 'Failed to parse URL: ' + err.message });
@@ -13224,7 +13514,7 @@ app.post('/api/admin/shop/products', (req, res) => {
   const admin = db.users.find(u => u.id === token && u.isAdmin);
   if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
-  const { name, price, originalPrice, image, images, category, description, stock, tags, isAffiliate, affiliateUrl, platform } = req.body;
+  const { name, price, originalPrice, image, images, category, description, stock, tags, isAffiliate, affiliateUrl, platform, seller, brand, specifications, keyFeatures, resolvedUrl, availability } = req.body;
   
   // Clean images array
   const cleanImages: string[] = Array.isArray(images)
@@ -13260,6 +13550,12 @@ app.post('/api/admin/shop/products', (req, res) => {
     isAffiliate: Boolean(isAffiliate),
     affiliateUrl: affiliateUrl ? String(affiliateUrl).trim() : undefined,
     platform: platform ? String(platform).trim() : (isAffiliate ? 'Shopee' : undefined),
+    seller: seller ? String(seller).trim() : undefined,
+    brand: brand ? String(brand).trim() : undefined,
+    specifications: Array.isArray(specifications) ? specifications : undefined,
+    keyFeatures: Array.isArray(keyFeatures) ? keyFeatures : undefined,
+    resolvedUrl: resolvedUrl ? String(resolvedUrl).trim() : undefined,
+    availability: availability ? String(availability).trim() : undefined,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -13289,7 +13585,7 @@ app.put('/api/admin/shop/products/:id', (req, res) => {
   const prodIndex = (db.shopProducts || []).findIndex(p => p.id === productId);
   if (prodIndex === -1) return res.status(404).json({ error: 'Product not found' });
 
-  const { name, price, originalPrice, image, images, category, description, stock, tags, isActive, isAffiliate, affiliateUrl, platform } = req.body;
+  const { name, price, originalPrice, image, images, category, description, stock, tags, isActive, isAffiliate, affiliateUrl, platform, seller, brand, specifications, keyFeatures, resolvedUrl, availability } = req.body;
 
   const existing = db.shopProducts![prodIndex];
 
@@ -13325,6 +13621,12 @@ app.put('/api/admin/shop/products/:id', (req, res) => {
     isAffiliate: isAffiliate !== undefined ? Boolean(isAffiliate) : existing.isAffiliate,
     affiliateUrl: affiliateUrl !== undefined ? String(affiliateUrl).trim() : existing.affiliateUrl,
     platform: platform !== undefined ? String(platform).trim() : existing.platform,
+    seller: seller !== undefined ? (seller ? String(seller).trim() : undefined) : existing.seller,
+    brand: brand !== undefined ? (brand ? String(brand).trim() : undefined) : existing.brand,
+    specifications: specifications !== undefined ? (Array.isArray(specifications) ? specifications : undefined) : existing.specifications,
+    keyFeatures: keyFeatures !== undefined ? (Array.isArray(keyFeatures) ? keyFeatures : undefined) : existing.keyFeatures,
+    resolvedUrl: resolvedUrl !== undefined ? (resolvedUrl ? String(resolvedUrl).trim() : undefined) : existing.resolvedUrl,
+    availability: availability !== undefined ? (availability ? String(availability).trim() : undefined) : existing.availability,
     updatedAt: new Date().toISOString()
   };
 

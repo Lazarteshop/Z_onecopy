@@ -65,6 +65,12 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
   const [pIsAffiliate, setPIsAffiliate] = useState<boolean>(false);
   const [pAffiliateUrl, setPAffiliateUrl] = useState<string>('');
   const [pPlatform, setPPlatform] = useState<string>('Shopee');
+  const [pBrand, setPBrand] = useState<string>('');
+  const [pSeller, setPSeller] = useState<string>('');
+  const [pSpecifications, setPSpecifications] = useState<{ label: string; value: string }[]>([]);
+  const [pKeyFeatures, setPKeyFeatures] = useState<string[]>([]);
+  const [pResolvedUrl, setPResolvedUrl] = useState<string>('');
+  const [pAvailability, setPAvailability] = useState<string>('In Stock');
   const [fetchingPreview, setFetchingPreview] = useState<boolean>(false);
   const [savingProduct, setSavingProduct] = useState<boolean>(false);
 
@@ -78,8 +84,14 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
     priceAvailable: boolean;
     platform: string;
     affiliateUrl: string;
+    resolvedUrl?: string;
     seller?: string;
+    brand?: string;
     currency?: string;
+    specifications?: { label: string; value: string }[];
+    keyFeatures?: string[];
+    availability?: string;
+    aiCleaned?: boolean;
   } | null>(null);
   const [previewReadMore, setPreviewReadMore] = useState<boolean>(false);
 
@@ -146,6 +158,12 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
     setPIsAffiliate(false);
     setPAffiliateUrl('');
     setPPlatform('Shopee');
+    setPBrand('');
+    setPSeller('');
+    setPSpecifications([]);
+    setPKeyFeatures([]);
+    setPResolvedUrl('');
+    setPAvailability('In Stock');
     setShowProductModal(true);
   };
 
@@ -174,6 +192,18 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
     setPIsAffiliate(Boolean(prod.isAffiliate));
     setPAffiliateUrl(prod.affiliateUrl || '');
     setPPlatform(prod.platform || 'Shopee');
+    setPBrand(prod.brand || '');
+    setPSeller(prod.seller || '');
+    if (Array.isArray(prod.specifications)) {
+      setPSpecifications(prod.specifications);
+    } else if (prod.specifications && typeof prod.specifications === 'object') {
+      setPSpecifications(Object.entries(prod.specifications).map(([label, value]) => ({ label, value: String(value) })));
+    } else {
+      setPSpecifications([]);
+    }
+    setPKeyFeatures(Array.isArray(prod.keyFeatures) ? prod.keyFeatures : []);
+    setPResolvedUrl(prod.resolvedUrl || '');
+    setPAvailability(prod.availability || 'In Stock');
     setShowProductModal(true);
   };
 
@@ -261,15 +291,21 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
         : (data.image ? [data.image] : []);
 
       const previewObj = {
-        name: (data.name || data.title || '').trim(),
-        image: data.image || (allImages[0] || ''),
+        name: (data.productName || data.name || data.title || '').trim(),
+        image: data.mainProductImage || data.image || (allImages[0] || ''),
         images: allImages,
-        description: (data.description || '').trim(),
+        description: (data.productDescription || data.description || '').trim(),
         price: typeof data.price === 'number' && !isNaN(data.price) ? data.price : null,
         priceAvailable: Boolean(data.priceAvailable && typeof data.price === 'number'),
         platform: data.platform || 'Other',
-        affiliateUrl: data.affiliateUrl || targetUrl,
+        affiliateUrl: data.originalAffiliateUrl || data.affiliateUrl || targetUrl,
+        resolvedUrl: data.finalResolvedProductUrl || data.resolvedUrl,
         seller: data.seller,
+        brand: data.brand,
+        specifications: data.specifications || [],
+        keyFeatures: data.keyFeatures || [],
+        availability: data.availability,
+        aiCleaned: Boolean(data.aiCleaned),
         currency: data.currency || 'PHP'
       };
 
@@ -301,6 +337,17 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
     }
     if (importedPreview.platform) setPPlatform(importedPreview.platform);
     if (importedPreview.affiliateUrl) setPAffiliateUrl(importedPreview.affiliateUrl);
+    if (importedPreview.brand) setPBrand(importedPreview.brand);
+    if (importedPreview.seller) setPSeller(importedPreview.seller);
+    if (importedPreview.specifications && importedPreview.specifications.length > 0) {
+      setPSpecifications(importedPreview.specifications);
+    }
+    if (importedPreview.keyFeatures && importedPreview.keyFeatures.length > 0) {
+      setPKeyFeatures(importedPreview.keyFeatures);
+    }
+    if (importedPreview.resolvedUrl) setPResolvedUrl(importedPreview.resolvedUrl);
+    if (importedPreview.availability) setPAvailability(importedPreview.availability);
+
     setPIsAffiliate(true);
     setImportedPreview(null);
     triggerNotification('✓ Inilagay ang imported product details sa form. Pindutin ang "I-save ang Produkto" upang opisyal na mai-save.', 'success');
@@ -351,7 +398,13 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
         isActive: pIsActive,
         isAffiliate: pIsAffiliate,
         affiliateUrl: pIsAffiliate ? pAffiliateUrl.trim() : undefined,
-        platform: pIsAffiliate ? pPlatform : undefined
+        platform: pIsAffiliate ? pPlatform : undefined,
+        brand: pBrand.trim() || undefined,
+        seller: pSeller.trim() || undefined,
+        specifications: pSpecifications.length > 0 ? pSpecifications : undefined,
+        keyFeatures: pKeyFeatures.length > 0 ? pKeyFeatures : undefined,
+        resolvedUrl: pResolvedUrl.trim() || undefined,
+        availability: pAvailability || undefined
       };
 
       let res;
@@ -1272,14 +1325,34 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
 
             {/* PREVIEW BODY */}
             <div className="p-4 sm:p-5 overflow-y-auto space-y-4 text-xs">
-              {/* PLATFORM BADGE & SELLER */}
-              <div className="flex items-center justify-between gap-2">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-900 border border-amber-300">
-                  🛍️ Platform: {importedPreview.platform}
-                </span>
-                {importedPreview.seller && (
-                  <span className="text-[11px] text-slate-500 font-semibold truncate max-w-[180px]">
-                    Store: {importedPreview.seller}
+              {/* PLATFORM BADGE, SELLER, BRAND, AI BADGE */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-900 border border-amber-300">
+                    🛍️ Platform: {importedPreview.platform}
+                  </span>
+                  {importedPreview.aiCleaned && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-violet-100 text-violet-800 border border-violet-200">
+                      <Sparkles className="w-3 h-3 text-violet-600" />
+                      Cleaned with AI
+                    </span>
+                  )}
+                  {importedPreview.availability && (
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                      importedPreview.availability.toLowerCase().includes('out')
+                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                        : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    }`}>
+                      {importedPreview.availability}
+                    </span>
+                  )}
+                </div>
+
+                {(importedPreview.seller || importedPreview.brand) && (
+                  <span className="text-[11px] text-slate-500 font-semibold truncate max-w-[200px]">
+                    {importedPreview.brand ? `Brand: ${importedPreview.brand}` : ''}
+                    {importedPreview.brand && importedPreview.seller ? ' • ' : ''}
+                    {importedPreview.seller ? `Store: ${importedPreview.seller}` : ''}
                   </span>
                 )}
               </div>
@@ -1359,6 +1432,40 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
                 )}
               </div>
 
+              {/* KEY HIGHLIGHTS / BULLETS */}
+              {Array.isArray(importedPreview.keyFeatures) && importedPreview.keyFeatures.length > 0 && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                    Key Features
+                  </label>
+                  <ul className="space-y-1 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    {importedPreview.keyFeatures.map((feat, fIdx) => (
+                      <li key={fIdx} className="flex items-start gap-1.5 text-slate-700">
+                        <span className="text-emerald-600 font-bold">✓</span>
+                        <span>{feat}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* SPECIFICATIONS TABLE */}
+              {Array.isArray(importedPreview.specifications) && importedPreview.specifications.length > 0 && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                    Specifications
+                  </label>
+                  <div className="rounded-xl border border-slate-200 overflow-hidden divide-y divide-slate-100 bg-white">
+                    {importedPreview.specifications.map((sp, sIdx) => (
+                      <div key={sIdx} className="flex text-[11px] p-2 hover:bg-slate-50">
+                        <span className="w-1/3 font-bold text-slate-600">{sp.label}</span>
+                        <span className="w-2/3 text-slate-800">{sp.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* FULL DESCRIPTION (WITH READ MORE / READ LESS) */}
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">
@@ -1389,13 +1496,21 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
               </div>
 
               {/* AFFILIATE DESTINATION LINK */}
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">
-                  Affiliate Link
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                  Original Affiliate Link (Preserved)
                 </label>
                 <p className="text-[11px] text-slate-600 font-mono truncate bg-slate-100 p-2 rounded-lg border border-slate-200">
                   {importedPreview.affiliateUrl}
                 </p>
+                {importedPreview.resolvedUrl && importedPreview.resolvedUrl !== importedPreview.affiliateUrl && (
+                  <div className="pt-1">
+                    <span className="text-[10px] text-slate-400 font-bold block">Resolved Destination:</span>
+                    <p className="text-[10px] text-slate-500 font-mono truncate bg-slate-50 p-1.5 rounded-md border border-slate-200">
+                      {importedPreview.resolvedUrl}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 
