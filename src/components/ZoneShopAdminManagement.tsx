@@ -18,6 +18,7 @@ import {
   X,
   Copy,
   ChevronRight,
+  ChevronDown,
   Phone,
   Tag,
   Filter,
@@ -92,8 +93,26 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
     keyFeatures?: string[];
     availability?: string;
     aiCleaned?: boolean;
+    extractionStatus?: {
+      productName: boolean;
+      productImage: boolean;
+      galleryCount: number;
+      price: boolean;
+      description: boolean;
+      seller: boolean;
+      brand: boolean;
+    };
+    extractionSources?: {
+      title?: string;
+      description?: string;
+      image?: string;
+      gallery?: string;
+      price?: string;
+      platform?: string;
+    };
   } | null>(null);
   const [previewReadMore, setPreviewReadMore] = useState<boolean>(false);
+  const [showExtractionSources, setShowExtractionSources] = useState<boolean>(false);
 
   // Orders state
   const [orders, setOrders] = useState<ShopOrder[]>([]);
@@ -306,11 +325,14 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
         keyFeatures: data.keyFeatures || [],
         availability: data.availability,
         aiCleaned: Boolean(data.aiCleaned),
-        currency: data.currency || 'PHP'
+        currency: data.currency || 'PHP',
+        extractionStatus: data.extractionStatus,
+        extractionSources: data.extractionSources
       };
 
       setImportedPreview(previewObj);
       setPreviewReadMore(false);
+      setShowExtractionSources(false);
       triggerNotification('✨ Matagumpay na na-retrieve ang product metadata! I-review sa preview bago i-apply.', 'success');
     } catch (err: any) {
       triggerNotification('Automatic product information is unavailable. Please enter the product details manually.', 'info');
@@ -1354,6 +1376,96 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
                     {importedPreview.brand && importedPreview.seller ? ' • ' : ''}
                     {importedPreview.seller ? `Store: ${importedPreview.seller}` : ''}
                   </span>
+                )}
+              </div>
+
+              {/* EXTRACTION STATUS INDICATORS */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+                <div className={`p-2 rounded-xl border flex items-center gap-1.5 ${
+                  importedPreview.name ? 'bg-emerald-50/70 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'
+                }`}>
+                  {importedPreview.name ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />}
+                  <span className="truncate font-semibold">{importedPreview.name ? 'Title: Detected' : 'Title: Missing'}</span>
+                </div>
+
+                <div className={`p-2 rounded-xl border flex items-center gap-1.5 ${
+                  importedPreview.image ? 'bg-emerald-50/70 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'
+                }`}>
+                  {importedPreview.image ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />}
+                  <span className="truncate font-semibold">{importedPreview.image ? 'Image: Detected' : 'Image: Missing'}</span>
+                </div>
+
+                <div className={`p-2 rounded-xl border flex items-center gap-1.5 ${
+                  importedPreview.priceAvailable ? 'bg-emerald-50/70 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'
+                }`}>
+                  {importedPreview.priceAvailable ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />}
+                  <span className="truncate font-semibold">{importedPreview.priceAvailable ? 'Price: Detected' : 'Price: Unavailable'}</span>
+                </div>
+
+                <div className={`p-2 rounded-xl border flex items-center gap-1.5 ${
+                  importedPreview.description ? 'bg-emerald-50/70 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'
+                }`}>
+                  {importedPreview.description ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />}
+                  <span className="truncate font-semibold">{importedPreview.description ? 'Description: Detected' : 'Description: Missing'}</span>
+                </div>
+              </div>
+
+              {/* MISSING FIELD WARNING BANNER (IF ANY KEY FIELD IS MISSING) */}
+              {(!importedPreview.image || !importedPreview.description || !importedPreview.priceAvailable) && (
+                <div className="p-3 bg-amber-50/90 border border-amber-200/90 rounded-xl flex items-start gap-2.5 text-amber-900">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-bold text-xs">Some product fields could not be automatically extracted from this store page:</p>
+                    <ul className="list-disc list-inside text-[11px] text-amber-800 space-y-0.5">
+                      {!importedPreview.image && <li>Product image not publicly accessible. Please add image manually.</li>}
+                      {!importedPreview.description && <li>Product description not publicly accessible. Please enter description manually.</li>}
+                      {!importedPreview.priceAvailable && <li>Price not publicly accessible. Please check on partner store and enter manually.</li>}
+                    </ul>
+                    <p className="text-[10px] text-amber-700">Click <strong>✏️ EDIT</strong> below to supply missing fields before saving to catalogue.</p>
+                  </div>
+                </div>
+              )}
+
+              {/* COLLAPSIBLE EXTRACTION SOURCES AUDIT */}
+              <div className="border border-slate-200 rounded-xl bg-slate-50/60 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowExtractionSources(!showExtractionSources)}
+                  className="w-full px-3 py-2 text-left flex items-center justify-between text-[11px] font-bold text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Search className="w-3.5 h-3.5 text-slate-500" />
+                    View Extraction Sources & Diagnostics
+                  </span>
+                  {showExtractionSources ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
+                </button>
+                {showExtractionSources && (
+                  <div className="p-3 border-t border-slate-200 space-y-1 text-[11px] bg-white divide-y divide-slate-100">
+                    <div className="flex justify-between py-1">
+                      <span className="text-slate-500 font-semibold">Title Source:</span>
+                      <span className="font-mono text-slate-800 font-bold">{importedPreview.extractionSources?.title || 'None / Manual'}</span>
+                    </div>
+                    <div className="flex justify-between py-1">
+                      <span className="text-slate-500 font-semibold">Description Source:</span>
+                      <span className="font-mono text-slate-800 font-bold">{importedPreview.extractionSources?.description || 'None / Manual'}</span>
+                    </div>
+                    <div className="flex justify-between py-1">
+                      <span className="text-slate-500 font-semibold">Primary Image Source:</span>
+                      <span className="font-mono text-slate-800 font-bold">{importedPreview.extractionSources?.image || 'None / Manual'}</span>
+                    </div>
+                    <div className="flex justify-between py-1">
+                      <span className="text-slate-500 font-semibold">Gallery Source:</span>
+                      <span className="font-mono text-slate-800 font-bold">{importedPreview.extractionSources?.gallery || 'None'}</span>
+                    </div>
+                    <div className="flex justify-between py-1">
+                      <span className="text-slate-500 font-semibold">Price Source:</span>
+                      <span className="font-mono text-slate-800 font-bold">{importedPreview.extractionSources?.price || 'None / Manual'}</span>
+                    </div>
+                    <div className="flex justify-between py-1">
+                      <span className="text-slate-500 font-semibold">Platform Detected:</span>
+                      <span className="font-mono text-slate-800 font-bold">{importedPreview.extractionSources?.platform || importedPreview.platform}</span>
+                    </div>
+                  </div>
                 )}
               </div>
 
