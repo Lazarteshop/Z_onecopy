@@ -68,6 +68,21 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
   const [fetchingPreview, setFetchingPreview] = useState<boolean>(false);
   const [savingProduct, setSavingProduct] = useState<boolean>(false);
 
+  // 🛍️ Affiliate Auto-Import Preview Modal State
+  const [importedPreview, setImportedPreview] = useState<{
+    name: string;
+    image: string;
+    images: string[];
+    description: string;
+    price: number | null;
+    priceAvailable: boolean;
+    platform: string;
+    affiliateUrl: string;
+    seller?: string;
+    currency?: string;
+  } | null>(null);
+  const [previewReadMore, setPreviewReadMore] = useState<boolean>(false);
+
   // Orders state
   const [orders, setOrders] = useState<ShopOrder[]>([]);
   const [orderStats, setOrderStats] = useState<any>(null);
@@ -209,10 +224,15 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
     });
   };
 
-  // Auto-Detect Affiliate Metadata with graceful fallback
+  // Auto-Detect Affiliate Metadata with graceful fallback and preview modal
   const handleAutoDetectAffiliate = async () => {
     if (!pAffiliateUrl.trim()) {
-      triggerNotification('Pakilagay muna ang Affiliate URL bago mag-detect.', 'error');
+      triggerNotification('Pakilagay muna ang Affiliate Product Link bago mag-import.', 'error');
+      return;
+    }
+
+    if (!/^https?:\/\//i.test(pAffiliateUrl.trim())) {
+      triggerNotification('Ang Affiliate Product Link ay dapat magsimula sa http:// o https://', 'error');
       return;
     }
 
@@ -230,20 +250,65 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
       }
 
       const { data } = json;
-      if (data.title && !pName.trim()) setPName(data.title);
-      if (data.image && (!pImage.trim() || pImage.includes('unsplash'))) setPImage(data.image);
-      if (data.description && !pDescription.trim()) setPDescription(data.description);
-      if (data.platform) setPPlatform(data.platform);
+      if (!data.name && !data.title && !data.image && (!data.images || data.images.length === 0)) {
+        triggerNotification('Automatic product information is unavailable. Please enter the product details manually.', 'info');
+        return;
+      }
 
-      triggerNotification(
-        data.title ? '✓ Nakuha ang product preview metadata!' : 'Manual fallback: Maaari mong ilagay ang detalye nang manual.',
-        data.title ? 'success' : 'info'
-      );
+      const allImages = Array.isArray(data.images) && data.images.length > 0 
+        ? data.images 
+        : (data.image ? [data.image] : []);
+
+      const previewObj = {
+        name: (data.name || data.title || '').trim(),
+        image: data.image || (allImages[0] || ''),
+        images: allImages,
+        description: (data.description || '').trim(),
+        price: typeof data.price === 'number' && !isNaN(data.price) ? data.price : null,
+        priceAvailable: Boolean(data.priceAvailable && typeof data.price === 'number'),
+        platform: data.platform || 'Other',
+        affiliateUrl: data.affiliateUrl || pAffiliateUrl.trim(),
+        seller: data.seller,
+        currency: data.currency || 'PHP'
+      };
+
+      setImportedPreview(previewObj);
+      setPreviewReadMore(false);
+      triggerNotification('✨ Matagumpay na na-retrieve ang product metadata! I-review sa preview bago i-apply.', 'success');
     } catch (err: any) {
-      triggerNotification(`Hindi ma-auto-detect: ${err.message}. Pakilagay nang manual ang detalye.`, 'info');
+      triggerNotification('Automatic product information is unavailable. Please enter the product details manually.', 'info');
     } finally {
       setFetchingPreview(false);
     }
+  };
+
+  // Confirm and populate form from imported preview
+  const handleUseImportedProduct = () => {
+    if (!importedPreview) return;
+    if (importedPreview.name) setPName(importedPreview.name);
+    if (importedPreview.image) setPImage(importedPreview.image);
+    if (importedPreview.images && importedPreview.images.length > 0) {
+      setPImages(importedPreview.images);
+    }
+    if (importedPreview.description) setPDescription(importedPreview.description);
+    if (importedPreview.priceAvailable && importedPreview.price !== null) {
+      setPPrice(String(importedPreview.price));
+    }
+    if (importedPreview.platform) setPPlatform(importedPreview.platform);
+    if (importedPreview.affiliateUrl) setPAffiliateUrl(importedPreview.affiliateUrl);
+    setPIsAffiliate(true);
+    setImportedPreview(null);
+    triggerNotification('✓ Inilagay ang imported product details sa form. Pindutin ang "I-save ang Produkto" upang opisyal na mai-save.', 'success');
+  };
+
+  const handleEditImportedProduct = () => {
+    handleUseImportedProduct();
+    triggerNotification('Maaari mo nang i-adjust ang anumang detalye sa form bago i-save.', 'info');
+  };
+
+  const handleCancelImportedProduct = () => {
+    setImportedPreview(null);
+    triggerNotification('Kinansela ang imported preview.', 'info');
   };
 
   // Save Product (Create or Edit)
@@ -871,24 +936,28 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
                     </p>
 
                     <div>
-                      <label className="block text-slate-700 font-bold mb-1">Affiliate Destination URL*</label>
-                      <div className="flex gap-2">
+                      <label className="block text-slate-700 font-bold mb-1">
+                        Affiliate Product Link*
+                        <span className="text-slate-400 font-normal ml-1">(TikTok Shop, Shopee, Lazada, Amazon, atbp.)</span>
+                      </label>
+                      <div className="flex flex-col sm:flex-row gap-2">
                         <input
                           type="url"
                           required={pIsAffiliate}
                           value={pAffiliateUrl}
                           onChange={(e) => setPAffiliateUrl(e.target.value)}
-                          placeholder="https://shopee.ph/product/... o TikTok Shop link"
+                          placeholder="Hal. https://vt.tiktok.com/... o Shopee/Lazada/Amazon link"
                           className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:border-orange-500"
                         />
                         <button
                           type="button"
                           onClick={handleAutoDetectAffiliate}
                           disabled={fetchingPreview || !pAffiliateUrl.trim()}
-                          className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl flex items-center gap-1 border border-indigo-200 transition disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                          className="px-3.5 py-2.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-black rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition active:scale-98 disabled:opacity-50 cursor-pointer whitespace-nowrap text-xs"
+                          title="Auto-import product details from affiliate link"
                         >
-                          <Sparkles className="w-3.5 h-3.5" />
-                          <span>{fetchingPreview ? 'Detecting...' : 'Auto-Detect'}</span>
+                          <Search className="w-3.5 h-3.5" />
+                          <span>{fetchingPreview ? 'Importing...' : '🔍 AUTO-IMPORT PRODUCT DETAILS'}</span>
                         </button>
                       </div>
                     </div>
@@ -903,6 +972,7 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
                         <option value="Shopee">Shopee</option>
                         <option value="TikTok Shop">TikTok Shop</option>
                         <option value="Lazada">Lazada</option>
+                        <option value="Amazon">Amazon</option>
                         <option value="Other">Other Partner</option>
                       </select>
                     </div>
@@ -1151,6 +1221,197 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== 🛍️ MODAL: IMPORTED PRODUCT PREVIEW ==================== */}
+      {importedPreview && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-xs overflow-y-auto animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-lg w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden my-auto animate-scaleUp">
+            {/* PREVIEW HEADER */}
+            <div className="bg-slate-900 text-white p-4 sm:p-5 flex items-center justify-between shrink-0 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <span className="p-2 rounded-xl bg-orange-500/20 text-orange-400">
+                  <Sparkles className="w-4 h-4" />
+                </span>
+                <div>
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-orange-400 block font-bold">
+                    Affiliate Auto-Import
+                  </span>
+                  <h3 className="text-sm font-black text-white">
+                    IMPORTED PRODUCT PREVIEW
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCancelImportedProduct}
+                className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white transition cursor-pointer"
+                title="Isara ang Preview"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* PREVIEW BODY */}
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-4 text-xs">
+              {/* PLATFORM BADGE & SELLER */}
+              <div className="flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-900 border border-amber-300">
+                  🛍️ Platform: {importedPreview.platform}
+                </span>
+                {importedPreview.seller && (
+                  <span className="text-[11px] text-slate-500 font-semibold truncate max-w-[180px]">
+                    Store: {importedPreview.seller}
+                  </span>
+                )}
+              </div>
+
+              {/* PRIMARY IMAGE & GALLERY THUMBNAILS */}
+              <div className="space-y-2">
+                <div className="relative rounded-2xl overflow-hidden aspect-video sm:aspect-[4/3] bg-slate-100 border border-slate-200 shadow-inner flex items-center justify-center">
+                  {importedPreview.image ? (
+                    <img
+                      src={importedPreview.image}
+                      alt={importedPreview.name}
+                      className="w-full h-full object-contain bg-white"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="text-slate-400 text-xs flex flex-col items-center gap-2">
+                      <ImageIcon className="w-8 h-8 opacity-40" />
+                      <span>Walang nade-detect na larawan</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* ADDITIONAL IMAGES THUMBNAIL STRIP */}
+                {Array.isArray(importedPreview.images) && importedPreview.images.length > 1 && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      Additional Images ({importedPreview.images.length})
+                    </label>
+                    <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+                      {importedPreview.images.map((img, idx) => (
+                        <div
+                          key={idx}
+                          className="w-14 h-14 rounded-xl border border-slate-200 overflow-hidden shrink-0 bg-white"
+                        >
+                          <img
+                            src={img}
+                            alt={`Thumb ${idx + 1}`}
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* PRODUCT NAME */}
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">
+                  Product Name
+                </label>
+                <p className="font-black text-sm text-slate-900 leading-snug">
+                  {importedPreview.name || (
+                    <span className="text-slate-400 italic">Walang nakuha na pamagat</span>
+                  )}
+                </p>
+              </div>
+
+              {/* PRICE */}
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">
+                  Product Price
+                </label>
+                {importedPreview.priceAvailable && importedPreview.price !== null ? (
+                  <div className="text-base font-black text-emerald-600 font-mono flex items-center gap-1">
+                    <span>₱{importedPreview.price.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+                    {importedPreview.currency && importedPreview.currency !== 'PHP' && (
+                      <span className="text-[10px] text-slate-400 font-bold">({importedPreview.currency})</span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 font-bold text-xs">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    <span>Price unavailable — Please enter manually</span>
+                  </div>
+                )}
+              </div>
+
+              {/* FULL DESCRIPTION (WITH READ MORE / READ LESS) */}
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">
+                  Product Description
+                </label>
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-slate-700 leading-relaxed whitespace-pre-wrap">
+                  {importedPreview.description ? (
+                    <div>
+                      <p>
+                        {previewReadMore || importedPreview.description.length <= 220
+                          ? importedPreview.description
+                          : `${importedPreview.description.slice(0, 220)}...`}
+                      </p>
+                      {importedPreview.description.length > 220 && (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewReadMore(!previewReadMore)}
+                          className="mt-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer"
+                        >
+                          {previewReadMore ? 'Read Less ▲' : 'Read More ▼'}
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-slate-400 italic">Walang deskripsyon na nakita sa page.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* AFFILIATE DESTINATION LINK */}
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">
+                  Affiliate Link
+                </label>
+                <p className="text-[11px] text-slate-600 font-mono truncate bg-slate-100 p-2 rounded-lg border border-slate-200">
+                  {importedPreview.affiliateUrl}
+                </p>
+              </div>
+            </div>
+
+            {/* 3 PREVIEW ACTIONS: USE, EDIT, CANCEL */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 shrink-0 flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={handleUseImportedProduct}
+                className="flex-1 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-black text-xs transition flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>✅ USE THIS PRODUCT</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleEditImportedProduct}
+                className="py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Edit className="w-4 h-4" />
+                <span>✏️ EDIT</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCancelImportedProduct}
+                className="py-3 px-4 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+                <span>❌ CANCEL</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

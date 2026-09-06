@@ -12954,7 +12954,12 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
       const fetchPromise = (async () => {
         let metaTitle = '';
         let metaImage = '';
+        const metaImages: string[] = [];
         let metaDescription = '';
+        let metaPrice: number | null = null;
+        let priceAvailable = false;
+        let metaSeller = '';
+        let metaCurrency = 'PHP';
 
         try {
           const response = await fetch(rawUrl, {
@@ -12967,23 +12972,83 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
 
           if (response.ok) {
             const text = await response.text();
-            const titleMatch = text.match(/<meta\s+property=["']og:title["']\s+content=["'](.*?)["']/i) ||
-                               text.match(/<meta\s+name=["']twitter:title["']\s+content=["'](.*?)["']/i) ||
+
+            // 1. Title
+            const titleMatch = text.match(/<meta\s+property=["'](?:og:title|twitter:title)["']\s+content=["'](.*?)["']/i) ||
+                               text.match(/<meta\s+name=["'](?:twitter:title|title)["']\s+content=["'](.*?)["']/i) ||
                                text.match(/<title[^>]*>(.*?)<\/title>/i);
             if (titleMatch && titleMatch[1]) {
-              metaTitle = titleMatch[1].trim().replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+              metaTitle = titleMatch[1].trim()
+                .replace(/<[^>]*>/g, '')
+                .replace(/&amp;/g, '&')
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'")
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>');
             }
 
-            const imageMatch = text.match(/<meta\s+property=["']og:image["']\s+content=["'](.*?)["']/i) ||
-                               text.match(/<meta\s+name=["']twitter:image["']\s+content=["'](.*?)["']/i);
-            if (imageMatch && imageMatch[1]) {
-              metaImage = imageMatch[1].trim();
+            // 2. Images (Multiple permitted images extraction)
+            const imgRegex = /<meta\s+(?:property|name)=["'](?:og:image|og:image:secure_url|twitter:image|twitter:image:src)["']\s+content=["'](.*?)["']/gi;
+            let m: RegExpExecArray | null;
+            while ((m = imgRegex.exec(text)) !== null) {
+              const urlCandidate = m[1]?.trim();
+              if (urlCandidate && /^https?:\/\//i.test(urlCandidate) && !urlCandidate.includes('<script') && !urlCandidate.includes('.js')) {
+                if (!metaImages.includes(urlCandidate)) {
+                  metaImages.push(urlCandidate);
+                }
+              }
             }
 
-            const descMatch = text.match(/<meta\s+property=["']og:description["']\s+content=["'](.*?)["']/i) ||
-                              text.match(/<meta\s+name=["']description["']\s+content=["'](.*?)["']/i);
+            if (metaImages.length > 0) {
+              metaImage = metaImages[0];
+            }
+
+            // 3. Description (Sanitized)
+            const descMatch = text.match(/<meta\s+property=["'](?:og:description|twitter:description)["']\s+content=["'](.*?)["']/i) ||
+                              text.match(/<meta\s+name=["'](?:description|twitter:description)["']\s+content=["'](.*?)["']/i);
             if (descMatch && descMatch[1]) {
-              metaDescription = descMatch[1].trim().replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+              metaDescription = descMatch[1].trim()
+                .replace(/<[^>]*>/g, '')
+                .replace(/&amp;/g, '&')
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'")
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>');
+            }
+
+            // 4. Price Extraction (Reliable Public Metadata or JSON-LD)
+            const priceMetaMatch = text.match(/<meta\s+property=["'](?:product:price:amount|og:price:amount)["']\s+content=["'](.*?)["']/i) ||
+                                   text.match(/<meta\s+name=["'](?:price|product_price)["']\s+content=["'](.*?)["']/i);
+            if (priceMetaMatch && priceMetaMatch[1]) {
+              const rawP = parseFloat(priceMetaMatch[1].replace(/,/g, '').trim());
+              if (!isNaN(rawP) && rawP > 0) {
+                metaPrice = rawP;
+                priceAvailable = true;
+              }
+            }
+
+            // Optional: check JSON-LD schema if meta tag missing
+            if (!priceAvailable) {
+              const jsonLdMatch = text.match(/"price"\s*:\s*"?([0-9]+(?:\.[0-9]{1,2})?)"?/i) ||
+                                  text.match(/"lowPrice"\s*:\s*"?([0-9]+(?:\.[0-9]{1,2})?)"?/i);
+              if (jsonLdMatch && jsonLdMatch[1]) {
+                const parsed = parseFloat(jsonLdMatch[1]);
+                if (!isNaN(parsed) && parsed > 0) {
+                  metaPrice = parsed;
+                  priceAvailable = true;
+                }
+              }
+            }
+
+            // 5. Currency & Seller
+            const currMatch = text.match(/<meta\s+property=["'](?:product:price:currency|og:price:currency)["']\s+content=["'](.*?)["']/i);
+            if (currMatch && currMatch[1]) {
+              metaCurrency = currMatch[1].trim();
+            }
+
+            const siteNameMatch = text.match(/<meta\s+property=["']og:site_name["']\s+content=["'](.*?)["']/i);
+            if (siteNameMatch && siteNameMatch[1]) {
+              metaSeller = siteNameMatch[1].trim();
             }
           }
         } catch (fetchErr) {
@@ -12992,10 +13057,16 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
 
         const data = {
           title: metaTitle || '',
+          name: metaTitle || '',
           image: metaImage || '',
+          images: metaImages,
           description: metaDescription || '',
+          price: metaPrice,
+          priceAvailable,
           platform: detectedPlatform,
-          affiliateUrl: rawUrl
+          affiliateUrl: rawUrl,
+          seller: metaSeller,
+          currency: metaCurrency
         };
 
         // Cache result with eviction if over max entries limit

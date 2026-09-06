@@ -325,6 +325,8 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
         .then(data => {
           if (data.success && data.product) {
             setSelectedProductForDetails(data.product);
+          } else {
+            triggerNotification('Z-oneShop', 'Hindi Magagamit ang Produkto: Ang ibinahaging produkto ay maaaring hindi na aktibo o tinanggal.', 'warning');
           }
         })
         .catch(err => {
@@ -2248,7 +2250,18 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
       {/* ========================================================================= */}
       <ZoneShopProductDetailsModal
         isOpen={Boolean(selectedProductForDetails)}
-        onClose={() => setSelectedProductForDetails(null)}
+        onClose={() => {
+          setSelectedProductForDetails(null);
+          try {
+            const url = new URL(window.location.href);
+            if (url.searchParams.has('shopProduct') || url.searchParams.has('product') || url.searchParams.has('shop')) {
+              url.searchParams.delete('shopProduct');
+              url.searchParams.delete('product');
+              url.searchParams.delete('shop');
+              window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
+            }
+          } catch (e) {}
+        }}
         product={selectedProductForDetails}
         currentUser={user}
         onAddToCart={(prod, qty) => handleAddToCart(prod, qty)}

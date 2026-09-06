@@ -362,22 +362,48 @@ export default function App() {
           sharedBy: p.get('sharedBy') || p.get('ref') || undefined
         };
       }
+      const saved = sessionStorage.getItem('pending_shop_product_target');
+      if (saved) {
+        sessionStorage.removeItem('pending_shop_product_target');
+        const parsed = JSON.parse(saved);
+        if (parsed?.productId) {
+          return parsed;
+        }
+      }
     } catch (e) {}
     return null;
   });
 
+  const [isShopProductDeepLink, setIsShopProductDeepLink] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get('shopProduct') || p.get('product') || p.get('shop')) return true;
+      const saved = sessionStorage.getItem('pending_shop_product_target');
+      if (saved) return true;
+    } catch (e) {}
+    return false;
+  });
+
   const [guestShopProduct, setGuestShopProduct] = useState<ShopProduct | null>(null);
+  const [productNotFoundModal, setProductNotFoundModal] = useState<boolean>(false);
 
   useEffect(() => {
     if (!publicShopProductParam?.productId) return;
+    setIsShopProductDeepLink(true);
     fetch(`/api/shop/products/${publicShopProductParam.productId}${publicShopProductParam.sharedBy ? `?sharedBy=${encodeURIComponent(publicShopProductParam.sharedBy)}` : ''}`)
       .then(r => r.json())
       .then(d => {
         if (d.success && d.product) {
           setGuestShopProduct(d.product);
+          setProductNotFoundModal(false);
+        } else {
+          setProductNotFoundModal(true);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setProductNotFoundModal(true);
+      });
   }, [publicShopProductParam]);
 
   // Viral registration attribution tracker
@@ -1549,6 +1575,23 @@ export default function App() {
         localStorage.setItem('gcash_click_earn_token', result.token);
         setToken(result.token);
         triggerNotification(authMode === 'login' ? '🔑 Welcome back!' : '🎉 Welcome! Tagumpay na ginawa ang account mo.', 'success');
+
+        // Preserve and restore deep-link product target in URL
+        const pendingShop = sessionStorage.getItem('pending_shop_product_target');
+        if (pendingShop) {
+          try {
+            const parsed = JSON.parse(pendingShop);
+            if (parsed?.productId) {
+              const url = new URL(window.location.href);
+              url.searchParams.set('shopProduct', parsed.productId);
+              if (parsed.sharedBy) {
+                url.searchParams.set('sharedBy', parsed.sharedBy);
+              }
+              window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
+            }
+          } catch (e) {}
+        }
+
         setTimeout(() => {
           window.location.reload();
         }, 1000);
@@ -2086,13 +2129,13 @@ export default function App() {
       </AnimatePresence>
 
       {/* 🌐 FLOATING DEMO TESTING WATERMARK BANNER (WHEN CLONE / DEMO MODE IS ACTIVE) */}
-      {isDemoMode && (
+      {isDemoMode && !isShopProductDeepLink && (
         <DemoTestingFloatingBanner />
       )}
 
       {/* 🚀 HIGH CONVERTING PROMO AD BANNER MODAL FOR UNSUBSCRIBED USERS */}
       <PromoAdBannerModal
-        isOpen={showPromoAdModal && Boolean(user) && !user?.isAdmin && isSubscriptionExpired()}
+        isOpen={!isShopProductDeepLink && showPromoAdModal && Boolean(user) && !user?.isAdmin && isSubscriptionExpired()}
         onClose={() => setShowPromoAdModal(false)}
         onSelectPlan={(planId) => {
           setActiveTab('cashout');
@@ -2123,7 +2166,7 @@ export default function App() {
 
       {/* 📢 OFFICIAL Z-ONEAPP WITHDRAWAL POLICY UPDATE POP-UP MODAL (Lumalabas tuwing mag-oopen ang user) */}
       <WithdrawalPolicyModal
-        isOpen={showWithdrawalPolicyModal && Boolean(user)}
+        isOpen={!isShopProductDeepLink && showWithdrawalPolicyModal && Boolean(user)}
         onClose={() => {
           setShowWithdrawalPolicyModal(false);
         }}
@@ -3448,17 +3491,85 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
       {!user && guestShopProduct && (
         <ZoneShopProductDetailsModal
           isOpen={Boolean(!user && guestShopProduct)}
-          onClose={() => setGuestShopProduct(null)}
+          onClose={() => {
+            setGuestShopProduct(null);
+            setIsShopProductDeepLink(false);
+            try {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('shopProduct');
+              url.searchParams.delete('product');
+              url.searchParams.delete('shop');
+              window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
+            } catch (e) {}
+          }}
           product={guestShopProduct}
           currentUser={null}
           onRequestLogin={() => {
+            if (guestShopProduct) {
+              sessionStorage.setItem('pending_shop_product_target', JSON.stringify({
+                productId: guestShopProduct.id,
+                sharedBy: publicShopProductParam?.sharedBy
+              }));
+            }
+            setAuthMode('login');
+            setGuestShopProduct(null);
+            triggerNotification('Mag-login upang buksan at makabili sa Z-oneShop.', 'info');
+          }}
+          onRequestRegister={() => {
+            if (guestShopProduct) {
+              sessionStorage.setItem('pending_shop_product_target', JSON.stringify({
+                productId: guestShopProduct.id,
+                sharedBy: publicShopProductParam?.sharedBy
+              }));
+            }
+            if (publicShopProductParam?.sharedBy) {
+              setReferralInput(publicShopProductParam.sharedBy);
+            }
             setAuthMode('register');
             setGuestShopProduct(null);
-            triggerNotification('Mag-register o mag-login muna upang makabili sa Z-oneShop COD.', 'info');
+            triggerNotification('Gumawa ng account para ma-access ang buong produkto at deals sa Z-oneShop.', 'info');
           }}
           triggerNotification={(msg, type) => triggerNotification(msg, type === 'error' ? 'error' : 'success')}
           sharedByUserId={publicShopProductParam?.sharedBy}
         />
+      )}
+
+      {/* ⚠️ FALLBACK FOR MISSING / INVALID PRODUCT */}
+      {productNotFoundModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-md w-full p-6 text-center shadow-2xl space-y-4 animate-scaleUp text-white">
+            <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
+              <AlertCircle className="w-8 h-8" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-lg font-black text-white">
+                Hindi Magagamit ang Produkto
+              </h3>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Paumanhin, ang ibinahaging produkto ay maaaring nabura, expired, o hindi pansamantalang magagamit sa Z-oneShop Catalogue.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setProductNotFoundModal(false);
+                setIsShopProductDeepLink(false);
+                setPublicShopProductParam(null);
+                setActiveTab('va_shop');
+                try {
+                  const url = new URL(window.location.href);
+                  url.searchParams.delete('shopProduct');
+                  url.searchParams.delete('product');
+                  url.searchParams.delete('shop');
+                  window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
+                } catch (e) {}
+              }}
+              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-slate-950 font-black text-xs transition shadow-lg shadow-orange-500/20 cursor-pointer"
+            >
+              Bumalik sa Z-oneShop
+            </button>
+          </div>
+        </div>
       )}
 
     </div>

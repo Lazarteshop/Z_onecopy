@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Share2,
@@ -25,6 +25,7 @@ interface ZoneShopProductDetailsModalProps {
   currentUser?: UserSession | null;
   onAddToCart?: (product: ShopProduct, quantity: number) => void;
   onRequestLogin?: () => void;
+  onRequestRegister?: () => void;
   triggerNotification: (message: string, type?: 'success' | 'info' | 'error') => void;
   sharedByUserId?: string;
 }
@@ -36,12 +37,27 @@ export const ZoneShopProductDetailsModal: React.FC<ZoneShopProductDetailsModalPr
   currentUser,
   onAddToCart,
   onRequestLogin,
+  onRequestRegister,
   triggerNotification,
   sharedByUserId
 }) => {
   const [quantity, setQuantity] = useState<number>(1);
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
   const [addedSuccess, setAddedSuccess] = useState<boolean>(false);
+
+  // Support Escape key to close modal
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen || !product) return null;
 
@@ -77,39 +93,58 @@ export const ZoneShopProductDetailsModal: React.FC<ZoneShopProductDetailsModalPr
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-xs overflow-y-auto animate-fadeIn">
+    <div 
+      id="zone-shop-product-details-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-xs overflow-y-auto animate-fadeIn"
+    >
       <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden my-auto">
         {/* TOP HEADER */}
-        <div className="p-4 sm:p-5 bg-slate-900 text-white flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400">
-              <ShoppingBag className="w-4 h-4" />
+        <div className="p-3.5 sm:p-5 bg-slate-900 text-white flex items-center justify-between shrink-0 gap-2 border-b border-slate-800">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1">
+            <span className="p-1.5 sm:p-2 rounded-xl bg-indigo-500/20 text-indigo-400 shrink-0">
+              <ShoppingBag className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
             </span>
-            <div className="min-w-0">
-              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] sm:text-[11px] font-mono uppercase tracking-wider text-slate-400 block truncate">
                 {product.isAffiliate ? `Affiliate Partner • ${product.platform || 'Partner'}` : 'Z-oneShop Catalogue'}
               </span>
-              <h3 className="text-sm font-black truncate max-w-[240px] sm:max-w-md">
+              <h3 className="text-xs sm:text-sm font-black truncate text-white leading-tight">
                 {product.name}
               </h3>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          
+          {/* HEADER CONTROLS (SHARE + PROMINENT CLOSE) */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* SHARE BUTTON */}
             <button
+              id="btn-share-product"
               type="button"
               onClick={() => setIsShareModalOpen(true)}
-              className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+              className="px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white transition cursor-pointer flex items-center gap-1.5 text-xs font-bold border border-white/10"
               title="Ibahagi ang Produkto"
+              aria-label="Ibahagi ang Produkto"
             >
-              <Share2 className="w-4 h-4" />
+              <Share2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-300" />
               <span className="hidden sm:inline">I-share</span>
             </button>
+
+            {/* PROMINENT ✕ CLOSE BUTTON */}
             <button
+              id="btn-close-product-details"
               type="button"
               onClick={onClose}
-              className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+              className="w-10 h-10 sm:w-10 sm:h-10 min-w-[40px] min-h-[40px] rounded-xl bg-white/10 hover:bg-rose-600 active:bg-rose-700 text-white border border-white/20 hover:border-rose-500 transition-all duration-150 flex items-center justify-center shrink-0 shadow-sm cursor-pointer active:scale-95 focus:outline-none focus:ring-2 focus:ring-rose-400"
+              aria-label="Close product details"
+              title="Close product details"
             >
-              <X className="w-5 h-5" />
+              <X className="w-5 h-5 sm:w-5.5 sm:h-5.5 stroke-[2.5]" />
+              <span className="sr-only">Close product details</span>
             </button>
           </div>
         </div>
@@ -230,17 +265,36 @@ export const ZoneShopProductDetailsModal: React.FC<ZoneShopProductDetailsModalPr
 
         {/* BOTTOM ACTION BAR */}
         <div className="p-4 sm:p-5 bg-slate-50 border-t border-slate-200 shrink-0">
-          {product.isAffiliate ? (
+          {!currentUser ? (
+            <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full">
+              <button
+                type="button"
+                onClick={onRequestRegister || onRequestLogin}
+                className="w-full sm:flex-1 py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-black text-xs transition flex items-center justify-center gap-2 shadow-md cursor-pointer whitespace-nowrap"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>CREATE ACCOUNT TO VIEW PRODUCT</span>
+              </button>
+              <button
+                type="button"
+                onClick={onRequestLogin}
+                className="w-full sm:w-auto min-w-[130px] py-3 px-5 rounded-2xl bg-blue-600 hover:bg-blue-700 active:scale-98 text-white font-black text-xs transition flex items-center justify-center gap-2 shadow-md cursor-pointer whitespace-nowrap"
+              >
+                <ExternalLink className="w-4 h-4" />
+                <span>LOGIN</span>
+              </button>
+            </div>
+          ) : product.isAffiliate ? (
             <div className="flex flex-col sm:flex-row items-center gap-3">
               <div className="text-[11px] text-slate-500 text-center sm:text-left flex-1 font-medium">
-                Pindutin ang <strong>View Product</strong> para mabili ito nang diretso sa aming partner platform ({product.platform || 'Partner Store'}).
+                Pindutin para mabili ito nang diretso sa aming partner platform ({product.platform || 'Partner Store'}).
               </div>
               <button
                 type="button"
                 onClick={handleOpenAffiliateLink}
                 className="w-full sm:w-auto bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black text-xs py-3 px-6 rounded-2xl transition flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 cursor-pointer"
               >
-                <span>🛒 TINGNAN ANG PRODUKTO (VIEW PRODUCT)</span>
+                <span>BUMILI SA {product.platform ? product.platform.toUpperCase() : 'STORE'} (₱{product.price.toFixed(2)})</span>
                 <ExternalLink className="w-4 h-4" />
               </button>
             </div>
@@ -289,9 +343,7 @@ export const ZoneShopProductDetailsModal: React.FC<ZoneShopProductDetailsModalPr
                   <>
                     <ShoppingCart className="w-4 h-4" />
                     <span>
-                      {currentUser
-                        ? `Ilagay sa Cart (${quantity}) • ₱${(product.price * quantity).toFixed(2)}`
-                        : 'Mag-login para Ma-order (Login to Order)'}
+                      {`Ilagay sa Cart (${quantity}) • ₱${(product.price * quantity).toFixed(2)}`}
                     </span>
                   </>
                 )}
