@@ -30,7 +30,7 @@ import {
   Plus,
   Star
 } from 'lucide-react';
-import { ShopProduct, ShopOrder, ShopOrderStatus } from '../types';
+import { ShopProduct, ShopOrder, ShopOrderStatus, ZONE_SHOP_CATEGORIES, normalizeShopCategory } from '../types';
 
 interface ZoneShopAdminManagementProps {
   token: string;
@@ -53,7 +53,7 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
 
   // Product Form state
   const [pName, setPName] = useState<string>('');
-  const [pCategory, setPCategory] = useState<string>('Gadgets');
+  const [pCategory, setPCategory] = useState<string>('Electronics');
   const [pPrice, setPPrice] = useState<string>('');
   const [pOriginalPrice, setPOriginalPrice] = useState<string>('');
   const [pStock, setPStock] = useState<string>('50');
@@ -164,7 +164,7 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
   const handleOpenNewProductModal = () => {
     setEditingProduct(null);
     setPName('');
-    setPCategory('Gadgets');
+    setPCategory('Electronics');
     setPPrice('');
     setPOriginalPrice('');
     setPStock('50');
@@ -546,9 +546,14 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
 
   // Filtered Products
   const filteredProducts = products.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-      p.category.toLowerCase().includes(productSearch.toLowerCase());
-    const matchesCategory = productCategoryFilter === 'all' || p.category.toLowerCase() === productCategoryFilter.toLowerCase();
+    const matchesSearch = !productSearch ||
+      p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+      (p.category && p.category.toLowerCase().includes(productSearch.toLowerCase()));
+    const matchesCategory = productCategoryFilter.toLowerCase() === 'all' || 
+      (p.category && (
+        p.category.toLowerCase() === productCategoryFilter.toLowerCase() ||
+        normalizeShopCategory(p.category).toLowerCase() === productCategoryFilter.toLowerCase()
+      ));
     return matchesSearch && matchesCategory;
   });
 
@@ -857,8 +862,8 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
               />
             </div>
 
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar w-full sm:w-auto">
-              {['all', 'Gadgets', 'Fashion', 'Beauty', 'Home', 'Lifestyle'].map(cat => (
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar w-full sm:w-auto pb-1">
+              {['all', ...ZONE_SHOP_CATEGORIES].map(cat => (
                 <button
                   key={cat}
                   onClick={() => setProductCategoryFilter(cat)}
@@ -1091,11 +1096,13 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
                     onChange={(e) => setPCategory(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:border-orange-500"
                   >
-                    <option value="Gadgets">Gadgets</option>
-                    <option value="Fashion">Fashion</option>
-                    <option value="Beauty">Beauty</option>
-                    <option value="Home">Home</option>
-                    <option value="Lifestyle">Lifestyle</option>
+                    {/* Backward compatibility: preserve existing custom or legacy category if not in list */}
+                    {pCategory && !(ZONE_SHOP_CATEGORIES as readonly string[]).includes(pCategory) && (
+                      <option value={pCategory}>{pCategory} (Existing)</option>
+                    )}
+                    {ZONE_SHOP_CATEGORIES.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -1542,6 +1549,26 @@ export const ZoneShopAdminManagement: React.FC<ZoneShopAdminManagementProps> = (
                     <span>Price unavailable — Please enter manually</span>
                   </div>
                 )}
+              </div>
+
+              {/* ASSIGN CATEGORY (STANDARDIZED MASTER LIST) */}
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">
+                  Assign Category (Z-oneShop Master List)*
+                </label>
+                <select
+                  value={pCategory}
+                  onChange={(e) => setPCategory(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-semibold text-slate-900 text-xs focus:outline-none focus:border-orange-500"
+                >
+                  {/* Backward compatibility: preserve existing custom or legacy category if not in list */}
+                  {pCategory && !(ZONE_SHOP_CATEGORIES as readonly string[]).includes(pCategory) && (
+                    <option value={pCategory}>{pCategory} (Existing)</option>
+                  )}
+                  {ZONE_SHOP_CATEGORIES.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
               </div>
 
               {/* KEY HIGHLIGHTS / BULLETS */}

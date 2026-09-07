@@ -1617,6 +1617,29 @@ interface DBStructure {
   depositRequests?: DepositRequest[];
   bilibiliFeedItems?: BilibiliFeedItem[];
   bilibiliFeedConfig?: BilibiliFeedConfig;
+  subscriptionPayments?: SubscriptionPayment[];
+}
+
+interface SubscriptionPayment {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userAvatar?: string;
+  planId: string;
+  planName: string;
+  amount: number;
+  gcashAccountName: string;
+  gcashMobileNumber: string;
+  referenceNumber: string;
+  paymentDateTime: string;
+  receiptScreenshot: string;
+  notes?: string;
+  submittedAt: string;
+  status: 'pending' | 'approved' | 'rejected';
+  rejectionReason?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
 }
 
 interface DepositRequest {
@@ -2498,6 +2521,9 @@ function loadDB(): DBStructure {
     }
     if (!loaded.depositRequests) {
       loaded.depositRequests = [];
+    }
+    if (!loaded.subscriptionPayments) {
+      loaded.subscriptionPayments = [];
     }
     if (!loaded.bilibiliFeedItems) {
       loaded.bilibiliFeedItems = [];
@@ -3983,7 +4009,8 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
       'kiddie_content',
       'challenges',
       'challenge_entries',
-      'sponsored_missions'
+      'sponsored_missions',
+      'subscription_payments'
     ];
 
     // Completely isolated temporary recovery buffer
@@ -4026,12 +4053,13 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
     const dbChallenges = fetched['challenges'] || [];
     const dbEntries = fetched['challenge_entries'] || [];
     const dbMissions = fetched['sponsored_missions'] || [];
+    const dbSubPayments = fetched['subscription_payments'] || [];
 
     const hasAnyCloudData = dbUsers.length > 0 || dbStories.length > 0 || dbAlbums.length > 0 || dbGroupChats.length > 0 || 
                             dbGroupMessages.length > 0 || dbDMs.length > 0 || dbPosts.length > 0 || 
                             dbReels.length > 0 || dbShopOrders.length > 0 || dbCampaigns.length > 0 || 
                             dbMerchantAds.length > 0 || dbShopProducts.length > 0 || dbRegisteredDevices.length > 0 ||
-                            dbChallenges.length > 0 || dbMissions.length > 0;
+                            dbChallenges.length > 0 || dbMissions.length > 0 || dbSubPayments.length > 0;
 
     const localDB = loadDB(); // Read current local records
 
@@ -4110,7 +4138,8 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
         deviceTransfers: localDB.deviceTransfers || [],
         creatorChallenges: finalChallenges.length > 0 ? finalChallenges : INITIAL_CREATOR_CHALLENGES,
         challengeEntries: finalEntries.length > 0 ? finalEntries : INITIAL_CHALLENGE_ENTRIES,
-        sponsoredMissions: finalMissions.length > 0 ? finalMissions : INITIAL_SPONSORED_MISSIONS
+        sponsoredMissions: finalMissions.length > 0 ? finalMissions : INITIAL_SPONSORED_MISSIONS,
+        subscriptionPayments: mergeCloudFirst(localDB.subscriptionPayments || [], dbSubPayments)
       };
 
       // Admin credential verification
@@ -7416,8 +7445,363 @@ app.post('/api/admin/subscription/:userId/decline', (req, res) => {
     details: `Ang iyong hiling para sa ${planName} ay tinanggihan ng admin. Mangyaring i-verify ang iyong de-posito o makipag-ugnayan sa Admin.`
   });
 
+  // Sync any linked pending payment submission
+  const linkedPayment = (db.subscriptionPayments || []).find(
+    p => p.userId === userId && p.status === 'pending'
+  );
+  if (linkedPayment) {
+    linkedPayment.status = 'rejected';
+    linkedPayment.rejectionReason = req.body?.reason || 'Tinanggihan ng Admin.';
+    linkedPayment.reviewedAt = new Date().toISOString();
+    linkedPayment.reviewedBy = adminUser.id;
+    safeCloudSync('update', 'subscription_payments', linkedPayment.id, linkedPayment);
+  }
+
   saveDB(db);
+  safeCloudSync('update', 'users', user.id, { subscription: user.subscription });
   res.json({ success: true, message: `Subscription ay matagumpay na tinanggihan.` });
+});
+
+// ============================================
+//   GCASH INSTAPAY SUBSCRIPTION PAYMENT APIS
+// ============================================
+
+// SUBMIT GCASH INSTAPAY PAYMENT FOR SUBSCRIPTION
+app.post('/api/subscription/submit-payment', (req, res) => {
+  const userId = req.headers.authorization;
+  const { 
+    planId, 
+    gcashAccountName, 
+    gcashMobileNumber, 
+    referenceNumber, 
+    paymentDateTime, 
+    receiptScreenshot, 
+    notes 
+  } = req.body;
+
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang magsumite ng payment.' });
+  }
+
+  const allowedPlans: Record<string, { name: string; amount: number; days: number }> = {
+    '7days': { name: '7-Days Special Trial', amount: 20, days: 7 },
+    '1month': { name: '1 Month Access', amount: 200, days: 30 },
+    '2months': { name: '2 Months Access', amount: 500, days: 60 },
+    '3months': { name: '3 Months VIP Access', amount: 1000, days: 90 },
+    '4months': { name: '4 Months Diamond Access', amount: 2000, days: 120 }
+  };
+
+  if (!planId || !allowedPlans[planId]) {
+    return res.status(400).json({ error: 'Maling subscription plan na pinili.' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user account.' });
+  }
+
+  if (planId === '7days') {
+    const isExpired = !hasActiveAccess(user);
+    if (!isExpired) {
+      return res.status(400).json({ error: 'Ang 7-Day Access na nagkakahalaga ng ₱20 ay para lamang sa mga expired users.' });
+    }
+    const balance = user.stats?.balance || 0;
+    if (balance >= 50) {
+      return res.status(400).json({ error: 'Hindi ka kwalipikado sa ₱20 plan dahil ang iyong balance ay ₱50 o higit pa.' });
+    }
+  }
+
+  if (!gcashAccountName || !String(gcashAccountName).trim()) {
+    return res.status(400).json({ error: 'Pakilagay ang GCash Account Name.' });
+  }
+
+  const cleanPhone = String(gcashMobileNumber || '').trim().replace(/\s+/g, '');
+  const phMobileRegex = /^(09\d{9}|\+639\d{9})$/;
+  if (!phMobileRegex.test(cleanPhone)) {
+    return res.status(400).json({ error: 'Pakilagay ang wastong Philippine GCash mobile number (hal. 09123456789 o +639123456789).' });
+  }
+
+  const cleanRef = String(referenceNumber || '').trim();
+  if (!cleanRef || cleanRef.length < 5) {
+    return res.status(400).json({ error: 'Pakilagay ang wastong GCash Reference Number mula sa iyong resibo.' });
+  }
+
+  if (!paymentDateTime) {
+    return res.status(400).json({ error: 'Pakilagay ang petsa at oras ng pagbabayad.' });
+  }
+
+  if (!receiptScreenshot || !String(receiptScreenshot).trim()) {
+    return res.status(400).json({ error: 'Kailangan mag-upload ng screenshot o larawan ng resibo.' });
+  }
+
+  // ANTI-DUPLICATE PROTECTION:
+  // Check if reference number has already been submitted in pending or approved status
+  db.subscriptionPayments = db.subscriptionPayments || [];
+  const duplicateRef = db.subscriptionPayments.find(p => 
+    p.referenceNumber.trim().toLowerCase() === cleanRef.toLowerCase() && 
+    (p.status === 'pending' || p.status === 'approved')
+  );
+
+  if (duplicateRef) {
+    return res.status(400).json({ 
+      error: 'Ang GCash Reference Number na ito ay naisumite na dati. Mangyaring suriin ang iyong resibo o makipag-ugnayan sa Admin.' 
+    });
+  }
+
+  const targetPlan = allowedPlans[planId];
+  const paymentId = 'sub_pay_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+
+  const newPayment: SubscriptionPayment = {
+    id: paymentId,
+    userId: user.id,
+    userName: user.name,
+    userEmail: user.email,
+    userAvatar: user.avatar,
+    planId: planId,
+    planName: targetPlan.name,
+    amount: targetPlan.amount,
+    gcashAccountName: String(gcashAccountName).trim(),
+    gcashMobileNumber: cleanPhone,
+    referenceNumber: cleanRef,
+    paymentDateTime: String(paymentDateTime).trim(),
+    receiptScreenshot: String(receiptScreenshot).trim(),
+    notes: notes ? String(notes).trim() : undefined,
+    submittedAt: new Date().toISOString(),
+    status: 'pending'
+  };
+
+  db.subscriptionPayments.unshift(newPayment);
+
+  // Update user subscription state to pending with full details
+  user.subscription = {
+    status: 'pending',
+    planId: planId as any,
+    requestedPlanName: targetPlan.name,
+    requestedAmount: targetPlan.amount,
+    requestedAt: newPayment.submittedAt,
+    approvedAt: null,
+    expiresAt: null,
+    paymentId: newPayment.id,
+    paymentReferenceNumber: newPayment.referenceNumber,
+    gcashAccountName: newPayment.gcashAccountName,
+    gcashMobileNumber: newPayment.gcashMobileNumber,
+    receiptScreenshot: newPayment.receiptScreenshot
+  };
+
+  user.activityLogs = user.activityLogs || [];
+  user.activityLogs.unshift({
+    id: 'sub-pay-' + Date.now(),
+    type: 'bonus',
+    title: 'GCash Payment Submitted ⏳',
+    amount: 0,
+    timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+    details: `Nagsumite ka ng GCash InstaPay payment para sa ${targetPlan.name} (₱${targetPlan.amount.toFixed(2)}) na may Ref #${newPayment.referenceNumber}. Hinihintay ang pagsusuri ng Admin.`
+  });
+
+  saveDB(db);
+
+  // Firestore Quota Protection: transactional sync only on actual submission
+  safeCloudSync('set', 'subscription_payments', newPayment.id, newPayment);
+  safeCloudSync('update', 'users', user.id, { subscription: user.subscription });
+
+  const { password: _, ...userSafe } = user as any;
+  res.json({ 
+    success: true, 
+    payment: newPayment, 
+    user: userSafe,
+    message: 'Matagumpay na naisumite ang iyong payment! Hinihintay ang pagsusuri ng Admin.' 
+  });
+});
+
+// GET USER'S SUBSCRIPTION PAYMENTS
+app.get('/api/subscription/my-payments', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan mag-login.' });
+  }
+
+  const db = loadDB();
+  const userPayments = (db.subscriptionPayments || []).filter(p => p.userId === userId);
+  res.json({ success: true, payments: userPayments });
+});
+
+// ADMIN: GET ALL SUBSCRIPTION PAYMENTS
+app.get('/api/admin/subscription-payments', (req, res) => {
+  const adminId = req.headers.authorization;
+  if (!adminId) {
+    return res.status(401).json({ error: 'Naka-loob lamang ito sa Admin.' });
+  }
+
+  const db = loadDB();
+  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na gawin ito.' });
+  }
+
+  const payments = db.subscriptionPayments || [];
+  res.json({ success: true, payments });
+});
+
+// ADMIN: APPROVE SUBSCRIPTION PAYMENT
+app.post('/api/admin/subscription-payments/:paymentId/approve', (req, res) => {
+  const adminId = req.headers.authorization;
+  const { paymentId } = req.params;
+
+  if (!adminId) {
+    return res.status(401).json({ error: 'Naka-loob lamang ito sa Admin.' });
+  }
+
+  const db = loadDB();
+  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na gawin ito.' });
+  }
+
+  db.subscriptionPayments = db.subscriptionPayments || [];
+  const payment = db.subscriptionPayments.find(p => p.id === paymentId);
+  if (!payment) {
+    return res.status(404).json({ error: 'Hindi mahanap ang payment submission.' });
+  }
+
+  // Anti-duplicate protection: prevent double activation
+  if (payment.status === 'approved') {
+    return res.status(400).json({ error: 'Ang payment submission na ito ay na-approve na dati.' });
+  }
+
+  const user = db.users.find(u => u.id === payment.userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user account para sa payment na ito.' });
+  }
+
+  const planId = payment.planId;
+  let validityDays = 30;
+  if (planId === '7days') validityDays = 7;
+  else if (planId === '2months') validityDays = 60;
+  else if (planId === '3months') validityDays = 90;
+  else if (planId === '4months') validityDays = 120;
+
+  const expiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000).toISOString();
+
+  // Update payment record
+  payment.status = 'approved';
+  payment.reviewedAt = new Date().toISOString();
+  payment.reviewedBy = adminUser.id;
+
+  // Activate user subscription
+  user.subscription = {
+    status: 'active',
+    planId: planId as any,
+    requestedPlanName: payment.planName,
+    requestedAmount: payment.amount,
+    requestedAt: payment.submittedAt,
+    approvedAt: new Date().toISOString(),
+    expiresAt: expiresAt,
+    paymentId: payment.id,
+    paymentReferenceNumber: payment.referenceNumber,
+    gcashAccountName: payment.gcashAccountName,
+    gcashMobileNumber: payment.gcashMobileNumber,
+    receiptScreenshot: payment.receiptScreenshot
+  };
+
+  user.activityLogs = user.activityLogs || [];
+  user.activityLogs.unshift({
+    id: 'sub-app-' + Date.now(),
+    type: 'bonus',
+    title: 'Subscription Activated! 🎉',
+    amount: 0,
+    timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+    details: `Inaprubahan ng Admin ang iyong GCash payment (Ref #${payment.referenceNumber}) para sa ${payment.planName}. Valid ang access mo hanggang sa ${new Date(expiresAt).toLocaleDateString('fil-PH', { month: 'long', day: 'numeric', year: 'numeric' })}.`
+  });
+
+  saveDB(db);
+
+  // Firestore Quota Protection: transactional sync only on genuine approval
+  safeCloudSync('update', 'subscription_payments', payment.id, payment);
+  safeCloudSync('update', 'users', user.id, { subscription: user.subscription });
+
+  // Optional Web Push notification to user
+  sendPushNotificationToUser(user.id, {
+    title: 'Subscription Activated! 🎉',
+    body: `Inaprubahan ng Admin ang iyong ${payment.planName}. Masiyahan sa unlimited earning!`,
+    tag: 'subscription-activated'
+  }).catch(() => {});
+
+  res.json({ 
+    success: true, 
+    payment, 
+    message: `Matagumpay na na-approve ang GCash payment at activated na ang subscription ni ${user.name}.` 
+  });
+});
+
+// ADMIN: REJECT SUBSCRIPTION PAYMENT
+app.post('/api/admin/subscription-payments/:paymentId/reject', (req, res) => {
+  const adminId = req.headers.authorization;
+  const { paymentId } = req.params;
+  const { reason, rejectionReason: bodyReason } = req.body;
+
+  if (!adminId) {
+    return res.status(401).json({ error: 'Naka-loob lamang ito sa Admin.' });
+  }
+
+  const db = loadDB();
+  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na gawin ito.' });
+  }
+
+  db.subscriptionPayments = db.subscriptionPayments || [];
+  const payment = db.subscriptionPayments.find(p => p.id === paymentId);
+  if (!payment) {
+    return res.status(404).json({ error: 'Hindi mahanap ang payment submission.' });
+  }
+
+  if (payment.status !== 'pending') {
+    return res.status(400).json({ error: 'Maaari lamang i-reject ang pending payment submission.' });
+  }
+
+  const user = db.users.find(u => u.id === payment.userId);
+  const rejectionReason = (reason || bodyReason) ? String(reason || bodyReason).trim() : 'Hindi tugma ang GCash Reference Number o walang pumasok na pondo.';
+
+  payment.status = 'rejected';
+  payment.rejectionReason = rejectionReason;
+  payment.reviewedAt = new Date().toISOString();
+  payment.reviewedBy = adminUser.id;
+
+  if (user) {
+    if (user.subscription && user.subscription.paymentId === payment.id) {
+      user.subscription = {
+        status: 'none',
+        planId: null,
+        requestedPlanName: null,
+        requestedAmount: null,
+        requestedAt: null,
+        expiresAt: null,
+        rejectionReason: rejectionReason
+      };
+    }
+
+    user.activityLogs = user.activityLogs || [];
+    user.activityLogs.unshift({
+      id: 'sub-dec-' + Date.now(),
+      type: 'bonus',
+      title: 'Subscription Payment Rejected ❌',
+      amount: 0,
+      timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+      details: `Ang iyong GCash payment (Ref #${payment.referenceNumber}) para sa ${payment.planName} ay tinanggihan ng Admin: "${rejectionReason}".`
+    });
+
+    safeCloudSync('update', 'users', user.id, { subscription: user.subscription });
+  }
+
+  saveDB(db);
+  safeCloudSync('update', 'subscription_payments', payment.id, payment);
+
+  res.json({ 
+    success: true, 
+    payment, 
+    message: `Matagumpay na na-reject ang payment submission.` 
+  });
 });
 
 

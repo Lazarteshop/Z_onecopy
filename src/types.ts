@@ -64,6 +64,89 @@ export interface Subscription {
   requestedAt?: string | null;
   approvedAt?: string | null;
   expiresAt?: string | null;
+  // GCash InstaPay Payment Submission Info
+  paymentId?: string | null;
+  paymentReferenceNumber?: string | null;
+  gcashAccountName?: string | null;
+  gcashMobileNumber?: string | null;
+  receiptScreenshot?: string | null;
+  rejectionReason?: string | null;
+}
+
+export interface SubscriptionPlanDef {
+  id: '7days' | '1month' | '2months' | '3months' | '4months';
+  name: string;
+  price: number;
+  validityDays: number;
+  badge?: string;
+  desc: string;
+  popular?: boolean;
+}
+
+export const SUBSCRIPTION_PLANS: SubscriptionPlanDef[] = [
+  {
+    id: '7days',
+    name: '7-Days Special Trial',
+    price: 20,
+    validityDays: 7,
+    badge: '⚡ MURA & MABILIS',
+    desc: '₱20 lang para sa 7 araw na pang-simula habang nag-iipon!'
+  },
+  {
+    id: '1month',
+    name: '1 Month Access',
+    price: 200,
+    validityDays: 30,
+    popular: true,
+    badge: '🔥 PINAKA-POPULAR',
+    desc: '30 araw na unlimited clicks, videos & GCash cashout access.'
+  },
+  {
+    id: '2months',
+    name: '2 Months Access',
+    price: 500,
+    validityDays: 60,
+    badge: '⚡ SAVE ₱100',
+    desc: '60 araw na pinalawak na earning portal access.'
+  },
+  {
+    id: '3months',
+    name: '3 Months VIP Access',
+    price: 1000,
+    validityDays: 90,
+    badge: '👑 VIP BEST VALUE',
+    desc: '90 araw na VIP priority cashouts & double rewards.'
+  },
+  {
+    id: '4months',
+    name: '4 Months Diamond Access',
+    price: 2000,
+    validityDays: 120,
+    badge: '💎 MAXIMUM ACCESS',
+    desc: '120 araw ng walang katapusang earning portal at pinakamabilis na payout priority.'
+  }
+];
+
+export interface SubscriptionPayment {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userAvatar?: string;
+  planId: '7days' | '1month' | '2months' | '3months' | '4months' | string;
+  planName: string;
+  amount: number;
+  gcashAccountName: string;
+  gcashMobileNumber: string;
+  referenceNumber: string;
+  paymentDateTime: string;
+  receiptScreenshot: string;
+  notes?: string;
+  submittedAt: string;
+  status: 'pending' | 'approved' | 'rejected';
+  rejectionReason?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
 }
 
 export interface ZoneComment {
@@ -306,6 +389,46 @@ export interface VALeaderboardWinner {
   rewardAmount: number;
 }
 
+// Z-oneShop Master Product Categories (Single Source of Truth)
+export const ZONE_SHOP_CATEGORIES = [
+  'Electronics',
+  'Wearables',
+  'Audio',
+  'Home & Living',
+  'Health & Wellness',
+  'Travel & Outdoor',
+  'Fashion Accessories',
+  'Food & Pantry',
+  'Gadgets',
+  'Fashion',
+  'Beauty',
+  'Home',
+  'Lifestyle'
+] as const;
+
+export type ZoneShopCategory = typeof ZONE_SHOP_CATEGORIES[number];
+
+// Helper to ensure backward compatibility for existing products with legacy category names
+export const normalizeShopCategory = (cat?: string): string => {
+  if (!cat || !cat.trim()) return 'Lifestyle';
+  const c = cat.trim();
+  const exact = ZONE_SHOP_CATEGORIES.find(zc => zc.toLowerCase() === c.toLowerCase());
+  if (exact) return exact;
+  if (/electronic/i.test(c)) return 'Electronics';
+  if (/wearable|watch/i.test(c)) return 'Wearables';
+  if (/audio|headphone|earbud|speaker/i.test(c)) return 'Audio';
+  if (/home & living/i.test(c)) return 'Home & Living';
+  if (/health|wellness|supplement/i.test(c)) return 'Health & Wellness';
+  if (/travel|outdoor|camping|sports/i.test(c)) return 'Travel & Outdoor';
+  if (/accessory|accessories/i.test(c)) return 'Fashion Accessories';
+  if (/food|pantry|grocery|snack/i.test(c)) return 'Food & Pantry';
+  if (/gadget/i.test(c)) return 'Gadgets';
+  if (/beauty|skincare|cosmetic/i.test(c)) return 'Beauty';
+  if (/fashion|apparel|clothing/i.test(c)) return 'Fashion';
+  if (/home/i.test(c)) return 'Home';
+  return c;
+};
+
 export interface ShopProduct {
   id: string;
   name: string;
@@ -315,7 +438,7 @@ export interface ShopProduct {
   image: string;
   primaryImage?: string;
   images?: string[];
-  category: 'Gadgets' | 'Fashion' | 'Beauty' | 'Home' | 'Lifestyle' | string;
+  category: ZoneShopCategory | string;
   description: string;
   sourceDescription?: string;
   aiNormalizedDescription?: string;

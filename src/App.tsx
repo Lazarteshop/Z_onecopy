@@ -77,6 +77,7 @@ import ReelsFloatingWidget, { parseVideoUrl } from './components/ReelsFloatingWi
 import ZoneAppBanner from './components/ZoneAppBanner';
 import { SmartphoneAppLauncher } from './components/SmartphoneAppLauncher';
 import { PromoAdBannerModal } from './components/PromoAdBannerModal';
+import { SubscriptionPaymentModal } from './components/SubscriptionPaymentModal';
 import { DemoTestingFloatingBanner } from './components/DemoTestingFloatingBanner';
 import { WithdrawalPolicyModal } from './components/WithdrawalPolicyModal';
 import { WithdrawalPolicyBanner } from './components/WithdrawalPolicyBanner';
@@ -1071,10 +1072,17 @@ export default function App() {
 
   // --- SUBSCRIPTIONS STATE & CALCULATIONS ---
   const [submittingSubscription, setSubmittingSubscription] = useState(false);
+  const [selectedSubPlanId, setSelectedSubPlanId] = useState<string | null>(null);
+  const [showSubPaymentModal, setShowSubPaymentModal] = useState(false);
   const [now, setNow] = useState<Date>(new Date());
   const [showExpiryWarningModal, setShowExpiryWarningModal] = useState(false);
   const [hasShownExpiryWarning, setHasShownExpiryWarning] = useState(false);
   const [showPlansInWarning, setShowPlansInWarning] = useState(false);
+
+  const handleOpenSubscriptionPayment = (planId: string) => {
+    setSelectedSubPlanId(planId);
+    setShowSubPaymentModal(true);
+  };
 
   useEffect(() => {
     // Update reference time every 15 seconds instead of 1 second to eliminate CPU lag
@@ -2094,10 +2102,9 @@ export default function App() {
                           
                           <button
                             onClick={() => {
-                              handleSubscriptionRequest(plan.id);
+                              handleOpenSubscriptionPayment(plan.id);
                               setShowExpiryWarningModal(false);
                             }}
-                            disabled={submittingSubscription}
                             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-[11px] px-4 py-2 rounded-xl cursor-pointer shadow-sm shrink-0"
                           >
                             {language === 'tl' ? 'Bilhin' : 'Buy'}
@@ -2138,16 +2145,7 @@ export default function App() {
         isOpen={!isShopProductDeepLink && showPromoAdModal && Boolean(user) && !user?.isAdmin && isSubscriptionExpired()}
         onClose={() => setShowPromoAdModal(false)}
         onSelectPlan={(planId) => {
-          setActiveTab('cashout');
-          handleSubscriptionRequest(planId);
-          setTimeout(() => {
-            const section = document.getElementById('renew-access-plan-section') || document.getElementById('subscription-plans-section');
-            if (section) {
-              section.scrollIntoView({ behavior: 'smooth' });
-            } else {
-              window.scrollTo({ top: 300, behavior: 'smooth' });
-            }
-          }, 150);
+          handleOpenSubscriptionPayment(planId);
         }}
         onNavigateToPlans={() => {
           setActiveTab('cashout');
@@ -2619,13 +2617,20 @@ export default function App() {
                       </ul>
                     </div>
 
-                    <div className="flex gap-3 pt-2">
+                    <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                      <button
+                        onClick={() => handleOpenSubscriptionPayment(user.subscription?.planId || '1month')}
+                        className="bg-indigo-600 hover:bg-indigo-700 transition px-5 py-3 rounded-2xl text-white font-black text-xs cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                      >
+                        <Receipt className="w-4 h-4" />
+                        <span>Isumite / Tingnan ang GCash InstaPay Payment</span>
+                      </button>
                       <button
                         onClick={() => fetchUserProfile(token)}
                         className="flex-1 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 transition py-3 rounded-2xl text-slate-950 font-black text-xs cursor-pointer flex items-center justify-center gap-2 shadow-sm"
                       >
                         <RefreshCw className="w-4 h-4 animate-spin-slow" />
-                        <span>I-refresh ang Status ng Aking Account</span>
+                        <span>I-refresh ang Status</span>
                       </button>
                       <button
                         onClick={handleLogout}
@@ -2644,7 +2649,7 @@ export default function App() {
                       </span>
                       <h3 className="font-extrabold text-slate-900 text-sm">Pumili ng Subscription Plan Upang Mag-patuloy</h3>
                       <p className="text-xs text-slate-450 font-semibold max-w-sm mx-auto mt-1">
-                        Kapag napili ang nais na plan, awtomatikong ipadadala ang iyong hiling sa admin queue para sa mabilisang validation.
+                        Kapag napili ang nais na plan, awtomatikong bubuksan ang GCash InstaPay Payment page kasama ang eksaktong halaga.
                       </p>
                     </div>
 
@@ -2676,9 +2681,8 @@ export default function App() {
                           </div>
                           
                           <button
-                            onClick={() => handleSubscriptionRequest(plan.id)}
-                            disabled={submittingSubscription}
-                            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition py-2 text-white font-black text-xs rounded-xl cursor-pointer shadow-sm text-center"
+                            onClick={() => handleOpenSubscriptionPayment(plan.id)}
+                            className="w-full bg-blue-600 hover:bg-blue-700 transition py-2.5 text-white font-black text-xs rounded-xl cursor-pointer shadow-sm text-center active:scale-98"
                           >
                             Bilhin ang Plan na ito
                           </button>
@@ -3571,6 +3575,22 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
           </div>
         </div>
       )}
+
+      {/* 💳 OFFICIAL GCASH INSTAPAY SUBSCRIPTION PAYMENT MODAL */}
+      <SubscriptionPaymentModal
+        isOpen={showSubPaymentModal}
+        onClose={() => setShowSubPaymentModal(false)}
+        selectedPlanId={selectedSubPlanId}
+        token={token}
+        currentUser={user}
+        triggerNotification={triggerNotification}
+        onRefreshProfile={() => {
+          if (token) fetchUserProfile(token);
+        }}
+        onSuccess={(_payment) => {
+          if (token) fetchUserProfile(token);
+        }}
+      />
 
     </div>
   );

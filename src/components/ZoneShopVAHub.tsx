@@ -44,7 +44,9 @@ import {
   VABanner,
   ShopBasketItem,
   ShopCartItem,
-  ShopOrder
+  ShopOrder,
+  ZONE_SHOP_CATEGORIES,
+  normalizeShopCategory
 } from '../types';
 import { ZoneShopCart } from './ZoneShopCart';
 import { ZoneShopCheckoutModal } from './ZoneShopCheckoutModal';
@@ -1540,12 +1542,12 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
               </div>
 
               <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
-                {['All', 'Electronics', 'Wearables', 'Audio', 'Home & Living', 'Health & Wellness', 'Travel & Outdoor', 'Fashion Accessories', 'Food & Pantry'].map((cat) => (
+                {['All', ...ZONE_SHOP_CATEGORIES].map((cat) => (
                   <button
                     key={cat}
                     onClick={() => setShopCategory(cat)}
                     className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${
-                      shopCategory === cat
+                      shopCategory.toLowerCase() === cat.toLowerCase()
                         ? 'bg-slate-900 text-white'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
@@ -1562,8 +1564,12 @@ export const ZoneShopVAHub: React.FC<ZoneShopVAHubProps> = ({
                 const matchesSearch = !shopSearch || 
                   p.name.toLowerCase().includes(shopSearch.toLowerCase()) || 
                   p.description.toLowerCase().includes(shopSearch.toLowerCase()) ||
-                  p.category.toLowerCase().includes(shopSearch.toLowerCase());
-                const matchesCat = shopCategory === 'All' || p.category.toLowerCase() === shopCategory.toLowerCase();
+                  (p.category && p.category.toLowerCase().includes(shopSearch.toLowerCase()));
+                const matchesCat = shopCategory.toLowerCase() === 'all' || 
+                  (p.category && (
+                    p.category.toLowerCase() === shopCategory.toLowerCase() ||
+                    normalizeShopCategory(p.category).toLowerCase() === shopCategory.toLowerCase()
+                  ));
                 return matchesSearch && matchesCat;
               });
 

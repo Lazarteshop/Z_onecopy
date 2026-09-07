@@ -52,7 +52,7 @@ import {
   Server,
   FileJson
 } from 'lucide-react';
-import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd, WebsiteCampaign, CreatorChallenge, ChallengeEntry, SponsoredMission, DepositRequest } from '../types';
+import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd, WebsiteCampaign, CreatorChallenge, ChallengeEntry, SponsoredMission, DepositRequest, SubscriptionPayment } from '../types';
 
 interface AdminDashboardData {
   users: {
@@ -114,6 +114,15 @@ export default function AdminPanel({
   const [rejectingDepId, setRejectingDepId] = useState<string | null>(null);
   const [rejectionReasonInput, setRejectionReasonInput] = useState<string>('');
   const [processingDepositId, setProcessingDepositId] = useState<string | null>(null);
+
+  // Subscription Payments States (GCash InstaPay Submissions)
+  const [subPayments, setSubPayments] = useState<SubscriptionPayment[]>([]);
+  const [loadingSubPayments, setLoadingSubPayments] = useState<boolean>(false);
+  const [subPaymentFilter, setSubPaymentFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
+  const [subPaymentSearch, setSubPaymentSearch] = useState<string>('');
+  const [rejectingSubPaymentId, setRejectingSubPaymentId] = useState<string | null>(null);
+  const [subRejectionReason, setSubRejectionReason] = useState<string>('');
+  const [processingSubPaymentId, setProcessingSubPaymentId] = useState<string | null>(null);
 
   // Creator Challenges & Sponsored Missions States
   const [adminChallenges, setAdminChallenges] = useState<CreatorChallenge[]>([]);
@@ -383,10 +392,86 @@ export default function AdminPanel({
     }
   };
 
+  const fetchSubPayments = async () => {
+    if (!token) return;
+    setLoadingSubPayments(true);
+    try {
+      const res = await fetch('/api/admin/subscription-payments', {
+        headers: { 'Authorization': token }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSubPayments(data.payments || []);
+      }
+    } catch (e) {
+      console.error('Error fetching subscription payments:', e);
+    } finally {
+      setLoadingSubPayments(false);
+    }
+  };
+
+  const handleApproveSubPayment = async (paymentId: string) => {
+    if (processingSubPaymentId) return;
+    setProcessingSubPaymentId(paymentId);
+    try {
+      const res = await fetch(`/api/admin/subscription-payments/${paymentId}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        triggerNotification('✅ Matagumpay na na-approve ang Subscription Payment! Aktibo na ang account ng user.', 'success');
+        fetchSubPayments();
+        fetchAdminData();
+      } else {
+        triggerNotification(data.error || 'Bigo sa pag-apruba ng subscription payment', 'error');
+      }
+    } catch (e) {
+      triggerNotification('May naganap na problema sa koneksyon.', 'error');
+    } finally {
+      setProcessingSubPaymentId(null);
+    }
+  };
+
+  const handleRejectSubPayment = async () => {
+    if (!rejectingSubPaymentId || processingSubPaymentId) return;
+    setProcessingSubPaymentId(rejectingSubPaymentId);
+    try {
+      const res = await fetch(`/api/admin/subscription-payments/${rejectingSubPaymentId}/reject`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({
+          rejectionReason: subRejectionReason.trim() || 'Hindi tugma o hindi ma-verify ang GCash payment receipt'
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        triggerNotification('❌ Na-reject ang subscription payment at na-update ang user.', 'info');
+        setRejectingSubPaymentId(null);
+        setSubRejectionReason('');
+        fetchSubPayments();
+        fetchAdminData();
+      } else {
+        triggerNotification(data.error || 'Bigo sa pag-reject ng subscription payment', 'error');
+      }
+    } catch (e) {
+      triggerNotification('May naganap na problema sa koneksyon.', 'error');
+    } finally {
+      setProcessingSubPaymentId(null);
+    }
+  };
+
   useEffect(() => {
     fetchAdminReels();
     fetchDepositRequests();
     fetchAdminChallenges();
+    fetchSubPayments();
   }, [token]);
 
   const handleApproveReel = async (reelId: string) => {
@@ -746,6 +831,7 @@ export default function AdminPanel({
       fetchMerchantAds();
       fetchAdminReels();
       fetchAdminCampaigns();
+      fetchSubPayments();
     }
   }, [token, activeSubTab]);
 
@@ -1201,9 +1287,9 @@ export default function AdminPanel({
           }`}
         >
           <span>Subscription Requests</span>
-          {(users.filter(u => u.subscription?.status === 'pending').length + (reelsData.reelSubscriptions || []).filter((s: any) => s.status === 'pending').length) > 0 && (
+          {(users.filter(u => u.subscription?.status === 'pending').length + (reelsData.reelSubscriptions || []).filter((s: any) => s.status === 'pending').length + subPayments.filter(p => p.status === 'pending').length) > 0 && (
             <span className="bg-amber-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold animate-pulse">
-              {users.filter(u => u.subscription?.status === 'pending').length + (reelsData.reelSubscriptions || []).filter((s: any) => s.status === 'pending').length}
+              {users.filter(u => u.subscription?.status === 'pending').length + (reelsData.reelSubscriptions || []).filter((s: any) => s.status === 'pending').length + subPayments.filter(p => p.status === 'pending').length}
             </span>
           )}
         </button>
@@ -1839,6 +1925,304 @@ export default function AdminPanel({
             <p className="text-xs text-slate-500 font-bold mt-1">
               Dito pinoproseso ang mga kahilingan ng mga user upang makagamit ng system base sa kanilang binayarang subscription plan.
             </p>
+          </div>
+
+          {/* 🌟 SECTION 1: GCASH INSTAPAY SUBSCRIPTION PAYMENTS (VERIFICATION & AUDIT TRAIL) */}
+          <div className="bg-white border-2 border-indigo-100 rounded-3xl p-5 sm:p-6 shadow-sm space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-150 pb-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="p-2 rounded-xl bg-blue-50 text-blue-600 border border-blue-150">
+                    <QrCode className="w-5 h-5" />
+                  </span>
+                  <div>
+                    <h3 className="font-black text-slate-900 text-base flex items-center gap-2">
+                      <span>GCash InstaPay Subscription Payments</span>
+                      {subPayments.filter(p => p.status === 'pending').length > 0 && (
+                        <span className="bg-amber-500 text-white text-xs px-2.5 py-0.5 rounded-full font-black animate-pulse">
+                          {subPayments.filter(p => p.status === 'pending').length} Nakabinbin
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-xs text-slate-500 font-semibold">
+                      Suriin ang mga GCash InstaPay screenshot, reference number, at aprubahan ang account access.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={fetchSubPayments}
+                  disabled={loadingSubPayments}
+                  className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-xs flex items-center gap-1.5 transition cursor-pointer border border-slate-200 active:scale-95"
+                  title="I-refresh ang listahan"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingSubPayments ? 'animate-spin' : ''}`} />
+                  <span>I-refresh</span>
+                </button>
+              </div>
+            </div>
+
+            {/* STATUS SUMMARY STATS */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 text-center">
+                <span className="text-[10px] font-black text-slate-450 uppercase block">Kabuuan (Total)</span>
+                <span className="text-lg font-black text-slate-800 font-mono mt-0.5 block">{subPayments.length}</span>
+              </div>
+              <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-3 text-center">
+                <span className="text-[10px] font-black text-amber-700 uppercase block">Nakabinbin (Pending)</span>
+                <span className="text-lg font-black text-amber-600 font-mono mt-0.5 block">
+                  {subPayments.filter(p => p.status === 'pending').length}
+                </span>
+              </div>
+              <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-3 text-center">
+                <span className="text-[10px] font-black text-emerald-700 uppercase block">Na-aprubahan (Approved)</span>
+                <span className="text-lg font-black text-emerald-600 font-mono mt-0.5 block">
+                  {subPayments.filter(p => p.status === 'approved').length}
+                </span>
+              </div>
+              <div className="bg-rose-50/60 border border-rose-200 rounded-2xl p-3 text-center">
+                <span className="text-[10px] font-black text-rose-700 uppercase block">Tinanggihan (Rejected)</span>
+                <span className="text-lg font-black text-rose-600 font-mono mt-0.5 block">
+                  {subPayments.filter(p => p.status === 'rejected').length}
+                </span>
+              </div>
+            </div>
+
+            {/* FILTERS & SEARCH */}
+            <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                {(['all', 'pending', 'approved', 'rejected'] as const).map((filterKey) => (
+                  <button
+                    key={filterKey}
+                    type="button"
+                    onClick={() => setSubPaymentFilter(filterKey)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black capitalize transition cursor-pointer shrink-0 ${
+                      subPaymentFilter === filterKey
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {filterKey === 'all' ? 'Lahat' : filterKey === 'pending' ? 'Nakabinbin' : filterKey === 'approved' ? 'Na-aprubahan' : 'Tinanggihan'}
+                    <span className="ml-1.5 opacity-75 font-mono text-[10px]">
+                      ({filterKey === 'all' ? subPayments.length : subPayments.filter(p => p.status === filterKey).length})
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="relative flex-1 sm:max-w-xs">
+                <input
+                  type="text"
+                  value={subPaymentSearch}
+                  onChange={e => setSubPaymentSearch(e.target.value)}
+                  placeholder="Maghanap (Pangalan, Ref No, Mobile)..."
+                  className="w-full text-xs py-2 pl-3 pr-8 rounded-xl border border-slate-200 focus:border-indigo-500 focus:outline-none bg-slate-50/50"
+                />
+                {subPaymentSearch && (
+                  <button
+                    onClick={() => setSubPaymentSearch('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* SUBMISSIONS LIST */}
+            {loadingSubPayments ? (
+              <div className="py-12 text-center text-slate-400 text-xs font-bold flex items-center justify-center gap-2">
+                <RefreshCw className="w-4 h-4 animate-spin text-indigo-600" />
+                <span>Kinukuha ang mga subscription payments...</span>
+              </div>
+            ) : (() => {
+              const filteredList = subPayments.filter(p => {
+                if (subPaymentFilter !== 'all' && p.status !== subPaymentFilter) return false;
+                if (!subPaymentSearch.trim()) return true;
+                const q = subPaymentSearch.toLowerCase().trim();
+                return (
+                  (p.userName || '').toLowerCase().includes(q) ||
+                  (p.userEmail || '').toLowerCase().includes(q) ||
+                  (p.gcashAccountName || '').toLowerCase().includes(q) ||
+                  (p.gcashMobileNumber || '').toLowerCase().includes(q) ||
+                  (p.referenceNumber || '').toLowerCase().includes(q) ||
+                  (p.planName || '').toLowerCase().includes(q) ||
+                  (p.userId || '').toLowerCase().includes(q)
+                );
+              });
+
+              if (filteredList.length === 0) {
+                return (
+                  <div className="py-10 text-center bg-slate-50/70 border border-slate-200 rounded-2xl p-6 text-slate-400 text-xs font-bold">
+                    Walang natagpuang subscription payment sa napiling filter o search query.
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-3.5">
+                  {filteredList.map((payment) => (
+                    <div
+                      key={payment.id}
+                      className={`border rounded-2xl p-4 transition duration-200 space-y-3 ${
+                        payment.status === 'pending'
+                          ? 'border-amber-300 bg-amber-50/20 shadow-xs'
+                          : payment.status === 'approved'
+                          ? 'border-emerald-200 bg-emerald-50/15'
+                          : 'border-rose-200 bg-rose-50/15 opacity-85'
+                      }`}
+                    >
+                      {/* CARD TOP ROW */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-150 pb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center font-black text-slate-700 text-sm shrink-0">
+                            {payment.userName?.charAt(0)?.toUpperCase() || 'U'}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="font-black text-slate-900 text-xs sm:text-sm">{payment.userName}</h4>
+                              <span className="font-mono text-[10px] text-slate-400 font-semibold bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                                ID: {payment.userId}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 font-medium font-mono mt-0.5">{payment.userEmail}</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-start sm:self-auto">
+                          <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-right">
+                            <span className="font-black text-indigo-700 text-xs block leading-tight">{payment.planName}</span>
+                            <span className="font-black font-mono text-emerald-600 text-xs">₱{payment.amount.toFixed(2)}</span>
+                          </div>
+
+                          <span className={`px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shrink-0 ${
+                            payment.status === 'pending'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                              : payment.status === 'approved'
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : 'bg-rose-100 text-rose-800 border border-rose-300'
+                          }`}>
+                            {payment.status === 'pending' && <Clock className="w-3 h-3 text-amber-600" />}
+                            {payment.status === 'approved' && <CheckCircle className="w-3 h-3 text-emerald-600" />}
+                            {payment.status === 'rejected' && <XCircle className="w-3 h-3 text-rose-600" />}
+                            <span>{payment.status === 'pending' ? 'Nakabinbin' : payment.status === 'approved' ? 'Na-aprubahan' : 'Tinanggihan'}</span>
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* PAYMENT DETAILS GRID */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-[11px] bg-white rounded-xl p-3 border border-slate-150">
+                        <div>
+                          <span className="text-[10px] font-black text-slate-400 uppercase block">GCash Sender Name</span>
+                          <span className="font-bold text-slate-900 mt-0.5 block">{payment.gcashAccountName}</span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] font-black text-slate-400 uppercase block">GCash Mobile Number</span>
+                          <span className="font-bold font-mono text-slate-900 mt-0.5 block">{payment.gcashMobileNumber}</span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] font-black text-slate-400 uppercase block">Reference Number</span>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="font-bold font-mono text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 select-all">
+                              {payment.referenceNumber}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(payment.referenceNumber);
+                                triggerNotification('Kinopya ang reference number!', 'info');
+                              }}
+                              className="text-slate-400 hover:text-indigo-600 p-1 cursor-pointer"
+                              title="Kopyahin"
+                            >
+                              <Copy className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] font-black text-slate-400 uppercase block">Petsa at Oras</span>
+                          <span className="font-medium text-slate-600 mt-0.5 block">
+                            {new Date(payment.paymentDateTime).toLocaleString('fil-PH', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* USER NOTES IF AVAILABLE */}
+                      {payment.notes && (
+                        <div className="text-[11px] text-slate-600 bg-slate-50 rounded-xl px-3 py-2 border border-slate-200/80">
+                          <span className="font-black text-slate-450 uppercase text-[9px] block">Mensahe / Notes ng User:</span>
+                          <p className="italic mt-0.5">{payment.notes}</p>
+                        </div>
+                      )}
+
+                      {/* RECEIPT PREVIEW & ACTIONS ROW */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                        <div className="flex items-center gap-2">
+                          {payment.receiptScreenshot ? (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedProofUrl(payment.receiptScreenshot)}
+                              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-xs flex items-center gap-2 cursor-pointer border border-slate-200 transition active:scale-95"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>Tingnan ang GCash Resibo (Zoom/Download)</span>
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-450 italic">Walang naka-attach na resibo</span>
+                          )}
+                        </div>
+
+                        {payment.status === 'pending' ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRejectingSubPaymentId(payment.id);
+                                setSubRejectionReason('');
+                              }}
+                              disabled={processingSubPaymentId === payment.id}
+                              className="px-3.5 py-2 rounded-xl border border-rose-200 hover:bg-rose-50 text-rose-600 font-black text-xs flex items-center gap-1.5 cursor-pointer transition active:scale-95"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              <span>Tanggihan</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveSubPayment(payment.id)}
+                              disabled={processingSubPaymentId === payment.id}
+                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center gap-2 cursor-pointer shadow-xs transition active:scale-95"
+                            >
+                              {processingSubPaymentId === payment.id ? (
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <CheckCircle className="w-3.5 h-3.5" />
+                              )}
+                              <span>Aprubahan at I-activate ang Access</span>
+                            </button>
+                          </div>
+                        ) : payment.status === 'approved' ? (
+                          <div className="text-right text-xs text-emerald-700 font-bold bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200">
+                            Na-aprubahan ni <b>{payment.reviewedBy || 'Admin'}</b> noong{' '}
+                            {payment.reviewedAt ? new Date(payment.reviewedAt).toLocaleString('fil-PH') : 'N/A'}
+                          </div>
+                        ) : (
+                          <div className="text-right text-xs text-rose-700 font-bold bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200">
+                            Tinanggihan ni <b>{payment.reviewedBy || 'Admin'}</b>:{' '}
+                            <span className="font-normal">{payment.rejectionReason || 'Hindi tugma ang payment'}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -4098,6 +4482,69 @@ export default function AdminPanel({
               >
                 {processingDepositId ? <RefreshCw className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
                 <span>Kumpirmahin ang Pagtanggi</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUBSCRIPTION PAYMENT REJECTION REASON PROMPT MODAL */}
+      {rejectingSubPaymentId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-3xl border border-slate-200 max-w-md w-full p-6 space-y-4 shadow-2xl animate-scaleUp">
+            <div className="flex items-start gap-3">
+              <div className="p-3 bg-rose-50 text-rose-600 rounded-2xl shrink-0">
+                <XCircle className="w-6 h-6" />
+              </div>
+              <div className="space-y-1 flex-1">
+                <h3 className="font-black text-slate-900 text-base">
+                  Tanggihan ang Subscription Payment
+                </h3>
+                <p className="text-xs text-slate-500 font-semibold">
+                  Ipadadala ang dahilan sa user upang maari nilang itama at muling isumite ang kanilang payment.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setRejectingSubPaymentId(null);
+                  setSubRejectionReason('');
+                }}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-black text-slate-700">Dahilan ng Pagtanggi (Rejection Reason)</label>
+              <textarea
+                value={subRejectionReason}
+                onChange={e => setSubRejectionReason(e.target.value)}
+                placeholder="Halimbawa: Maling GCash Reference Number, hindi tugma ang halaga ng plan, o hindi mabasa ang resibo..."
+                rows={3}
+                className="w-full text-xs p-3 rounded-xl border border-slate-200 focus:border-rose-500 focus:outline-none"
+              />
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setRejectingSubPaymentId(null);
+                  setSubRejectionReason('');
+                }}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-black text-xs hover:bg-slate-50 cursor-pointer"
+              >
+                Kanselahin
+              </button>
+              <button
+                type="button"
+                onClick={handleRejectSubPayment}
+                disabled={Boolean(processingSubPaymentId)}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs cursor-pointer"
+              >
+                {processingSubPaymentId ? <RefreshCw className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                <span>Kumpirmahin ang Pag-reject</span>
               </button>
             </div>
           </div>
