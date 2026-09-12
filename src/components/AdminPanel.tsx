@@ -52,7 +52,7 @@ import {
   Server,
   FileJson
 } from 'lucide-react';
-import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd, WebsiteCampaign, CreatorChallenge, ChallengeEntry, SponsoredMission, DepositRequest, SubscriptionPayment } from '../types';
+import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd, WebsiteCampaign, CreatorChallenge, ChallengeEntry, SponsoredMission, DepositRequest, SubscriptionPayment, SocialReport } from '../types';
 
 interface AdminDashboardData {
   users: {
@@ -95,7 +95,7 @@ export default function AdminPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'campaigns' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'shop_management' | 'settings' | 'database' | 'challenges' | 'deposit_requests'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'campaigns' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'shop_management' | 'settings' | 'database' | 'challenges' | 'deposit_requests' | 'moderation'>('overview');
   const [adminCampaigns, setAdminCampaigns] = useState<WebsiteCampaign[]>([]);
   const [showAddCampaignModal, setShowAddCampaignModal] = useState<boolean>(false);
   const [campaignSearch, setCampaignSearch] = useState<string>('');
@@ -105,6 +105,13 @@ export default function AdminPanel({
   const [showSuccessStoryModal, setShowSuccessStoryModal] = useState<boolean>(false);
   const [showRedemptionModal, setShowRedemptionModal] = useState<boolean>(false);
   const [activeRedemptionRecord, setActiveRedemptionRecord] = useState<RedemptionRecordItem | null>(null);
+
+  // Community Moderation Queue States
+  const [adminReports, setAdminReports] = useState<SocialReport[]>([]);
+  const [loadingReports, setLoadingReports] = useState<boolean>(false);
+  const [reportFilter, setReportFilter] = useState<'all' | 'pending' | 'actioned' | 'dismissed'>('pending');
+  const [reportTargetFilter, setReportTargetFilter] = useState<'all' | 'post' | 'user' | 'comment'>('all');
+  const [processingReportId, setProcessingReportId] = useState<string | null>(null);
 
   // Deposit Requests States
   const [depositRequests, setDepositRequests] = useState<DepositRequest[]>([]);
@@ -467,11 +474,66 @@ export default function AdminPanel({
     }
   };
 
+  const fetchAdminReports = async () => {
+    try {
+      setLoadingReports(true);
+      const res = await fetch('/api/admin/moderation/reports', {
+        headers: { 'Authorization': token }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAdminReports(data.reports || []);
+      }
+    } catch (e) {
+      console.error('Error fetching admin moderation reports:', e);
+    } finally {
+      setLoadingReports(false);
+    }
+  };
+
+  const handleReportAction = async (reportId: string, action: 'dismiss' | 'delete_content' | 'ban_user') => {
+    const actionLabel = action === 'dismiss'
+      ? 'ipawalang-bisa (dismiss) ang report na ito'
+      : action === 'delete_content'
+      ? 'burahin ang inireport na content / post'
+      : 'i-ban ang user na may-ari ng inireport na content';
+
+    if (!window.confirm(`Kumpirmasyon: Sigurado ka bang nais mong ${actionLabel}?`)) {
+      return;
+    }
+
+    setProcessingReportId(reportId);
+    try {
+      const res = await fetch(`/api/admin/moderation/reports/${reportId}/action`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ action })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        triggerNotification(data.message || 'Naisagawa ang moderation action.', 'success');
+        fetchAdminReports();
+        fetchAdminData();
+      } else {
+        triggerNotification(data.error || 'Bigo sa pagsagawa ng action.', 'error');
+      }
+    } catch (e) {
+      console.error('Error performing report action:', e);
+      triggerNotification('Koneksyon error sa pag-moderate.', 'error');
+    } finally {
+      setProcessingReportId(null);
+    }
+  };
+
   useEffect(() => {
     fetchAdminReels();
     fetchDepositRequests();
     fetchAdminChallenges();
     fetchSubPayments();
+    fetchAdminReports();
   }, [token]);
 
   const handleApproveReel = async (reelId: string) => {
@@ -1390,6 +1452,22 @@ export default function AdminPanel({
           {depositRequests.filter(d => d.status === 'pending').length > 0 && (
             <span className="bg-emerald-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold animate-pulse">
               {depositRequests.filter(d => d.status === 'pending').length}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('moderation'); fetchAdminReports(); }}
+          className={`px-3.5 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            activeSubTab === 'moderation'
+              ? 'border-rose-500 text-rose-600 bg-white/70'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <ShieldAlert className="w-3.5 h-3.5 text-rose-500" />
+          <span>🛡️ Moderation Queue</span>
+          {adminReports.filter(r => r.status === 'pending').length > 0 && (
+            <span className="bg-rose-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold animate-pulse">
+              {adminReports.filter(r => r.status === 'pending').length}
             </span>
           )}
         </button>
@@ -4379,6 +4457,323 @@ export default function AdminPanel({
                     </div>
                   </div>
                 ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SECTION: COMMUNITY SAFETY & CONTENT MODERATION QUEUE */}
+      {activeSubTab === 'moderation' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* Header Banner & Controls */}
+          <div className="bg-gradient-to-r from-slate-900 via-rose-950 to-slate-950 rounded-3xl p-6 text-white border border-rose-500/30 shadow-xl space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="p-2 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                    <ShieldAlert className="w-5 h-5" />
+                  </span>
+                  <h2 className="text-xl font-black tracking-tight">
+                    Community Moderation & Safety Center
+                  </h2>
+                </div>
+                <p className="text-xs text-rose-200/80 font-medium max-w-2xl">
+                  Suriin ang mga inireport na post, komento, at user upang mapanatiling ligtas at lehitimo ang buong Z-one community.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={fetchAdminReports}
+                  disabled={loadingReports}
+                  className="px-4 py-2 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-black text-xs flex items-center gap-2 border border-white/10 transition cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingReports ? 'animate-spin' : ''}`} />
+                  <span>I-refresh ang Listahan</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Metrics Bar */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-white/10">
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-3.5 space-y-1">
+                <span className="text-[10px] text-amber-300 font-black uppercase tracking-wider block">
+                  ⚠️ Nakabinbin (Pending)
+                </span>
+                <span className="text-2xl font-black text-white block">
+                  {adminReports.filter(r => r.status === 'pending').length}
+                </span>
+                <span className="text-[10px] text-slate-400">Nangangailangan ng aksyon</span>
+              </div>
+
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-3.5 space-y-1">
+                <span className="text-[10px] text-emerald-300 font-black uppercase tracking-wider block">
+                  🔨 Naisagawa (Actioned)
+                </span>
+                <span className="text-2xl font-black text-white block">
+                  {adminReports.filter(r => r.status === 'actioned').length}
+                </span>
+                <span className="text-[10px] text-slate-400">Nalapatan ng parusa / burado</span>
+              </div>
+
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-3.5 space-y-1">
+                <span className="text-[10px] text-slate-300 font-black uppercase tracking-wider block">
+                  🕊️ Naipawalang-bisa
+                </span>
+                <span className="text-2xl font-black text-white block">
+                  {adminReports.filter(r => r.status === 'dismissed').length}
+                </span>
+                <span className="text-[10px] text-slate-400">Walang paglabag</span>
+              </div>
+
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-3.5 space-y-1">
+                <span className="text-[10px] text-indigo-300 font-black uppercase tracking-wider block">
+                  📋 Kabuuang Ulat
+                </span>
+                <span className="text-2xl font-black text-white block">
+                  {adminReports.length}
+                </span>
+                <span className="text-[10px] text-slate-400">Nai-record sa database</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Filter Bars */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-4 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            {/* Status Filter */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs font-black text-slate-500 mr-2">Status:</span>
+              <button
+                onClick={() => setReportFilter('pending')}
+                className={`px-3 py-1.5 rounded-xl font-black text-xs cursor-pointer transition ${
+                  reportFilter === 'pending'
+                    ? 'bg-amber-500 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                ⚠️ Pending ({adminReports.filter(r => r.status === 'pending').length})
+              </button>
+              <button
+                onClick={() => setReportFilter('actioned')}
+                className={`px-3 py-1.5 rounded-xl font-black text-xs cursor-pointer transition ${
+                  reportFilter === 'actioned'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                🔨 Actioned ({adminReports.filter(r => r.status === 'actioned').length})
+              </button>
+              <button
+                onClick={() => setReportFilter('dismissed')}
+                className={`px-3 py-1.5 rounded-xl font-black text-xs cursor-pointer transition ${
+                  reportFilter === 'dismissed'
+                    ? 'bg-slate-800 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                🕊️ Dismissed ({adminReports.filter(r => r.status === 'dismissed').length})
+              </button>
+              <button
+                onClick={() => setReportFilter('all')}
+                className={`px-3 py-1.5 rounded-xl font-black text-xs cursor-pointer transition ${
+                  reportFilter === 'all'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Lahat ({adminReports.length})
+              </button>
+            </div>
+
+            {/* Target Filter */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs font-black text-slate-500 mr-2">Uri:</span>
+              {(['all', 'post', 'user', 'comment'] as const).map(target => (
+                <button
+                  key={target}
+                  onClick={() => setReportTargetFilter(target)}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold cursor-pointer transition capitalize ${
+                    reportTargetFilter === target
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {target === 'all' ? 'Lahat' : target}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Reports List */}
+          {loadingReports ? (
+            <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center space-y-3">
+              <RefreshCw className="w-8 h-8 text-rose-500 animate-spin mx-auto" />
+              <p className="text-xs font-black text-slate-500">Ikinakarga ang moderation queue...</p>
+            </div>
+          ) : adminReports.filter(r => (reportFilter === 'all' || r.status === reportFilter) && (reportTargetFilter === 'all' || r.targetType === reportTargetFilter)).length === 0 ? (
+            <div className="bg-white rounded-3xl border border-dashed border-slate-300 p-12 text-center space-y-3">
+              <ShieldCheck className="w-12 h-12 text-emerald-500 mx-auto" />
+              <h3 className="text-base font-black text-slate-800">
+                {reportFilter === 'pending' ? 'Walang nakabinbing report!' : 'Walang nahanap na record para sa filter na ito.'}
+              </h3>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                {reportFilter === 'pending'
+                  ? 'Malinis ang komunidad. Lahat ng sumbong ay naaksyunan na ng mga moderator.'
+                  : 'Maaari kang pumili ng ibang filter sa itaas upang makita ang nakaraang kasaysayan.'}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {adminReports
+                .filter(r => (reportFilter === 'all' || r.status === reportFilter) && (reportTargetFilter === 'all' || r.targetType === reportTargetFilter))
+                .map((report) => {
+                  const isPending = report.status === 'pending';
+                  const isProcessing = processingReportId === report.id;
+
+                  const reasonColorMap: Record<string, { bg: string; text: string; label: string }> = {
+                    spam: { bg: 'bg-amber-100', text: 'text-amber-800', label: 'Spam / Scam' },
+                    harassment: { bg: 'bg-rose-100', text: 'text-rose-800', label: 'Harassment / Pang-aapi' },
+                    inappropriate: { bg: 'bg-red-100', text: 'text-red-800', label: 'Hindi Angkop / Explicit' },
+                    misinformation: { bg: 'bg-purple-100', text: 'text-purple-800', label: 'Maling Impormasyon' },
+                    other: { bg: 'bg-slate-100', text: 'text-slate-800', label: 'Iba pang Dahilan' }
+                  };
+
+                  const reasonInfo = reasonColorMap[report.reason] || reasonColorMap.other;
+
+                  return (
+                    <div
+                      key={report.id}
+                      className={`bg-white rounded-3xl border p-5 sm:p-6 transition shadow-xs space-y-4 ${
+                        isPending ? 'border-amber-300 ring-1 ring-amber-200' : 'border-slate-200 opacity-90'
+                      }`}
+                    >
+                      {/* Top Meta Bar */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="px-2.5 py-1 rounded-xl bg-slate-900 text-white font-mono text-[10px] font-black uppercase">
+                            {report.targetType}
+                          </span>
+                          <span className={`px-2.5 py-1 rounded-xl text-[10px] font-black ${reasonInfo.bg} ${reasonInfo.text}`}>
+                            {reasonInfo.label}
+                          </span>
+                          {report.status === 'pending' && (
+                            <span className="px-2.5 py-1 rounded-xl bg-amber-100 text-amber-800 text-[10px] font-black flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                              <span>Nangangailangan ng Aksyon</span>
+                            </span>
+                          )}
+                          {report.status === 'actioned' && (
+                            <span className="px-2.5 py-1 rounded-xl bg-emerald-100 text-emerald-800 text-[10px] font-black flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              <span>Aksyunan: {report.actionTaken}</span>
+                            </span>
+                          )}
+                          {report.status === 'dismissed' && (
+                            <span className="px-2.5 py-1 rounded-xl bg-slate-100 text-slate-700 text-[10px] font-black">
+                              Naipawalang-bisa (Dismissed)
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="text-[11px] text-slate-400 font-mono">
+                          {new Date(report.createdAt).toLocaleString()}
+                        </div>
+                      </div>
+
+                      {/* Content & Details Grid */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Target Section */}
+                        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
+                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">
+                            🎯 Inireport na Nilalaman / User:
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black text-slate-800">
+                              {report.targetAuthorName || 'Hindi kilala'}
+                            </span>
+                            {report.targetAuthorId && (
+                              <span className="text-[10px] font-mono text-slate-400 bg-slate-200 px-1.5 py-0.5 rounded">
+                                UID: {report.targetAuthorId}
+                              </span>
+                            )}
+                          </div>
+                          {report.targetContentSnippet ? (
+                            <div className="bg-white border border-slate-200 rounded-xl p-3 text-xs text-slate-700 font-medium italic">
+                              "{report.targetContentSnippet}"
+                            </div>
+                          ) : (
+                            <div className="text-xs text-slate-500 italic">
+                              Walang text preview na naiwan (User o Media report). Target ID: {report.targetId}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Reporter Section */}
+                        <div className="bg-rose-50/50 border border-rose-100 rounded-2xl p-4 space-y-2">
+                          <span className="text-[10px] font-black uppercase text-rose-500 tracking-wider block">
+                            👤 Nag-ulat (Reporter):
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black text-slate-900">
+                              {report.reporterUserName}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-400 bg-white px-1.5 py-0.5 rounded border border-rose-100">
+                              UID: {report.reporterUserId}
+                            </span>
+                          </div>
+                          {report.notes && (
+                            <div className="bg-white border border-rose-100 rounded-xl p-3 text-xs text-slate-800">
+                              <span className="font-bold text-rose-600 block mb-1">Paliwanag ng Reporter:</span>
+                              {report.notes}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Admin Decision Actions */}
+                      {isPending ? (
+                        <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                          <button
+                            onClick={() => handleReportAction(report.id, 'dismiss')}
+                            disabled={isProcessing}
+                            className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 font-black text-xs cursor-pointer transition disabled:opacity-50"
+                          >
+                            Pawalang-bisa (Dismiss)
+                          </button>
+
+                          {report.targetType === 'post' && (
+                            <button
+                              onClick={() => handleReportAction(report.id, 'delete_content')}
+                              disabled={isProcessing}
+                              className="px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50 shadow-xs"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Burahin ang Post</span>
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => handleReportAction(report.id, 'ban_user')}
+                            disabled={isProcessing}
+                            className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50 shadow-xs"
+                          >
+                            <Ban className="w-3.5 h-3.5" />
+                            <span>I-ban ang User</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between text-xs text-slate-500 pt-2 border-t border-slate-100 font-medium">
+                          <span>
+                            Na-review noong: <b>{report.reviewedAt ? new Date(report.reviewedAt).toLocaleString() : 'N/A'}</b>
+                          </span>
+                          <span className="text-[11px] font-mono text-slate-400">
+                            Aksyon: <b>{report.actionTaken || report.status}</b>
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
             </div>
           )}
         </div>

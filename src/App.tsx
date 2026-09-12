@@ -89,6 +89,8 @@ import { CreatorChallengesView } from './components/CreatorChallengesView';
 import { PublicEntryLandingModal } from './components/PublicEntryLandingModal';
 import { VerificationFlowModal } from './components/VerificationFlowModal';
 import { DeviceTransferModal } from './components/DeviceTransferModal';
+import { UnifiedSearchDiscoveryModal } from './components/UnifiedSearchDiscoveryModal';
+import { UserProfileModal } from './components/UserProfileModal';
 import { getOrCreateDeviceKeyId, getDeviceSecurityHeaders } from './utils/deviceSecurity';
 import { dataSaver, generateIdempotencyKey } from './utils/dataSaver';
 import { idbStorage } from './utils/idbStorage';
@@ -182,7 +184,15 @@ export default function App() {
   // --- AUTHENTICATION & SYNC STATES ---
   const [token, setToken] = useState<string | null>(() => {
     try {
-      return localStorage.getItem('gcash_click_earn_token');
+      const storedToken = localStorage.getItem('gcash_click_earn_token');
+      if (storedToken) {
+        // If a legacy raw user-ID token or non-JWT is detected, treat as expired without altering user data
+        if (storedToken.split('.').length !== 3) {
+          return null;
+        }
+        return storedToken;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -389,6 +399,46 @@ export default function App() {
   const [guestShopProduct, setGuestShopProduct] = useState<ShopProduct | null>(null);
   const [productNotFoundModal, setProductNotFoundModal] = useState<boolean>(false);
 
+  // 🔍 Unified Search Discovery Modal State
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState<boolean>(false);
+  const [searchModalQuery, setSearchModalQuery] = useState<string>('');
+  const [searchModalType, setSearchModalType] = useState<'all' | 'people' | 'posts' | 'reels' | 'challenges' | 'products'>('all');
+
+  // 👤 User Profile Inspection Modal State
+  const [viewingProfileUserId, setViewingProfileUserId] = useState<string | null>(null);
+  const [isViewingProfileOpen, setIsViewingProfileOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleSearchEvent = (e: any) => {
+      setIsSearchModalOpen(true);
+      if (e.detail?.query) setSearchModalQuery(e.detail.query);
+      if (e.detail?.type) setSearchModalType(e.detail.type);
+    };
+    const handleOpenProduct = (e: any) => {
+      const prod = e.detail?.product;
+      if (prod) {
+        setActiveTab('va_shop');
+        setPublicShopProductParam({ productId: prod.id, sharedBy: prod.sharedBy });
+        setIsShopProductDeepLink(true);
+      }
+    };
+    const handleOpenProfile = (e: any) => {
+      const uId = e.detail?.userId;
+      if (uId) {
+        setViewingProfileUserId(uId);
+        setIsViewingProfileOpen(true);
+      }
+    };
+    window.addEventListener('open-unified-search', handleSearchEvent);
+    window.addEventListener('open-shop-product-detail', handleOpenProduct);
+    window.addEventListener('open-user-profile-modal', handleOpenProfile);
+    return () => {
+      window.removeEventListener('open-unified-search', handleSearchEvent);
+      window.removeEventListener('open-shop-product-detail', handleOpenProduct);
+      window.removeEventListener('open-user-profile-modal', handleOpenProfile);
+    };
+  }, []);
+
   useEffect(() => {
     if (!publicShopProductParam?.productId) return;
     setIsShopProductDeepLink(true);
@@ -511,7 +561,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(user?.id ? { 'Authorization': user.id } : {})
+          ...(token ? { 'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}` } : {})
         },
         body: JSON.stringify({
           url,
@@ -563,7 +613,7 @@ export default function App() {
       const res = await fetch(`/api/reels/${id}`, {
         method: 'DELETE',
         headers: {
-          ...(user?.id ? { 'Authorization': user.id } : {})
+          ...(token ? { 'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}` } : {})
         }
       });
       if (res.ok) {
@@ -2426,6 +2476,7 @@ export default function App() {
                 onOpenDataSaver={() => setShowDataSaverModal(true)}
                 onOpenVerification={() => setShowVerificationModal(true)}
                 onOpenDeviceTransfer={() => setShowDeviceTransferModal(true)}
+                onOpenSearch={() => setIsSearchModalOpen(true)}
                 onOpenNotifications={() => {
                   if (notificationPermission === 'default') {
                     requestNotificationPermission();
@@ -2755,6 +2806,12 @@ export default function App() {
                     triggerNotification={triggerNotification}
                     onRefreshProfile={() => fetchUserProfile(token || '')}
                     language={language}
+                    onOpenProfile={(id) => {
+                      setViewingProfileUserId(id);
+                      setIsViewingProfileOpen(true);
+                    }}
+                    onNavigateToShop={() => setActiveTab('va_shop')}
+                    onNavigateToChallenge={() => setActiveTab('challenges')}
                   />
                 )}
               </div>
@@ -3441,6 +3498,7 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
       {/* 🎬 FLOATING REELS & SHORTS WIDGET (Accessible to Users & Non-Users / Visitors) */}
       <ReelsFloatingWidget
         reels={reels}
+        token={token || ''}
         isAdmin={user?.isAdmin || false}
         currentUserName={user?.name}
         currentUserId={user?.id}
@@ -3452,9 +3510,76 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
         onDeleteReel={handleDeleteReel}
         onLikeReel={handleLikeReel}
         onWatchRewardReel={handleWatchRewardReel}
+        onOpenProduct={(prod) => {
+          setActiveTab('va_shop');
+          setPublicShopProductParam({ productId: prod.id });
+          setIsShopProductDeepLink(true);
+        }}
+        onOpenCreatorProfile={(userId) => {
+          setViewingProfileUserId(userId);
+          setIsViewingProfileOpen(true);
+        }}
         triggerNotification={triggerNotification}
         onRefreshReels={fetchReels}
       />
+
+      {/* 🔍 UNIFIED SEARCH & DISCOVERY MODAL */}
+      <UnifiedSearchDiscoveryModal
+        isOpen={isSearchModalOpen}
+        onClose={() => setIsSearchModalOpen(false)}
+        initialQuery={searchModalQuery}
+        initialType={searchModalType}
+        language={language}
+        onSelectCreator={(userId) => {
+          setViewingProfileUserId(userId);
+          setIsViewingProfileOpen(true);
+        }}
+        onSelectProduct={(product) => {
+          setActiveTab('va_shop');
+          setPublicShopProductParam({ productId: product.id });
+          setIsShopProductDeepLink(true);
+        }}
+        onSelectReel={(reelId) => {
+          window.dispatchEvent(new CustomEvent('open-reel-detail', { detail: { reelId } }));
+        }}
+        onSelectPost={() => {
+          setActiveTab('zone');
+        }}
+        onSelectChallenge={() => {
+          setActiveTab('challenges');
+        }}
+      />
+
+      {/* 👤 USER PROFILE INSPECTION MODAL */}
+      {viewingProfileUserId && (
+        <UserProfileModal
+          isOpen={isViewingProfileOpen}
+          token={token || ''}
+          onClose={() => {
+            setIsViewingProfileOpen(false);
+            setViewingProfileUserId(null);
+          }}
+          userId={viewingProfileUserId}
+          currentUserId={user?.id}
+          currentUserName={user?.name}
+          onStartDM={() => {
+            setIsViewingProfileOpen(false);
+            setActiveTab('zone');
+          }}
+          onNavigateToShop={() => {
+            setIsViewingProfileOpen(false);
+            setActiveTab('va_shop');
+          }}
+          onViewChallenge={() => {
+            setIsViewingProfileOpen(false);
+            setActiveTab('challenges');
+          }}
+          onPlayReel={() => {
+            setIsViewingProfileOpen(false);
+            setActiveTab('zone');
+          }}
+        />
+      )}
 
       {/* 📶 INTELLIGENT MOBILE DATA SAVER SETTINGS MODAL */}
       <DataSaverSettingsModal

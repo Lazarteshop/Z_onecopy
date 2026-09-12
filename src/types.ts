@@ -156,6 +156,21 @@ export interface ZoneComment {
   userAvatar: string;
   text: string;
   createdAt: string;
+  likes?: string[];
+  replies?: ZoneCommentReply[];
+}
+
+export interface SocialProductRef {
+  id: string;
+  name: string;
+  price: number;
+  originalPrice?: number;
+  image: string;
+  category?: string;
+  commissionRate?: number;
+  affiliateUrl?: string;
+  isAffiliate?: boolean;
+  platform?: string;
 }
 
 export interface ZonePost {
@@ -171,6 +186,8 @@ export interface ZonePost {
   embedUrls?: string[];
   likes: string[]; // List of user IDs who liked
   comments: ZoneComment[];
+  viewsCount?: number;
+  sharesCount?: number;
   createdAt: string;
   isFlagged?: boolean;
   isRss?: boolean;
@@ -179,6 +196,8 @@ export interface ZonePost {
   videoSourceAvailable?: boolean;
   videoStreamType?: 'direct' | 'hls' | 'dailymotion' | 'youtube' | 'okru' | 'embed';
   episodeTitle?: string;
+  productRef?: SocialProductRef;
+  hashtags?: string[];
   sharedPost?: {
     id: string;
     userId: string;
@@ -212,6 +231,8 @@ export interface MerchantAd {
   gcashSenderNumber: string;
   gcashReferenceNo: string;
   status: 'pending' | 'active' | 'declined' | 'expired';
+  paymentId?: string;
+  rejectionReason?: string;
   createdAt: string;
   approvedAt?: string;
   expiresAt?: string;
@@ -232,6 +253,13 @@ export interface ReelVideo {
   audienceCountry?: 'Philippines' | 'India' | 'Indonesia' | 'US' | 'Canada' | 'UK';
   addedBy?: string;
   addedByUserId?: string;
+  authorAvatar?: string;
+  authorBio?: string;
+  comments?: ZoneComment[];
+  commentsCount?: number;
+  sharesCount?: number;
+  productRef?: SocialProductRef;
+  hashtags?: string[];
   status?: 'approved' | 'pending' | 'disapproved';
   disapproveReason?: string;
   createdAt: string;
@@ -261,6 +289,57 @@ export interface ReelTokenSubscription {
   approvedAt?: string;
 }
 
+export interface SearchResults {
+  people: Array<{
+    id: string;
+    name: string;
+    avatar: string;
+    bio: string;
+    referralCode?: string;
+    zonedUsersCount: number;
+    isZoned?: boolean;
+  }>;
+  posts: Array<{
+    id: string;
+    text: string;
+    userId: string;
+    userName: string;
+    userAvatar?: string;
+    mediaUrl?: string;
+    createdAt: string;
+    likesCount: number;
+    commentsCount: number;
+  }>;
+  reels: Array<{
+    id: string;
+    title: string;
+    platform: string;
+    likes: number;
+    views?: number;
+    addedBy?: string;
+    addedByUserId?: string;
+    productRef?: SocialProductRef;
+  }>;
+  challenges: Array<{
+    id: string;
+    title: string;
+    description?: string;
+    category: string;
+    prizePool: number;
+    entryCount: number;
+    status: string;
+  }>;
+  products: Array<{
+    id: string;
+    name: string;
+    price: number;
+    image?: string;
+    category?: string;
+    commissionRate?: number;
+    inStock?: boolean;
+  }>;
+}
+
 export interface DirectMessage {
   id: string;
   clientMessageId?: string;
@@ -274,6 +353,9 @@ export interface DirectMessage {
   mediaUrl?: string;
   mediaType?: 'image' | 'video';
   createdAt: string;
+  status?: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+  deliveredAt?: string;
+  readAt?: string;
 }
 
 export interface GroupChat {
@@ -650,6 +732,7 @@ export interface UserAlbum {
 export interface UserProfileInfo {
   id: string;
   name: string;
+  handle?: string;
   avatar: string;
   coverPhoto?: string;
   bio?: string;
@@ -658,7 +741,13 @@ export interface UserProfileInfo {
   postCount?: number;
   publicPhotoCount?: number;
   albumCount?: number;
+  followerCount?: number;
+  followingCount?: number;
+  isFollowing?: boolean;
   isOnline?: boolean;
+  reels?: any[];
+  challenges?: any[];
+  taggedProducts?: any[];
 }
 
 export interface AdminUser {
@@ -957,6 +1046,57 @@ export interface BilibiliFeedConfig {
   lastError?: string | null;
   itemCount?: number;
 }
+
+export interface SocialNotification {
+  id: string;
+  recipientUserId: string;
+  senderUserId?: string;
+  senderUserName?: string;
+  senderUserAvatar?: string;
+  type: 'like' | 'comment' | 'reply' | 'follow' | 'mention' | 'share' | 'challenge' | 'shop';
+  title: string;
+  message: string;
+  targetId?: string;
+  targetType?: 'post' | 'reel' | 'challenge' | 'product' | 'profile';
+  read: boolean;
+  createdAt: string;
+}
+
+export interface SocialReport {
+  id: string;
+  targetType: 'post' | 'comment' | 'user';
+  targetId: string;
+  targetAuthorId?: string;
+  targetAuthorName?: string;
+  targetContentSnippet?: string;
+  reason: 'spam' | 'harassment' | 'inappropriate' | 'misinformation' | 'other';
+  notes?: string;
+  reporterUserId: string;
+  reporterUserName: string;
+  status: 'pending' | 'reviewed' | 'actioned' | 'dismissed';
+  actionTaken?: string;
+  createdAt: string;
+  reviewedAt?: string;
+}
+
+export interface ZoneCommentReply {
+  id: string;
+  commentId: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  text: string;
+  createdAt: string;
+  likes?: string[];
+}
+
+export interface SavedPostRef {
+  id: string;
+  userId: string;
+  postId: string;
+  savedAt: string;
+}
+
 
 
 

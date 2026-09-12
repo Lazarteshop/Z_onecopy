@@ -39,25 +39,43 @@ import {
   UserPlus,
   Plus,
   Check,
+  CheckCheck,
+  Clock,
+  Loader2,
+  WifiOff,
   MoreHorizontal,
   Info,
   LogOut,
   Settings,
   ShieldCheck,
+  ShieldAlert,
+  CheckCircle,
   Paperclip,
   Wifi,
   Smartphone,
   ExternalLink,
-  User
+  User,
+  ShoppingBag,
+  Bookmark,
+  BookmarkCheck,
+  EyeOff,
+  CornerDownRight,
+  Flame,
+  BarChart3
 } from 'lucide-react';
-import { ZonePost, GroupChat, GroupMessage, ZoneStory, DirectMessage, BilibiliFeedItem, BilibiliFeedConfig } from '../types';
+import { ZonePost, GroupChat, GroupMessage, ZoneStory, DirectMessage, BilibiliFeedItem, BilibiliFeedConfig, SocialProductRef, SocialReport } from '../types';
 import { ZoneStories } from './ZoneStories';
 import { dataSaver } from '../utils/dataSaver';
 import { idbStorage } from '../utils/idbStorage';
+import { chatSocket, ConnectionStatus } from '../utils/chatSocketClient';
 import { DataSaverSettingsModal } from './DataSaverSettingsModal';
 import { UserProfileModal } from './UserProfileModal';
 import { BilibiliCard } from './BilibiliCard';
 import { BilibiliPlayerModal } from './BilibiliPlayerModal';
+import { ProductTagSelectorModal } from './ProductTagSelectorModal';
+import { SocialNotificationCenter } from './SocialNotificationCenter';
+import { CreatorAnalyticsDashboard } from './CreatorAnalyticsDashboard';
+import { trackContentView, trackProductClick } from '../utils/analyticsTracker';
 
 interface ZoneFeedProps {
   token: string;
@@ -72,6 +90,9 @@ interface ZoneFeedProps {
   triggerNotification: (msg: string, type: 'success' | 'error' | 'info') => void;
   onRefreshProfile: () => void;
   language: 'en' | 'tl';
+  onOpenProfile?: (userId: string) => void;
+  onNavigateToShop?: (productId?: string) => void;
+  onNavigateToChallenge?: (challengeId?: string) => void;
 }
 
 const PRESET_PHOTOS = [
@@ -248,7 +269,7 @@ const compressImage = (dataUrl: string, maxWidth: number = 800, maxHeight: numbe
   });
 };
 
-export default function ZoneFeed({ token, user, setUser, triggerNotification, onRefreshProfile, language }: ZoneFeedProps) {
+export default function ZoneFeed({ token, user, setUser, triggerNotification, onRefreshProfile, language, onOpenProfile, onNavigateToShop, onNavigateToChallenge }: ZoneFeedProps) {
   const [posts, setPosts] = useState<ZonePost[]>(() => {
     try {
       const cached = localStorage.getItem('zone_posts_cache');
@@ -306,7 +327,15 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     ];
   });
   const [loadingPosts, setLoadingPosts] = useState(false);
-  const [postFilter, setPostFilter] = useState<'all' | 'news' | 'community' | 'teleserye' | 'bilibili'>('all');
+  const [postFilter, setPostFilter] = useState<'all' | 'following' | 'popular' | 'trending' | 'saved' | 'news' | 'community' | 'teleserye' | 'bilibili'>('all');
+  const [savedPostIds, setSavedPostIds] = useState<Set<string>>(new Set());
+  const [replyInputOpenMap, setReplyInputOpenMap] = useState<Record<string, boolean>>({});
+  const [replyTexts, setReplyTexts] = useState<Record<string, string>>({});
+  const [submittingReplyId, setSubmittingReplyId] = useState<string | null>(null);
+  const [reportingPost, setReportingPost] = useState<ZonePost | null>(null);
+  const [postReportReason, setPostReportReason] = useState<'spam' | 'harassment' | 'inappropriate' | 'misinformation' | 'other'>('inappropriate');
+  const [postReportNotes, setPostReportNotes] = useState('');
+  const [submittingPostReport, setSubmittingPostReport] = useState(false);
   const [teleseryeStreamFilter, setTeleseryeStreamFilter] = useState<'all' | 'playable' | 'pending'>('all');
   const [selectedServerMap, setSelectedServerMap] = useState<Record<string, string>>({});
   const [teleseryeSearch, setTeleseryeSearch] = useState<string>('');
@@ -436,6 +465,14 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const [inboxTab, setInboxTab] = useState<'chats' | 'groups' | 'members'>('chats');
   const [allUsersList, setAllUsersList] = useState<any[]>([]);
   const [loadingUsersList, setLoadingUsersList] = useState(false);
+  const [chatConnectionStatus, setChatConnectionStatus] = useState<ConnectionStatus>('offline');
+  const [typingUsers, setTypingUsers] = useState<Record<string, { isTyping: boolean; name: string }>>({});
+  const [visibleDmCount, setVisibleDmCount] = useState<number>(35);
+  const activeDmUserRef = React.useRef(activeDmUser);
+
+  useEffect(() => {
+    activeDmUserRef.current = activeDmUser;
+  }, [activeDmUser]);
 
   // --- GROUP CHAT (GC) STATES ---
   const [groupChats, setGroupChats] = useState<GroupChat[]>([]);
@@ -454,6 +491,9 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const [isAddingMembers, setIsAddingMembers] = useState(false);
   const [editingGroupMessageId, setEditingGroupMessageId] = useState<string | null>(null);
   const [editingGroupMessageText, setEditingGroupMessageText] = useState('');
+
+  // --- 📊 CREATOR ANALYTICS STUDIO STATE ---
+  const [showCreatorAnalytics, setShowCreatorAnalytics] = useState(false);
 
   // --- 📖 STORIES ("MY DAY") STATES ---
   const [stories, setStories] = useState<ZoneStory[]>([]);
@@ -847,6 +887,146 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       }
     });
   }, [user.id]);
+
+  // Initialize Real-Time Chat & Presence WebSocket Engine
+  useEffect(() => {
+    if (!token) return;
+
+    chatSocket.init(token, user.id);
+    const unsubStatus = chatSocket.onStatusChange((newStatus) => {
+      setChatConnectionStatus(newStatus);
+    });
+
+    const unsubMsg = chatSocket.onMessage((incomingMsg) => {
+      setDmMessages((prev) => {
+        const exists = prev.some(
+          m => m.id === incomingMsg.id || (incomingMsg.clientMessageId && m.clientMessageId === incomingMsg.clientMessageId)
+        );
+        let updated: any[];
+        if (exists) {
+          updated = prev.map(m =>
+            (m.id === incomingMsg.id || (incomingMsg.clientMessageId && m.clientMessageId === incomingMsg.clientMessageId))
+              ? incomingMsg
+              : m
+          );
+        } else {
+          updated = [...prev, incomingMsg];
+        }
+        idbStorage.set(`zone_dms_${user.id}`, updated);
+        return updated;
+      });
+
+      // Smart auto-scroll if message is for the current conversation
+      if (activeDmUserRef.current && (activeDmUserRef.current.id === incomingMsg.senderId || activeDmUserRef.current.id === incomingMsg.receiverId)) {
+        setTimeout(() => {
+          const chatContainer = document.getElementById('dm-chat-scroll');
+          if (chatContainer) {
+            const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 150;
+            if (isNearBottom || incomingMsg.senderId === user.id) {
+              chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+          }
+        }, 30);
+
+        // Mark as read immediately if current user is actively looking at this chat
+        if (incomingMsg.senderId === activeDmUserRef.current.id) {
+          chatSocket.markAsRead(incomingMsg.senderId, [incomingMsg.id]);
+        }
+      }
+    });
+
+    const unsubAck = chatSocket.onAck(({ clientMessageId, serverMessageId, status, message }) => {
+      setDmMessages((prev) => {
+        const updated = prev.map(m => {
+          if (m.clientMessageId === clientMessageId || m.id === clientMessageId || m.id === serverMessageId) {
+            return {
+              ...message,
+              id: serverMessageId,
+              clientMessageId,
+              status: status || 'sent'
+            };
+          }
+          return m;
+        });
+        idbStorage.set(`zone_dms_${user.id}`, updated);
+        return updated;
+      });
+    });
+
+    const unsubDelivered = chatSocket.onDelivered(({ clientMessageId, messageId, deliveredAt }) => {
+      setDmMessages((prev) => {
+        const updated = prev.map(m => {
+          if (m.id === messageId || (clientMessageId && m.clientMessageId === clientMessageId)) {
+            return {
+              ...m,
+              status: m.status === 'read' ? 'read' : 'delivered',
+              deliveredAt
+            };
+          }
+          return m;
+        });
+        idbStorage.set(`zone_dms_${user.id}`, updated);
+        return updated;
+      });
+    });
+
+    const unsubRead = chatSocket.onRead(({ readerId, messageIds, readAt }) => {
+      setDmMessages((prev) => {
+        const updated = prev.map(m => {
+          if (m.receiverId === readerId && (messageIds.length === 0 || messageIds.includes(m.id))) {
+            return {
+              ...m,
+              status: 'read',
+              readAt
+            };
+          }
+          return m;
+        });
+        idbStorage.set(`zone_dms_${user.id}`, updated);
+        return updated;
+      });
+    });
+
+    const unsubTyping = chatSocket.onTyping(({ senderId, senderName, isTyping }) => {
+      setTypingUsers(prev => ({
+        ...prev,
+        [senderId]: { isTyping, name: senderName }
+      }));
+    });
+
+    const unsubPresence = chatSocket.onPresence(({ userId, isOnline }) => {
+      setOnlineUserIds(prev => {
+        if (isOnline) {
+          return prev.includes(userId) ? prev : [...prev, userId];
+        } else {
+          return prev.filter(id => id !== userId);
+        }
+      });
+    });
+
+    return () => {
+      unsubStatus();
+      unsubMsg();
+      unsubAck();
+      unsubDelivered();
+      unsubRead();
+      unsubTyping();
+      unsubPresence();
+    };
+  }, [token, user.id]);
+
+  // Handle active DM open & read receipt dispatch
+  useEffect(() => {
+    if (!activeDmUser) return;
+    setVisibleDmCount(35);
+    const unreadMsgIds = dmMessages
+      .filter(m => m.senderId === activeDmUser.id && m.receiverId === user.id && !m.readAt)
+      .map(m => m.id);
+
+    if (unreadMsgIds.length > 0) {
+      chatSocket.markAsRead(activeDmUser.id, unreadMsgIds);
+    }
+  }, [activeDmUser, user.id]);
 
   // Poll for incoming Direct Messages, Groups, and Calls with Delta Synchronization
   useEffect(() => {
@@ -1263,7 +1443,8 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       text: originalText,
       mediaUrl: mediaToSend || undefined,
       mediaType: mediaToSend ? mediaTypeToSend : undefined,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      status: 'sending'
     };
 
     // Immediate optimistic local rendering
@@ -1271,6 +1452,9 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     setNewDmText('');
     setDmMediaPreview(null);
     if (dmFileInputRef.current) dmFileInputRef.current.value = '';
+
+    // Stop typing indicator on send
+    chatSocket.stopTyping(activeDmUser.id);
 
     // Scroll to bottom
     setTimeout(() => {
@@ -1318,6 +1502,30 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         }
       }
 
+      // Try high-speed real-time WebSocket delivery first
+      const canSendViaSocket = !finalMediaUrl || !finalMediaUrl.startsWith('data:');
+      let sentViaSocket = false;
+      if (canSendViaSocket && chatSocket.getStatus() === 'live') {
+        sentViaSocket = chatSocket.sendMessage({
+          clientMessageId: tempId,
+          receiverId: activeDmUser.id,
+          text: originalText,
+          mediaUrl: finalMediaUrl || undefined,
+          mediaType: finalMediaUrl ? mediaTypeToSend : undefined
+        });
+      }
+
+      if (sentViaSocket) {
+        // Dispatched via WebSocket! Clean outbox once delivered
+        if (outboxId) {
+          setTimeout(async () => {
+            try { await idbStorage.removeOutboxItem(outboxId); } catch {}
+          }, 1500);
+        }
+        return;
+      }
+
+      // Fallback: standard HTTP POST delivery
       const res = await fetch('/api/zone/messages', {
         method: 'POST',
         headers: {
@@ -1337,7 +1545,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       if (res.ok) {
         const data = await res.json();
         // Replace temp message with server version and remove from outbox
-        setDmMessages(prev => prev.map(msg => (msg.id === tempId || msg.clientMessageId === tempId) ? data.message : msg));
+        setDmMessages(prev => prev.map(msg => (msg.id === tempId || msg.clientMessageId === tempId) ? { ...data.message, status: 'sent' } : msg));
         if (outboxId) {
           await idbStorage.removeOutboxItem(outboxId);
         }
@@ -1350,10 +1558,56 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           setDmMediaPreview(mediaToSend);
           if (outboxId) await idbStorage.removeOutboxItem(outboxId);
           triggerNotification(errData.error || 'Failed to send message', 'error');
+        } else {
+          setDmMessages(prev => prev.map(msg => (msg.id === tempId || msg.clientMessageId === tempId) ? { ...msg, status: 'failed' } : msg));
         }
       }
     } catch (err) {
       console.warn('Network issue sending DM. Message preserved in outbox for retry:', err);
+      setDmMessages(prev => prev.map(msg => (msg.id === tempId || msg.clientMessageId === tempId) ? { ...msg, status: 'failed' } : msg));
+    }
+  };
+
+  // Handler to manually retry sending a failed message
+  const handleRetryDmMessage = async (msg: DirectMessage) => {
+    setDmMessages(prev => prev.map(m => m.id === msg.id ? { ...m, status: 'sending' } : m));
+
+    // Try socket first
+    const socketSent = chatSocket.sendMessage({
+      clientMessageId: msg.clientMessageId || msg.id,
+      receiverId: msg.receiverId,
+      text: msg.text,
+      mediaUrl: msg.mediaUrl,
+      mediaType: msg.mediaType
+    });
+
+    if (socketSent) return;
+
+    // Fallback HTTP
+    try {
+      const res = await fetch('/api/zone/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({
+          clientMessageId: msg.clientMessageId || msg.id,
+          tempId: msg.id,
+          receiverId: msg.receiverId,
+          text: msg.text,
+          mediaUrl: msg.mediaUrl,
+          mediaType: msg.mediaType
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDmMessages(prev => prev.map(m => (m.id === msg.id || m.clientMessageId === msg.clientMessageId) ? { ...data.message, status: 'sent' } : m));
+      } else {
+        setDmMessages(prev => prev.map(m => m.id === msg.id ? { ...m, status: 'failed' } : m));
+      }
+    } catch {
+      setDmMessages(prev => prev.map(m => m.id === msg.id ? { ...m, status: 'failed' } : m));
     }
   };
 
@@ -1589,6 +1843,8 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const [customMediaUrl, setCustomMediaUrl] = useState('');
   const [showMediaSelect, setShowMediaSelect] = useState(false);
+  const [taggedProduct, setTaggedProduct] = useState<SocialProductRef | null>(null);
+  const [showProductTagModal, setShowProductTagModal] = useState<boolean>(false);
   const [isSubmittingPost, setIsSubmittingPost] = useState(false);
   const [isUploadingLocalFile, setIsUploadingLocalFile] = useState(false);
   const [postUploadProgress, setPostUploadProgress] = useState<number>(0);
@@ -1685,6 +1941,10 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const [modUsers, setModUsers] = useState<any[]>([]);
   const [showModPanel, setShowModPanel] = useState(false);
   const [loadingModUsers, setLoadingModUsers] = useState(false);
+  const [modSubTab, setModSubTab] = useState<'reports' | 'users'>('reports');
+  const [modReports, setModReports] = useState<SocialReport[]>([]);
+  const [loadingModReports, setLoadingModReports] = useState(false);
+  const [processingReportActionId, setProcessingReportActionId] = useState<string | null>(null);
 
   const fetchPosts = async (silent: boolean = false) => {
     if (!silent) setLoadingPosts(true);
@@ -1718,6 +1978,9 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           });
           if (res.ok) {
             const data = await res.json();
+            if (Array.isArray(data.savedPostIds)) {
+              setSavedPostIds(new Set(data.savedPostIds));
+            }
             return data.posts || [];
           }
           throw new Error(`Failed to fetch posts: ${res.status}`);
@@ -1756,6 +2019,66 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       console.error('Failed to load moderation users', err);
     } finally {
       if (!loadingModUsers) setLoadingModUsers(false);
+    }
+  };
+
+  const fetchModReports = async () => {
+    if (!user.isAdmin) return;
+    setLoadingModReports(true);
+    try {
+      const res = await fetch('/api/admin/moderation/reports', {
+        headers: {
+          'Authorization': token
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setModReports(data.reports || []);
+      }
+    } catch (err) {
+      console.error('Failed to load moderation reports', err);
+    } finally {
+      setLoadingModReports(false);
+    }
+  };
+
+  const handleTakeReportAction = async (reportId: string, action: 'dismiss' | 'delete_content' | 'ban_user') => {
+    const actionLabel = action === 'dismiss'
+      ? 'ipawalang-bisa ang report'
+      : action === 'delete_content'
+      ? 'burahin ang post na ito'
+      : 'i-ban ang user na ito';
+
+    if (!window.confirm(`Kumpirmasyon: Sigurado ka bang nais mong ${actionLabel}?`)) return;
+
+    setProcessingReportActionId(reportId);
+    try {
+      const res = await fetch(`/api/admin/moderation/reports/${reportId}/action`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ action })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        triggerNotification(data.message || 'Naisagawa ang moderation action.', 'success');
+        fetchModReports();
+        if (action === 'delete_content') {
+          fetchPosts(true);
+        } else if (action === 'ban_user') {
+          fetchModUsers();
+          fetchPosts(true);
+        }
+      } else {
+        triggerNotification(data.error || 'Bigo sa moderation action.', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification('Koneksyon error sa moderation action.', 'error');
+    } finally {
+      setProcessingReportActionId(null);
     }
   };
 
@@ -1864,7 +2187,8 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           text: item.text,
           mediaUrl: finalMediaUrl || undefined,
           mediaType: item.mediaType || undefined,
-          mediaUrls: finalMediaUrls || undefined
+          mediaUrls: finalMediaUrls || undefined,
+          productRef: item.productRef || undefined
         })
       });
 
@@ -2055,6 +2379,20 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
   // Memoized filtered posts list based on selected filter
   const filteredPosts = React.useMemo(() => {
+    if (postFilter === 'following') {
+      const zonedSet = new Set(user.zonedUsers || []);
+      return visiblePosts.filter(p => zonedSet.has(p.userId) || p.userId === user.id);
+    }
+    if (postFilter === 'popular' || postFilter === 'trending') {
+      return [...visiblePosts].sort((a, b) => {
+        const scoreA = (a.likes?.length || 0) * 3 + (a.comments?.length || 0) * 2;
+        const scoreB = (b.likes?.length || 0) * 3 + (b.comments?.length || 0) * 2;
+        return scoreB - scoreA;
+      });
+    }
+    if (postFilter === 'saved') {
+      return visiblePosts.filter(p => savedPostIds.has(p.id));
+    }
     if (postFilter === 'news') {
       return visiblePosts.filter(p => p.userId === 'balita-rss-author');
     }
@@ -2079,7 +2417,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       return visiblePosts.filter(p => !(p as any).isRss && p.userId !== 'balita-rss-author' && p.userId !== 'teleserye-feed-author');
     }
     return visiblePosts;
-  }, [visiblePosts, postFilter, teleseryeSearch, teleseryeStreamFilter]);
+  }, [visiblePosts, postFilter, teleseryeSearch, teleseryeStreamFilter, user.zonedUsers, user.id, savedPostIds]);
 
   // Progressive posts slicing for ultra-fast 60 FPS performance (like Facebook News Feed)
   const displayedPosts = React.useMemo(() => {
@@ -2104,6 +2442,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     fetchBilibiliFeed(true);
     if (user.isAdmin) {
       fetchModUsers();
+      fetchModReports();
     }
 
     // Auto-refresh the feed silently (only when window is active, throttled on Mobile Data Saver)
@@ -2144,6 +2483,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       mediaUrl: finalMediaUrl || undefined,
       mediaType: finalMediaType,
       mediaUrls: selectedPhotos.length > 0 ? selectedPhotos : undefined,
+      productRef: taggedProduct || undefined,
       createdAt: new Date().toISOString(),
       isFailed: false,
       progress: 15,
@@ -2159,6 +2499,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     setSelectedVideo(null);
     setCustomMediaUrl('');
     setShowMediaSelect(false);
+    setTaggedProduct(null);
 
     triggerNotification(
       language === 'tl' 
@@ -2503,6 +2844,173 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       }
     } catch (err) {
       triggerNotification('Koneksyon error sa pag-delete ng comment.', 'error');
+    }
+  };
+
+  // --- SOCIAL BOOKMARKS & SAVE HANDLER ---
+  const handleToggleSavePost = async (postId: string) => {
+    try {
+      const isCurrentlySaved = savedPostIds.has(postId);
+      // Optimistic update
+      setSavedPostIds(prev => {
+        const next = new Set(prev);
+        if (isCurrentlySaved) next.delete(postId);
+        else next.add(postId);
+        return next;
+      });
+
+      const res = await fetch(`/api/zone/posts/${postId}/save`, {
+        method: 'POST',
+        headers: { 'Authorization': token }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        triggerNotification(
+          data.saved
+            ? (language === 'tl' ? 'Nai-save ang post sa iyong bookmarks! 🔖' : 'Post saved to bookmarks! 🔖')
+            : (language === 'tl' ? 'Inalis ang post sa iyong bookmarks.' : 'Post removed from bookmarks.'),
+          'success'
+        );
+      } else {
+        // Revert on error
+        setSavedPostIds(prev => {
+          const next = new Set(prev);
+          if (isCurrentlySaved) next.add(postId);
+          else next.delete(postId);
+          return next;
+        });
+      }
+    } catch (err) {
+      console.error('Error toggling save post:', err);
+    }
+  };
+
+  // --- HIDE POST HANDLER ---
+  const handleHidePost = async (postId: string) => {
+    try {
+      setPosts(prev => prev.filter(p => p.id !== postId));
+      triggerNotification(
+        language === 'tl' ? 'Itinago ang post sa iyong feed.' : 'Post hidden from your feed.',
+        'info'
+      );
+      await fetch(`/api/zone/posts/${postId}/hide`, {
+        method: 'POST',
+        headers: { 'Authorization': token }
+      });
+    } catch (err) {
+      console.error('Error hiding post:', err);
+    }
+  };
+
+  // --- COMMUNITY SAFETY REPORTING ---
+  const handleOpenReportPost = (post: ZonePost) => {
+    setReportingPost(post);
+    setPostReportReason('inappropriate');
+    setPostReportNotes('');
+  };
+
+  const handleSubmitPostReport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reportingPost) return;
+    setSubmittingPostReport(true);
+    try {
+      const res = await fetch('/api/zone/report', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({
+          targetType: 'post',
+          targetId: reportingPost.id,
+          targetAuthorId: reportingPost.userId,
+          targetAuthorName: reportingPost.userName,
+          reason: postReportReason,
+          notes: postReportNotes
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        triggerNotification(
+          language === 'tl'
+            ? 'Salamat sa pag-report! Susuriin ito ng aming safety team. 🛡️'
+            : 'Thank you for reporting! Our safety team will review this. 🛡️',
+          'success'
+        );
+        setReportingPost(null);
+      } else {
+        triggerNotification(data.error || 'Hindi maipadala ang report.', 'error');
+      }
+    } catch (err) {
+      triggerNotification('Koneksyon error sa pagpapadala ng report.', 'error');
+    } finally {
+      setSubmittingPostReport(false);
+    }
+  };
+
+  // --- COMMENT LIKE & THREADED REPLIES ---
+  const handleLikeComment = async (postId: string, commentId: string) => {
+    try {
+      const res = await fetch(`/api/zone/posts/${postId}/comments/${commentId}/like`, {
+        method: 'POST',
+        headers: { 'Authorization': token }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setPosts(prev => prev.map(p => {
+          if (p.id !== postId || !p.comments) return p;
+          return {
+            ...p,
+            comments: p.comments.map(c => c.id === commentId ? { ...c, likes: data.likes } : c)
+          };
+        }));
+      }
+    } catch (err) {
+      console.error('Error liking comment:', err);
+    }
+  };
+
+  const handlePostReply = async (postId: string, commentId: string) => {
+    const text = replyTexts[commentId]?.trim();
+    if (!text) return;
+    setSubmittingReplyId(commentId);
+    try {
+      const res = await fetch(`/api/zone/posts/${postId}/comments/${commentId}/reply`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ text })
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.reply) {
+        setPosts(prev => prev.map(p => {
+          if (p.id !== postId || !p.comments) return p;
+          return {
+            ...p,
+            comments: p.comments.map(c => {
+              if (c.id !== commentId) return c;
+              return {
+                ...c,
+                replies: [...(c.replies || []), data.reply]
+              };
+            })
+          };
+        }));
+        setReplyTexts(prev => ({ ...prev, [commentId]: '' }));
+        setReplyInputOpenMap(prev => ({ ...prev, [commentId]: false }));
+        triggerNotification(
+          language === 'tl' ? 'Matagumpay na naipadala ang sagot!' : 'Reply posted successfully!',
+          'success'
+        );
+      } else {
+        triggerNotification(data.error || 'Hindi maipadala ang sagot.', 'error');
+      }
+    } catch (err) {
+      triggerNotification('Koneksyon error sa pag-post ng reply.', 'error');
+    } finally {
+      setSubmittingReplyId(null);
     }
   };
 
@@ -2972,15 +3480,66 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
             {user.isAdmin && (
               <button
                 onClick={() => setShowModPanel(!showModPanel)}
-                className={`font-black text-xs px-4 py-2.5 rounded-2xl cursor-pointer transition ${
+                className={`font-black text-xs px-4 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-1.5 ${
                   showModPanel 
                     ? 'bg-rose-500 text-white shadow-inner' 
                     : 'bg-white text-rose-600 hover:bg-rose-50 shadow-xs'
                 }`}
               >
-                {showModPanel ? '❌ Close Moderator Panel' : '🛡️ Manage Banned Users'}
+                <span>{showModPanel ? '❌ Isara ang Moderator Panel' : '🛡️ Admin Moderation'}</span>
+                {modReports.filter(r => r.status === 'pending').length > 0 && !showModPanel && (
+                  <span className="bg-rose-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-black animate-pulse">
+                    {modReports.filter(r => r.status === 'pending').length}
+                  </span>
+                )}
               </button>
             )}
+            
+            {/* 👤 My Profile Inspection */}
+            {onOpenProfile && (
+              <button
+                onClick={() => onOpenProfile(user.id)}
+                className="bg-white text-slate-800 hover:bg-slate-100 border border-slate-200 font-black text-xs px-3.5 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-1.5 shadow-xs"
+                title={language === 'tl' ? 'Tingnan ang iyong Profile' : 'View your Profile'}
+              >
+                <User className="w-4 h-4 text-blue-600" />
+                <span className="hidden sm:inline">{language === 'tl' ? 'Aking Profile' : 'My Profile'}</span>
+              </button>
+            )}
+
+            {/* 📊 Creator Analytics Studio */}
+            <button
+              id="creator-analytics-feed-btn"
+              onClick={() => setShowCreatorAnalytics(true)}
+              className="bg-white/95 hover:bg-white text-indigo-900 border border-white/60 font-black text-xs px-3.5 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-1.5 shadow-xs hover:scale-[1.02] active:scale-[0.98]"
+              title={language === 'tl' ? 'Buksan ang Creator Analytics Studio' : 'Open Creator Analytics Studio'}
+            >
+              <BarChart3 className="w-4 h-4 text-indigo-600" />
+              <span className="hidden sm:inline">{language === 'tl' ? 'Analytics' : 'Analytics'}</span>
+            </button>
+
+            {/* 🔔 In-App Social Notification Center */}
+            <SocialNotificationCenter
+              token={token}
+              currentUserId={user.id}
+              language={language}
+              onNavigateToPost={(postId) => {
+                const el = document.getElementById(`post-card-${postId}`);
+                if (el) {
+                  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  el.classList.add('ring-2', 'ring-blue-500');
+                  setTimeout(() => el.classList.remove('ring-2', 'ring-blue-500'), 3000);
+                }
+              }}
+              onNavigateToProfile={(profileUserId) => {
+                if (onOpenProfile) onOpenProfile(profileUserId);
+                else handleOpenDm({ id: profileUserId, name: 'User', avatar: '👤' });
+              }}
+              onNavigateToChallenge={(challengeId) => {
+                onNavigateToChallenge?.(challengeId);
+              }}
+            />
+
             <button
               onClick={handleOpenInbox}
               className="relative bg-white text-indigo-700 hover:bg-indigo-50 border border-slate-250 font-black text-xs px-4 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-2 shadow-xs"
@@ -3028,57 +3587,193 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
             exit={{ opacity: 0, height: 0 }}
             className="bg-slate-900 text-white rounded-3xl p-6 border border-slate-800 space-y-4 overflow-hidden"
           >
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="font-black text-sm tracking-wider uppercase flex items-center gap-2 text-rose-400">
-                <Ban className="w-5 h-5" />
-                <span>Admin User Moderation Dashboard</span>
-              </h3>
-              <span className="text-[10px] bg-slate-800 px-2 py-1 rounded-full font-bold">
-                {modUsers.length} Users Tracked
-              </span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-3 gap-3">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-rose-400" />
+                <h3 className="font-black text-sm tracking-wider uppercase text-rose-400">
+                  Admin Moderation & Safety Center
+                </h3>
+              </div>
+
+              {/* Sub tabs: Reports vs Users */}
+              <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-2xl border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setModSubTab('reports')}
+                  className={`px-3 py-1.5 rounded-xl font-black text-xs cursor-pointer transition flex items-center gap-1.5 ${
+                    modSubTab === 'reports'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span>⚠️ Mga Sumbong</span>
+                  {modReports.filter(r => r.status === 'pending').length > 0 && (
+                    <span className="bg-white text-rose-600 text-[9px] px-1.5 py-0.2 rounded-full font-black">
+                      {modReports.filter(r => r.status === 'pending').length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModSubTab('users')}
+                  className={`px-3 py-1.5 rounded-xl font-black text-xs cursor-pointer transition flex items-center gap-1.5 ${
+                    modSubTab === 'users'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span>👥 Users ({modUsers.length})</span>
+                </button>
+              </div>
             </div>
 
-            {loadingModUsers ? (
-              <div className="text-center py-6 text-slate-400 text-xs">Sini-sync ang listahan ng mamamayan...</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-2">
-                {modUsers.map((u) => (
-                  <div key={u.id} className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="relative inline-block select-none">
-                        {renderFeedAvatar(u.avatar, u.name, "w-9 h-9", "text-sm")}
-                        {(u.id === user.id || onlineUserIds.includes(u.id)) ? (
-                          <span className="absolute bottom-0 right-0 flex h-2.5 w-2.5">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 border border-slate-950"></span>
-                          </span>
-                        ) : (
-                          <span className="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full bg-rose-500 border border-slate-950" />
-                        )}
-                      </div>
-                      <div>
-                        <div className="font-extrabold text-xs text-white flex items-center gap-1.5">
-                          <span>{u.name}</span>
-                          {u.isAdmin && <span className="text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.2 rounded font-black">Admin</span>}
-                        </div>
-                        <span className="text-[10px] text-slate-500 block font-mono">{u.email}</span>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => handleToggleBan(u.id)}
-                      disabled={u.id === user.id}
-                      className={`text-[10px] font-black px-3.5 py-2 rounded-xl cursor-pointer transition ${
-                        u.isBanned 
-                          ? 'bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30' 
-                          : 'bg-rose-600/20 text-rose-400 hover:bg-rose-600/30 disabled:opacity-30'
-                      }`}
-                    >
-                      {u.isBanned ? '🟢 Unban User' : '🔴 Ban User'}
-                    </button>
+            {/* TAB 1: REPORTS QUEUE */}
+            {modSubTab === 'reports' && (
+              <div className="space-y-3">
+                {loadingModReports ? (
+                  <div className="text-center py-6 text-slate-400 text-xs">Sini-sync ang mga sumbong at reports...</div>
+                ) : modReports.length === 0 ? (
+                  <div className="text-center py-8 bg-slate-950/60 rounded-2xl border border-slate-800/80 space-y-1">
+                    <CheckCircle className="w-6 h-6 text-emerald-400 mx-auto" />
+                    <p className="text-xs font-bold text-slate-300">Walang natanggap na sumbong sa kasalukuyan.</p>
+                    <p className="text-[10px] text-slate-500">Ligtas at malinis ang takbo ng Z-one social feed.</p>
                   </div>
-                ))}
+                ) : (
+                  <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                    {modReports.map((rep) => {
+                      const isPending = rep.status === 'pending';
+                      const isProcessing = processingReportActionId === rep.id;
+                      return (
+                        <div
+                          key={rep.id}
+                          className={`p-3.5 rounded-2xl border transition space-y-2.5 ${
+                            isPending
+                              ? 'bg-slate-950 border-amber-500/40'
+                              : 'bg-slate-950/60 border-slate-800 opacity-75'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded-lg bg-rose-500/20 text-rose-300 font-bold uppercase">
+                                {rep.targetType}
+                              </span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 font-bold uppercase">
+                                {rep.reason}
+                              </span>
+                              {isPending ? (
+                                <span className="text-[10px] text-amber-400 font-bold animate-pulse">
+                                  ● Pending Review
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-emerald-400 font-bold">
+                                  ✓ {rep.actionTaken || rep.status}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] font-mono text-slate-500">
+                              {new Date(rep.createdAt).toLocaleDateString()}
+                            </span>
+                          </div>
+
+                          <div className="text-xs text-slate-300">
+                            <span className="text-slate-500">May-ari/Author: </span>
+                            <span className="font-bold text-white">{rep.targetAuthorName || rep.targetId}</span>
+                            {rep.targetContentSnippet && (
+                              <p className="mt-1 p-2 bg-slate-900 rounded-xl text-slate-400 italic text-[11px] border border-slate-800">
+                                "{rep.targetContentSnippet}"
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-900">
+                            <div>
+                              <span>Inireport ni: </span>
+                              <b className="text-slate-300">{rep.reporterUserName}</b>
+                              {rep.notes && <span className="ml-1 text-slate-500 font-normal">({rep.notes})</span>}
+                            </div>
+
+                            {isPending && (
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  onClick={() => handleTakeReportAction(rep.id, 'dismiss')}
+                                  disabled={isProcessing}
+                                  className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                                >
+                                  Dismiss
+                                </button>
+                                {rep.targetType === 'post' && (
+                                  <button
+                                    onClick={() => handleTakeReportAction(rep.id, 'delete_content')}
+                                    disabled={isProcessing}
+                                    className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-orange-600/30 hover:bg-orange-600/50 text-orange-300 cursor-pointer"
+                                  >
+                                    Burahin
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleTakeReportAction(rep.id, 'ban_user')}
+                                  disabled={isProcessing}
+                                  className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 cursor-pointer"
+                                >
+                                  I-ban
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
+            )}
+
+            {/* TAB 2: USERS REGISTRY & BAN CONTROL */}
+            {modSubTab === 'users' && (
+              <>
+                {loadingModUsers ? (
+                  <div className="text-center py-6 text-slate-400 text-xs">Sini-sync ang listahan ng mamamayan...</div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-2">
+                    {modUsers.map((u) => (
+                      <div key={u.id} className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="relative inline-block select-none">
+                            {renderFeedAvatar(u.avatar, u.name, "w-9 h-9", "text-sm")}
+                            {(u.id === user.id || onlineUserIds.includes(u.id)) ? (
+                              <span className="absolute bottom-0 right-0 flex h-2.5 w-2.5">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 border border-slate-950"></span>
+                              </span>
+                            ) : (
+                              <span className="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full bg-rose-500 border border-slate-950" />
+                            )}
+                          </div>
+                          <div>
+                            <div className="font-extrabold text-xs text-white flex items-center gap-1.5">
+                              <span>{u.name}</span>
+                              {u.isAdmin && <span className="text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.2 rounded font-black">Admin</span>}
+                            </div>
+                            <span className="text-[10px] text-slate-500 block font-mono">{u.email}</span>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleToggleBan(u.id)}
+                          disabled={u.id === user.id}
+                          className={`text-[10px] font-black px-3.5 py-2 rounded-xl cursor-pointer transition ${
+                            u.isBanned 
+                              ? 'bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30' 
+                              : 'bg-rose-600/20 text-rose-400 hover:bg-rose-600/30 disabled:opacity-30'
+                          }`}
+                        >
+                          {u.isBanned ? '🟢 Unban User' : '🔴 Ban User'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </motion.div>
         )}
@@ -3236,14 +3931,56 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setShowMediaSelect(!showMediaSelect)}
-                  className="w-full border border-slate-200 hover:border-slate-300 bg-slate-50/80 hover:bg-slate-100 p-2 rounded-xl text-[10.5px] text-slate-600 font-bold cursor-pointer transition flex items-center justify-center gap-1.5 select-none"
-                >
-                  <Camera className="w-3.5 h-3.5 text-slate-500" />
-                  <span>{language === 'tl' ? 'Pumili sa Royalty-Free Presets' : 'Select Royalty-Free Presets'}</span>
-                </button>
+                {/* Tagged Shop Product Preview */}
+                {taggedProduct && (
+                  <div className="flex items-center justify-between p-2.5 rounded-2xl bg-amber-50 border border-amber-200 shadow-2xs">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {taggedProduct.image ? (
+                        <img src={taggedProduct.image} alt={taggedProduct.name} className="w-9 h-9 rounded-xl object-cover border border-amber-300 shrink-0" />
+                      ) : (
+                        <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700 shrink-0">
+                          <ShoppingBag className="w-4 h-4" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1 text-[9px] font-black uppercase text-amber-750 tracking-wider">
+                          <ShoppingBag className="w-2.5 h-2.5 text-amber-600" />
+                          <span>Z-oneShop Tagged</span>
+                        </div>
+                        <p className="text-[11px] font-black text-slate-900 truncate">{taggedProduct.name}</p>
+                        <p className="text-[10px] font-extrabold text-emerald-600">₱{taggedProduct.price.toLocaleString()}</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setTaggedProduct(null)}
+                      className="p-1.5 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer shrink-0"
+                      title="Remove product"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowProductTagModal(true)}
+                    className="w-full border border-amber-200 hover:border-amber-400 bg-amber-50/80 hover:bg-amber-100 text-amber-900 p-2 rounded-xl text-[10.5px] font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5 select-none"
+                  >
+                    <ShoppingBag className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    <span className="truncate">{taggedProduct ? (language === 'tl' ? 'Palitan ang Tag' : 'Change Product') : (language === 'tl' ? '🛍️ I-tag ang Produkto' : '🛍️ Tag Shop Product')}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowMediaSelect(!showMediaSelect)}
+                    className="w-full border border-slate-200 hover:border-slate-300 bg-slate-50/80 hover:bg-slate-100 p-2 rounded-xl text-[10.5px] text-slate-600 font-bold cursor-pointer transition flex items-center justify-center gap-1.5 select-none"
+                  >
+                    <Camera className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                    <span className="truncate">{language === 'tl' ? 'Presets' : 'Presets'}</span>
+                  </button>
+                </div>
 
                 <AnimatePresence>
                   {showMediaSelect && (
@@ -3418,17 +4155,17 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 </div>
 
                 {/* 🏷️ Interactive Post Filter Tabs */}
-                <div className="bg-slate-150/60 p-1.5 rounded-2xl grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-1.5 border border-slate-200/50">
+                <div className="bg-slate-150/60 p-1.5 rounded-2xl flex flex-wrap gap-1.5 border border-slate-200/50">
                   <button
                     onClick={() => setPostFilter('all')}
-                    className={`py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
                       postFilter === 'all'
                         ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
                         : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
                     }`}
                   >
                     <Sparkles className={`w-3.5 h-3.5 ${postFilter === 'all' ? 'text-indigo-600' : 'text-slate-400'}`} />
-                    <span className="truncate">{language === 'tl' ? 'Lahat' : 'All'}</span>
+                    <span>{language === 'tl' ? 'Lahat' : 'All'}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
                       postFilter === 'all' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-200/60 text-slate-550'
                     }`}>
@@ -3437,15 +4174,61 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   </button>
 
                   <button
+                    onClick={() => setPostFilter('following')}
+                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                      postFilter === 'following'
+                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                    }`}
+                  >
+                    <UserCheck className={`w-3.5 h-3.5 ${postFilter === 'following' ? 'text-indigo-600' : 'text-slate-400'}`} />
+                    <span>{language === 'tl' ? 'Sinusubaybayan (Zoned)' : 'Following'}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                      postFilter === 'following' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-200/60 text-slate-550'
+                    }`}>
+                      {visiblePosts.filter(p => (user.zonedUsers || []).includes(p.userId) || p.userId === user.id).length}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setPostFilter('popular')}
+                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                      postFilter === 'popular'
+                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                    }`}
+                  >
+                    <Flame className={`w-3.5 h-3.5 ${postFilter === 'popular' ? 'text-orange-500' : 'text-slate-400'}`} />
+                    <span>{language === 'tl' ? 'Trending 🔥' : 'Trending 🔥'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => setPostFilter('saved')}
+                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                      postFilter === 'saved'
+                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                    }`}
+                  >
+                    <Bookmark className={`w-3.5 h-3.5 ${postFilter === 'saved' ? 'text-amber-500' : 'text-slate-400'}`} />
+                    <span>{language === 'tl' ? 'Naka-save 🔖' : 'Bookmarks 🔖'}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                      postFilter === 'saved' ? 'bg-amber-50 text-amber-700' : 'bg-slate-200/60 text-slate-550'
+                    }`}>
+                      {savedPostIds.size}
+                    </span>
+                  </button>
+
+                  <button
                     onClick={() => setPostFilter('bilibili')}
-                    className={`py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
                       postFilter === 'bilibili'
                         ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40 ring-1 ring-pink-500/30'
                         : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
                     }`}
                   >
                     <Film className={`w-3.5 h-3.5 ${postFilter === 'bilibili' ? 'text-pink-600' : 'text-slate-400'}`} />
-                    <span className="truncate">🎬 BiliBili FLIX</span>
+                    <span>🎬 BiliBili</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
                       postFilter === 'bilibili' ? 'bg-pink-50 text-pink-700' : 'bg-slate-200/60 text-slate-550'
                     }`}>
@@ -3455,14 +4238,14 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
                   <button
                     onClick={() => setPostFilter('teleserye')}
-                    className={`py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
                       postFilter === 'teleserye'
                         ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
                         : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
                     }`}
                   >
                     <Tv className={`w-3.5 h-3.5 ${postFilter === 'teleserye' ? 'text-red-600' : 'text-slate-400'}`} />
-                    <span className="truncate">{language === 'tl' ? 'Teleserye' : 'Teleserye'}</span>
+                    <span>{language === 'tl' ? 'Teleserye' : 'Teleserye'}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
                       postFilter === 'teleserye' ? 'bg-red-50 text-red-700' : 'bg-slate-200/60 text-slate-550'
                     }`}>
@@ -3472,14 +4255,14 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
                   <button
                     onClick={() => setPostFilter('news')}
-                    className={`py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
                       postFilter === 'news'
                         ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
                         : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
                     }`}
                   >
                     <Newspaper className={`w-3.5 h-3.5 ${postFilter === 'news' ? 'text-emerald-600' : 'text-slate-400'}`} />
-                    <span className="truncate">{language === 'tl' ? 'Balita' : 'News'}</span>
+                    <span>{language === 'tl' ? 'Balita' : 'News'}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
                       postFilter === 'news' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-200/60 text-slate-550'
                     }`}>
@@ -3489,14 +4272,14 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
                   <button
                     onClick={() => setPostFilter('community')}
-                    className={`py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none col-span-2 sm:col-span-1 ${
+                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
                       postFilter === 'community'
                         ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
                         : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
                     }`}
                   >
                     <Users className={`w-3.5 h-3.5 ${postFilter === 'community' ? 'text-blue-600' : 'text-slate-400'}`} />
-                    <span className="truncate">{language === 'tl' ? 'Komunidad' : 'Community'}</span>
+                    <span>{language === 'tl' ? 'Komunidad' : 'Community'}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
                       postFilter === 'community' ? 'bg-blue-50 text-blue-700' : 'bg-slate-200/60 text-slate-550'
                     }`}>
@@ -4050,8 +4833,65 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                         post.text && (
                           <div className="space-y-3">
                             <p className="text-slate-800 text-xs font-semibold leading-relaxed whitespace-pre-wrap">
-                              {post.text}
+                              {post.text.split(/(#[a-zA-Z0-9_\u00C0-\u017F]+)/g).map((part, idx) => {
+                                if (part.startsWith('#')) {
+                                  return (
+                                    <span
+                                      key={idx}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        window.dispatchEvent(new CustomEvent('open-unified-search', { detail: { query: part.replace('#', '') } }));
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 hover:underline font-bold cursor-pointer inline-block"
+                                    >
+                                      {part}
+                                    </span>
+                                  );
+                                }
+                                return part;
+                              })}
                             </p>
+
+                            {/* 🛍️ Social Commerce Tagged Product Card */}
+                            {post.productRef && (
+                              <div 
+                                onClick={() => {
+                                  if (post.productRef?.id && post.userId) {
+                                    trackProductClick(post.productRef.id, post.userId, 'post', post.id, token);
+                                  }
+                                  window.dispatchEvent(new CustomEvent('open-shop-product-detail', { detail: { product: post.productRef } }));
+                                }}
+                                className="border border-amber-300/80 bg-gradient-to-r from-amber-50/70 to-orange-50/50 rounded-2xl p-3 flex items-center gap-3 shadow-2xs hover:shadow-md hover:border-amber-400 transition cursor-pointer group"
+                              >
+                                {post.productRef.image ? (
+                                  <img 
+                                    src={post.productRef.image} 
+                                    alt={post.productRef.name} 
+                                    className="w-12 h-12 rounded-xl object-cover border border-amber-200 bg-white shrink-0 group-hover:scale-105 transition"
+                                  />
+                                ) : (
+                                  <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                                    <ShoppingBag className="w-6 h-6" />
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-[10px] font-bold text-amber-800 flex items-center gap-1">
+                                    <ShoppingBag className="w-3 h-3 text-amber-600" />
+                                    <span>Z-oneShop Tagged Product</span>
+                                  </div>
+                                  <div className="text-xs font-black text-slate-900 truncate group-hover:text-amber-900">
+                                    {post.productRef.name}
+                                  </div>
+                                  <div className="text-xs font-black text-emerald-700 mt-0.5">
+                                    ₱{post.productRef.price.toLocaleString()}
+                                  </div>
+                                </div>
+                                <span className="text-[10px] font-black text-amber-950 bg-amber-200/90 group-hover:bg-amber-300 px-3 py-1.5 rounded-xl transition shrink-0 shadow-2xs">
+                                  Bumili ➔
+                                </span>
+                              </div>
+                            )}
+
                             {post.isRss && post.rssLink && (
                               <a 
                                 href={post.rssLink} 
@@ -4551,6 +5391,28 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                           >
                             <Share2 className="w-4 h-4 text-slate-500" />
                             <span>{language === 'tl' ? 'I-share' : 'Share'}</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleToggleSavePost(post.id)}
+                            className={`flex-1 py-2 rounded-xl text-xs font-black cursor-pointer transition flex items-center justify-center gap-1.5 ${
+                              savedPostIds.has(post.id)
+                                ? 'text-amber-600 bg-amber-50'
+                                : 'text-slate-650 hover:bg-slate-100'
+                            }`}
+                            title={savedPostIds.has(post.id) ? 'Naka-save sa Bookmarks' : 'I-save ang post'}
+                          >
+                            {savedPostIds.has(post.id) ? (
+                              <>
+                                <BookmarkCheck className="w-4 h-4 fill-amber-500 text-amber-500" />
+                                <span>{language === 'tl' ? 'Naka-save' : 'Saved'}</span>
+                              </>
+                            ) : (
+                              <>
+                                <Bookmark className="w-4 h-4 text-slate-500" />
+                                <span>{language === 'tl' ? 'I-save' : 'Save'}</span>
+                              </>
+                            )}
                           </button>
                         </div>
 
@@ -5132,15 +5994,35 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 className="chat-header-gradient p-3.5 sm:p-4 shrink-0 flex items-center justify-between shadow-sm"
                 style={{ backgroundColor: '#3730a3' }}
               >
-                <div className="flex items-center gap-2.5">
-                  <span className="leading-none select-none block ring-2 ring-white/60 rounded-full">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="leading-none select-none block ring-2 ring-white/60 rounded-full shrink-0">
                     {renderFeedAvatar(activeDmUser.avatar, activeDmUser.name, "w-9 h-9", "text-sm", activeDmUser.id)}
                   </span>
-                  <div className="text-left">
-                    <h3 className="font-extrabold text-white text-xs leading-none" style={{ color: '#ffffff' }}>
-                      {activeDmUser.name}
-                    </h3>
-                    {(onlineUserIds.includes(activeDmUser.id) || activeDmUser.id === user.id) ? (
+                  <div className="text-left min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h3 className="font-extrabold text-white text-xs leading-none truncate" style={{ color: '#ffffff' }}>
+                        {activeDmUser.name}
+                      </h3>
+                      {chatConnectionStatus === 'live' ? (
+                        <span className="text-[8px] bg-emerald-500/25 text-emerald-300 font-extrabold px-1.5 py-0.2 rounded-full border border-emerald-400/40 select-none">
+                          Live
+                        </span>
+                      ) : chatConnectionStatus === 'reconnecting' ? (
+                        <span className="text-[8px] bg-amber-500/25 text-amber-200 font-extrabold px-1.5 py-0.2 rounded-full border border-amber-400/40 select-none flex items-center gap-0.5">
+                          <Loader2 className="w-2 h-2 animate-spin" /> Reconnecting
+                        </span>
+                      ) : (
+                        <span className="text-[8px] bg-slate-500/25 text-slate-300 font-extrabold px-1.5 py-0.2 rounded-full border border-slate-400/40 select-none">
+                          Fallback
+                        </span>
+                      )}
+                    </div>
+                    {typingUsers[activeDmUser.id]?.isTyping ? (
+                      <span className="text-[9.5px] text-emerald-300 font-extrabold flex items-center gap-1 mt-1 animate-pulse">
+                        <span>✍️</span>
+                        <span>{language === 'tl' ? `nagsusulat si ${activeDmUser.name.split(' ')[0]}...` : `${activeDmUser.name.split(' ')[0]} is typing...`}</span>
+                      </span>
+                    ) : (onlineUserIds.includes(activeDmUser.id) || activeDmUser.id === user.id) ? (
                       <span className="text-[9.5px] text-emerald-300 font-extrabold flex items-center gap-1 mt-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                         <span>{language === 'tl' ? 'Aktibo Ngayon' : 'Active Now'}</span>
@@ -5154,7 +6036,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   {/* Call buttons */}
                   <button 
                     type="button"
@@ -5192,128 +6074,199 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 bg-slate-100"
                 style={{ backgroundColor: '#f1f5f9' }}
               >
-                {dmMessages.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-2">
-                    <span className="text-3xl select-none animate-bounce">👋</span>
-                    <p className="text-xs font-black text-slate-800">{language === 'tl' ? `Simulan ang usapan kay ${activeDmUser.name}` : `Say hello to ${activeDmUser.name}`}</p>
-                    <p className="text-[10px] text-slate-500 font-semibold max-w-xs">{language === 'tl' ? 'Maaari kayong mag-usap at mag-tawagan nang ligtas sa Z-one.' : 'You can message each other and place secure calls on Z-one.'}</p>
-                  </div>
-                ) : (
-                  dmMessages
-                    .filter(msg => (msg.senderId === user.id && msg.receiverId === activeDmUser.id) || (msg.senderId === activeDmUser.id && msg.receiverId === user.id))
-                    .map((msg) => {
-                      const isMe = msg.senderId === user.id;
-                      const msgTime = new Date(msg.createdAt).getTime();
-                      const canEditOrDelete = (Date.now() - msgTime) <= 120000;
+                {(() => {
+                  const conversationMessages = dmMessages.filter(
+                    msg => (msg.senderId === user.id && msg.receiverId === activeDmUser.id) || 
+                           (msg.senderId === activeDmUser.id && msg.receiverId === user.id)
+                  );
+                  const hasMoreMessages = conversationMessages.length > visibleDmCount;
+                  const displayedMessages = conversationMessages.slice(Math.max(0, conversationMessages.length - visibleDmCount));
 
-                      return (
-                        <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} group relative`}>
-                          <div 
-                            className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-xs font-semibold leading-relaxed ${
-                              isMe 
-                                ? 'chat-bubble-outgoing text-white rounded-br-xs shadow-sm text-left' 
-                                : 'chat-bubble-incoming bg-white text-slate-900 border border-slate-300 rounded-bl-xs shadow-2xs text-left'
-                            }`}
-                            style={isMe ? { backgroundColor: '#2563eb', color: '#ffffff' } : { backgroundColor: '#ffffff', color: '#0f172a' }}
+                  if (conversationMessages.length === 0) {
+                    return (
+                      <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-2">
+                        <span className="text-3xl select-none animate-bounce">👋</span>
+                        <p className="text-xs font-black text-slate-800">{language === 'tl' ? `Simulan ang usapan kay ${activeDmUser.name}` : `Say hello to ${activeDmUser.name}`}</p>
+                        <p className="text-[10px] text-slate-500 font-semibold max-w-xs">{language === 'tl' ? 'Maaari kayong mag-usap at mag-tawagan nang ligtas sa Z-one gamit ang instant real-time messaging.' : 'You can message each other and place secure calls on Z-one with instant real-time messaging.'}</p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <>
+                      {hasMoreMessages && (
+                        <div className="text-center py-1">
+                          <button
+                            type="button"
+                            onClick={() => setVisibleDmCount(prev => prev + 30)}
+                            className="text-[10px] font-extrabold text-indigo-700 hover:text-indigo-900 bg-white hover:bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-full shadow-2xs cursor-pointer transition select-none"
                           >
-                            {editingMessageId === msg.id ? (
-                              <div className="space-y-1.5 min-w-[150px]">
-                                <input
-                                  type="text"
-                                  value={editingMessageText}
-                                  onChange={(e) => setEditingMessageText(e.target.value)}
-                                  className="w-full text-xs p-1 bg-white text-slate-950 border border-slate-300 rounded-lg outline-none font-semibold"
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleSaveMessageEdit(msg.id);
-                                  }}
-                                  autoFocus
-                                />
-                                <div className="flex justify-end gap-1.5 text-[9px] font-bold uppercase tracking-wider">
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditingMessageId(null)}
-                                    className="text-slate-300 hover:text-white"
-                                  >
-                                    Cancel
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleSaveMessageEdit(msg.id)}
-                                    className="text-white hover:underline font-black"
-                                  >
-                                    Save
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <>
-                                {msg.mediaUrl && (
-                                  <div className="mb-2 rounded-xl overflow-hidden bg-black/5">
-                                    {msg.mediaType === 'video' || msg.mediaUrl.match(/\.(mp4|webm|mov|ogg|m4v)$/i) ? (
-                                      <video 
-                                        src={msg.mediaUrl} 
-                                        controls 
-                                        playsInline
-                                        className="max-w-full max-h-60 rounded-xl bg-black w-full"
-                                      />
-                                    ) : (
-                                      <img 
-                                        src={msg.mediaUrl} 
-                                        alt="Attachment" 
-                                        onClick={() => {
-                                          setLightboxMediaUrl(msg.mediaUrl);
-                                          setLightboxMediaType('image');
-                                        }}
-                                        className="max-w-full max-h-60 rounded-xl object-cover cursor-zoom-in hover:opacity-95 transition w-full"
-                                      />
-                                    )}
+                            ↑ {language === 'tl' ? 'Tingnan ang mas lumang mensahe' : 'Load older messages'} ({conversationMessages.length - visibleDmCount})
+                          </button>
+                        </div>
+                      )}
+
+                      {displayedMessages.map((msg) => {
+                        const isMe = msg.senderId === user.id;
+                        const msgTime = new Date(msg.createdAt).getTime();
+                        const canEditOrDelete = (Date.now() - msgTime) <= 120000;
+
+                        return (
+                          <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'} group relative`}>
+                            <div 
+                              className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-xs font-semibold leading-relaxed ${
+                                isMe 
+                                  ? 'chat-bubble-outgoing text-white rounded-br-xs shadow-sm text-left' 
+                                  : 'chat-bubble-incoming bg-white text-slate-900 border border-slate-300 rounded-bl-xs shadow-2xs text-left'
+                              }`}
+                              style={isMe ? { backgroundColor: '#2563eb', color: '#ffffff' } : { backgroundColor: '#ffffff', color: '#0f172a' }}
+                            >
+                              {editingMessageId === msg.id ? (
+                                <div className="space-y-1.5 min-w-[150px]">
+                                  <input
+                                    type="text"
+                                    value={editingMessageText}
+                                    onChange={(e) => setEditingMessageText(e.target.value)}
+                                    className="w-full text-xs p-1 bg-white text-slate-950 border border-slate-300 rounded-lg outline-none font-semibold"
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') handleSaveMessageEdit(msg.id);
+                                    }}
+                                    autoFocus
+                                  />
+                                  <div className="flex justify-end gap-1.5 text-[9px] font-bold uppercase tracking-wider">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingMessageId(null)}
+                                      className="text-slate-300 hover:text-white"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveMessageEdit(msg.id)}
+                                      className="text-white hover:underline font-black"
+                                    >
+                                      Save
+                                    </button>
                                   </div>
-                                )}
-                                {msg.text && (
-                                  <p className="break-words font-medium" style={isMe ? { color: '#ffffff' } : { color: '#0f172a' }}>{msg.text}</p>
-                                )}
-                                <div className="flex items-center justify-between gap-3 mt-1">
-                                  {isMe && canEditOrDelete ? (
-                                    <div className="flex items-center gap-2 select-none opacity-80 max-sm:opacity-100 md:opacity-0 md:group-hover:opacity-100 transition duration-150">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setEditingMessageId(msg.id);
-                                          setEditingMessageText(msg.text || '');
-                                        }}
-                                        className="text-blue-200 hover:text-white cursor-pointer p-0.5"
-                                        title={language === 'tl' ? 'I-edit ang mensahe' : 'Edit message'}
-                                      >
-                                        <Pencil className="w-2.5 h-2.5" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          if (!window.confirm || window.confirm(language === 'tl' ? 'Sigurado ka bang gusto mong i-delete ang mensaheng ito?' : 'Are you sure you want to delete this message?')) {
-                                            handleDeleteMessage(msg.id);
-                                          }
-                                        }}
-                                        className="text-blue-200 hover:text-red-300 cursor-pointer p-0.5"
-                                        title={language === 'tl' ? 'I-delete ang mensahe (Unsend)' : 'Unsend message'}
-                                      >
-                                        <Trash2 className="w-2.5 h-2.5" />
-                                      </button>
-                                    </div>
-                                  ) : <span />}
-                                  <span 
-                                    className="text-[8px] block font-mono font-bold"
-                                    style={isMe ? { color: '#e0e7ff' } : { color: '#64748b' }}
-                                  >
-                                    {new Date(msg.createdAt).toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' })}
-                                  </span>
                                 </div>
-                              </>
-                            )}
+                              ) : (
+                                <>
+                                  {msg.mediaUrl && (
+                                    <div className="mb-2 rounded-xl overflow-hidden bg-black/5">
+                                      {msg.mediaType === 'video' || msg.mediaUrl.match(/\.(mp4|webm|mov|ogg|m4v)$/i) ? (
+                                        <video 
+                                          src={msg.mediaUrl} 
+                                          controls 
+                                          playsInline
+                                          className="max-w-full max-h-60 rounded-xl bg-black w-full"
+                                        />
+                                      ) : (
+                                        <img 
+                                          src={msg.mediaUrl} 
+                                          alt="Attachment" 
+                                          onClick={() => {
+                                            setLightboxMediaUrl(msg.mediaUrl);
+                                            setLightboxMediaType('image');
+                                          }}
+                                          className="max-w-full max-h-60 rounded-xl object-cover cursor-zoom-in hover:opacity-95 transition w-full"
+                                        />
+                                      )}
+                                    </div>
+                                  )}
+                                  {msg.text && (
+                                    <p className="break-words font-medium" style={isMe ? { color: '#ffffff' } : { color: '#0f172a' }}>{msg.text}</p>
+                                  )}
+                                  <div className="flex items-center justify-between gap-2.5 mt-1">
+                                    {isMe && canEditOrDelete ? (
+                                      <div className="flex items-center gap-1.5 select-none opacity-80 max-sm:opacity-100 md:opacity-0 md:group-hover:opacity-100 transition duration-150">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setEditingMessageId(msg.id);
+                                            setEditingMessageText(msg.text || '');
+                                          }}
+                                          className="text-blue-200 hover:text-white cursor-pointer p-0.5"
+                                          title={language === 'tl' ? 'I-edit ang mensahe' : 'Edit message'}
+                                        >
+                                          <Pencil className="w-2.5 h-2.5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (!window.confirm || window.confirm(language === 'tl' ? 'Sigurado ka bang gusto mong i-delete ang mensaheng ito?' : 'Are you sure you want to delete this message?')) {
+                                              handleDeleteMessage(msg.id);
+                                            }
+                                          }}
+                                          className="text-blue-200 hover:text-red-300 cursor-pointer p-0.5"
+                                          title={language === 'tl' ? 'I-delete ang mensahe (Unsend)' : 'Unsend message'}
+                                        >
+                                          <Trash2 className="w-2.5 h-2.5" />
+                                        </button>
+                                      </div>
+                                    ) : <span />}
+                                    
+                                    <div className="flex items-center gap-1 select-none shrink-0 ml-auto">
+                                      <span 
+                                        className="text-[8px] font-mono font-bold"
+                                        style={isMe ? { color: '#e0e7ff' } : { color: '#64748b' }}
+                                      >
+                                        {new Date(msg.createdAt).toLocaleTimeString('fil-PH', { hour: 'numeric', minute: '2-digit' })}
+                                      </span>
+
+                                      {isMe && (
+                                        <span className="flex items-center" title={
+                                          msg.status === 'read' ? 'Nabasa na (Read)' :
+                                          msg.status === 'delivered' ? 'Naihatid na (Delivered)' :
+                                          msg.status === 'sent' ? 'Naipadala (Sent)' :
+                                          msg.status === 'failed' ? 'Hindi naipadala (Failed)' : 'Ipinapadala (Sending)'
+                                        }>
+                                          {msg.status === 'failed' ? (
+                                            <button 
+                                              type="button"
+                                              onClick={() => handleRetryDmMessage(msg)}
+                                              className="text-[8px] bg-rose-500/90 hover:bg-rose-600 text-white font-black px-1.5 py-0.2 rounded flex items-center gap-0.5 cursor-pointer ml-1"
+                                            >
+                                              <AlertCircle className="w-2.5 h-2.5" /> Retry
+                                            </button>
+                                          ) : msg.status === 'sending' ? (
+                                            <Clock className="w-2.5 h-2.5 text-blue-200 animate-pulse" />
+                                          ) : msg.status === 'read' ? (
+                                            <CheckCheck className="w-3 h-3 text-emerald-300 font-bold" />
+                                          ) : msg.status === 'delivered' ? (
+                                            <CheckCheck className="w-3 h-3 text-blue-200" />
+                                          ) : (
+                                            <Check className="w-3 h-3 text-blue-200" />
+                                          )}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Ephemeral Typing Indicator Bubble in Stream */}
+                      {typingUsers[activeDmUser.id]?.isTyping && (
+                        <div className="flex justify-start">
+                          <div className="bg-white text-slate-700 border border-slate-200 rounded-2xl rounded-bl-xs px-3.5 py-2 shadow-2xs flex items-center gap-2 text-xs font-semibold">
+                            <span className="text-[11px] text-slate-500 font-bold">
+                              {language === 'tl' ? `Nagsusulat si ${activeDmUser.name.split(' ')[0]}` : `${activeDmUser.name.split(' ')[0]} is typing`}
+                            </span>
+                            <span className="flex items-center gap-0.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                            </span>
                           </div>
                         </div>
-                      );
-                    })
-                )}
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
               {/* DM Media Preview Box */}
@@ -5377,7 +6330,12 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 <input
                   type="text"
                   value={newDmText}
-                  onChange={(e) => setNewDmText(e.target.value)}
+                  onChange={(e) => {
+                    setNewDmText(e.target.value);
+                    if (activeDmUser) {
+                      chatSocket.handleTyping(activeDmUser.id);
+                    }
+                  }}
                   onFocus={() => {
                     setTimeout(() => {
                       const el = document.getElementById('dm-chat-scroll');
@@ -6546,13 +7504,28 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                       <MessageSquare className="w-5 h-5 text-white" />
                     </span>
                     <div className="text-left">
-                      <h3 className="font-black text-white text-sm leading-tight" style={{ color: '#ffffff' }}>
-                        {language === 'tl' ? 'Z-one Inbox (Mga Mensahe)' : 'Z-one Messages Inbox'}
-                      </h3>
-                      <p className="text-[10px] text-indigo-100 font-bold font-mono">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-black text-white text-sm leading-tight" style={{ color: '#ffffff' }}>
+                          {language === 'tl' ? 'Z-one Inbox (Mga Mensahe)' : 'Z-one Messages Inbox'}
+                        </h3>
+                        {chatConnectionStatus === 'live' ? (
+                          <span className="text-[8px] bg-emerald-500/25 text-emerald-300 font-extrabold px-1.5 py-0.2 rounded-full border border-emerald-400/40 select-none flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Live
+                          </span>
+                        ) : chatConnectionStatus === 'reconnecting' ? (
+                          <span className="text-[8px] bg-amber-500/25 text-amber-200 font-extrabold px-1.5 py-0.2 rounded-full border border-amber-400/40 select-none flex items-center gap-0.5">
+                            <Loader2 className="w-2 h-2 animate-spin" /> Reconnecting
+                          </span>
+                        ) : (
+                          <span className="text-[8px] bg-slate-500/25 text-slate-300 font-extrabold px-1.5 py-0.2 rounded-full border border-slate-400/40 select-none">
+                            Fallback
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-indigo-100 font-bold font-mono mt-0.5">
                         {totalUnreadCount > 0
                           ? (language === 'tl' ? `Mayroon kang ${totalUnreadCount} unread` : `You have ${totalUnreadCount} unread`)
-                          : (language === 'tl' ? 'Ligtas na end-to-end messaging' : 'Secure end-to-end messaging')}
+                          : (language === 'tl' ? 'Ligtas na real-time messaging' : 'Secure real-time messaging')}
                       </p>
                     </div>
                   </div>
@@ -6694,11 +7667,17 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                 <h4 className={`text-xs font-black truncate text-slate-900 ${conv.unreadCount > 0 ? 'text-indigo-900 font-extrabold' : ''}`}>
                                   {conv.userName}
                                 </h4>
-                                <p className={`text-[11px] truncate mt-0.5 leading-none ${
-                                  conv.unreadCount > 0 ? 'text-slate-900 font-extrabold' : 'text-slate-450 font-medium'
-                                }`}>
-                                  {conv.lastMessage}
-                                </p>
+                                {typingUsers[conv.userId]?.isTyping ? (
+                                  <p className="text-[11px] truncate mt-0.5 leading-none text-emerald-600 font-extrabold flex items-center gap-1 animate-pulse">
+                                    <span>✍️</span> <span>{language === 'tl' ? 'nagsusulat...' : 'typing...'}</span>
+                                  </p>
+                                ) : (
+                                  <p className={`text-[11px] truncate mt-0.5 leading-none ${
+                                    conv.unreadCount > 0 ? 'text-slate-900 font-extrabold' : 'text-slate-450 font-medium'
+                                  }`}>
+                                    {conv.lastMessage}
+                                  </p>
+                                )}
                               </div>
                             </div>
 
@@ -7018,6 +7997,46 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         language={language}
         onNotification={triggerNotification}
       />
+
+      {/* 🛍️ PRODUCT TAG SELECTOR MODAL */}
+      {showProductTagModal && (
+        <ProductTagSelectorModal
+          isOpen={showProductTagModal}
+          onClose={() => setShowProductTagModal(false)}
+          onSelectProduct={(p) => setTaggedProduct(p)}
+          selectedProductId={taggedProduct?.id}
+          language={language}
+        />
+      )}
+
+      {/* 📊 CREATOR ANALYTICS STUDIO MODAL */}
+      {showCreatorAnalytics && (
+        <CreatorAnalyticsDashboard
+          isOpen={showCreatorAnalytics}
+          onClose={() => setShowCreatorAnalytics(false)}
+          token={token}
+          currentUserId={user.id}
+          currentUserName={user.name}
+          language={language}
+          onNavigateToPost={(postId) => {
+            setShowCreatorAnalytics(false);
+            const el = document.getElementById(`post-card-${postId}`);
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              el.classList.add('ring-2', 'ring-blue-500');
+              setTimeout(() => el.classList.remove('ring-2', 'ring-blue-500'), 3000);
+            }
+          }}
+          onNavigateToChallenge={(chId) => {
+            setShowCreatorAnalytics(false);
+            onNavigateToChallenge?.(chId);
+          }}
+          onNavigateToShop={() => {
+            setShowCreatorAnalytics(false);
+            onNavigateToShop?.();
+          }}
+        />
+      )}
 
     </div>
   );

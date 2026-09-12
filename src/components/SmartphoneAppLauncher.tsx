@@ -24,7 +24,8 @@ import {
   Building2,
   Bell,
   Smartphone,
-  Trophy
+  Trophy,
+  Search
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { soundEffects } from '../utils/audio';
@@ -83,6 +84,7 @@ interface SmartphoneAppLauncherProps {
   onOpenDataSaver?: () => void;
   onOpenVerification?: () => void;
   onOpenDeviceTransfer?: () => void;
+  onOpenSearch?: () => void;
 }
 
 export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
@@ -105,7 +107,8 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
   onOpenNotifications,
   onOpenDataSaver,
   onOpenVerification,
-  onOpenDeviceTransfer
+  onOpenDeviceTransfer,
+  onOpenSearch
 }) => {
   const isTl = language === 'tl';
 
@@ -382,6 +385,17 @@ export const SmartphoneAppLauncher: React.FC<SmartphoneAppLauncherProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                if (onOpenSearch) onOpenSearch();
+                else window.dispatchEvent(new CustomEvent('open-unified-search'));
+              }}
+              type="button"
+              className="relative p-2 sm:p-2.5 rounded-full bg-white/15 hover:bg-white/25 active:scale-95 transition text-white cursor-pointer"
+              title="Search & Discover"
+            >
+              <Search className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+            </button>
             <button
               onClick={onOpenNotifications}
               type="button"

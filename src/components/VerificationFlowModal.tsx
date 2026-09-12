@@ -79,9 +79,10 @@ export const VerificationFlowModal: React.FC<VerificationFlowModalProps> = ({
       const deviceHeaders = await getDeviceAuthHeaders();
 
       // 1. Request cryptographic verification session challenge token from server
-      const authHeader = token 
-        ? (token.startsWith('Bearer ') ? token : `Bearer ${token}`) 
-        : (resolvedUserId ? `Bearer ${resolvedUserId}` : '');
+      const activeToken = token || (typeof window !== 'undefined' ? localStorage.getItem('gcash_click_earn_token') : null) || '';
+      const authHeader = activeToken 
+        ? (activeToken.startsWith('Bearer ') ? activeToken : `Bearer ${activeToken}`) 
+        : '';
 
       const sessionRes = await fetch('/api/verification/start-session', {
         method: 'POST',

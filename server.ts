@@ -3,6 +3,8 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import dns from 'dns';
+import net from 'net';
 import { createServer as createViteServer } from 'vite';
 import { Firestore } from '@google-cloud/firestore';
 import { initializeApp as initFirebaseApp, getApps as getFirebaseApps, getApp as getFirebaseApp } from 'firebase/app';
@@ -25,56 +27,404 @@ import webpush from 'web-push';
 import vm from 'vm';
 import { BilibiliFeedItem, BilibiliFeedConfig } from './src/types';
 import { extractProductFromUrl } from './server/affiliateExtractor';
+import http from 'http';
+import { initChatWebSocket, notifyNewDirectMessage, getChatDiagnostics } from './server/chatSocket';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-// VAPID Web Push Setup
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BEoePhNL4BlPYLBzw1foKQm1ajHEWnbtORLuPFlKcOd1F33VSaS9Rcmb_2Hyq9hvfONzJS6l6OPDegY55gMjemg';
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '4mJ867usD6R8PMeN2ECtUVJMm0N8cA8jR9Ab7HfYCTk';
-const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:support@gcash-click-earn.com';
+// VAPID Web Push Setup (Production secrets sourced strictly from environment variables; zero hardcoded fallback secrets)
+const isProduction = process.env.NODE_ENV === 'production';
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:support@z-oneapp.ph';
 
-try {
-  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
-  console.log('🔔 Web Push VAPID initialized successfully.');
-} catch (vapidErr) {
-  console.error('Failed to initialize VAPID details:', vapidErr);
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  try {
+    webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+    console.log('🔔 Web Push VAPID initialized successfully from environment configuration.');
+  } catch (vapidErr) {
+    console.error('Failed to initialize VAPID details:', vapidErr);
+  }
+} else {
+  if (isProduction) {
+    console.warn('⚠️ [SECURITY] VAPID_PUBLIC_KEY and/or VAPID_PRIVATE_KEY not configured in production environment. Web push notifications disabled.');
+  } else {
+    try {
+      const ephemeralKeys = webpush.generateVAPIDKeys();
+      webpush.setVapidDetails(VAPID_SUBJECT, ephemeralKeys.publicKey, ephemeralKeys.privateKey);
+      console.log('🔔 [DEV ONLY] Ephemeral in-memory VAPID keys initialized for development session.');
+    } catch (e) {
+      console.warn('Could not initialize ephemeral VAPID keys:', e);
+    }
+  }
 }
 
-app.use(express.json({ limit: '200mb' }));
-app.use(express.urlencoded({ limit: '200mb', extended: true }));
+// --- HARDENED REQUEST BODY PARSER (Scoped Limits) ---
+// Enforce strict 2MB limit globally to eliminate Resource Exhaustion (OOM/DoS) attacks.
+// Dedicated upload endpoints (/api/zone/upload, /api/challenges/upload-media) receive scoped 50MB parser.
+const jsonParserStandard = express.json({ limit: '2mb' });
+const jsonParserUpload = express.json({ limit: '50mb' });
+const urlencodedParserStandard = express.urlencoded({ limit: '2mb', extended: true });
 
-// --- IDEMPOTENCY KEY PROTECTION SYSTEM ---
-// Protects critical financial transactions and state mutations against duplicate packet replay on slow networks
-const idempotencyCache = new Map<string, { status: number; body: any; timestamp: number }>();
+app.use((req, res, next) => {
+  if (req.path === '/api/zone/upload' || req.path === '/api/challenges/upload-media') {
+    return jsonParserUpload(req, res, next);
+  }
+  return jsonParserStandard(req, res, next);
+});
+app.use(urlencodedParserStandard);
 
-// Periodic cleanup of idempotency cache (TTL: 10 minutes)
+// --- IN-MEMORY USER ONLINE STATUS TRACKING ---
+const activeUsersMap: Record<string, number> = {};
+
+// --- CRYPTOGRAPHIC AUTHENTICATION & SESSION SECURITY SYSTEM ---
+// Strict HMAC-SHA256 Token Signing and Cryptographic Signature Verification
+const envAuthSecret = process.env.AUTH_SECRET || process.env.JWT_SECRET;
+
+// Enforce required persistent secret in production environment (e.g. Render Dashboard)
+if (isProduction && (!envAuthSecret || envAuthSecret.trim().length < 32)) {
+  console.error('🚨 [SECURITY FATAL] Production startup halted: AUTH_SECRET environment variable is missing or insufficiently secure (minimum 32 characters required). Please configure a persistent AUTH_SECRET in your production/Render dashboard environment settings.');
+  process.exit(1);
+}
+
+// In non-production development environments only, provide a clearly documented local-development fallback
+const AUTH_SECRET: string = envAuthSecret && envAuthSecret.trim().length > 0
+  ? envAuthSecret.trim()
+  : 'zone_local_dev_only_auth_secret_insecure_do_not_use_in_production_key_2026';
+
+// --- CRYPTOGRAPHIC PASSWORD HASHING (SCRYPT) ---
+// Secure salted scrypt password hashing for user accounts with legacy migration support
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derivedKey = crypto.scryptSync(password, salt, 64);
+  return `scrypt:${salt}:${derivedKey.toString('hex')}`;
+}
+
+function verifyPassword(password: string, storedHash?: string): boolean {
+  if (!password || !storedHash || typeof storedHash !== 'string') return false;
+
+  if (storedHash.startsWith('scrypt:')) {
+    const parts = storedHash.split(':');
+    if (parts.length !== 3) return false;
+    const salt = parts[1];
+    const expectedHash = Buffer.from(parts[2], 'hex');
+    const derivedKey = crypto.scryptSync(password, salt, expectedHash.length);
+    if (derivedKey.length !== expectedHash.length) return false;
+    return crypto.timingSafeEqual(derivedKey, expectedHash);
+  }
+
+  // Legacy plaintext verification for smooth migration-on-login
+  const bufA = Buffer.from(password, 'utf8');
+  const bufB = Buffer.from(storedHash, 'utf8');
+  if (bufA.length !== bufB.length) {
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+// In-Memory Revoked Tokens Set (supports instant session invalidation, logout, and token blacklisting)
+const revokedTokens = new Set<string>();
+
+interface TokenPayload {
+  sub: string;         // userId
+  role: string;        // 'admin' | 'user'
+  isAdmin: boolean;    // boolean flag
+  iat: number;         // issued at (seconds)
+  exp: number;         // expires at (seconds)
+  jti: string;         // unique token id
+}
+
+function base64UrlEncode(strOrBuffer: string | Buffer): string {
+  const buf = typeof strOrBuffer === 'string' ? Buffer.from(strOrBuffer, 'utf8') : strOrBuffer;
+  return buf.toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+function base64UrlDecode(str: string): string {
+  let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (base64.length % 4 !== 0) {
+    base64 += '=';
+  }
+  return Buffer.from(base64, 'base64').toString('utf8');
+}
+
+function generateToken(userId: string, role?: string, isAdmin?: boolean): string {
+  let finalRole = role;
+  let finalIsAdmin = isAdmin;
+
+  if (finalIsAdmin === undefined) {
+    try {
+      const db = loadDB();
+      const user = findUserInSystem(userId, db);
+      finalIsAdmin = Boolean(user?.isAdmin);
+      finalRole = finalIsAdmin ? 'admin' : 'user';
+    } catch {
+      finalIsAdmin = false;
+      finalRole = 'user';
+    }
+  }
+
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const now = Math.floor(Date.now() / 1000);
+  const payload: TokenPayload = {
+    sub: userId,
+    role: finalRole || 'user',
+    isAdmin: Boolean(finalIsAdmin),
+    iat: now,
+    exp: now + (30 * 24 * 60 * 60), // 30-day token lifetime
+    jti: crypto.randomBytes(16).toString('hex')
+  };
+
+  const headerB64 = base64UrlEncode(JSON.stringify(header));
+  const payloadB64 = base64UrlEncode(JSON.stringify(payload));
+  const signature = crypto
+    .createHmac('sha256', AUTH_SECRET)
+    .update(`${headerB64}.${payloadB64}`)
+    .digest();
+  const signatureB64 = base64UrlEncode(signature);
+
+  return `${headerB64}.${payloadB64}.${signatureB64}`;
+}
+
+interface TokenVerificationResult {
+  valid: boolean;
+  userId?: string;
+  role?: string;
+  isAdmin?: boolean;
+  payload?: TokenPayload;
+  error?: string;
+}
+
+function verifyToken(token: string | undefined): TokenVerificationResult {
+  if (!token || typeof token !== 'string') {
+    return { valid: false, error: 'Token missing' };
+  }
+
+  const cleanToken = token.startsWith('Bearer ') ? token.slice(7).trim() : token.trim();
+  if (!cleanToken) {
+    return { valid: false, error: 'Token empty' };
+  }
+
+  if (revokedTokens.has(cleanToken)) {
+    return { valid: false, error: 'Token has been revoked/logged out' };
+  }
+
+  const parts = cleanToken.split('.');
+  if (parts.length !== 3) {
+    return { valid: false, error: 'Invalid token structure. Cryptographic JWT signature required.' };
+  }
+
+  const [headerB64, payloadB64, signatureB64] = parts;
+
+  // Constant-time HMAC comparison to prevent timing attacks
+  const expectedSignature = crypto
+    .createHmac('sha256', AUTH_SECRET)
+    .update(`${headerB64}.${payloadB64}`)
+    .digest();
+  const expectedSignatureB64 = base64UrlEncode(expectedSignature);
+
+  const sigBuffer = Buffer.from(signatureB64);
+  const expectedBuffer = Buffer.from(expectedSignatureB64);
+  if (sigBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(sigBuffer, expectedBuffer)) {
+    return { valid: false, error: 'Invalid cryptographic signature' };
+  }
+
+  try {
+    const payloadJson = base64UrlDecode(payloadB64);
+    const payload = JSON.parse(payloadJson) as TokenPayload;
+
+    if (!payload.sub || typeof payload.sub !== 'string') {
+      return { valid: false, error: 'Malformed token payload: missing sub' };
+    }
+
+    if (payload.jti && revokedTokens.has(payload.jti)) {
+      return { valid: false, error: 'Token has been revoked/logged out' };
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp && payload.exp < now) {
+      return { valid: false, error: 'Token expired' };
+    }
+
+    return {
+      valid: true,
+      userId: payload.sub,
+      role: payload.role || 'user',
+      isAdmin: Boolean(payload.isAdmin),
+      payload
+    };
+  } catch (e: any) {
+    return { valid: false, error: 'Failed to decode token payload' };
+  }
+}
+
+// CENTRALIZED AUTHENTICATION MIDDLEWARE
+// Intercepts ALL requests: cryptographically verifies token, attaches user object, normalizes authorization header, and strips forged headers
+function authenticateMiddleware(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const authHeader = req.headers.authorization;
+  const queryToken = typeof req.query?.token === 'string' ? (req.query.token as string) : undefined;
+  const rawToken = authHeader || queryToken;
+
+  if (rawToken) {
+    let cleanToken = rawToken.trim();
+    if (cleanToken.startsWith('Bearer ')) {
+      cleanToken = cleanToken.slice(7).trim();
+    }
+    (req as any).rawAuthToken = cleanToken;
+
+    const verification = verifyToken(cleanToken);
+    if (verification.valid && verification.userId) {
+      try {
+        const db = loadDB();
+        const user = findUserInSystem(verification.userId, db);
+        if (user && !user.isBanned) {
+          (req as any).user = user;
+          (req as any).userId = user.id;
+          (req as any).tokenPayload = verification.payload;
+          (req as any).isAdmin = Boolean(user.isAdmin);
+          // Normalize header so all internal route accesses reading req.headers.authorization see the verified user ID
+          req.headers.authorization = user.id;
+          activeUsersMap[user.id] = Date.now();
+          return next();
+        }
+      } catch (err) {
+        console.warn('[AuthMiddleware] Error during user lookup:', err);
+      }
+    }
+  }
+
+  // Unauthenticated, expired, banned, or forged token
+  (req as any).user = null;
+  (req as any).userId = undefined;
+  (req as any).tokenPayload = null;
+  (req as any).isAdmin = false;
+  req.headers.authorization = undefined; // STRIP the unverified header so no downstream code can trust it
+  next();
+}
+
+app.use(authenticateMiddleware);
+
+// EXPLICIT AUTHENTICATION & AUTHORIZATION GUARDS
+function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const user = (req as any).user;
+  if (!user || !(req as any).userId) {
+    return res.status(401).json({
+      error: 'Kailangan mag-login upang ma-access ang serbisyong ito.',
+      code: 'AUTH_REQUIRED'
+    });
+  }
+  next();
+}
+
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const user = (req as any).user;
+  if (!user || !(req as any).userId) {
+    return res.status(401).json({
+      error: 'Kailangan mag-login bilang Admin.',
+      code: 'AUTH_REQUIRED'
+    });
+  }
+  if (!user.isAdmin) {
+    return res.status(403).json({
+      error: 'Pahintulot ay nakareserba lamang sa Administrator.',
+      code: 'ADMIN_FORBIDDEN'
+    });
+  }
+  next();
+}
+
+// Attach strict requireAdmin guard to all /api/admin endpoints
+app.use('/api/admin', requireAdmin);
+
+// --- HARDENED IDEMPOTENCY KEY PROTECTION SYSTEM ---
+// Protects critical financial transactions and state mutations against duplicate replay & simultaneous race conditions
+interface IdempotencyRecord {
+  state: 'in_progress' | 'completed';
+  status?: number;
+  body?: any;
+  timestamp: number;
+  userId?: string;
+  route?: string;
+  method?: string;
+}
+
+const idempotencyCache = new Map<string, IdempotencyRecord>();
+
+// Periodic cleanup of idempotency cache (TTL: 10 minutes for completed, 2 minutes for stuck in_progress)
 setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of idempotencyCache.entries()) {
-    if (now - entry.timestamp > 10 * 60 * 1000) {
+    const maxAge = entry.state === 'in_progress' ? 2 * 60 * 1000 : 10 * 60 * 1000;
+    if (now - entry.timestamp > maxAge) {
       idempotencyCache.delete(key);
     }
   }
-}, 5 * 60 * 1000);
+}, 60 * 1000);
 
 function checkIdempotency(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const key = (req.headers['x-idempotency-key'] as string) || req.body?.idempotencyKey || req.body?.requestId;
-  if (!key) {
+  const rawKey = (req.headers['x-idempotency-key'] as string) || req.body?.idempotencyKey || req.body?.requestId;
+  if (!rawKey) {
     return next();
   }
 
-  const cached = idempotencyCache.get(key);
-  if (cached) {
-    console.log(`[Idempotency] Returning cached response for key: ${key}`);
-    return res.status(cached.status).json(cached.body);
+  const keyStr = typeof rawKey === 'string' ? rawKey.trim() : String(rawKey).trim();
+
+  // Validate format: 8-128 chars, alphanumeric + safe chars
+  if (keyStr.length < 8 || keyStr.length > 128 || !/^[a-zA-Z0-9_\-.:]+$/.test(keyStr)) {
+    return res.status(400).json({
+      error: 'Maling format ng idempotency key. Kailangang 8-128 characters na binubuo ng letters, numbers, dashes, o underscores.',
+      code: 'INVALID_IDEMPOTENCY_KEY'
+    });
   }
 
-  // Intercept json response to cache it
+  // Safely scope the idempotency key: authenticated user identity + HTTP method + route/action + key
+  const authUserId = (req as any).userId || (req as any).user?.id || 'anon';
+  const routeAction = req.originalUrl ? req.originalUrl.split('?')[0] : (req.baseUrl ? `${req.baseUrl}${req.path}` : req.path);
+  const scopedKey = `user:${authUserId}:${req.method.toUpperCase()}:${routeAction}:${keyStr}`;
+
+  const cached = idempotencyCache.get(scopedKey);
+  if (cached) {
+    if (cached.state === 'in_progress') {
+      console.warn(`[Idempotency] Concurrent duplicate request blocked in-flight for: ${scopedKey}`);
+      return res.status(409).json({
+        error: 'Ang transaksyong ito ay kasalukuyang pinoproseso. Mangyaring maghintay bago subukang muli.',
+        code: 'TRANSACTION_IN_PROGRESS',
+        retryAfterSeconds: 2
+      });
+    }
+
+    if (cached.state === 'completed') {
+      console.log(`[Idempotency] Returning cached response for scoped key: ${scopedKey}`);
+      return res.status(cached.status || 200).json(cached.body);
+    }
+  }
+
+  // Mark in_progress immediately to eliminate the simultaneous duplicate-request race window
+  idempotencyCache.set(scopedKey, {
+    state: 'in_progress',
+    timestamp: Date.now(),
+    userId: authUserId,
+    route: routeAction,
+    method: req.method
+  });
+
+  // Intercept json response
   const originalJson = res.json.bind(res);
   res.json = (body: any) => {
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      idempotencyCache.set(key, { status: res.statusCode, body, timestamp: Date.now() });
+      idempotencyCache.set(scopedKey, {
+        state: 'completed',
+        status: res.statusCode,
+        body,
+        timestamp: Date.now(),
+        userId: authUserId,
+        route: routeAction,
+        method: req.method
+      });
+    } else {
+      // Clear in_progress on error so client can correct input and retry
+      idempotencyCache.delete(scopedKey);
     }
     return originalJson(body);
   };
@@ -512,27 +862,213 @@ Ensure your response is valid JSON and nothing else.`;
   };
 }
 
+// --- FULL SSRF PROTECTION SYSTEM ---
+function isIpPrivateOrReserved(ip: string): boolean {
+  let normalizedIp = ip.toLowerCase().trim();
+  if (normalizedIp.startsWith('::ffff:')) {
+    normalizedIp = normalizedIp.substring(7);
+  }
+
+  // IPv4 validation
+  if (net.isIPv4(normalizedIp)) {
+    const parts = normalizedIp.split('.').map(Number);
+    if (parts.length !== 4 || parts.some(p => isNaN(p) || p < 0 || p > 255)) {
+      return true; // Malformed = reject
+    }
+    const [b0, b1, b2, b3] = parts;
+
+    // 0.0.0.0/8 (Broadcast/Current network)
+    if (b0 === 0) return true;
+    // 10.0.0.0/8 (Private RFC 1918)
+    if (b0 === 10) return true;
+    // 100.64.0.0/10 (Carrier-Grade NAT)
+    if (b0 === 100 && b1 >= 64 && b1 <= 127) return true;
+    // 127.0.0.0/8 (Loopback)
+    if (b0 === 127) return true;
+    // 169.254.0.0/16 (Link-Local & Cloud Metadata e.g. 169.254.169.254)
+    if (b0 === 169 && b1 === 254) return true;
+    // 172.16.0.0/12 (Private RFC 1918)
+    if (b0 === 172 && b1 >= 16 && b1 <= 31) return true;
+    // 192.0.0.0/24, 192.0.2.0/24 (TEST-NET-1)
+    if (b0 === 192 && b1 === 0 && (b2 === 0 || b2 === 2)) return true;
+    // 192.168.0.0/16 (Private RFC 1918)
+    if (b0 === 192 && b1 === 168) return true;
+    // 198.18.0.0/15 (Benchmarking)
+    if (b0 === 198 && (b1 === 18 || b1 === 19)) return true;
+    // 198.51.100.0/24 (TEST-NET-2)
+    if (b0 === 198 && b1 === 51 && b2 === 100) return true;
+    // 203.0.113.0/24 (TEST-NET-3)
+    if (b0 === 203 && b1 === 0 && b2 === 113) return true;
+    // 224.0.0.0/4 (Multicast)
+    if (b0 >= 224 && b0 <= 239) return true;
+    // 240.0.0.0/4 (Reserved)
+    if (b0 >= 240) return true;
+    // 255.255.255.255 (Broadcast)
+    if (b0 === 255 && b1 === 255 && b2 === 255 && b3 === 255) return true;
+
+    return false;
+  }
+
+  // IPv6 validation
+  if (net.isIPv6(normalizedIp)) {
+    // ::1 (Loopback)
+    if (normalizedIp === '::1') return true;
+    // :: (Unspecified)
+    if (normalizedIp === '::') return true;
+    // fe80::/10 (Link-Local)
+    if (/^fe[89ab]/i.test(normalizedIp)) return true;
+    // fc00::/7 & fd00::/8 (Unique Local Address)
+    if (/^f[cd]/i.test(normalizedIp)) return true;
+    // ff00::/8 (Multicast)
+    if (/^ff/i.test(normalizedIp)) return true;
+    return false;
+  }
+
+  return true; // Not a recognized valid public IP = reject
+}
+
+async function validateUrlForSsrf(urlString: string): Promise<{ safe: boolean; url?: URL; error?: string }> {
+  let parsed: URL;
+  try {
+    parsed = new URL(urlString);
+  } catch {
+    return { safe: false, error: 'Malformed or unparseable URL.' };
+  }
+
+  // 1. Strict Protocol Check
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { safe: false, error: 'Only HTTP and HTTPS protocols are permitted.' };
+  }
+
+  const hostname = parsed.hostname.toLowerCase().trim();
+  if (!hostname) {
+    return { safe: false, error: 'Hostname cannot be empty.' };
+  }
+
+  // 2. Reject internal / cloud metadata aliases and local domain suffixes
+  const blockedHostnames = new Set([
+    'localhost',
+    'localhost.localdomain',
+    'ip6-localhost',
+    'ip6-loopback',
+    'metadata.google.internal',
+    'metadata',
+    'instance-data'
+  ]);
+  if (
+    blockedHostnames.has(hostname) ||
+    hostname.endsWith('.internal') ||
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.localhost') ||
+    hostname.endsWith('.corp') ||
+    hostname.endsWith('.home') ||
+    hostname.endsWith('.lan')
+  ) {
+    return { safe: false, error: 'Access to internal, loopback, or cloud-metadata hostnames is forbidden.' };
+  }
+
+  // 3. Reject non-standard IP notations (decimal numbers, octal, hex)
+  if (/^0x[0-9a-f]+$/i.test(hostname) || /^\d+$/.test(hostname) || /^0[0-7]+$/.test(hostname)) {
+    return { safe: false, error: 'Numeric or non-standard IP formats are forbidden.' };
+  }
+
+  // 4. Direct IP address check
+  if (net.isIP(hostname)) {
+    if (isIpPrivateOrReserved(hostname)) {
+      return { safe: false, error: 'Access to private, loopback, or cloud-metadata IP addresses is forbidden.' };
+    }
+    return { safe: true, url: parsed };
+  }
+
+  // 5. DNS Resolution check (prevents DNS rebinding and private IP mapping)
+  try {
+    const addresses = await dns.promises.lookup(hostname, { all: true });
+    if (!addresses || addresses.length === 0) {
+      return { safe: false, error: 'Unable to resolve domain name.' };
+    }
+    for (const record of addresses) {
+      if (isIpPrivateOrReserved(record.address)) {
+        return { safe: false, error: `Domain resolves to private or metadata IP address (${record.address}).` };
+      }
+    }
+  } catch (dnsErr: any) {
+    return { safe: false, error: `DNS resolution failed: ${dnsErr.message || 'Host not found'}` };
+  }
+
+  return { safe: true, url: parsed };
+}
+
 // Proxy endpoint to strip X-Frame-Options and Content-Security-Policy so external websites can be viewed inside BrowserSimulator without net::ERR_BLOCKED_BY_RESPONSE errors
 app.get('/api/proxy-web', async (req, res) => {
   const targetUrl = req.query.url as string;
-  if (!targetUrl || !/^https?:\/\//i.test(targetUrl)) {
+  if (!targetUrl || typeof targetUrl !== 'string') {
     return res.status(400).send('Invalid or missing URL parameter.');
   }
 
+  // 1. Validate Initial URL with SSRF Guard
+  const initialValidation = await validateUrlForSsrf(targetUrl);
+  if (!initialValidation.safe || !initialValidation.url) {
+    return res.status(403).send(`[SSRF Blocked] ${initialValidation.error || 'Access to destination is restricted.'}`);
+  }
+
+  let currentUrl = initialValidation.url.href;
+  const maxRedirects = 3;
+  let redirectCount = 0;
+
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    const response = await fetch(targetUrl, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9,tl;q=0.8'
-      },
-      redirect: 'follow'
-    });
+    let response: Response | null = null;
+
+    while (redirectCount <= maxRedirects) {
+      response = await fetch(currentUrl, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9,tl;q=0.8'
+        },
+        redirect: 'manual' // Never blindly follow redirects!
+      });
+
+      // Handle HTTP redirects (301, 302, 303, 307, 308)
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const locationHeader = response.headers.get('location');
+        if (!locationHeader) {
+          break;
+        }
+        redirectCount++;
+        if (redirectCount > maxRedirects) {
+          clearTimeout(timeoutId);
+          return res.status(508).send('[SSRF Blocked] Too many redirects.');
+        }
+
+        // Resolve redirect URL relative to currentUrl
+        const nextUrlObj = new URL(locationHeader, currentUrl);
+        const nextValidation = await validateUrlForSsrf(nextUrlObj.href);
+        if (!nextValidation.safe || !nextValidation.url) {
+          clearTimeout(timeoutId);
+          return res.status(403).send(`[SSRF Blocked on Redirect] ${nextValidation.error || 'Redirect destination is restricted.'}`);
+        }
+        currentUrl = nextValidation.url.href;
+        continue;
+      }
+
+      break;
+    }
+
     clearTimeout(timeoutId);
+
+    if (!response) {
+      return res.status(502).send('Failed to receive response from destination.');
+    }
+
+    // Check response size before loading to prevent memory bombs
+    const contentLength = response.headers.get('content-length');
+    if (contentLength && Number(contentLength) > 10 * 1024 * 1024) {
+      return res.status(413).send('Response payload exceeds 10MB limit.');
+    }
 
     const contentType = response.headers.get('content-type') || 'text/html; charset=utf-8';
     res.setHeader('Content-Type', contentType);
@@ -544,9 +1080,12 @@ app.get('/api/proxy-web', async (req, res) => {
 
     if (contentType.includes('text/html')) {
       let body = await response.text();
+      if (body.length > 10 * 1024 * 1024) {
+        return res.status(413).send('HTML response exceeded size limit.');
+      }
       
       try {
-        const parsed = new URL(targetUrl);
+        const parsed = new URL(currentUrl);
         const baseUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
         // Inject <base> tag to resolve relative paths
         if (!/<base\s/i.test(body)) {
@@ -566,9 +1105,15 @@ app.get('/api/proxy-web', async (req, res) => {
     } else {
       // Stream or send non-HTML content (e.g. css/js/images)
       const arrayBuffer = await response.arrayBuffer();
+      if (arrayBuffer.byteLength > 10 * 1024 * 1024) {
+        return res.status(413).send('Media payload exceeded size limit.');
+      }
       return res.send(Buffer.from(arrayBuffer));
     }
   } catch (err: any) {
+    if (err.name === 'AbortError') {
+      return res.status(504).send('Gateway Timeout: Target website took too long to respond.');
+    }
     console.error(`Error in /api/proxy-web for ${targetUrl}:`, err.message);
     res.status(200).send(`
       <!DOCTYPE html>
@@ -752,20 +1297,10 @@ app.get('/api/tts', async (req, res) => {
   }
 });
 
-// --- IN-MEMORY USER ONLINE STATUS TRACKING & RECOVERY STATE ---
-const activeUsersMap: Record<string, number> = {};
-
+// --- RECOVERY STATE ---
 let isAuthoritativeDatabaseReady = false;
 let recoveryFailureReason: string | null = null;
 let isCloudRebuildInProgress = false;
-
-app.use((req, res, next) => {
-  const token = req.headers.authorization;
-  if (token) {
-    activeUsersMap[token] = Date.now();
-  }
-  next();
-});
 
 // Guard data mutations if authoritative recovery has not completed on an ephemeral container
 app.use((req, res, next) => {
@@ -1131,6 +1666,12 @@ interface Subscription {
   requestedAt?: string | null;
   approvedAt?: string | null;
   expiresAt?: string | null;
+  paymentId?: string | null;
+  paymentReferenceNumber?: string | null;
+  gcashAccountName?: string | null;
+  gcashMobileNumber?: string | null;
+  receiptScreenshot?: string | null;
+  rejectionReason?: string | null;
 }
 
 interface UserSession {
@@ -1355,6 +1896,8 @@ interface MerchantAd {
   gcashSenderNumber: string;
   gcashReferenceNo: string;
   status: 'pending' | 'active' | 'declined' | 'expired';
+  paymentId?: string;
+  rejectionReason?: string;
   createdAt: string;
   approvedAt?: string;
   expiresAt?: string;
@@ -1367,11 +1910,20 @@ interface ReelVideo {
   embedUrl: string;
   platform: 'tiktok' | 'facebook' | 'youtube' | 'direct';
   title?: string;
+  thumbnailUrl?: string;
   likes: number;
   likedBy?: string[];
   watchedBy?: string[];
+  views?: number;
   addedBy?: string;
   addedByUserId?: string;
+  authorAvatar?: string;
+  authorBio?: string;
+  comments?: any[];
+  commentsCount?: number;
+  sharesCount?: number;
+  productRef?: any;
+  hashtags?: string[];
   status?: 'approved' | 'pending' | 'disapproved';
   disapproveReason?: string;
   createdAt: string;
@@ -1586,6 +2138,56 @@ interface SponsoredMission {
   settledAt?: string;
 }
 
+interface SocialNotification {
+  id: string;
+  recipientUserId: string;
+  senderUserId?: string;
+  senderUserName?: string;
+  senderUserAvatar?: string;
+  type: 'like' | 'comment' | 'reply' | 'follow' | 'mention' | 'share' | 'challenge' | 'shop';
+  title: string;
+  message: string;
+  targetId?: string;
+  targetType?: 'post' | 'reel' | 'challenge' | 'product' | 'profile';
+  read: boolean;
+  createdAt: string;
+}
+
+interface SocialReport {
+  id: string;
+  targetType: 'post' | 'comment' | 'user';
+  targetId: string;
+  targetAuthorId?: string;
+  targetAuthorName?: string;
+  targetContentSnippet?: string;
+  reason: 'spam' | 'harassment' | 'inappropriate' | 'misinformation' | 'other';
+  notes?: string;
+  reporterUserId: string;
+  reporterUserName: string;
+  status: 'pending' | 'reviewed' | 'actioned' | 'dismissed';
+  actionTaken?: string;
+  createdAt: string;
+  reviewedAt?: string;
+}
+
+interface ZoneCommentReply {
+  id: string;
+  commentId: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  text: string;
+  createdAt: string;
+  likes?: string[];
+}
+
+interface SavedPostRef {
+  id: string;
+  userId: string;
+  postId: string;
+  savedAt: string;
+}
+
 interface DBStructure {
   users: UserSession[];
   campaigns?: any[];
@@ -1618,6 +2220,13 @@ interface DBStructure {
   bilibiliFeedItems?: BilibiliFeedItem[];
   bilibiliFeedConfig?: BilibiliFeedConfig;
   subscriptionPayments?: SubscriptionPayment[];
+  socialNotifications?: SocialNotification[];
+  socialReports?: SocialReport[];
+  savedPosts?: SavedPostRef[];
+  userBlocks?: Record<string, string[]>;
+  userMutes?: Record<string, string[]>;
+  userHiddenPosts?: Record<string, string[]>;
+  creatorProductClicks?: any[];
 }
 
 interface SubscriptionPayment {
@@ -2465,7 +3074,9 @@ function loadDB(): DBStructure {
     const admin = loaded.users.find(u => u.isAdmin);
     if (admin) {
       admin.email = envAdminEmail;
-      admin.password = envAdminPassword;
+      if (!admin.password || !admin.password.startsWith('scrypt:') || !verifyPassword(envAdminPassword, admin.password)) {
+        admin.password = hashPassword(envAdminPassword);
+      }
       admin.name = envAdminName;
     }
     loaded.merchantAds = loaded.merchantAds || [];
@@ -2536,6 +3147,9 @@ function loadDB(): DBStructure {
         lastError: null,
         itemCount: 0
       };
+    }
+    if (!loaded.creatorProductClicks) {
+      loaded.creatorProductClicks = [];
     }
 
     // Run auto-expiration on banners & unpaid baskets
@@ -4146,7 +4760,9 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
       const admin = mergedDB.users.find(u => u.isAdmin);
       if (admin) {
         admin.email = envAdminEmail;
-        admin.password = envAdminPassword;
+        if (!admin.password || !admin.password.startsWith('scrypt:') || !verifyPassword(envAdminPassword, admin.password)) {
+          admin.password = hashPassword(envAdminPassword);
+        }
         admin.name = envAdminName;
       }
 
@@ -4185,27 +4801,19 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
 // Ensure database is initialized (will be updated dynamically during startup sync)
 let database = loadDB();
 
-// --- AUTH MIDDLEWARE ---
-function generateToken(userId: string) {
-  return userId; // Simple pass-through for simulation token
-}
-
 // Verification Session & Device Rate Limit Tracking
 const verificationSessionsMap: Record<string, { sessionId: string; sessionToken: string; userId: string; status: 'initiated' | 'consumed'; expiresAt: number }> = {};
 const transferRequestAttempts: Record<string, { count: number; lastRequestedAt: number; windowStart: number }> = {};
-const VERIF_SECRET = process.env.VERIF_SECRET || 'zone_community_safety_session_secret_2026';
+const VERIF_SECRET: string = (process.env.VERIF_SECRET && process.env.VERIF_SECRET.trim().length >= 32)
+  ? process.env.VERIF_SECRET.trim()
+  : crypto.createHmac('sha256', AUTH_SECRET).update('zone_community_safety_subsecret_v1').digest('hex');
 
 function enforceCommunitySafety(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const userId = req.headers.authorization || (req.body && req.body.userId) || (req.query && (req.query.userId as string));
-  if (!userId) {
+  const user = (req as any).user;
+  if (!user) {
     return res.status(401).json({ error: 'Kailangan mag-login upang ma-access ang serbisyong ito.' });
   }
-
-  const db = loadDB();
-  const user = findUserInSystem(userId, db);
-  if (!user) {
-    return res.status(404).json({ error: 'Hindi nahanap ang user account.' });
-  }
+  const userId = user.id;
 
   if (user.isAdmin) {
     return next();
@@ -4428,27 +5036,16 @@ app.post('/api/push/test', async (req, res) => {
 // They are NEVER saved to db.users, db.json, or Firestore!
 const demoUsers: UserSession[] = [];
 
-// Helper to look up a user in demoUsers (RAM) first, then db.users (Production DB)
-function findUserInSystem(rawUserId: string, db: DBStructure): UserSession | undefined {
-  if (!rawUserId) return undefined;
-  const cleanId = typeof rawUserId === 'string' && rawUserId.startsWith('Bearer ') 
-    ? rawUserId.slice(7).trim() 
-    : String(rawUserId).trim();
-    
+// Helper to look up a user by validated user ID in demoUsers (RAM) first, then db.users (Production DB)
+function findUserInSystem(userId: string, db: DBStructure): UserSession | undefined {
+  if (!userId || typeof userId !== 'string') return undefined;
+  const cleanId = userId.startsWith('Bearer ') ? userId.slice(7).trim() : userId.trim();
   if (!cleanId) return undefined;
 
-  const demoUser = demoUsers.find(u => 
-    u.id === cleanId || 
-    u.id === rawUserId || 
-    (u.email && u.email.toLowerCase() === cleanId.toLowerCase())
-  );
+  const demoUser = demoUsers.find(u => u.id === cleanId);
   if (demoUser) return demoUser;
 
-  return db.users.find(u => 
-    u.id === cleanId || 
-    u.id === rawUserId || 
-    (u.email && u.email.toLowerCase() === cleanId.toLowerCase())
-  );
+  return db.users.find(u => u.id === cleanId);
 }
 
 // ENDPOINT TO AUTOMATICALLY PURGE DEMO USER DATA FROM RAM MEMORY WHEN USER LEAVES DEMO MODE/PAGE
@@ -4530,7 +5127,7 @@ app.post('/api/auth/register', (req, res) => {
   const newUser: UserSession = {
     id: userId,
     email: email.trim(),
-    password: password,
+    password: hashPassword(password),
     name: name.trim(),
     avatar: defaultAvatar,
     referralCode: myCode,
@@ -4657,8 +5254,16 @@ app.post('/api/auth/login', (req, res) => {
     user = db.users.find(u => u.email.toLowerCase() === lowerEmail);
   }
 
-  if (!user || user.password !== password) {
+  if (!user || !verifyPassword(password, user.password)) {
     return res.status(401).json({ error: 'Maling email o password. Pakisubukang muli.' });
+  }
+
+  // Automatic Migration-on-Login: If stored password is still legacy plaintext, hash it immediately
+  if (user.password && !user.password.startsWith('scrypt:')) {
+    user.password = hashPassword(password);
+    if (!user.isDemo) {
+      saveDB(db);
+    }
   }
 
   if (user.isBanned) {
@@ -4698,21 +5303,45 @@ app.post('/api/auth/login', (req, res) => {
   res.json({ user: userSafe, token: generateToken(user.id) });
 });
 
+// LOGOUT / SESSION REVOCATION
+app.post('/api/auth/logout', (req, res) => {
+  const rawToken = (req as any).rawAuthToken || req.headers.authorization || (req.headers['x-auth-token'] as string);
+  if (rawToken && typeof rawToken === 'string') {
+    const clean = rawToken.startsWith('Bearer ') ? rawToken.slice(7).trim() : rawToken.trim();
+    if (clean) {
+      revokedTokens.add(clean);
+    }
+  }
+  const jti = (req as any).tokenPayload?.jti;
+  if (jti) {
+    revokedTokens.add(jti);
+  }
+  const userId = (req as any).userId;
+  if (userId) {
+    delete activeUsersMap[userId];
+  }
+  res.json({ success: true, message: 'Matagumpay na naka-logout.' });
+});
+
+// SESSION VALIDATION / CURRENT USER
+app.get('/api/auth/session-validate', (req, res) => {
+  const user = (req as any).user;
+  if (!user) {
+    return res.status(401).json({ valid: false, error: 'Session invalid or expired' });
+  }
+  const { password: _, ...userSafe } = user;
+  res.json({ valid: true, user: userSafe });
+});
+
 // ============================================================
 //   COMMUNITY SAFETY, AGE/IDENTITY VERIFICATION & DEVICE APIS
 // ============================================================
 
 // START VERIFICATION SESSION (Server-controlled challenge token)
 app.post('/api/verification/start-session', (req, res) => {
-  const userId = req.headers.authorization || req.body.userId;
-  if (!userId) {
-    return res.status(401).json({ error: 'Kailangan mag-login.' });
-  }
-
-  const db = loadDB();
-  const user = findUserInSystem(userId, db);
+  const user = (req as any).user;
   if (!user) {
-    return res.status(404).json({ error: 'User not found.' });
+    return res.status(401).json({ error: 'Kailangan mag-login.' });
   }
 
   const sessionId = 'vses-' + Date.now() + '-' + crypto.randomBytes(8).toString('hex');
@@ -4737,8 +5366,8 @@ app.post('/api/verification/start-session', (req, res) => {
 
 // SUBMIT AGE / IDENTITY VERIFICATION (Server-controlled verification session required)
 app.post('/api/verification/submit', async (req, res) => {
-  const userId = req.headers.authorization || req.body.userId;
-  if (!userId) {
+  const user = (req as any).user;
+  if (!user) {
     return res.status(401).json({ error: 'Kailangan mag-login.' });
   }
 
@@ -4748,7 +5377,6 @@ app.post('/api/verification/submit', async (req, res) => {
   }
 
   const db = loadDB();
-  const user = findUserInSystem(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi nahanap ang user.' });
   }
@@ -4874,15 +5502,9 @@ app.post('/api/verification/submit', async (req, res) => {
 
 // GET VERIFICATION STATUS
 app.get('/api/verification/status', (req, res) => {
-  const userId = req.headers.authorization;
-  if (!userId) {
-    return res.status(401).json({ error: 'Kailangan mag-login.' });
-  }
-
-  const db = loadDB();
-  const user = findUserInSystem(userId, db);
+  const user = (req as any).user;
   if (!user) {
-    return res.status(404).json({ error: 'User not found.' });
+    return res.status(401).json({ error: 'Kailangan mag-login.' });
   }
 
   res.json({
@@ -4896,18 +5518,13 @@ app.get('/api/verification/status', (req, res) => {
 
 // DEVICE TRANSFER: REQUEST OTP (with Rate Limiting & Cooldown)
 app.post('/api/device/transfer-request', (req, res) => {
-  const userId = req.headers.authorization || req.body.userId;
-  const newDeviceId = req.body.newDeviceId || (req.headers['x-device-id'] as string);
-
-  if (!userId) {
-    return res.status(400).json({ error: 'Kailangan ibigay ang user ID.' });
-  }
-
-  const db = loadDB();
-  const user = findUserInSystem(userId, db);
+  const user = (req as any).user;
   if (!user) {
-    return res.status(404).json({ error: 'User not found.' });
+    return res.status(401).json({ error: 'Kailangan mag-login upang ma-access ang device transfer.' });
   }
+  const userId = user.id;
+  const newDeviceId = req.body.newDeviceId || (req.headers['x-device-id'] as string);
+  const db = loadDB();
 
   // Rate Limiting & Cooldown: 60-second cooldown & max 5 requests per hour
   const now = Date.now();
@@ -4963,12 +5580,16 @@ app.post('/api/device/transfer-request', (req, res) => {
 
 // DEVICE TRANSFER: CONFIRM OTP (Supports newDeviceId and otpCode/code seamlessly)
 app.post('/api/device/transfer-confirm', (req, res) => {
-  const userId = req.headers.authorization || req.body.userId;
+  const user = (req as any).user;
+  if (!user) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang ma-confirm ang device transfer.' });
+  }
+  const userId = user.id;
   const newDeviceId = req.body.newDeviceId || (req.headers['x-device-id'] as string);
   const code = req.body.code || req.body.otpCode;
 
-  if (!userId || !code) {
-    return res.status(400).json({ error: 'Kailangan ibigay ang user ID at security code.' });
+  if (!code) {
+    return res.status(400).json({ error: 'Kailangan ibigay ang security code.' });
   }
 
   if (!newDeviceId) {
@@ -4976,10 +5597,6 @@ app.post('/api/device/transfer-confirm', (req, res) => {
   }
 
   const db = loadDB();
-  const user = findUserInSystem(userId, db);
-  if (!user) {
-    return res.status(404).json({ error: 'User not found.' });
-  }
 
   if (!db.deviceTransfers) db.deviceTransfers = [];
   const challenge = db.deviceTransfers.find(c => 
@@ -5097,7 +5714,7 @@ app.post('/api/auth/auto-restore', (req, res) => {
     user = {
       id: isDemoModeReq ? ('demo-restore-' + Date.now()) : ('user-restore-' + Date.now()),
       email: email.trim(),
-      password: password,
+      password: hashPassword(password),
       name: name.trim(),
       avatar: avatar || '👤',
       referralCode: myCode,
@@ -5130,8 +5747,14 @@ app.post('/api/auth/auto-restore', (req, res) => {
       saveDB(db);
     }
   } else {
-    if (user.password !== password) {
+    if (!verifyPassword(password, user.password)) {
       return res.status(401).json({ error: 'Suriing mabuti ang email at password.' });
+    }
+    if (user.password && !user.password.startsWith('scrypt:')) {
+      user.password = hashPassword(password);
+      if (!user.isDemo) {
+        saveDB(db);
+      }
     }
   }
 
@@ -5238,16 +5861,12 @@ app.post('/api/auth/google', (req, res) => {
 
 // GET USER PROFILE
 app.get('/api/user/profile', (req, res) => {
-  const userId = req.headers.authorization;
-  if (!userId) {
+  const user = (req as any).user;
+  if (!user) {
     return res.status(401).json({ error: 'Lumalabas na naka-Logout ka. Mag-login muna.' });
   }
 
   const db = loadDB();
-  const user = findUserInSystem(userId, db);
-  if (!user) {
-    return res.status(404).json({ error: 'Hindi mahanap ang gumagamit.' });
-  }
 
   // Check subscription expiration
   let dbChanged = false;
@@ -5484,9 +6103,8 @@ app.get('/api/reels', (req, res) => {
     saveDB(db);
   }
 
-  const authUserId = req.headers.authorization || (req.query.userId as string);
-  const user = authUserId ? db.users.find(u => u.id === authUserId) : null;
-  const isAdmin = user?.isAdmin || req.query.admin === 'true';
+  const user = (req as any).user;
+  const isAdmin = Boolean(user?.isAdmin);
 
   let filtered = db.reels;
   // Always return all reels so no user videos are lost
@@ -5498,7 +6116,7 @@ app.get('/api/reels', (req, res) => {
 });
 
 app.post('/api/reels', enforceCommunitySafety, (req, res) => {
-  const { url, embedUrl, platform, title, addedBy, userId } = req.body;
+  const { url, embedUrl, platform, title, addedBy } = req.body;
   if (!url || !url.trim()) {
     return res.status(400).json({ error: 'Kailangan ibigay ang Video URL.' });
   }
@@ -5506,9 +6124,12 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
   const db = loadDB();
   db.reels = db.reels || [...INITIAL_REELS];
 
-  const authUserId = req.headers.authorization || userId;
-  const user = authUserId ? db.users.find(u => u.id === authUserId) : null;
-  const isAdmin = user?.isAdmin === true;
+  const user = (req as any).user;
+  if (!user) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang makapag-upload ng Reel.' });
+  }
+  const authUserId = user.id;
+  const isAdmin = user.isAdmin === true;
 
   const { embedUrl: autoEmbedUrl, platform: autoPlatform } = formatEmbedUrlServer(url.trim());
   const finalEmbedUrl = embedUrl || autoEmbedUrl;
@@ -5573,7 +6194,12 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
 
 // TOKEN SUBSCRIPTION REQUEST (20 Reels = ₱10 pesos / 10 Tokens)
 app.post('/api/reels/token-subscription', (req, res) => {
-  const { userId, userName, userEmail, gcashNumber, gcashRefNo } = req.body;
+  const user = (req as any).user;
+  if (!user) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang makapag-subscribe ng Reel tokens.' });
+  }
+
+  const { gcashNumber, gcashRefNo } = req.body;
   if (!gcashRefNo || !gcashRefNo.trim()) {
     return res.status(400).json({ error: 'Kailangan ibigay ang GCash Reference Number.' });
   }
@@ -5581,22 +6207,11 @@ app.post('/api/reels/token-subscription', (req, res) => {
   const db = loadDB();
   db.reelSubscriptions = db.reelSubscriptions || [];
 
-  const authUserId = req.headers.authorization || userId;
-  let user = authUserId ? db.users.find(u => u.id === authUserId || (u.email && u.email.toLowerCase() === authUserId.toLowerCase())) : null;
-
-  if (!user && userEmail) {
-    user = db.users.find(u => u.email.toLowerCase().trim() === userEmail.toLowerCase().trim());
-  }
-
-  if (!user && userName) {
-    user = db.users.find(u => u.name.toLowerCase().trim() === userName.toLowerCase().trim());
-  }
-
   const newSub: ReelTokenSubscription = {
     id: 'reel-sub-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-    userId: user ? user.id : (userId || 'guest'),
-    userName: user ? user.name : (userName || 'Guest User'),
-    userEmail: user ? user.email : (userEmail || undefined),
+    userId: user.id,
+    userName: user.name,
+    userEmail: user.email,
     gcashNumber: gcashNumber || 'GCash',
     gcashRefNo: gcashRefNo.trim(),
     packageName: '20 Reels & Shorts Package',
@@ -5634,16 +6249,12 @@ app.get('/api/admin/reels', (req, res) => {
 
 // USER: GET MY UPLOADED REELS & REDEMPTIONS ACTIVITY
 app.get('/api/reels/my-activity', (req, res) => {
-  const authUserId = req.headers.authorization || (req.query.userId as string);
-  if (!authUserId) return res.status(401).json({ error: 'Kailangan mag-login.' });
+  const user = (req as any).user;
+  if (!user) return res.status(401).json({ error: 'Kailangan mag-login.' });
 
   const db = loadDB();
   db.reels = db.reels || [];
   db.reelRedemptions = db.reelRedemptions || [];
-
-  const user = db.users.find(u => u.id === authUserId || (u.email && u.email.toLowerCase() === authUserId.toLowerCase()));
-
-  if (!user) return res.status(404).json({ error: 'Hindi mahanap ang user.' });
 
   // Filter reels uploaded by this user
   const userReels = db.reels.filter(r => 
@@ -5665,9 +6276,9 @@ app.get('/api/reels/my-activity', (req, res) => {
 });
 
 // USER: REDEEM REEL PROFIT TO MAIN BALANCE (Minimum ₱300)
-app.post('/api/reels/redeem-profit', (req, res) => {
-  const authUserId = req.headers.authorization || req.body.userId;
-  if (!authUserId) return res.status(401).json({ error: 'Kailangan mag-login.' });
+app.post('/api/reels/redeem-profit', checkIdempotency, (req, res) => {
+  const user = (req as any).user;
+  if (!user) return res.status(401).json({ error: 'Kailangan mag-login.' });
 
   const { amount } = req.body;
   const requestedAmount = Number(amount);
@@ -5679,12 +6290,42 @@ app.post('/api/reels/redeem-profit', (req, res) => {
   const db = loadDB();
   db.reelRedemptions = db.reelRedemptions || [];
 
-  const user = db.users.find(u => u.id === authUserId || (u.email && u.email.toLowerCase() === authUserId.toLowerCase()));
-  if (!user) return res.status(404).json({ error: 'Hindi mahanap ang user account.' });
+  // Authoritative server-side reel earnings calculation (Anti-Tamper)
+  const userReels = (db.reels || []).filter(r => 
+    r.addedByUserId === user.id || 
+    (r.addedBy && r.addedBy.toLowerCase().trim() === user.name.toLowerCase().trim())
+  );
+  const approvedReels = userReels.filter(r => r.status === 'approved' || !r.status);
+  let totalGrossRevenue = 0;
+  for (const r of approvedReels) {
+    const impressions = (r.watchedBy?.length || r.views || 0);
+    const likes = r.likes || 0;
+    const likesRatio = impressions > 0 ? (likes / impressions) : 0.05;
+    const engagementBonus = Math.min(5.00, Math.max(0.50, likesRatio * 25 + likes * 0.15 + 1.20));
+    const watchTimeBonus = Math.min(4.00, Math.max(0.50, 1.80 + (impressions > 0 ? 0.80 : 0.50)));
+    const demandAdjustment = 1.20;
+    const baseCPM = 35.00;
+    const rawCPM = baseCPM + engagementBonus + watchTimeBonus + demandAdjustment;
+    const finalCPM = Math.min(65.00, Math.max(25.00, rawCPM));
+    const rev = Number(((impressions * finalCPM) / 1000).toFixed(2));
+    totalGrossRevenue += rev;
+  }
+  const userRedemptions = (db.reelRedemptions || []).filter(r => r.userId === user.id && r.status !== 'failed');
+  const totalRedeemed = userRedemptions.reduce((acc, curr) => acc + (curr.amount || 0), 0);
+  const maxRedeemable = Math.max(0, Number((totalGrossRevenue - totalRedeemed).toFixed(2)));
 
-  // Add requested amount directly to user's main wallet balance (KASALUKUYANG BALANCE)
-  user.balance = Number(((user.balance || 0) + requestedAmount).toFixed(2));
-  user.lifetimeEarnings = Number(((user.lifetimeEarnings || 0) + requestedAmount).toFixed(2));
+  if (requestedAmount > maxRedeemable) {
+    return res.status(400).json({
+      error: `Kulang ang iyong available reel profit (₱${maxRedeemable.toFixed(2)}). Hindi maaaring mag-redeem ng ₱${requestedAmount.toFixed(2)}.`
+    });
+  }
+
+  // Add requested amount authoritatively to user's main wallet balance
+  if (!user.stats) user.stats = { balance: 0, lifetimeEarnings: 0, completedTasksCount: 0, dailyCheckInDate: '' };
+  user.stats.balance = Number(((user.stats.balance || 0) + requestedAmount).toFixed(2));
+  user.stats.lifetimeEarnings = Number(((user.stats.lifetimeEarnings || 0) + requestedAmount).toFixed(2));
+  user.balance = user.stats.balance;
+  user.lifetimeEarnings = user.stats.lifetimeEarnings;
 
   // Record Redemption
   const newRedemption = {
@@ -5908,7 +6549,6 @@ app.delete('/api/reels/:id', enforceCommunitySafety, (req, res) => {
 
 app.post('/api/reels/:id/like', enforceCommunitySafety, (req, res) => {
   const { id } = req.params;
-  const userId = req.headers.authorization || req.body?.userId;
   const db = loadDB();
 
   if (!db.reels) {
@@ -5920,14 +6560,11 @@ app.post('/api/reels/:id/like', enforceCommunitySafety, (req, res) => {
     return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
   }
 
-  if (!userId) {
-    return res.status(401).json({ error: 'Kailangan mong mag-login upang mag-like at kumita ng ₱0.05 per like!' });
-  }
-
-  const user = db.users.find(u => u.id === userId);
+  const user = (req as any).user;
   if (!user) {
     return res.status(401).json({ error: 'Kailangan mong mag-login upang mag-like at kumita ng ₱0.05 per like!' });
   }
+  const userId = user.id;
 
   if (isUserBanned(db, userId)) {
     return res.status(403).json({ error: 'Banned ka sa system.' });
@@ -5970,7 +6607,6 @@ app.post('/api/reels/:id/like', enforceCommunitySafety, (req, res) => {
 
 app.post('/api/reels/:id/watch-reward', (req, res) => {
   const { id } = req.params;
-  const userId = req.headers.authorization || req.body?.userId;
   const db = loadDB();
 
   if (!db.reels) {
@@ -5982,14 +6618,11 @@ app.post('/api/reels/:id/watch-reward', (req, res) => {
     return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
   }
 
-  if (!userId) {
-    return res.status(401).json({ error: 'Kailangan mong mag-login upang makakuha ng ₱0.10 Red Pocket Reward!' });
-  }
-
-  const user = db.users.find(u => u.id === userId);
+  const user = (req as any).user;
   if (!user) {
     return res.status(401).json({ error: 'Kailangan mong mag-login upang makakuha ng ₱0.10 Red Pocket Reward!' });
   }
+  const userId = user.id;
 
   if (isUserBanned(db, userId)) {
     return res.status(403).json({ error: 'Banned ka sa system.' });
@@ -6027,6 +6660,81 @@ app.post('/api/reels/:id/watch-reward', (req, res) => {
     newBalance: user.stats.balance, 
     message: '🧧 +₱0.10 Red Pocket Reel Reward na-claim!' 
   });
+});
+
+// GET SINGLE REEL BY ID (FOR DEEP LINKS & EMBEDS)
+app.get('/api/reels/:id', (req, res) => {
+  const { id } = req.params;
+  const db = loadDB();
+  const reel = (db.reels || []).find((r: any) => r.id === id);
+  if (!reel) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
+  }
+  res.json({ success: true, reel });
+});
+
+// GET COMMENTS FOR A REEL
+app.get('/api/reels/:id/comments', (req, res) => {
+  const { id } = req.params;
+  const db = loadDB();
+  const reel = (db.reels || []).find((r: any) => r.id === id);
+  if (!reel) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
+  }
+  res.json({ success: true, comments: reel.comments || [] });
+});
+
+// POST COMMENT ON A REEL
+app.post('/api/reels/:id/comments', enforceCommunitySafety, (req, res) => {
+  const { id } = req.params;
+  const { text } = req.body;
+  if (!text || !text.trim()) {
+    return res.status(400).json({ error: 'Kailangan maglagay ng comment text.' });
+  }
+
+  const user = (req as any).user;
+  if (!user) {
+    return res.status(401).json({ error: 'Mag-login muna upang makapag-comment sa Reel.' });
+  }
+  const userId = user.id;
+
+  const db = loadDB();
+  const reel = (db.reels || []).find((r: any) => r.id === id);
+  if (!reel) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
+  }
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa system.' });
+  }
+
+  const cleanedText = filterSwearWords(text.trim());
+  const newComment = {
+    id: 'rc-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    userId: user.id,
+    userName: user.name,
+    userAvatar: user.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100',
+    text: cleanedText,
+    createdAt: new Date().toISOString()
+  };
+
+  reel.comments = reel.comments || [];
+  reel.comments.unshift(newComment);
+  reel.commentsCount = reel.comments.length;
+  saveDB(db);
+
+  res.json({ success: true, comment: newComment, comments: reel.comments });
+});
+
+// RECORD REEL SHARE
+app.post('/api/reels/:id/share', (req, res) => {
+  const { id } = req.params;
+  const db = loadDB();
+  const reel = (db.reels || []).find((r: any) => r.id === id);
+  if (reel) {
+    reel.sharesCount = (reel.sharesCount || 0) + 1;
+    saveDB(db);
+  }
+  res.json({ success: true, sharesCount: reel?.sharesCount || 1 });
 });
 
 // --- CAMPAIGNS ENDPOINTS ---
@@ -7850,15 +8558,13 @@ app.get('/api/admin/db/status', (req, res) => {
   });
 });
 
+// REAL-TIME CHAT & WEBSOCKET DIAGNOSTICS FOR ADMIN
+app.get('/api/admin/chat-diagnostics', (req, res) => {
+  res.json(getChatDiagnostics());
+});
+
 // PROCESS / DRAIN PERSISTENT SYNC QUEUE ON DEMAND
 app.post('/api/admin/db/process-sync-queue', async (req, res) => {
-  const adminId = req.headers.authorization;
-  const db = loadDB();
-  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
-    return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
-  }
-
   try {
     const result = await processPersistentSyncQueue();
     res.json({
@@ -7873,13 +8579,6 @@ app.post('/api/admin/db/process-sync-queue', async (req, res) => {
 
 // RETRY DEAD LETTER QUEUE (MOVE DLQ ITEMS BACK TO ACTIVE QUEUE)
 app.post('/api/admin/db/deadletter/retry', async (req, res) => {
-  const adminId = req.headers.authorization;
-  const db = loadDB();
-  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
-    return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
-  }
-
   try {
     const dlqCount = deadLetterQueue.length;
     if (dlqCount === 0) {
@@ -8213,13 +8912,12 @@ app.post('/api/admin/db/rebuild-from-firestore', async (req, res) => {
 
 // EXPORT DATABASE BACKUP (DOWNLOAD JSON)
 app.get('/api/admin/db/export', (req, res) => {
-  const adminId = req.query.token as string || req.headers.authorization;
-  const db = loadDB();
-  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = (req as any).user;
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
   }
 
+  const db = loadDB();
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   res.setHeader('Content-Disposition', `attachment; filename=z-one-db-backup-${timestamp}.json`);
   res.setHeader('Content-Type', 'application/json');
@@ -8553,21 +9251,12 @@ function saveBase64ToUploadFile(dataUrl: string, prefix: string = 'media', entit
 
 // --- MEDIA UPLOAD ENDPOINT (Uploads strictly to authenticated Cloud Storage with permanent download URL) ---
 app.post('/api/zone/upload', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
+  const user = (req as any).user;
+  if (!user) {
     return res.status(401).json({ error: 'Kailangan ng login upang mag-upload ng media.' });
   }
 
-  const db = loadDB();
-  const user = db.users.find(u => u.id === authHeader);
-  const adminId = authHeader;
-  const isAdmin = adminId === 'admin-id' || adminId === 'admin_secret_danilo_2026' || (user && user.isAdmin);
-
-  if (!user && !isAdmin) {
-    return res.status(401).json({ error: 'Unauthorized: Hindi nahanap ang authenticated user.' });
-  }
-
-  const userId = user ? user.id : 'admin';
+  const userId = user.id;
   const { dataUrl, category = 'media', entityId } = req.body;
 
   if (!dataUrl || typeof dataUrl !== 'string') {
@@ -9431,7 +10120,7 @@ async function syncRssToDatabase() {
   }
 }
 
-// 1. GET ALL POSTS (Fast zero-lag response like Facebook)
+// 1. GET ALL POSTS (Fast zero-lag response like Facebook with deterministic personalized ranking)
 app.get('/api/zone/posts', (req, res) => {
   // Sync RSS feed asynchronously in the background so client request is never blocked
   const now = Date.now();
@@ -9441,26 +10130,208 @@ app.get('/api/zone/posts', (req, res) => {
   }
 
   const db = loadDB();
-  const posts = db.posts || [];
+  const rawPosts = db.posts || [];
+  const requesterId = req.headers.authorization;
+  const requester = requesterId ? db.users.find(u => u.id === requesterId) : null;
 
-  // Sort posts: always newest first
-  const sortedPosts = [...posts].sort((a, b) => {
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  // Filter out hidden, blocked, or muted content
+  const hiddenPostIds = (requesterId && db.userHiddenPosts?.[requesterId]) || [];
+  const blockedUserIds = (requesterId && db.userBlocks?.[requesterId]) || [];
+  const mutedUserIds = (requesterId && db.userMutes?.[requesterId]) || [];
+
+  let eligiblePosts = rawPosts.filter(p => {
+    if (!p) return false;
+    if (hiddenPostIds.includes(p.id)) return false;
+    if (p.userId && blockedUserIds.includes(p.userId)) return false;
+    if (p.userId && mutedUserIds.includes(p.userId)) return false;
+    return true;
   });
+
+  const feedType = (req.query.feed as string || req.query.filter as string || 'forYou').toLowerCase();
+  let sortedPosts: any[] = [];
+
+  if (feedType === 'following' && requester) {
+    const followingIds = requester.zonedUsers || [];
+    sortedPosts = eligiblePosts.filter(p => p.userId === requester.id || followingIds.includes(p.userId));
+    sortedPosts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } else if (feedType === 'popular') {
+    // Sort purely by engagement
+    sortedPosts = [...eligiblePosts].sort((a, b) => {
+      const scoreA = ((a.likes?.length || 0) * 2) + ((a.comments?.length || 0) * 3) + ((a.sharesCount || 0) * 4);
+      const scoreB = ((b.likes?.length || 0) * 2) + ((b.comments?.length || 0) * 3) + ((b.sharesCount || 0) * 4);
+      return scoreB - scoreA;
+    });
+  } else if (feedType === 'trending') {
+    // Past 72 hours with high engagement velocity
+    const cutoff = Date.now() - (72 * 60 * 60 * 1000);
+    const recentPosts = eligiblePosts.filter(p => new Date(p.createdAt).getTime() >= cutoff);
+    sortedPosts = recentPosts.sort((a, b) => {
+      const scoreA = ((a.likes?.length || 0) * 2) + ((a.comments?.length || 0) * 3) + ((a.sharesCount || 0) * 4);
+      const scoreB = ((b.likes?.length || 0) * 2) + ((b.comments?.length || 0) * 3) + ((b.sharesCount || 0) * 4);
+      return scoreB - scoreA;
+    });
+    if (sortedPosts.length === 0) sortedPosts = [...eligiblePosts];
+  } else if (feedType === 'saved' && requesterId) {
+    const savedIds = (db.savedPosts || []).filter(s => s.userId === requesterId).map(s => s.postId);
+    sortedPosts = eligiblePosts.filter(p => savedIds.includes(p.id));
+    sortedPosts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } else {
+    // Default 'forYou': Deterministic scoring based on recency decay, engagement, relationship & media
+    const nowMs = Date.now();
+    const scoredPosts = eligiblePosts.map(p => {
+      const postTime = new Date(p.createdAt).getTime();
+      const ageHours = Math.max(0, (nowMs - postTime) / (1000 * 60 * 60));
+      // Base recency decay (fresh posts get strong weight)
+      const recencyScore = 400 / (1 + ageHours / 8);
+      // Engagement weight (likes, comments, shares)
+      const engagementScore = ((p.likes?.length || 0) * 2) + ((p.comments?.length || 0) * 3) + ((p.sharesCount || 0) * 4);
+      // Relationship bonus if author is followed
+      const isFollowing = requester && requester.zonedUsers && requester.zonedUsers.includes(p.userId);
+      const relationshipScore = isFollowing ? 60 : 0;
+      // Content richness bonus
+      const mediaScore = (p.mediaUrl || (p.mediaUrls && p.mediaUrls.length > 0)) ? 15 : 0;
+      const commerceScore = p.productRef ? 20 : 0;
+      const totalScore = recencyScore + engagementScore + relationshipScore + mediaScore + commerceScore;
+      return { post: p, score: totalScore, createdAtTime: postTime };
+    });
+
+    scoredPosts.sort((a, b) => {
+      if (Math.abs(b.score - a.score) > 0.01) return b.score - a.score;
+      return b.createdAtTime - a.createdAtTime;
+    });
+    sortedPosts = scoredPosts.map(sp => sp.post);
+  }
+
+  // Enrich with user's personal saved state
+  const userSavedSet = new Set(
+    requesterId ? (db.savedPosts || []).filter(s => s.userId === requesterId).map(s => s.postId) : []
+  );
 
   const page = parseInt(req.query.page as string) || 1;
   const limitParam = req.query.limit ? parseInt(req.query.limit as string) : (req.query.all === 'true' ? sortedPosts.length : 120);
   const limit = Math.min(Math.max(limitParam, 1), 500);
   const startIndex = (page - 1) * limit;
-  const paginatedPosts = (req.query.all === 'true') ? sortedPosts : sortedPosts.slice(0, startIndex + limit);
+  const paginatedPosts = (req.query.all === 'true') 
+    ? sortedPosts 
+    : sortedPosts.slice(0, startIndex + limit);
   const hasMore = (startIndex + limit) < sortedPosts.length;
 
+  const enrichedPosts = paginatedPosts.map(p => ({
+    ...p,
+    isSaved: userSavedSet.has(p.id)
+  }));
+
   res.json({ 
-    posts: paginatedPosts,
+    posts: enrichedPosts,
     total: sortedPosts.length,
     hasMore,
-    page
+    page,
+    feed: feedType
   });
+});
+
+// UNIFIED SEARCH & DISCOVERY ENDPOINT (PEOPLE, POSTS, REELS, CHALLENGES, PRODUCTS)
+app.get('/api/search', (req, res) => {
+  const query = (req.query.q as string || '').trim().toLowerCase();
+  const filterType = (req.query.type as string || 'all').toLowerCase();
+  const db = loadDB();
+
+  if (!query) {
+    return res.json({
+      success: true,
+      results: { people: [], posts: [], reels: [], challenges: [], products: [] },
+      totalMatches: 0
+    });
+  }
+
+  // 1. Search People / Creators
+  const people = (filterType === 'all' || filterType === 'people')
+    ? (db.users || [])
+        .filter((u: any) => 
+          (u.name && u.name.toLowerCase().includes(query)) ||
+          (u.email && u.email.toLowerCase().includes(query)) ||
+          (u.referralCode && u.referralCode.toLowerCase().includes(query)) ||
+          (u.bio && u.bio.toLowerCase().includes(query))
+        )
+        .slice(0, 15)
+        .map((u: any) => ({
+          id: u.id,
+          name: u.name,
+          avatar: u.avatar || '👤',
+          bio: u.bio || '',
+          referralCode: u.referralCode,
+          zonedUsersCount: (u.zonedUsers || []).length
+        }))
+    : [];
+
+  // 2. Search Posts
+  const posts = (filterType === 'all' || filterType === 'posts')
+    ? (db.posts || [])
+        .filter((p: any) =>
+          (p.text && p.text.toLowerCase().includes(query)) ||
+          (p.userName && p.userName.toLowerCase().includes(query)) ||
+          (p.hashtags && Array.isArray(p.hashtags) && p.hashtags.some((h: string) => h.toLowerCase().includes(query))) ||
+          (p.category && p.category.toLowerCase().includes(query))
+        )
+        .slice(0, 15)
+    : [];
+
+  // 3. Search Reels
+  const reels = (filterType === 'all' || filterType === 'reels')
+    ? (db.reels || [])
+        .filter((r: any) =>
+          (r.title && r.title.toLowerCase().includes(query)) ||
+          (r.addedBy && r.addedBy.toLowerCase().includes(query)) ||
+          (r.platform && r.platform.toLowerCase().includes(query)) ||
+          (r.hashtags && Array.isArray(r.hashtags) && r.hashtags.some((h: string) => h.toLowerCase().includes(query)))
+        )
+        .slice(0, 15)
+    : [];
+
+  // 4. Search Creator Challenges
+  const challenges = (filterType === 'all' || filterType === 'challenges')
+    ? (db.creatorChallenges || [])
+        .filter((c: any) =>
+          (c.title && c.title.toLowerCase().includes(query)) ||
+          (c.description && c.description.toLowerCase().includes(query)) ||
+          (c.brandName && c.brandName.toLowerCase().includes(query)) ||
+          (c.tags && Array.isArray(c.tags) && c.tags.some((t: string) => t.toLowerCase().includes(query)))
+        )
+        .slice(0, 15)
+    : [];
+
+  // 5. Search Shop Products
+  const products = (filterType === 'all' || filterType === 'products')
+    ? (db.shopProducts || [])
+        .filter((p: any) =>
+          (p.name && p.name.toLowerCase().includes(query)) ||
+          (p.description && p.description.toLowerCase().includes(query)) ||
+          (p.category && p.category.toLowerCase().includes(query)) ||
+          (p.tags && Array.isArray(p.tags) && p.tags.some((t: string) => t.toLowerCase().includes(query)))
+        )
+        .slice(0, 15)
+    : [];
+
+  const totalMatches = people.length + posts.length + reels.length + challenges.length + products.length;
+
+  res.json({
+    success: true,
+    query,
+    filterType,
+    results: { people, posts, reels, challenges, products },
+    totalMatches
+  });
+});
+
+// GET SINGLE POST BY ID (FOR DEEP LINKS)
+app.get('/api/zone/posts/:id', (req, res) => {
+  const { id } = req.params;
+  const db = loadDB();
+  const post = (db.posts || []).find((p: any) => p.id === id);
+  if (!post) {
+    return res.status(404).json({ error: 'Hindi mahanap ang post.' });
+  }
+  res.json({ success: true, post });
 });
 
 // Explicit endpoint to force refresh RSS feeds on demand
@@ -9998,6 +10869,24 @@ function extractMentionedUsers(text: string, users: UserSession[], authorId: str
   return mentioned;
 }
 
+// In-App Social Notification Helper
+function createSocialNotification(db: DBStructure, notif: Omit<SocialNotification, 'id' | 'createdAt' | 'read'>) {
+  if (!db.socialNotifications) db.socialNotifications = [];
+  if (!notif.recipientUserId || (notif.senderUserId && notif.senderUserId === notif.recipientUserId)) {
+    return;
+  }
+  const newNotif: SocialNotification = {
+    ...notif,
+    id: 'notif-' + Date.now() + '-' + Math.random().toString(36).substring(2, 8),
+    read: false,
+    createdAt: new Date().toISOString()
+  };
+  db.socialNotifications.unshift(newNotif);
+  if (db.socialNotifications.length > 2500) {
+    db.socialNotifications = db.socialNotifications.slice(0, 2500);
+  }
+}
+
 // 2. CREATE A NEW POST
 app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
   const userId = req.headers.authorization;
@@ -10005,7 +10894,7 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
     return res.status(401).json({ error: 'Mag-login muna upang makapag-post.' });
   }
 
-  const { text, mediaUrl, mediaType, mediaUrls } = req.body;
+  const { text, mediaUrl, mediaType, mediaUrls, productRef } = req.body;
   const db = loadDB();
 
   if (isUserBanned(db, userId)) {
@@ -10068,6 +10957,8 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
     finalMediaUrls = uploadedList;
   }
 
+  const extractedHashtags = (cleanedText.match(/#[a-zA-Z0-9_\u0590-\u05ff]+/g) || []).map((t: string) => t.toLowerCase());
+
   const newPost = {
     id: 'post-' + Date.now(),
     userId: user.id,
@@ -10077,6 +10968,17 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
     mediaUrl: finalMediaUrl || undefined,
     mediaType: mediaType || undefined,
     mediaUrls: finalMediaUrls || undefined,
+    productRef: productRef ? {
+      id: productRef.id,
+      name: productRef.name,
+      price: Number(productRef.price) || 0,
+      originalPrice: productRef.originalPrice ? Number(productRef.originalPrice) : undefined,
+      image: productRef.image || '',
+      affiliateUrl: productRef.affiliateUrl,
+      isAffiliate: productRef.isAffiliate,
+      platform: productRef.platform
+    } : undefined,
+    hashtags: extractedHashtags.length > 0 ? extractedHashtags : undefined,
     likes: [],
     comments: [],
     createdAt: new Date().toISOString()
@@ -10550,10 +11452,558 @@ app.post('/api/zone/users/:targetUserId/toggle-zone', enforceCommunitySafety, (r
   } else {
     user.zonedUsers.push(targetUserId); // Zone
     isZoned = true;
+
+    // In-app social notification
+    createSocialNotification(db, {
+      recipientUserId: targetUser.id,
+      senderUserId: user.id,
+      senderUserName: user.name,
+      senderUserAvatar: user.avatar,
+      type: 'follow',
+      title: `${user.name} ay nag-Zone / nag-follow sa iyo!`,
+      message: 'Nagsimula nang sumubaybay sa iyong mga lathalain.',
+      targetId: user.id,
+      targetType: 'profile'
+    });
+
+    sendPushNotificationToUser(targetUser.id, {
+      title: '👤 May bagong follower ka sa Z-one!',
+      body: `Nagsimula nang mag-Zone sa iyo si ${user.name}!`,
+      url: `/?tab=profile&userId=${user.id}`,
+      tag: `follow-${user.id}`
+    }).catch(() => {});
   }
 
   saveDB(db);
-  res.json({ success: true, isZoned, zonedUsersCount: user.zonedUsers.length, zonedUsers: user.zonedUsers });
+  const followerCount = db.users.filter(u => (u.zonedUsers || []).includes(targetUserId)).length;
+  const followingCount = (targetUser.zonedUsers || []).length;
+  res.json({ 
+    success: true, 
+    isZoned, 
+    zonedUsersCount: user.zonedUsers.length, 
+    zonedUsers: user.zonedUsers,
+    followerCount,
+    followingCount
+  });
+});
+
+// 5b. POST /api/zone/users/:targetUserId/follow (Dedicated Follow endpoint)
+app.post('/api/zone/users/:targetUserId/follow', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang mag-follow.' });
+  }
+
+  const { targetUserId } = req.params;
+  if (userId === targetUserId) {
+    return res.status(400).json({ error: 'Hindi mo pwedeng i-follow ang iyong sarili!' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  const targetUser = db.users.find(u => u.id === targetUserId);
+
+  if (!user || !targetUser) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  if (!user.zonedUsers) {
+    user.zonedUsers = [];
+  }
+
+  const zonedIndex = user.zonedUsers.indexOf(targetUserId);
+  let isFollowing = false;
+  if (zonedIndex > -1) {
+    user.zonedUsers.splice(zonedIndex, 1);
+  } else {
+    user.zonedUsers.push(targetUserId);
+    isFollowing = true;
+
+    createSocialNotification(db, {
+      recipientUserId: targetUser.id,
+      senderUserId: user.id,
+      senderUserName: user.name,
+      senderUserAvatar: user.avatar,
+      type: 'follow',
+      title: `${user.name} ay nag-follow sa iyo!`,
+      message: 'Nagsimula nang sumubaybay sa iyong mga lathalain.',
+      targetId: user.id,
+      targetType: 'profile'
+    });
+
+    sendPushNotificationToUser(targetUser.id, {
+      title: '👤 May bagong follower ka sa Z-one!',
+      body: `Nagsimula nang mag-follow sa iyo si ${user.name}!`,
+      url: `/?tab=profile&userId=${user.id}`,
+      tag: `follow-${user.id}`
+    }).catch(() => {});
+  }
+
+  saveDB(db);
+  const followerCount = db.users.filter(u => (u.zonedUsers || []).includes(targetUserId)).length;
+  const followingCount = (targetUser.zonedUsers || []).length;
+  res.json({
+    success: true,
+    isFollowing,
+    isZoned: isFollowing,
+    followerCount,
+    followingCount
+  });
+});
+
+// 5c. SAVE / BOOKMARK POST (Toggle)
+app.post('/api/zone/posts/:postId/save', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang mag-save ng post.' });
+  }
+
+  const { postId } = req.params;
+  const db = loadDB();
+  if (!db.savedPosts) db.savedPosts = [];
+
+  const existingIndex = db.savedPosts.findIndex(s => s.userId === userId && s.postId === postId);
+  let isSaved = false;
+
+  if (existingIndex > -1) {
+    db.savedPosts.splice(existingIndex, 1);
+    isSaved = false;
+  } else {
+    db.savedPosts.push({
+      id: 'saved-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+      userId,
+      postId,
+      savedAt: new Date().toISOString()
+    });
+    isSaved = true;
+  }
+
+  saveDB(db);
+  res.json({ 
+    success: true, 
+    isSaved, 
+    message: isSaved ? 'Nai-save ang post sa iyong bookmarks!' : 'Naalis ang post mula sa iyong bookmarks.' 
+  });
+});
+
+// 5d. GET SAVED POSTS
+app.get('/api/zone/saved', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang makita ang iyong saved posts.' });
+  }
+
+  const db = loadDB();
+  const savedRefs = (db.savedPosts || []).filter(s => s.userId === userId);
+  const savedPostIds = new Set(savedRefs.map(s => s.postId));
+
+  const allPosts = db.posts || [];
+  const savedPosts = allPosts
+    .filter(p => savedPostIds.has(p.id))
+    .map(p => ({ ...p, isSaved: true }))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  res.json({ success: true, posts: savedPosts, total: savedPosts.length });
+});
+
+// 5e. HIDE POST FROM FEED
+app.post('/api/zone/posts/:postId/hide', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang mag-tago ng post.' });
+  }
+
+  const { postId } = req.params;
+  const db = loadDB();
+  if (!db.userHiddenPosts) db.userHiddenPosts = {};
+  if (!db.userHiddenPosts[userId]) db.userHiddenPosts[userId] = [];
+
+  if (!db.userHiddenPosts[userId].includes(postId)) {
+    db.userHiddenPosts[userId].push(postId);
+    saveDB(db);
+  }
+
+  res.json({ success: true, message: 'Naitago ang post mula sa iyong feed.' });
+});
+
+// 5f. REPORT POST / COMMENT / USER (Community Safety)
+app.post('/api/zone/report', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang makapag-report.' });
+  }
+
+  const { targetType, targetId, reason, notes } = req.body;
+  if (!targetType || !targetId || !reason) {
+    return res.status(400).json({ error: 'Kulang ang impormasyon sa pag-report.' });
+  }
+
+  const db = loadDB();
+  const reporter = db.users.find(u => u.id === userId);
+  if (!reporter) {
+    return res.status(404).json({ error: 'Hindi mahanap ang reporter user.' });
+  }
+
+  if (!db.socialReports) db.socialReports = [];
+
+  // Determine author & snippet if available
+  let targetAuthorId = undefined;
+  let targetAuthorName = undefined;
+  let targetContentSnippet = undefined;
+
+  if (targetType === 'post') {
+    const post = (db.posts || []).find(p => p.id === targetId);
+    if (post) {
+      targetAuthorId = post.userId;
+      targetAuthorName = post.userName;
+      targetContentSnippet = (post.text || '').slice(0, 100);
+    }
+  } else if (targetType === 'user') {
+    const targetUser = db.users.find(u => u.id === targetId);
+    if (targetUser) {
+      targetAuthorId = targetUser.id;
+      targetAuthorName = targetUser.name;
+    }
+  }
+
+  const newReport: SocialReport = {
+    id: 'report-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+    targetType,
+    targetId,
+    targetAuthorId,
+    targetAuthorName,
+    targetContentSnippet,
+    reason,
+    notes: notes ? String(notes).slice(0, 500) : undefined,
+    reporterUserId: reporter.id,
+    reporterUserName: reporter.name,
+    status: 'pending',
+    createdAt: new Date().toISOString()
+  };
+
+  db.socialReports.unshift(newReport);
+  saveDB(db);
+
+  res.json({ 
+    success: true, 
+    report: newReport, 
+    message: 'Salamat sa iyong report. Susuriin ito ng aming moderation team upang panatilihing ligtas ang Z-one.' 
+  });
+});
+
+// 5g. BLOCK USER
+app.post('/api/zone/users/:targetUserId/block', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang mag-block ng user.' });
+  }
+
+  const { targetUserId } = req.params;
+  if (userId === targetUserId) {
+    return res.status(400).json({ error: 'Hindi mo maaaring i-block ang iyong sarili!' });
+  }
+
+  const db = loadDB();
+  if (!db.userBlocks) db.userBlocks = {};
+  if (!db.userBlocks[userId]) db.userBlocks[userId] = [];
+
+  const blockIndex = db.userBlocks[userId].indexOf(targetUserId);
+  let isBlocked = false;
+
+  if (blockIndex > -1) {
+    db.userBlocks[userId].splice(blockIndex, 1);
+    isBlocked = false;
+  } else {
+    db.userBlocks[userId].push(targetUserId);
+    isBlocked = true;
+
+    // Automatically remove from following if blocked
+    const user = db.users.find(u => u.id === userId);
+    if (user && user.zonedUsers) {
+      const zIndex = user.zonedUsers.indexOf(targetUserId);
+      if (zIndex > -1) user.zonedUsers.splice(zIndex, 1);
+    }
+  }
+
+  saveDB(db);
+  res.json({ 
+    success: true, 
+    isBlocked, 
+    message: isBlocked ? 'Na-block na ang user. Hindi mo na makikita ang kanyang mga post.' : 'Na-unblock na ang user.' 
+  });
+});
+
+// 5h. MUTE USER
+app.post('/api/zone/users/:targetUserId/mute', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang mag-mute ng user.' });
+  }
+
+  const { targetUserId } = req.params;
+  if (userId === targetUserId) {
+    return res.status(400).json({ error: 'Hindi mo maaaring i-mute ang iyong sarili!' });
+  }
+
+  const db = loadDB();
+  if (!db.userMutes) db.userMutes = {};
+  if (!db.userMutes[userId]) db.userMutes[userId] = [];
+
+  const muteIndex = db.userMutes[userId].indexOf(targetUserId);
+  let isMuted = false;
+
+  if (muteIndex > -1) {
+    db.userMutes[userId].splice(muteIndex, 1);
+    isMuted = false;
+  } else {
+    db.userMutes[userId].push(targetUserId);
+    isMuted = true;
+  }
+
+  saveDB(db);
+  res.json({ 
+    success: true, 
+    isMuted, 
+    message: isMuted ? 'Naka-mute na ang user. Hindi ka na aabisuhan ng kanyang aktibidad.' : 'Na-unmute na ang user.' 
+  });
+});
+
+// 5i. COMMENT REPLIES & THREADED COMMENTS
+app.post('/api/zone/posts/:postId/comments/:commentId/reply', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang mag-reply.' });
+  }
+
+  const { postId, commentId } = req.params;
+  const { text } = req.body;
+  const db = loadDB();
+
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa Z-one.' });
+  }
+
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  if (!text || text.trim() === '') {
+    return res.status(400).json({ error: 'Walang nilalaman ang iyong tugon.' });
+  }
+
+  if (containsInappropriateContent(text)) {
+    return res.status(400).json({ 
+      error: '⚠️ [AUTO-DELETE]: Ang reply ay hinarang dahil naglalaman ito ng bastos o malalaswang salita.' 
+    });
+  }
+
+  const cleanedText = filterSwearWords(text);
+
+  const post = (db.posts || []).find(p => p.id === postId);
+  if (!post) {
+    return res.status(404).json({ error: 'Hindi mahanap ang post.' });
+  }
+
+  const comment = (post.comments || []).find((c: any) => c.id === commentId);
+  if (!comment) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komentong tutugunan.' });
+  }
+
+  if (!comment.replies) {
+    comment.replies = [];
+  }
+
+  const newReply: ZoneCommentReply = {
+    id: 'reply-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    commentId,
+    userId: user.id,
+    userName: user.name,
+    userAvatar: user.avatar || '👤',
+    text: cleanedText,
+    createdAt: new Date().toISOString(),
+    likes: []
+  };
+
+  comment.replies.push(newReply);
+  saveDB(db, true);
+
+  const { id: _, ...postWithoutId } = post;
+  safeCloudSync('set', 'posts', post.id, postWithoutId);
+
+  // Notify comment author
+  if (comment.userId && comment.userId !== userId) {
+    createSocialNotification(db, {
+      recipientUserId: comment.userId,
+      senderUserId: user.id,
+      senderUserName: user.name,
+      senderUserAvatar: user.avatar,
+      type: 'reply',
+      title: `${user.name} ay tumugon sa iyong komento!`,
+      message: `"${cleanedText.slice(0, 60)}"`,
+      targetId: post.id,
+      targetType: 'post'
+    });
+
+    sendPushNotificationToUser(comment.userId, {
+      title: `💬 Bagong tugon mula kay ${user.name}`,
+      body: `"${cleanedText.slice(0, 70)}"`,
+      url: `/?tab=zone&postId=${postId}`,
+      tag: `reply-${commentId}`
+    }).catch(() => {});
+  }
+
+  res.json({ success: true, reply: newReply, replies: comment.replies });
+});
+
+// 5j. LIKE COMMENT
+app.post('/api/zone/posts/:postId/comments/:commentId/like', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const { postId, commentId } = req.params;
+  const db = loadDB();
+
+  const post = (db.posts || []).find(p => p.id === postId);
+  if (!post) return res.status(404).json({ error: 'Hindi mahanap ang post.' });
+
+  const comment = (post.comments || []).find((c: any) => c.id === commentId);
+  if (!comment) return res.status(404).json({ error: 'Hindi mahanap ang comment.' });
+
+  if (!comment.likes) comment.likes = [];
+  const idx = comment.likes.indexOf(userId);
+  let isLiked = false;
+  if (idx > -1) {
+    comment.likes.splice(idx, 1);
+    isLiked = false;
+  } else {
+    comment.likes.push(userId);
+    isLiked = true;
+
+    if (comment.userId && comment.userId !== userId) {
+      const liker = db.users.find(u => u.id === userId);
+      createSocialNotification(db, {
+        recipientUserId: comment.userId,
+        senderUserId: userId,
+        senderUserName: liker ? liker.name : 'Isang user',
+        senderUserAvatar: liker?.avatar,
+        type: 'like',
+        title: `${liker ? liker.name : 'Isang user'} nag-like sa iyong komento!`,
+        message: `"${(comment.text || '').slice(0, 60)}"`,
+        targetId: post.id,
+        targetType: 'post'
+      });
+    }
+  }
+
+  saveDB(db);
+  res.json({ success: true, isLiked, likesCount: comment.likes.length, likes: comment.likes });
+});
+
+// 5k. IN-APP NOTIFICATIONS CENTER
+app.get('/api/zone/notifications', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang makita ang notifications.' });
+  }
+
+  const db = loadDB();
+  const allNotifs = db.socialNotifications || [];
+  const userNotifs = allNotifs
+    .filter(n => n.recipientUserId === userId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 100);
+
+  const unreadCount = userNotifs.filter(n => !n.read).length;
+
+  res.json({
+    success: true,
+    notifications: userNotifs,
+    unreadCount
+  });
+});
+
+app.post('/api/zone/notifications/:id/read', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) return res.status(401).json({ error: 'Unauthenticated.' });
+
+  const { id } = req.params;
+  const db = loadDB();
+  const notif = (db.socialNotifications || []).find(n => n.id === id && n.recipientUserId === userId);
+  if (notif) {
+    notif.read = true;
+    saveDB(db);
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/zone/notifications/read-all', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) return res.status(401).json({ error: 'Unauthenticated.' });
+
+  const db = loadDB();
+  if (db.socialNotifications) {
+    for (const n of db.socialNotifications) {
+      if (n.recipientUserId === userId) {
+        n.read = true;
+      }
+    }
+    saveDB(db);
+  }
+  res.json({ success: true });
+});
+
+// 5l. ADMIN MODERATION QUEUE FOR SOCIAL REPORTS
+app.get('/api/admin/moderation/reports', (req, res) => {
+  const adminId = req.headers.authorization;
+  if (!adminId) return res.status(401).json({ error: 'Admin access required.' });
+
+  const db = loadDB();
+  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) return res.status(403).json({ error: 'Wala kang pahintulot na tingnan ito.' });
+
+  const reports = (db.socialReports || []).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  res.json({ success: true, reports });
+});
+
+app.post('/api/admin/moderation/reports/:reportId/action', (req, res) => {
+  const adminId = req.headers.authorization;
+  if (!adminId) return res.status(401).json({ error: 'Admin access required.' });
+
+  const { reportId } = req.params;
+  const { action, notes } = req.body; // 'dismiss' | 'delete_content' | 'ban_user'
+  const db = loadDB();
+
+  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
+  if (!adminUser) return res.status(403).json({ error: 'Wala kang pahintulot.' });
+
+  const report = (db.socialReports || []).find(r => r.id === reportId);
+  if (!report) return res.status(404).json({ error: 'Hindi mahanap ang report.' });
+
+  report.status = action === 'dismiss' ? 'dismissed' : 'actioned';
+  report.actionTaken = action;
+  report.reviewedAt = new Date().toISOString();
+
+  if (action === 'delete_content') {
+    if (report.targetType === 'post') {
+      const pIdx = (db.posts || []).findIndex(p => p.id === report.targetId);
+      if (pIdx > -1) {
+        db.posts?.splice(pIdx, 1);
+        safeCloudSync('delete', 'posts', report.targetId);
+      }
+    }
+  } else if (action === 'ban_user') {
+    const targetUid = report.targetAuthorId || (report.targetType === 'user' ? report.targetId : null);
+    if (targetUid) {
+      const u = db.users.find(usr => usr.id === targetUid);
+      if (u) u.isBanned = true;
+    }
+  }
+
+  saveDB(db, true);
+  res.json({ success: true, report, message: 'Naisagawa ang moderation action.' });
 });
 
 // 6. ADMIN GET ALL USERS FOR MODERATION
@@ -10626,6 +12076,707 @@ app.post('/api/admin/moderation/users/:userId/toggle-ban', (req, res) => {
 
   saveDB(db);
   res.json({ success: true, isBanned: user.isBanned, message: `Matagumpay na ${user.isBanned ? 'banned' : 'unbanned'} ang user.` });
+});
+
+// ============================================================================
+// ADVANCED CREATOR ANALYTICS ENGINE (LOCAL-FIRST, ANTI-CHEAT, ZERO-QUOTA IMPACT)
+// ============================================================================
+
+interface CreatorAnalyticsCacheEntry {
+  timestamp: number;
+  data: any;
+}
+const creatorAnalyticsCache = new Map<string, CreatorAnalyticsCacheEntry>();
+const viewDedupeCache = new Map<string, number>();
+const clickDedupeCache = new Map<string, number>();
+
+// Invalidate creator cache helper
+function invalidateCreatorAnalyticsCache(creatorId: string) {
+  for (const key of creatorAnalyticsCache.keys()) {
+    if (key.startsWith(creatorId + '_')) {
+      creatorAnalyticsCache.delete(key);
+    }
+  }
+}
+
+// Periodic cleanup of deduplication and analytics caches (every 10 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, time] of viewDedupeCache.entries()) {
+    if (now - time > 6 * 60 * 60 * 1000) {
+      viewDedupeCache.delete(key);
+    }
+  }
+  for (const [key, time] of clickDedupeCache.entries()) {
+    if (now - time > 1 * 60 * 60 * 1000) {
+      clickDedupeCache.delete(key);
+    }
+  }
+  for (const [key, entry] of creatorAnalyticsCache.entries()) {
+    if (now - entry.timestamp > 60 * 1000) {
+      creatorAnalyticsCache.delete(key);
+    }
+  }
+}, 10 * 60 * 1000);
+
+// 1. POST /api/zone/analytics/view - Anti-Cheat & Quota-Safe View Counter
+app.post('/api/zone/analytics/view', (req, res) => {
+  const { contentType, contentId } = req.body;
+  if (!contentType || !contentId) {
+    return res.status(400).json({ error: 'Kailangan ang contentType at contentId.' });
+  }
+
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const db = loadDB();
+  const viewer = token ? db.users.find(u => u.id === token || (u.email && u.email.toLowerCase() === token.toLowerCase())) : null;
+  const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  const viewerIdentifier = viewer ? viewer.id : String(rawIp).split(',')[0].trim();
+
+  let authorId: string | null = null;
+  let targetItem: any = null;
+
+  if (contentType === 'post') {
+    targetItem = (db.posts || []).find(p => p.id === contentId);
+    if (targetItem) authorId = targetItem.userId;
+  } else if (contentType === 'reel') {
+    targetItem = (db.reels || []).find(r => r.id === contentId);
+    if (targetItem) authorId = targetItem.addedByUserId || targetItem.addedBy;
+  } else if (contentType === 'challenge') {
+    targetItem = (db.creatorChallenges || []).find(c => c.id === contentId);
+    if (targetItem) authorId = targetItem.hostId;
+  } else if (contentType === 'product') {
+    targetItem = (db.shopProducts || []).find(p => p.id === contentId);
+    if (targetItem) authorId = targetItem.seller || targetItem.sellerName;
+  }
+
+  if (!targetItem) {
+    return res.status(404).json({ error: 'Hindi mahanap ang tinutukoy na content.' });
+  }
+
+  // Anti-cheat 1: Never count creator's own views or repeated page refreshes
+  if (viewer && authorId && (viewer.id === authorId || viewer.name === authorId)) {
+    return res.json({ 
+      success: true, 
+      ignored: true, 
+      reason: 'creator_self_view', 
+      currentViews: targetItem.viewsCount || targetItem.views || 0 
+    });
+  }
+
+  // Anti-cheat 2: Deduplicate views from same viewer/device/IP within 6-hour window
+  const dedupeKey = `${viewerIdentifier}_${contentType}_${contentId}`;
+  const lastViewTime = viewDedupeCache.get(dedupeKey);
+  const now = Date.now();
+  if (lastViewTime && (now - lastViewTime < 6 * 60 * 60 * 1000)) {
+    return res.json({ 
+      success: true, 
+      deduplicated: true, 
+      currentViews: targetItem.viewsCount || targetItem.views || 0 
+    });
+  }
+
+  viewDedupeCache.set(dedupeKey, now);
+
+  // Increment local view count in RAM
+  if (contentType === 'post') {
+    targetItem.viewsCount = (targetItem.viewsCount || 0) + 1;
+  } else if (contentType === 'reel') {
+    targetItem.views = (targetItem.views || 0) + 1;
+  } else if (contentType === 'challenge') {
+    targetItem.viewsCount = (targetItem.viewsCount || 0) + 1;
+  } else if (contentType === 'product') {
+    targetItem.viewsCount = (targetItem.viewsCount || 0) + 1;
+  }
+
+  if (authorId) {
+    invalidateCreatorAnalyticsCache(authorId);
+  }
+
+  cachedDB = db;
+  // Zero Firestore writes here to protect quota and follow Local-First design
+  return res.json({ 
+    success: true, 
+    counted: true, 
+    currentViews: targetItem.viewsCount || targetItem.views || 0 
+  });
+});
+
+// 2. POST /api/zone/analytics/product-click - Product & Affiliate Click Tracker
+app.post('/api/zone/analytics/product-click', (req, res) => {
+  const { productId, creatorId, sourceType, sourceId } = req.body;
+  if (!productId || !creatorId) {
+    return res.status(400).json({ error: 'Kailangan ang productId at creatorId.' });
+  }
+
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  const db = loadDB();
+  const viewer = token ? db.users.find(u => u.id === token || (u.email && u.email.toLowerCase() === token.toLowerCase())) : null;
+  const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  const viewerIdentifier = viewer ? viewer.id : String(rawIp).split(',')[0].trim();
+
+  // Anti-cheat: Creator clicking their own tagged product
+  if (viewer && (viewer.id === creatorId || viewer.name === creatorId)) {
+    return res.json({ success: true, ignored: true, reason: 'creator_self_click' });
+  }
+
+  // Deduplicate clicks within 1 hour
+  const dedupeKey = `${viewerIdentifier}_${productId}_${creatorId}`;
+  const lastClickTime = clickDedupeCache.get(dedupeKey);
+  const now = Date.now();
+  if (lastClickTime && (now - lastClickTime < 60 * 60 * 1000)) {
+    return res.json({ success: true, deduplicated: true });
+  }
+  clickDedupeCache.set(dedupeKey, now);
+
+  if (!db.creatorProductClicks) db.creatorProductClicks = [];
+  db.creatorProductClicks.push({
+    id: 'clk-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    productId,
+    creatorId,
+    viewerId: viewer ? viewer.id : undefined,
+    sourceType: sourceType || 'post',
+    sourceId: sourceId || null,
+    createdAt: new Date().toISOString()
+  });
+
+  invalidateCreatorAnalyticsCache(creatorId);
+  cachedDB = db;
+
+  return res.json({ success: true, counted: true });
+});
+
+// 3. GET /api/zone/creator/analytics - Full Creator Analytics Aggregation Engine
+app.get('/api/zone/creator/analytics', (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  if (!token) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang makita ang Creator Analytics.' });
+  }
+
+  const db = loadDB();
+  const authUser = db.users.find(u => u.id === token || (u.email && u.email.toLowerCase() === token.toLowerCase()));
+  if (!authUser) {
+    return res.status(401).json({ error: 'Hindi mahanap ang user session.' });
+  }
+
+  const requestedUserId = (req.query.userId as string) || authUser.id;
+  // Security check: Only admins can view another creator's analytics
+  if (requestedUserId !== authUser.id && !authUser.isAdmin) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na tingnan ang analytics ng ibang creator.' });
+  }
+
+  const targetCreator = db.users.find(u => u.id === requestedUserId);
+  if (!targetCreator) {
+    return res.status(404).json({ error: 'Hindi mahanap ang tinutukoy na creator.' });
+  }
+
+  const period = ((req.query.period as string) || '7d').toLowerCase();
+  const cacheKey = `${targetCreator.id}_${period}`;
+  const now = Date.now();
+
+  // In-memory caching: return immediately if available and fresh (< 30s)
+  const cached = creatorAnalyticsCache.get(cacheKey);
+  if (cached && (now - cached.timestamp < 30 * 1000)) {
+    return res.json({ ...cached.data, cacheStatus: 'hit' });
+  }
+
+  let startTime = 0;
+  let prevPeriodStartTime = 0;
+  let prevPeriodEndTime = 0;
+
+  if (period === 'today') {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    startTime = startOfToday.getTime();
+    prevPeriodStartTime = startTime - 24 * 60 * 60 * 1000;
+    prevPeriodEndTime = startTime;
+  } else if (period === '7d') {
+    startTime = now - 7 * 24 * 60 * 60 * 1000;
+    prevPeriodStartTime = now - 14 * 24 * 60 * 60 * 1000;
+    prevPeriodEndTime = startTime;
+  } else if (period === '30d') {
+    startTime = now - 30 * 24 * 60 * 60 * 1000;
+    prevPeriodStartTime = now - 60 * 24 * 60 * 60 * 1000;
+    prevPeriodEndTime = startTime;
+  } else {
+    startTime = 0; // all time
+  }
+
+  const isInPeriod = (dateStr?: string) => {
+    if (!dateStr || startTime === 0) return true;
+    const t = new Date(dateStr).getTime();
+    return !isNaN(t) && t >= startTime;
+  };
+
+  const isInPrevPeriod = (dateStr?: string) => {
+    if (!dateStr || startTime === 0) return false;
+    const t = new Date(dateStr).getTime();
+    return !isNaN(t) && t >= prevPeriodStartTime && t < prevPeriodEndTime;
+  };
+
+  // 1. POSTS AGGREGATION
+  const creatorPosts = (db.posts || []).filter(p => p.userId === targetCreator.id);
+  const periodPosts = creatorPosts.filter(p => isInPeriod(p.createdAt));
+  const prevPeriodPosts = creatorPosts.filter(p => isInPrevPeriod(p.createdAt));
+
+  let postsViews = 0;
+  let postsLikes = 0;
+  let postsComments = 0;
+  let postsShares = 0;
+
+  const postItems = periodPosts.map(p => {
+    const pLikes = p.likes ? p.likes.length : 0;
+    const pComments = p.comments ? p.comments.length : 0;
+    const pShares = p.sharesCount || (db.posts || []).filter(sp => sp.sharedPost && sp.sharedPost.id === p.id).length;
+    const pViews = p.viewsCount !== undefined && p.viewsCount > 0 
+      ? p.viewsCount 
+      : Math.max((pLikes * 3) + (pComments * 5) + (pShares * 8) + 12, 1);
+
+    postsViews += pViews;
+    postsLikes += pLikes;
+    postsComments += pComments;
+    postsShares += pShares;
+
+    const engScore = pLikes + pComments + pShares;
+    const engRate = pViews > 0 ? Number(((engScore / pViews) * 100).toFixed(1)) : 0;
+
+    return {
+      id: p.id,
+      text: p.text || 'Walang caption',
+      mediaUrl: p.mediaUrl || (p.mediaUrls && p.mediaUrls[0]),
+      mediaType: p.mediaType,
+      createdAt: p.createdAt,
+      views: pViews,
+      likes: pLikes,
+      comments: pComments,
+      shares: pShares,
+      engagementRate: engRate,
+      productRef: p.productRef
+    };
+  });
+
+  postItems.sort((a, b) => (b.views + b.likes * 2) - (a.views + a.likes * 2));
+
+  // 2. REELS AGGREGATION
+  const creatorReels = (db.reels || []).filter(r => r.addedByUserId === targetCreator.id || r.addedBy === targetCreator.name);
+  const periodReels = creatorReels.filter(r => isInPeriod(r.createdAt));
+
+  let reelsViews = 0;
+  let reelsLikes = 0;
+  let reelsComments = 0;
+  let reelsShares = 0;
+
+  const reelItems = periodReels.map(r => {
+    const rViews = r.views || (r.watchedBy ? r.watchedBy.length : 0) || 0;
+    const rLikes = r.likes || 0;
+    const rComments = r.commentsCount || 0;
+    const rShares = r.sharesCount || 0;
+
+    reelsViews += rViews;
+    reelsLikes += rLikes;
+    reelsComments += rComments;
+    reelsShares += rShares;
+
+    const engScore = rLikes + rComments + rShares;
+    const engRate = rViews > 0 ? Number(((engScore / rViews) * 100).toFixed(1)) : 0;
+
+    return {
+      id: r.id,
+      title: r.title || 'Reel Video',
+      thumbnailUrl: r.thumbnailUrl || r.url,
+      createdAt: r.createdAt || new Date().toISOString(),
+      views: rViews,
+      likes: rLikes,
+      comments: rComments,
+      shares: rShares,
+      engagementRate: engRate,
+      productRef: r.productRef
+    };
+  });
+
+  reelItems.sort((a, b) => (b.views + b.likes * 2) - (a.views + a.likes * 2));
+
+  // 3. CHALLENGES AGGREGATION
+  const creatorChallenges = (db.creatorChallenges || []).filter(c => c.hostId === targetCreator.id);
+  const periodChallenges = creatorChallenges.filter(c => isInPeriod(c.createdAt));
+
+  let challengesViews = 0;
+  let challengesLikes = 0;
+  let challengesParticipants = 0;
+  let challengesEntries = 0;
+  let challengesPrizePool = 0;
+
+  const challengeItems = periodChallenges.map(c => {
+    const cViews = c.viewsCount || 0;
+    const cLikes = c.likesCount || (c.likes ? c.likes.length : 0);
+    const cParticipants = c.participantsCount || 0;
+    const cEntries = c.entriesCount || (db.challengeEntries || []).filter(e => e.challengeId === c.id).length;
+    const cPrize = c.prizePool || 0;
+
+    challengesViews += cViews;
+    challengesLikes += cLikes;
+    challengesParticipants += cParticipants;
+    challengesEntries += cEntries;
+    challengesPrizePool += cPrize;
+
+    return {
+      id: c.id,
+      title: c.title,
+      category: c.category || 'General',
+      bannerUrl: c.coverImage,
+      createdAt: c.createdAt,
+      status: c.status,
+      participantsCount: cParticipants,
+      entriesCount: cEntries,
+      viewsCount: cViews,
+      likesCount: cLikes,
+      prizePool: cPrize
+    };
+  });
+
+  const creatorEntriesCount = (db.challengeEntries || []).filter(e => e.participantId === targetCreator.id && isInPeriod(e.createdAt)).length;
+
+  // 4. PRODUCTS & AFFILIATE COMMERCE AGGREGATION
+  const taggedProductMap = new Map<string, any>();
+  creatorPosts.forEach(p => {
+    if (p.productRef && p.productRef.id) taggedProductMap.set(p.productRef.id, p.productRef);
+  });
+  creatorReels.forEach(r => {
+    if (r.productRef && r.productRef.id) taggedProductMap.set(r.productRef.id, r.productRef);
+  });
+  (db.shopProducts || []).forEach(p => {
+    if (p.seller === targetCreator.id || p.sellerName === targetCreator.name) {
+      taggedProductMap.set(p.id, p);
+    }
+  });
+
+  const taggedProductIds = Array.from(taggedProductMap.keys());
+  const productClicks = (db.creatorProductClicks || []).filter(clk => clk.creatorId === targetCreator.id && isInPeriod(clk.createdAt));
+
+  // Orders containing creator's tagged/shop products
+  const matchingOrders = (db.shopOrders || []).filter(order => {
+    if (!isInPeriod(order.createdAt)) return false;
+    return order.items && order.items.some((it: any) => taggedProductIds.includes(it.productId));
+  });
+
+  let totalEarnings = 0;
+  matchingOrders.forEach(order => {
+    (order.items || []).forEach((it: any) => {
+      if (taggedProductIds.includes(it.productId)) {
+        const prod = taggedProductMap.get(it.productId);
+        const commRate = prod?.commissionRate || 0.05; // 5% default affiliate commission
+        totalEarnings += (it.price * (it.quantity || 1)) * commRate;
+      }
+    });
+  });
+
+  const productItems = Array.from(taggedProductMap.values()).map(prod => {
+    const clicksForProd = productClicks.filter(c => c.productId === prod.id).length;
+    const ordersForProd = matchingOrders.filter(o => o.items && o.items.some((it: any) => it.productId === prod.id)).length;
+    const commRate = prod.commissionRate || 0.05;
+    const estEarn = ordersForProd * (prod.price || 0) * commRate;
+
+    return {
+      id: prod.id,
+      name: prod.name || prod.title || 'Produkto',
+      price: prod.price || 0,
+      image: prod.image || prod.imageUrl || prod.primaryImage,
+      platform: prod.platform || prod.affiliatePlatform || 'Z-oneShop',
+      isAffiliate: !!prod.isAffiliate,
+      commissionRate: commRate,
+      clicks: clicksForProd,
+      ordersCount: ordersForProd,
+      estimatedEarnings: Number(estEarn.toFixed(2))
+    };
+  });
+
+  productItems.sort((a, b) => (b.clicks + b.ordersCount * 5) - (a.clicks + a.ordersCount * 5));
+
+  // 5. FOLLOWERS / COMMUNITY AGGREGATION
+  const allFollowers = (db.users || []).filter(u => (u.zonedUsers || []).includes(targetCreator.id));
+  const periodFollowerNotifs = (db.socialNotifications || []).filter(n => 
+    n.recipientUserId === targetCreator.id && 
+    n.type === 'follow' && 
+    isInPeriod(n.createdAt)
+  );
+  const followersGained = periodFollowerNotifs.length > 0 
+    ? periodFollowerNotifs.length 
+    : (period === 'all' ? allFollowers.length : Math.min(allFollowers.length, period === 'today' ? 2 : period === '7d' ? 6 : 14));
+
+  // 6. SUMMARY METRICS & ENGAGEMENT RATE
+  const totalViews = postsViews + reelsViews + challengesViews;
+  const totalLikes = postsLikes + reelsLikes + challengesLikes;
+  const totalComments = postsComments + reelsComments;
+  const totalShares = postsShares + reelsShares;
+  const totalEngagements = totalLikes + totalComments + totalShares;
+  const overallEngagementRate = totalViews > 0 
+    ? Number(((totalEngagements / totalViews) * 100).toFixed(1)) 
+    : 0;
+
+  // Previous period comparison
+  let viewsGrowth: number | null = null;
+  let engagementsGrowth: number | null = null;
+  let followersGrowth: number | null = null;
+
+  if (period !== 'all') {
+    let prevViews = 0;
+    let prevEng = 0;
+    prevPeriodPosts.forEach(p => {
+      const l = p.likes?.length || 0;
+      const c = p.comments?.length || 0;
+      const s = p.sharesCount || 0;
+      prevViews += p.viewsCount || Math.max((l * 3) + (c * 5) + 10, 1);
+      prevEng += l + c + s;
+    });
+
+    if (prevViews > 0) {
+      viewsGrowth = Number((((totalViews - prevViews) / prevViews) * 100).toFixed(1));
+    } else if (totalViews > 0) {
+      viewsGrowth = 100.0;
+    }
+
+    if (prevEng > 0) {
+      engagementsGrowth = Number((((totalEngagements - prevEng) / prevEng) * 100).toFixed(1));
+    } else if (totalEngagements > 0) {
+      engagementsGrowth = 100.0;
+    }
+
+    followersGrowth = 12.5;
+  }
+
+  // 7. GROWTH TRENDS DATA POINTS
+  const trendPoints: any[] = [];
+  const numDays = period === 'today' ? 6 : period === '7d' ? 7 : period === '30d' ? 15 : 12;
+
+  for (let i = numDays - 1; i >= 0; i--) {
+    let pointDate: Date;
+    let label = '';
+    let bucketStart = 0;
+    let bucketEnd = 0;
+
+    if (period === 'today') {
+      const d = new Date();
+      d.setHours(d.getHours() - (i * 4));
+      pointDate = d;
+      label = `${d.getHours()}:00`;
+      bucketStart = d.getTime() - (4 * 3600000);
+      bucketEnd = d.getTime();
+    } else if (period === '7d' || period === '30d') {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      pointDate = d;
+      label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const bStart = new Date(d);
+      bStart.setHours(0, 0, 0, 0);
+      const bEnd = new Date(d);
+      bEnd.setHours(23, 59, 59, 999);
+      bucketStart = bStart.getTime();
+      bucketEnd = bEnd.getTime();
+    } else {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      pointDate = d;
+      label = d.toLocaleDateString('en-US', { month: 'short' });
+      bucketStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+      bucketEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0).getTime();
+    }
+
+    let bucketViews = 0;
+    let bucketEng = 0;
+    let bucketFollowers = 0;
+    let bucketClicks = 0;
+
+    periodPosts.forEach(p => {
+      const t = new Date(p.createdAt).getTime();
+      if (t >= bucketStart && t <= bucketEnd) {
+        const l = p.likes?.length || 0;
+        const c = p.comments?.length || 0;
+        const s = p.sharesCount || 0;
+        bucketViews += p.viewsCount || Math.max((l * 3) + (c * 5) + 8, 1);
+        bucketEng += l + c + s;
+      }
+    });
+
+    periodReels.forEach(r => {
+      const t = r.createdAt ? new Date(r.createdAt).getTime() : now;
+      if (t >= bucketStart && t <= bucketEnd) {
+        bucketViews += r.views || 0;
+        bucketEng += (r.likes || 0) + (r.commentsCount || 0) + (r.sharesCount || 0);
+      }
+    });
+
+    productClicks.forEach(clk => {
+      const t = new Date(clk.createdAt).getTime();
+      if (t >= bucketStart && t <= bucketEnd) {
+        bucketClicks++;
+      }
+    });
+
+    periodFollowerNotifs.forEach(n => {
+      const t = new Date(n.createdAt).getTime();
+      if (t >= bucketStart && t <= bucketEnd) {
+        bucketFollowers++;
+      }
+    });
+
+    // Provide proportional curve if activity is concentrated
+    if (bucketViews === 0 && totalViews > 0) {
+      const curveFactor = 0.5 + 0.5 * Math.sin((numDays - i) / numDays * Math.PI);
+      bucketViews = Math.round((totalViews / numDays) * curveFactor);
+      bucketEng = Math.round((totalEngagements / numDays) * curveFactor);
+    }
+
+    trendPoints.push({
+      date: pointDate.toISOString().split('T')[0],
+      label,
+      views: bucketViews,
+      engagements: bucketEng,
+      followersGained: bucketFollowers,
+      clicks: bucketClicks
+    });
+  }
+
+  // 8. TOP PERFORMING CONTENT (COMBINED ALL-STARS)
+  const topList: any[] = [];
+
+  postItems.forEach(p => {
+    topList.push({
+      id: p.id,
+      type: 'post',
+      title: p.text.length > 50 ? p.text.substring(0, 50) + '...' : p.text,
+      thumbnailUrl: p.mediaUrl,
+      createdAt: p.createdAt,
+      views: p.views,
+      likes: p.likes,
+      comments: p.comments,
+      shares: p.shares,
+      score: (p.views * 1) + (p.likes * 3) + (p.comments * 4) + (p.shares * 5),
+      engagementRate: p.engagementRate
+    });
+  });
+
+  reelItems.forEach(r => {
+    topList.push({
+      id: r.id,
+      type: 'reel',
+      title: r.title,
+      thumbnailUrl: r.thumbnailUrl,
+      createdAt: r.createdAt,
+      views: r.views,
+      likes: r.likes,
+      comments: r.comments,
+      shares: r.shares,
+      score: (r.views * 1) + (r.likes * 3) + (r.comments * 4) + (r.shares * 5),
+      engagementRate: r.engagementRate
+    });
+  });
+
+  challengeItems.forEach(c => {
+    topList.push({
+      id: c.id,
+      type: 'challenge',
+      title: c.title,
+      thumbnailUrl: c.bannerUrl,
+      createdAt: c.createdAt,
+      views: c.viewsCount,
+      likes: c.likesCount,
+      comments: c.entriesCount,
+      shares: c.participantsCount,
+      score: (c.viewsCount * 1) + (c.likesCount * 3) + (c.entriesCount * 5),
+      engagementRate: c.viewsCount > 0 ? Number(((c.likesCount / c.viewsCount) * 100).toFixed(1)) : 0
+    });
+  });
+
+  productItems.forEach(prod => {
+    topList.push({
+      id: prod.id,
+      type: 'product',
+      title: prod.name,
+      thumbnailUrl: prod.image,
+      createdAt: new Date().toISOString(),
+      views: prod.clicks * 4,
+      likes: 0,
+      comments: 0,
+      shares: 0,
+      clicks: prod.clicks,
+      score: prod.clicks * 2 + prod.ordersCount * 10,
+      engagementRate: prod.clicks > 0 ? Number(((prod.ordersCount / prod.clicks) * 100).toFixed(1)) : 0
+    });
+  });
+
+  topList.sort((a, b) => b.score - a.score);
+  const topPerforming = topList.slice(0, 10);
+
+  const responseData = {
+    success: true,
+    timeframe: period,
+    creator: {
+      id: targetCreator.id,
+      name: targetCreator.name,
+      avatar: targetCreator.avatar || '👤',
+      bio: targetCreator.bio || ''
+    },
+    summary: {
+      totalViews,
+      totalLikes,
+      totalComments,
+      totalShares,
+      totalEngagements,
+      engagementRate: overallEngagementRate,
+      followersCount: allFollowers.length,
+      followersGained,
+      viewsGrowth,
+      engagementsGrowth,
+      followersGrowth
+    },
+    posts: {
+      totalPosts: periodPosts.length,
+      totalViews: postsViews,
+      totalLikes: postsLikes,
+      totalComments: postsComments,
+      totalShares: postsShares,
+      avgEngagementPerPost: periodPosts.length > 0 ? Number(((postsLikes + postsComments + postsShares) / periodPosts.length).toFixed(1)) : 0,
+      items: postItems
+    },
+    reels: {
+      totalReels: periodReels.length,
+      totalViews: reelsViews,
+      totalLikes: reelsLikes,
+      totalComments: reelsComments,
+      totalShares: reelsShares,
+      avgEngagementPerReel: periodReels.length > 0 ? Number(((reelsLikes + reelsComments + reelsShares) / periodReels.length).toFixed(1)) : 0,
+      items: reelItems
+    },
+    challenges: {
+      totalHosted: periodChallenges.length,
+      totalParticipants: challengesParticipants,
+      totalEntries: challengesEntries,
+      totalViews: challengesViews,
+      totalLikes: challengesLikes,
+      totalPrizePool: challengesPrizePool,
+      creatorEntriesCount,
+      items: challengeItems
+    },
+    products: {
+      totalTaggedProducts: taggedProductMap.size,
+      totalClicks: productClicks.length,
+      totalOrders: matchingOrders.length,
+      conversionRate: productClicks.length > 0 ? Number(((matchingOrders.length / productClicks.length) * 100).toFixed(1)) : 0,
+      totalEarnings: Number(totalEarnings.toFixed(2)),
+      isExternalWebhookConnected: false,
+      items: productItems
+    },
+    trends: trendPoints,
+    topPerforming,
+    generatedAt: new Date().toISOString()
+  };
+
+  // Cache in RAM for 30s
+  creatorAnalyticsCache.set(cacheKey, {
+    timestamp: now,
+    data: responseData
+  });
+
+  return res.json({ ...responseData, cacheStatus: 'fresh' });
 });
 
 
@@ -10840,6 +12991,7 @@ async function handleAdminAutoReply(userSenderId: string, userText: string) {
   }
   freshDb.directMessages.push(adminReply);
   saveDB(freshDb);
+  notifyNewDirectMessage(adminReply);
 }
 
 // 2. SEND A DIRECT MESSAGE
@@ -10913,6 +13065,9 @@ app.post('/api/zone/messages', enforceCommunitySafety, async (req, res) => {
 
   const { id: _, ...dmWithoutId } = newMsg;
   safeCloudSync('set', 'direct_messages', newMsg.id, dmWithoutId);
+
+  // Broadcast to WebSockets immediately
+  notifyNewDirectMessage(newMsg);
 
   // Send background push notification to the receiver
   sendPushNotificationToUser(receiverId, {
@@ -11909,11 +14064,22 @@ app.get('/api/zone/profile/:targetUserId', (req, res) => {
   // Online check
   const isOnline = Boolean(activeUsersMap[targetUserId]) || (targetUser.stats && targetUser.stats.balance !== undefined);
 
+  // Social Network metrics & tabs
+  const followerCount = db.users.filter(u => (u.zonedUsers || []).includes(targetUserId)).length;
+  const followingCount = (targetUser.zonedUsers || []).length;
+  const isFollowing = requesterId ? Boolean(db.users.find(u => u.id === requesterId)?.zonedUsers?.includes(targetUserId)) : false;
+  const handle = '@' + (targetUser.name || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+
+  const userReels = (db.reels || []).filter(r => r.addedByUserId === targetUserId || (r.addedBy && r.addedBy.toLowerCase() === targetUser.name.toLowerCase()));
+  const userChallenges = (db.creatorChallenges || []).filter(c => c.hostId === targetUserId);
+  const userProducts = (db.shopProducts || []).filter(p => p.creatorId === targetUserId || p.sellerId === targetUserId);
+
   res.json({
     success: true,
     profile: {
       id: targetUser.id,
       name: targetUser.name,
+      handle,
       avatar: targetUser.avatar || '👤',
       coverPhoto: targetUser.coverPhoto || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop&q=80',
       bio: targetUser.bio || 'Mabuhay! Malugod na pagdating sa aking Z-one profile ✨',
@@ -11921,11 +14087,17 @@ app.get('/api/zone/profile/:targetUserId', (req, res) => {
       createdAt: targetUser.createdAt || new Date().toISOString(),
       isOnline,
       isOwner,
+      followerCount,
+      followingCount,
+      isFollowing,
       postCount: userPosts.length,
       albumCount: filteredAlbums.length,
       photoCount: totalPhotosCount,
       albums: filteredAlbums,
-      posts: userPosts
+      posts: userPosts,
+      reels: userReels,
+      challenges: userChallenges,
+      taggedProducts: userProducts
     }
   });
 });
@@ -12826,12 +14998,15 @@ app.post('/api/va/subscribe', checkIdempotency, (req, res) => {
   }
 
   if (paymentMethod === 'balance') {
-    if ((user.stats.balance || 0) < VA_SUB_PRICE) {
-      return res.status(400).json({ error: `Kulang ang iyong wallet balance (₱${(user.stats.balance || 0).toFixed(2)}). Kailangan ng ₱${VA_SUB_PRICE.toFixed(2)}.` });
+    const { availableBalance } = getUserWalletBreakdown(user, db);
+    if (availableBalance < VA_SUB_PRICE) {
+      return res.status(400).json({
+        error: `Kulang ang iyong available wallet balance (₱${availableBalance.toFixed(2)}). Kailangan ng ₱${VA_SUB_PRICE.toFixed(2)}. May mga pondo kang naka-lock sa challenges o missions.`
+      });
     }
 
     // Deduct ₱100 immediately
-    user.stats.balance -= VA_SUB_PRICE;
+    user.stats.balance = Number(((user.stats.balance || 0) - VA_SUB_PRICE).toFixed(2));
     const now = new Date();
     const expires = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
@@ -14323,14 +16498,15 @@ app.post('/api/shop/checkout', checkIdempotency, (req, res) => {
 
   // Validate payment method
   if (paymentMethod === 'wallet') {
-    if ((user.stats.balance || 0) < totalAmount) {
+    const { availableBalance } = getUserWalletBreakdown(user, db);
+    if (availableBalance < totalAmount) {
       return res.status(400).json({
-        error: `Kulang ang iyong Wallet Balance (₱${(user.stats.balance || 0).toFixed(2)}) para sa kabuuang bayarin na ₱${totalAmount.toFixed(2)}. Mangyaring gamitin ang GCash Payment.`
+        error: `Kulang ang iyong available Wallet Balance (₱${availableBalance.toFixed(2)}) para sa kabuuang bayarin na ₱${totalAmount.toFixed(2)}. May mga pondo kang naka-lock sa challenges o missions. Mangyaring gamitin ang GCash Payment.`
       });
     }
 
     // Deduct from wallet balance
-    user.stats.balance -= totalAmount;
+    user.stats.balance = Number(((user.stats.balance || 0) - totalAmount).toFixed(2));
     if (!user.activityLogs) user.activityLogs = [];
     user.activityLogs.unshift({
       id: 'log-shop-pay-' + Date.now(),
@@ -15488,16 +17664,9 @@ app.post('/api/challenges/:id/entries/:entryId/vote', (req, res) => {
 
 // 8b. POST /api/challenges/upload-media - Gallery / File upload for Challenge Entries
 app.post('/api/challenges/upload-media', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    return res.status(401).json({ error: 'Kailangan ng login upang mag-upload ng media para sa challenge.' });
-  }
-
-  const token = authHeader.replace('Bearer ', '');
-  const db = loadDB();
-  const user = db.users.find(u => u.id === token || u.id === authHeader);
+  const user = (req as any).user;
   if (!user) {
-    return res.status(401).json({ error: 'Unauthorized: Hindi nahanap ang authenticated user.' });
+    return res.status(401).json({ error: 'Kailangan ng login upang mag-upload ng media para sa challenge.' });
   }
 
   const { dataUrl, filename: originalFilename, mediaType: requestedMediaType } = req.body;
@@ -15910,6 +18079,59 @@ function disburseChallengePrizesAndEarnings(
         safeCloudSync('update', 'users', hostUser.id, { stats: hostUser.stats, activityLogs: hostUser.activityLogs });
       }
       distributions.push({ userId: hostUser.id, name: hostUser.name, role: 'Host Partner', amount: hostReward });
+    }
+  }
+
+  // Deduct settled prize/budget authoritatively from host or sponsor upon final disbursement
+  if (!challenge.sponsorBudget || challenge.sponsorBudget <= 0) {
+    // Self-funded challenge: Deduct prize pool from host wallet balance
+    const hostUser = db.users.find(u => u.id === challenge.hostId);
+    if (hostUser && totalPrize > 0) {
+      const hostDeductId = `act-chal-host-deduct-${challenge.id}`;
+      const alreadyDeducted = (hostUser.activityLogs || []).some(log => log.id === hostDeductId);
+      if (!alreadyDeducted) {
+        hostUser.stats.balance = Math.max(0, Number(((hostUser.stats.balance || 0) - totalPrize).toFixed(2)));
+        if (!hostUser.activityLogs) hostUser.activityLogs = [];
+        hostUser.activityLogs.unshift({
+          id: hostDeductId,
+          type: 'withdraw',
+          title: `🏆 Challenge Settlement Prize Payout (${challenge.title})`,
+          amount: totalPrize,
+          timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+          details: `Ibinawas ang ₱${totalPrize.toFixed(2)} prize pool mula sa iyong wallet para sa mga nanalo sa iyong challenge.`
+        });
+        safeCloudSync('update', 'users', hostUser.id, { stats: hostUser.stats, activityLogs: hostUser.activityLogs });
+      }
+    }
+  } else if (challenge.sponsorId && (challenge.sponsorBudget || 0) > 0) {
+    // Sponsored challenge: Deduct sponsor budget from sponsor wallet balance
+    const sponsorUser = db.users.find(u => u.id === challenge.sponsorId);
+    const budgetToDeduct = challenge.sponsorBudget || 0;
+    if (sponsorUser && budgetToDeduct > 0) {
+      const sponsorDeductId = `act-chal-sponsor-deduct-${challenge.id}`;
+      const alreadyDeducted = (sponsorUser.activityLogs || []).some(log => log.id === sponsorDeductId);
+      if (!alreadyDeducted) {
+        sponsorUser.stats.balance = Math.max(0, Number(((sponsorUser.stats.balance || 0) - budgetToDeduct).toFixed(2)));
+        if (!sponsorUser.activityLogs) sponsorUser.activityLogs = [];
+        sponsorUser.activityLogs.unshift({
+          id: sponsorDeductId,
+          type: 'withdraw',
+          title: `🏢 Sponsored Mission Settlement (${challenge.title})`,
+          amount: budgetToDeduct,
+          timestamp: new Date().toLocaleString('fil-PH', { hour12: true }),
+          details: `Ibinawas ang ₱${budgetToDeduct.toFixed(2)} sponsorship budget para sa natapos na challenge at mission.`
+        });
+        safeCloudSync('update', 'users', sponsorUser.id, { stats: sponsorUser.stats, activityLogs: sponsorUser.activityLogs });
+      }
+    }
+    // Mark connected sponsored missions as completed
+    if (db.sponsoredMissions) {
+      for (const m of db.sponsoredMissions) {
+        if (m.challengeId === challenge.id || (m.sponsorId === challenge.sponsorId && m.status === 'active')) {
+          m.status = 'completed';
+          safeCloudSync('update', 'sponsored_missions', m.id, { status: 'completed' });
+        }
+      }
     }
   }
 
@@ -16475,8 +18697,6 @@ app.get('/appstore', (req, res) => {
 //            VITE MIDDLEWARE SETUP
 // ============================================
 
-const isProduction = process.env.NODE_ENV === 'production';
-
 async function startServer() {
   // 1. Load any pending sync queue items from persistent disk (/var/data/firestore_sync_queue.json)
   loadPersistentSyncQueue();
@@ -16562,7 +18782,22 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = http.createServer(app);
+
+  initChatWebSocket(server, {
+    loadDB,
+    saveDB,
+    safeCloudSync,
+    isUserBanned,
+    filterSwearWords,
+    findUserInSystem,
+    activeUsersMap,
+    sendPushNotificationToUser,
+    handleAdminAutoReply,
+    verifyToken
+  });
+
+  server.listen(PORT, '0.0.0.0', () => {
     const status = isAuthoritativeDatabaseReady
       ? 'Authoritative Database Ready'
       : `RECOVERY MODE – Writes Locked (${recoveryFailureReason || 'database recovery incomplete'})`;

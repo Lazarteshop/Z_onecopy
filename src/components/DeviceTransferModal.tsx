@@ -19,6 +19,7 @@ export const DeviceTransferModal: React.FC<DeviceTransferModalProps> = ({
   isOpen,
   userEmail,
   userId,
+  token: propToken,
   onTransferSuccess,
   onSuccess,
   onCancel,
@@ -29,6 +30,9 @@ export const DeviceTransferModal: React.FC<DeviceTransferModalProps> = ({
   const [error, setError] = useState<string>('');
   const [resending, setResending] = useState<boolean>(false);
   const [resendSuccess, setResendSuccess] = useState<boolean>(false);
+
+  const activeToken = propToken || (typeof window !== 'undefined' ? localStorage.getItem('gcash_click_earn_token') : null) || '';
+  const token = activeToken ? (activeToken.startsWith('Bearer ') ? activeToken.replace('Bearer ', '') : activeToken) : '';
 
   if (!isOpen) return null;
 
@@ -48,6 +52,7 @@ export const DeviceTransferModal: React.FC<DeviceTransferModalProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
           ...deviceHeaders,
         },
         body: JSON.stringify({
@@ -81,6 +86,7 @@ export const DeviceTransferModal: React.FC<DeviceTransferModalProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
           ...deviceHeaders,
         },
         body: JSON.stringify({ userId }),

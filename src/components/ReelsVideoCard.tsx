@@ -13,9 +13,11 @@ import {
   AlertCircle,
   Plus,
   Volume2,
-  VolumeX
+  VolumeX,
+  MessageCircle,
+  ShoppingBag
 } from 'lucide-react';
-import { ReelVideo } from '../types';
+import { ReelVideo, SocialProductRef } from '../types';
 import { formatEmbedUrl } from '../utils/reels';
 
 interface ReelsVideoCardProps {
@@ -36,6 +38,9 @@ interface ReelsVideoCardProps {
   onClaimReward: (id: string) => void;
   onDelete?: (id: string) => void;
   onOpenUploadModal?: () => void;
+  onOpenComments?: (reel: ReelVideo) => void;
+  onOpenProduct?: (product: SocialProductRef) => void;
+  onOpenCreatorProfile?: (userId: string) => void;
   triggerNotification?: (message: string, type?: 'success' | 'info' | 'error') => void;
 }
 
@@ -57,6 +62,9 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
   onClaimReward,
   onDelete,
   onOpenUploadModal,
+  onOpenComments,
+  onOpenProduct,
+  onOpenCreatorProfile,
   triggerNotification
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -554,9 +562,18 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
       {/* ================= RIGHT SIDEBAR ACTION BUTTONS (TikTok Style) ================= */}
       <aside className="absolute right-3.5 bottom-24 z-30 flex flex-col items-center gap-3.5 pointer-events-auto">
         
-        {/* Creator / Channel Avatar with '+' Upload / Follow Badge */}
+        {/* Creator / Channel Avatar with Profile Click and '+' Upload / Follow Badge */}
         <div className="relative group">
-          <div className="w-12 h-12 rounded-full p-0.5 bg-gradient-to-tr from-rose-500 via-pink-500 to-amber-400 shadow-xl overflow-hidden">
+          <div 
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onOpenCreatorProfile && (reel.addedByUserId || reel.addedBy)) {
+                onOpenCreatorProfile(reel.addedByUserId || reel.addedBy);
+              }
+            }}
+            className="w-12 h-12 rounded-full p-0.5 bg-gradient-to-tr from-rose-500 via-pink-500 to-amber-400 shadow-xl overflow-hidden cursor-pointer active:scale-95 transition"
+            title="Tingnan ang Creator Profile"
+          >
             <div className="w-full h-full bg-slate-900 rounded-full flex items-center justify-center text-white font-black text-sm">
               {reel.addedBy ? reel.addedBy.charAt(0).toUpperCase() : 'Z'}
             </div>
@@ -595,7 +612,25 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
           </span>
         </div>
 
-        {/* 2. Red Pocket Reward Button (+₱0.10) */}
+        {/* 2. Comments Button */}
+        <div className="flex flex-col items-center gap-0.5">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onOpenComments) onOpenComments(reel);
+            }}
+            className="p-1.5 active:scale-125 transition duration-200 hover:text-amber-300 cursor-pointer text-white"
+            title="Tingnan at Mag-comment sa Reel"
+          >
+            <MessageCircle className="w-7 h-7 fill-black/30 drop-shadow-md" />
+          </button>
+          <span className="text-[11px] font-extrabold text-white drop-shadow">
+            {formatNumber(reel.commentsCount ?? (reel.comments?.length || 0))}
+          </span>
+        </div>
+
+        {/* 3. Red Pocket Reward Button (+₱0.10) */}
         <div className="flex flex-col items-center gap-0.5">
           <button
             type="button"
@@ -617,22 +652,28 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
           </span>
         </div>
 
-        {/* 3. Share Button */}
+        {/* 4. Share Button with Deep Link */}
         <div className="flex flex-col items-center gap-0.5">
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
+              const origin = typeof window !== 'undefined' ? window.location.origin : '';
+              const shareUrl = `${origin}?reel=${reel.id}`;
+              
+              // Record share on server
+              fetch(`/api/reels/${reel.id}/share`, { method: 'POST' }).catch(() => {});
+
               if (navigator.share) {
                 navigator.share({
                   title: reel.title || 'Panoorin ang Reel sa Z-oneApp',
-                  text: 'Panoorin ang viral video na ito at kumita sa GCash!',
-                  url: window.location.href,
+                  text: 'Panoorin ang viral reel na ito at kumita sa GCash!',
+                  url: shareUrl,
                 }).catch(() => {});
               } else {
-                navigator.clipboard.writeText(window.location.href);
+                navigator.clipboard.writeText(shareUrl);
                 if (triggerNotification) {
-                  triggerNotification('📋 Na-kopya na ang link ng Reel sa clipboard!', 'success');
+                  triggerNotification('📋 Na-kopya na ang direct deep-link ng Reel!', 'success');
                 }
               }
             }}
@@ -641,7 +682,9 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
           >
             <Share2 className="w-7 h-7 text-white fill-black/30 drop-shadow-md" />
           </button>
-          <span className="text-[11px] font-extrabold text-white drop-shadow">Share</span>
+          <span className="text-[11px] font-extrabold text-white drop-shadow">
+            {reel.sharesCount ? formatNumber(reel.sharesCount) : 'Share'}
+          </span>
         </div>
 
         {/* 4. Original Source Link */}
@@ -743,7 +786,15 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
           
           {/* Creator / Channel & Badges */}
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-sm sm:text-base font-extrabold text-white drop-shadow-md tracking-tight flex items-center gap-1.5">
+            <h2 
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onOpenCreatorProfile && (reel.addedByUserId || reel.addedBy)) {
+                  onOpenCreatorProfile(reel.addedByUserId || reel.addedBy);
+                }
+              }}
+              className="text-sm sm:text-base font-extrabold text-white drop-shadow-md tracking-tight flex items-center gap-1.5 cursor-pointer hover:underline"
+            >
               <span>@{reel.addedBy || 'Z-oneReels'}</span>
               <span className="w-3.5 h-3.5 rounded-full bg-blue-500 text-white flex items-center justify-center text-[8px] font-black">
                 ✓
@@ -776,12 +827,65 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
             </div>
           )}
 
+          {/* 🛍️ Social Commerce Product Tag Card (Z-oneShop Integration) */}
+          {reel.productRef && (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onOpenProduct) {
+                  onOpenProduct(reel.productRef!);
+                } else {
+                  window.dispatchEvent(new CustomEvent('open-shop-product-detail', { detail: { product: reel.productRef } }));
+                }
+              }}
+              className="bg-slate-900/90 hover:bg-slate-850 border border-amber-400/40 rounded-xl p-2 pr-3 flex items-center gap-2.5 shadow-xl cursor-pointer active:scale-95 transition-all backdrop-blur-md group"
+            >
+              {reel.productRef.image ? (
+                <img 
+                  src={reel.productRef.image} 
+                  alt={reel.productRef.name} 
+                  className="w-10 h-10 rounded-lg object-cover shrink-0 border border-white/20 bg-slate-800" 
+                />
+              ) : (
+                <div className="w-10 h-10 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0">
+                  <ShoppingBag className="w-5 h-5" />
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] font-bold text-amber-300 flex items-center gap-1">
+                  <ShoppingBag className="w-3 h-3 text-amber-400" />
+                  <span>Z-oneShop Tagged</span>
+                </div>
+                <div className="text-xs font-black text-white truncate group-hover:text-amber-200">
+                  {reel.productRef.name}
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="text-xs font-black text-emerald-400">
+                  ₱{reel.productRef.price.toLocaleString()}
+                </div>
+                <span className="inline-block text-[9px] font-black text-cyan-300 bg-cyan-950/70 border border-cyan-400/40 px-2 py-0.5 rounded-md">
+                  Buy ➔
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Hashtags */}
           <div className="flex flex-wrap gap-1 text-[11px] font-bold text-amber-300 drop-shadow">
-            <span className="hover:underline">#Z-oneReels</span>
-            <span className="hover:underline">#WatchAndEarn</span>
-            <span className="hover:underline">#GCashProfit</span>
-            <span className="hover:underline">#Shorts</span>
+            {(reel.hashtags && reel.hashtags.length > 0 ? reel.hashtags : ['#Z-oneReels', '#WatchAndEarn', '#GCashProfit', '#Shorts']).map((tag, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.dispatchEvent(new CustomEvent('open-unified-search', { detail: { query: tag.replace('#', '') } }));
+                }}
+                className="hover:underline hover:text-amber-200 cursor-pointer text-left"
+              >
+                {tag.startsWith('#') ? tag : `#${tag}`}
+              </button>
+            ))}
           </div>
 
           {/* Sound / Music Ticker at bottom */}

@@ -21,38 +21,71 @@ import {
   Sparkles,
   Layers,
   FileText,
-  AlertCircle
+  AlertCircle,
+  Share2,
+  UserPlus,
+  UserCheck,
+  Play,
+  Trophy,
+  ShoppingBag,
+  Flag,
+  Copy,
+  ExternalLink,
+  BarChart3
 } from 'lucide-react';
 import { UserAlbum, UserPhoto, UserProfileInfo } from '../types';
+import { CreatorAnalyticsDashboard } from './CreatorAnalyticsDashboard';
 
 interface UserProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
   userId: string;
+  token?: string;
   currentUserId?: string;
   currentUserName?: string;
   onStartDM?: (targetUserId: string, targetUserName: string, targetUserAvatar?: string) => void;
   onProfileUpdated?: () => void;
+  onNavigateToShop?: (productId?: string) => void;
+  onPlayReel?: (reelId: string) => void;
+  onViewChallenge?: (challengeId: string) => void;
 }
 
 export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   isOpen,
   onClose,
   userId,
+  token = '',
   currentUserId,
   currentUserName,
   onStartDM,
-  onProfileUpdated
+  onProfileUpdated,
+  onNavigateToShop,
+  onPlayReel,
+  onViewChallenge
 }) => {
-  const [profile, setProfile] = useState<UserProfileInfo & { albums?: UserAlbum[]; posts?: any[] } | null>(null);
+  const authToken = token ? (token.startsWith('Bearer ') ? token : `Bearer ${token}`) : '';
+  const authHeader = authToken;
+  const [profile, setProfile] = useState<UserProfileInfo & { albums?: UserAlbum[]; posts?: any[]; reels?: any[]; challenges?: any[]; taggedProducts?: any[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'albums' | 'posts'>('albums');
+  const [activeTab, setActiveTab] = useState<'posts' | 'reels' | 'challenges' | 'products' | 'albums'>('posts');
   const [selectedAlbum, setSelectedAlbum] = useState<UserAlbum | null>(null);
   const [lightboxPhoto, setLightboxPhoto] = useState<UserPhoto | null>(null);
 
+  // Follow State
+  const [followingLoading, setFollowingLoading] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  // Moderation / Report State
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [reportReason, setReportReason] = useState<'spam' | 'harassment' | 'inappropriate' | 'misinformation' | 'other'>('inappropriate');
+  const [reportNotes, setReportNotes] = useState('');
+  const [submittingReport, setSubmittingReport] = useState(false);
+  const [reportToast, setReportToast] = useState<string | null>(null);
+
   // Profile Edit State
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
   const [editBio, setEditBio] = useState('');
   const [editAvatar, setEditAvatar] = useState('');
   const [editCover, setEditCover] = useState('');
@@ -88,7 +121,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     setError(null);
     try {
       const res = await fetch(`/api/zone/profile/${userId}`, {
-        headers: currentUserId ? { Authorization: currentUserId } : {}
+        headers: authHeader ? { Authorization: authHeader } : {}
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -118,6 +151,95 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     }
   }, [isOpen, userId]);
 
+  // Handle Toggle Follow
+  const handleToggleFollow = async () => {
+    if (!currentUserId) {
+      alert('Mag-login muna upang mag-Zone o sumubaybay sa user na ito.');
+      return;
+    }
+    if (followingLoading || !profile) return;
+    setFollowingLoading(true);
+    try {
+      const res = await fetch(`/api/zone/users/${profile.id}/follow`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {})
+        }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setProfile(prev => prev ? {
+          ...prev,
+          isFollowing: data.isFollowing,
+          followerCount: data.followerCount
+        } : null);
+        if (onProfileUpdated) onProfileUpdated();
+      } else {
+        alert(data.error || 'Bigo ang pag-follow sa user.');
+      }
+    } catch (err) {
+      alert('Error updating follow status.');
+    } finally {
+      setFollowingLoading(false);
+    }
+  };
+
+  // Handle Share Profile Link
+  const handleShareProfile = () => {
+    if (!profile) return;
+    const url = `${window.location.origin}/?tab=profile&userId=${profile.id}`;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(() => {
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 2500);
+      }).catch(() => {
+        prompt('Kopyahin ang profile link:', url);
+      });
+    } else {
+      prompt('Kopyahin ang profile link:', url);
+    }
+  };
+
+  // Handle Report User
+  const handleSubmitReport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUserId) {
+      alert('Mag-login muna upang makapag-report.');
+      return;
+    }
+    if (!profile) return;
+    setSubmittingReport(true);
+    try {
+      const res = await fetch('/api/zone/report', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {})
+        },
+        body: JSON.stringify({
+          targetType: 'user',
+          targetId: profile.id,
+          reason: reportReason,
+          notes: reportNotes
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setIsReportModalOpen(false);
+        setReportNotes('');
+        setReportToast('Nai-submit na ang iyong report sa moderation team. Salamat!');
+        setTimeout(() => setReportToast(null), 4000);
+      } else {
+        alert(data.error || 'Bigo ang pag-report.');
+      }
+    } catch (err) {
+      alert('Error submitting report.');
+    } finally {
+      setSubmittingReport(false);
+    }
+  };
+
   // Handle Save Profile
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -128,7 +250,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: currentUserId
+          ...(authHeader ? { Authorization: authHeader } : {})
         },
         body: JSON.stringify({
           bio: editBio,
@@ -165,7 +287,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         method,
         headers: {
           'Content-Type': 'application/json',
-          Authorization: currentUserId
+          ...(authHeader ? { Authorization: authHeader } : {})
         },
         body: JSON.stringify({
           title: albumTitle,
@@ -207,7 +329,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     try {
       const res = await fetch(`/api/zone/albums/${albumId}`, {
         method: 'DELETE',
-        headers: { Authorization: currentUserId }
+        headers: authHeader ? { Authorization: authHeader } : {}
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -239,7 +361,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: currentUserId
+          ...(authHeader ? { Authorization: authHeader } : {})
         },
         body: JSON.stringify({
           url: photoUrl,
@@ -276,7 +398,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     try {
       const res = await fetch(`/api/zone/albums/${selectedAlbum.id}/photos/${photoId}`, {
         method: 'DELETE',
-        headers: { Authorization: currentUserId }
+        headers: authHeader ? { Authorization: authHeader } : {}
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -302,7 +424,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: currentUserId
+          ...(authHeader ? { Authorization: authHeader } : {})
         },
         body: JSON.stringify({ privacy: newPrivacy })
       });
@@ -444,41 +566,118 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
-                        <Calendar className="w-3.5 h-3.5" />
+                      <p className="text-xs text-cyan-400 font-mono font-medium mt-0.5">
+                        {profile.handle || ('@' + (profile.name || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_'))}
+                      </p>
+                      <p className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-1">
+                        <Calendar className="w-3 h-3 text-slate-500" />
                         <span>Miyembro mula {new Date(profile.createdAt || Date.now()).toLocaleDateString('fil-PH', { month: 'short', year: 'numeric' })}</span>
                       </p>
                     </div>
                   </div>
 
-                  {/* Actions (Message / Edit Profile) */}
-                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                  {/* Actions (Follow / Message / Share / Edit / Report) */}
+                  <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
                     {!isOwner ? (
-                      <button
-                        id="profile-dm-btn"
-                        onClick={() => {
-                          if (onStartDM) {
-                            onStartDM(profile.id, profile.name, profile.avatar);
-                            onClose();
-                          }
-                        }}
-                        className="flex-1 sm:flex-none px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-semibold text-sm rounded-xl shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 transition-all"
-                      >
-                        <MessageCircle className="w-4 h-4" />
-                        <span>I-message</span>
-                      </button>
+                      <>
+                        <button
+                          id="profile-follow-btn"
+                          onClick={handleToggleFollow}
+                          disabled={followingLoading}
+                          className={`px-4 py-2 font-semibold text-sm rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md ${
+                            profile.isFollowing
+                              ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                              : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-blue-500/20'
+                          }`}
+                        >
+                          {profile.isFollowing ? (
+                            <>
+                              <UserCheck className="w-4 h-4 text-emerald-400" />
+                              <span>Following</span>
+                            </>
+                          ) : (
+                            <>
+                              <UserPlus className="w-4 h-4" />
+                              <span>+ Follow</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          id="profile-dm-btn"
+                          onClick={() => {
+                            if (onStartDM) {
+                              onStartDM(profile.id, profile.name, profile.avatar);
+                              onClose();
+                            }
+                          }}
+                          className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white font-semibold text-sm rounded-xl border border-slate-700 flex items-center justify-center gap-1.5 transition-all shadow-sm"
+                          title="Magpadala ng Mensahe"
+                        >
+                          <MessageCircle className="w-4 h-4 text-cyan-400" />
+                          <span>Mensahe</span>
+                        </button>
+
+                        <button
+                          id="profile-share-btn"
+                          onClick={handleShareProfile}
+                          className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-sm rounded-xl border border-slate-700 flex items-center justify-center gap-1.5 transition-all"
+                          title="I-share ang Profile link"
+                        >
+                          <Share2 className="w-4 h-4" />
+                          {copiedLink ? <span className="text-emerald-400 text-xs">Na-kopya!</span> : <span>Share</span>}
+                        </button>
+
+                        <button
+                          id="profile-report-btn"
+                          onClick={() => setIsReportModalOpen(true)}
+                          className="p-2 bg-slate-800/80 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 border border-slate-700 rounded-xl transition-all"
+                          title="I-report ang Profile"
+                        >
+                          <Flag className="w-4 h-4" />
+                        </button>
+                      </>
                     ) : (
-                      <button
-                        id="edit-profile-trigger-btn"
-                        onClick={() => setIsEditingProfile(true)}
-                        className="flex-1 sm:flex-none px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold text-sm rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                        <span>I-edit ang Profile</span>
-                      </button>
+                      <>
+                        <button
+                          id="edit-profile-trigger-btn"
+                          onClick={() => setIsEditingProfile(true)}
+                          className="flex-1 sm:flex-none px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold text-sm rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer"
+                        >
+                          <Edit3 className="w-4 h-4 text-cyan-400" />
+                          <span>I-edit ang Profile</span>
+                        </button>
+
+                        <button
+                          id="owner-analytics-trigger-btn"
+                          onClick={() => setIsAnalyticsOpen(true)}
+                          className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold text-sm rounded-xl flex items-center justify-center gap-2 transition-all shadow-md shadow-blue-500/20 cursor-pointer"
+                          title="Buksan ang Creator Analytics"
+                        >
+                          <BarChart3 className="w-4 h-4" />
+                          <span>Analytics</span>
+                        </button>
+
+                        <button
+                          id="owner-share-profile-btn"
+                          onClick={handleShareProfile}
+                          className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-sm rounded-xl border border-slate-700 flex items-center justify-center gap-1.5 transition-all"
+                          title="I-share ang iyong Profile link"
+                        >
+                          <Share2 className="w-4 h-4" />
+                          {copiedLink ? <span className="text-emerald-400 text-xs">Na-kopya!</span> : <span>Share</span>}
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
+
+                {reportToast && (
+                  <div className="mb-3 p-3 bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs rounded-xl flex items-center gap-2">
+                    <Check className="w-4 h-4 text-emerald-400" />
+                    <span>{reportToast}</span>
+                  </div>
+                )}
 
                 {/* Bio */}
                 <div className="bg-slate-800/60 border border-slate-700/50 rounded-xl p-3.5 mb-4">
@@ -487,53 +686,110 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   </p>
                 </div>
 
-                {/* Stats Summary Bar */}
-                <div className="grid grid-cols-3 gap-2 p-3 bg-slate-950/60 border border-slate-800/80 rounded-xl text-center mb-5">
-                  <div>
-                    <span className="block text-lg font-black text-white">{profile.postCount || 0}</span>
-                    <span className="text-xs text-slate-400 font-medium">Mga Post</span>
+                {/* 5-Column Stats Summary Bar */}
+                <div className="grid grid-cols-5 gap-1 sm:gap-2 p-3 bg-slate-950/70 border border-slate-800 rounded-xl text-center mb-5">
+                  <div className="border-r border-slate-800/60 pr-1">
+                    <span className="block text-base sm:text-lg font-black text-blue-400">{profile.followerCount || 0}</span>
+                    <span className="text-[10px] sm:text-xs text-slate-400 font-medium">Followers</span>
+                  </div>
+                  <div className="border-r border-slate-800/60 pr-1">
+                    <span className="block text-base sm:text-lg font-black text-slate-200">{profile.followingCount || 0}</span>
+                    <span className="text-[10px] sm:text-xs text-slate-400 font-medium">Following</span>
+                  </div>
+                  <div className="border-r border-slate-800/60 pr-1">
+                    <span className="block text-base sm:text-lg font-black text-white">{profile.postCount || 0}</span>
+                    <span className="text-[10px] sm:text-xs text-slate-400 font-medium">Posts</span>
+                  </div>
+                  <div className="border-r border-slate-800/60 pr-1">
+                    <span className="block text-base sm:text-lg font-black text-rose-400">{(profile.reels || []).length}</span>
+                    <span className="text-[10px] sm:text-xs text-slate-400 font-medium">Reels</span>
                   </div>
                   <div>
-                    <span className="block text-lg font-black text-cyan-400">{profile.albumCount || (profile.albums ? profile.albums.length : 0)}</span>
-                    <span className="text-xs text-slate-400 font-medium">Mga Album</span>
-                  </div>
-                  <div>
-                    <span className="block text-lg font-black text-indigo-400">{(profile as any).photoCount || 0}</span>
-                    <span className="text-xs text-slate-400 font-medium">Mga Litrato</span>
+                    <span className="block text-base sm:text-lg font-black text-amber-400">{(profile.taggedProducts || []).length}</span>
+                    <span className="text-[10px] sm:text-xs text-slate-400 font-medium">Products</span>
                   </div>
                 </div>
 
-                {/* Profile Tabs */}
-                <div className="flex border-b border-slate-800 mb-4">
-                  <button
-                    id="tab-albums-btn"
-                    onClick={() => {
-                      setActiveTab('albums');
-                      setSelectedAlbum(null);
-                    }}
-                    className={`flex-1 py-2.5 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-all ${
-                      activeTab === 'albums'
-                        ? 'border-cyan-500 text-cyan-400'
-                        : 'border-transparent text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    <Layers className="w-4 h-4" />
-                    <span>Mga Album & Photos ({profile.albumCount || (profile.albums ? profile.albums.length : 0)})</span>
-                  </button>
+                {/* 5-Tab Profile Navigation */}
+                <div className="flex border-b border-slate-800 mb-4 overflow-x-auto no-scrollbar">
                   <button
                     id="tab-posts-btn"
                     onClick={() => {
                       setActiveTab('posts');
                       setSelectedAlbum(null);
                     }}
-                    className={`flex-1 py-2.5 text-sm font-bold flex items-center justify-center gap-2 border-b-2 transition-all ${
+                    className={`px-4 py-2.5 text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 border-b-2 whitespace-nowrap transition-all ${
                       activeTab === 'posts'
-                        ? 'border-cyan-500 text-cyan-400'
+                        ? 'border-blue-500 text-blue-400'
                         : 'border-transparent text-slate-400 hover:text-slate-200'
                     }`}
                   >
                     <FileText className="w-4 h-4" />
-                    <span>Mga Post ({profile.postCount || 0})</span>
+                    <span>Posts ({profile.postCount || 0})</span>
+                  </button>
+
+                  <button
+                    id="tab-reels-btn"
+                    onClick={() => {
+                      setActiveTab('reels');
+                      setSelectedAlbum(null);
+                    }}
+                    className={`px-4 py-2.5 text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 border-b-2 whitespace-nowrap transition-all ${
+                      activeTab === 'reels'
+                        ? 'border-rose-500 text-rose-400'
+                        : 'border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Play className="w-4 h-4" />
+                    <span>Reels ({(profile.reels || []).length})</span>
+                  </button>
+
+                  <button
+                    id="tab-challenges-btn"
+                    onClick={() => {
+                      setActiveTab('challenges');
+                      setSelectedAlbum(null);
+                    }}
+                    className={`px-4 py-2.5 text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 border-b-2 whitespace-nowrap transition-all ${
+                      activeTab === 'challenges'
+                        ? 'border-amber-500 text-amber-400'
+                        : 'border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Trophy className="w-4 h-4" />
+                    <span>Challenges ({(profile.challenges || []).length})</span>
+                  </button>
+
+                  <button
+                    id="tab-products-btn"
+                    onClick={() => {
+                      setActiveTab('products');
+                      setSelectedAlbum(null);
+                    }}
+                    className={`px-4 py-2.5 text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 border-b-2 whitespace-nowrap transition-all ${
+                      activeTab === 'products'
+                        ? 'border-emerald-500 text-emerald-400'
+                        : 'border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <ShoppingBag className="w-4 h-4" />
+                    <span>Products ({(profile.taggedProducts || []).length})</span>
+                  </button>
+
+                  <button
+                    id="tab-albums-btn"
+                    onClick={() => {
+                      setActiveTab('albums');
+                      setSelectedAlbum(null);
+                    }}
+                    className={`px-4 py-2.5 text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 border-b-2 whitespace-nowrap transition-all ${
+                      activeTab === 'albums'
+                        ? 'border-cyan-500 text-cyan-400'
+                        : 'border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Layers className="w-4 h-4" />
+                    <span>Photos & Albums ({profile.albumCount || (profile.albums ? profile.albums.length : 0)})</span>
                   </button>
                 </div>
 
@@ -887,11 +1143,254 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     )}
                   </div>
                 )}
+
+                {/* TAB CONTENT: REELS */}
+                {activeTab === 'reels' && (
+                  <div>
+                    {(!profile.reels || profile.reels.length === 0) ? (
+                      <div className="text-center py-16 bg-slate-950/40 border border-dashed border-slate-800 rounded-2xl p-6">
+                        <Play className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                        <h4 className="text-sm font-bold text-slate-300 mb-1">Walang mga Reel</h4>
+                        <p className="text-xs text-slate-500">Wala pang naibabahaging video o reel ang user na ito.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                        {profile.reels.map((reel: any) => (
+                          <div
+                            key={reel.id}
+                            onClick={() => {
+                              if (onPlayReel) {
+                                onPlayReel(reel.id);
+                                onClose();
+                              }
+                            }}
+                            className="group relative aspect-[9/16] bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 hover:border-rose-500/50 cursor-pointer shadow-lg transition-all"
+                          >
+                            <img
+                              src={reel.thumbnailUrl || 'https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=500&auto=format&fit=crop&q=60'}
+                              alt={reel.title || 'Reel'}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20" />
+                            <div className="absolute top-2.5 right-2.5 w-7 h-7 bg-black/60 backdrop-blur-md rounded-full flex items-center justify-center text-white">
+                              <Play className="w-3.5 h-3.5 fill-white" />
+                            </div>
+                            <div className="absolute bottom-2.5 left-2.5 right-2.5">
+                              <p className="text-xs font-bold text-white line-clamp-1 group-hover:text-rose-400 transition-colors">
+                                {reel.title || 'Z-one Reel'}
+                              </p>
+                              <div className="flex items-center gap-2 text-[10px] text-slate-300 mt-0.5">
+                                <span>{(reel.views || 0).toLocaleString()} views</span>
+                                <span>•</span>
+                                <span>{(reel.likes || []).length} likes</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* TAB CONTENT: CHALLENGES */}
+                {activeTab === 'challenges' && (
+                  <div>
+                    {(!profile.challenges || profile.challenges.length === 0) ? (
+                      <div className="text-center py-16 bg-slate-950/40 border border-dashed border-slate-800 rounded-2xl p-6">
+                        <Trophy className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                        <h4 className="text-sm font-bold text-slate-300 mb-1">Walang mga Challenge</h4>
+                        <p className="text-xs text-slate-500">Wala pang na-host na Creator Challenge ang user na ito.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                        {profile.challenges.map((c: any) => (
+                          <div
+                            key={c.id}
+                            onClick={() => {
+                              if (onViewChallenge) {
+                                onViewChallenge(c.id);
+                                onClose();
+                              }
+                            }}
+                            className="bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 hover:border-amber-500/50 rounded-2xl p-4 transition-all cursor-pointer shadow-md flex flex-col justify-between"
+                          >
+                            <div>
+                              <div className="flex items-center justify-between gap-2 mb-2">
+                                <span className="px-2.5 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-bold rounded-lg uppercase tracking-wide">
+                                  {c.category || 'Creator Challenge'}
+                                </span>
+                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${
+                                  c.status === 'active' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-slate-700 text-slate-300'
+                                }`}>
+                                  {c.status === 'active' ? 'Aktibo' : c.status}
+                                </span>
+                              </div>
+                              <h4 className="text-sm font-bold text-white mb-1.5 hover:text-amber-400 transition-colors">
+                                {c.title}
+                              </h4>
+                              <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+                                {c.description}
+                              </p>
+                            </div>
+
+                            <div className="mt-4 pt-3 border-t border-slate-700/50 flex items-center justify-between text-xs">
+                              <div>
+                                <span className="text-[10px] text-slate-400 block">Prize Pool</span>
+                                <span className="font-black text-amber-400">₱{(c.prizePool || 0).toLocaleString()}</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-[10px] text-slate-400 block">Kalahok</span>
+                                <span className="font-semibold text-slate-200">{c.maxParticipants ? `Up to ${c.maxParticipants}` : 'Open'}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* TAB CONTENT: PRODUCTS */}
+                {activeTab === 'products' && (
+                  <div>
+                    {(!profile.taggedProducts || profile.taggedProducts.length === 0) ? (
+                      <div className="text-center py-16 bg-slate-950/40 border border-dashed border-slate-800 rounded-2xl p-6">
+                        <ShoppingBag className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                        <h4 className="text-sm font-bold text-slate-300 mb-1">Walang mga Produkto</h4>
+                        <p className="text-xs text-slate-500">Wala pang nakatalagang produkto sa Z-oneShop mula sa user na ito.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5">
+                        {profile.taggedProducts.map((p: any) => (
+                          <div
+                            key={p.id}
+                            onClick={() => {
+                              if (onNavigateToShop) {
+                                onNavigateToShop(p.id);
+                                onClose();
+                              }
+                            }}
+                            className="group bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 hover:border-emerald-500/50 rounded-2xl overflow-hidden cursor-pointer shadow-md transition-all flex flex-col justify-between"
+                          >
+                            <div className="aspect-square bg-slate-900 overflow-hidden relative">
+                              <img
+                                src={p.imageUrl || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=500&auto=format&fit=crop&q=60'}
+                                alt={p.title}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                referrerPolicy="no-referrer"
+                              />
+                              <div className="absolute bottom-2 left-2 px-2 py-0.5 bg-slate-950/80 backdrop-blur-md rounded-md text-emerald-400 text-xs font-black">
+                                ₱{Number(p.price || 0).toLocaleString()}
+                              </div>
+                            </div>
+                            <div className="p-3">
+                              <h4 className="text-xs font-bold text-white line-clamp-1 group-hover:text-emerald-400 transition-colors">
+                                {p.title}
+                              </h4>
+                              {p.category && (
+                                <span className="text-[10px] text-slate-400 block mt-0.5">{p.category}</span>
+                              )}
+                              <button
+                                className="w-full mt-2.5 py-1.5 bg-slate-700/80 hover:bg-emerald-600 text-white text-[11px] font-bold rounded-lg transition-colors flex items-center justify-center gap-1"
+                              >
+                                <span>Tingnan sa Shop</span>
+                                <ExternalLink className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
         </div>
       </motion.div>
+
+      {/* ========================================================= */}
+      {/* REPORT USER MODAL */}
+      {/* ========================================================= */}
+      <AnimatePresence>
+        {isReportModalOpen && (
+          <div
+            id="report-user-modal"
+            className="fixed inset-0 z-70 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setIsReportModalOpen(false)}
+          >
+            <div
+              className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-rose-500/20 text-rose-400 flex items-center justify-center">
+                    <Flag className="w-4 h-4" />
+                  </div>
+                  <h3 className="text-base font-bold text-white">I-report ang User</h3>
+                </div>
+                <button
+                  onClick={() => setIsReportModalOpen(false)}
+                  className="text-slate-400 hover:text-white p-1"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-300 mb-4">
+                Tulungan kaming mapanatiling ligtas ang Z-one Community. Piliin ang dahilan ng pag-report kay <span className="font-semibold text-white">{profile?.name}</span>:
+              </p>
+
+              <form onSubmit={handleSubmitReport} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1.5">Dahilan</label>
+                  <select
+                    value={reportReason}
+                    onChange={(e) => setReportReason(e.target.value as any)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-rose-500"
+                  >
+                    <option value="inappropriate">Hindi angkop na Nilalaman / Content</option>
+                    <option value="harassment">Harassment / Pambubully</option>
+                    <option value="spam">Spam / Panlilinlang / Scam</option>
+                    <option value="misinformation">Maling Impormasyon / Fake News</option>
+                    <option value="other">Iba pa</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1.5">Karagdagang Paliwanag (Opsyonal)</label>
+                  <textarea
+                    value={reportNotes}
+                    onChange={(e) => setReportNotes(e.target.value)}
+                    rows={3}
+                    placeholder="Magbigay ng detalye kung bakit nilabag ang community safety..."
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-500"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsReportModalOpen(false)}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl"
+                  >
+                    Kanselahin
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingReport}
+                    className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-lg shadow-rose-600/20 disabled:opacity-50"
+                  >
+                    {submittingReport ? 'Isinusumite...' : 'I-submit ang Report'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* ========================================================= */}
       {/* PHOTO LIGHTBOX MODAL */}
@@ -1382,6 +1881,33 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           </div>
         )}
       </AnimatePresence>
+
+      {/* 📊 CREATOR ANALYTICS DASHBOARD MODAL */}
+      {isAnalyticsOpen && (
+        <CreatorAnalyticsDashboard
+          isOpen={isAnalyticsOpen}
+          onClose={() => setIsAnalyticsOpen(false)}
+          token={currentUserId || ''}
+          currentUserId={currentUserId || ''}
+          currentUserName={currentUserName || 'Creator'}
+          targetUserId={userId}
+          onNavigateToShop={() => {
+            setIsAnalyticsOpen(false);
+            onClose();
+            onNavigateToShop?.();
+          }}
+          onNavigateToReel={(reelId) => {
+            setIsAnalyticsOpen(false);
+            onClose();
+            onPlayReel?.(reelId);
+          }}
+          onNavigateToChallenge={(chId) => {
+            setIsAnalyticsOpen(false);
+            onClose();
+            onViewChallenge?.(chId);
+          }}
+        />
+      )}
     </div>
   );
 };

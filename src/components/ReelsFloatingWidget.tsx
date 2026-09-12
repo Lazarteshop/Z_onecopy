@@ -39,7 +39,8 @@ import {
   ArrowLeft,
   Flame,
   Zap,
-  Radio
+  Radio,
+  MessageCircle
 } from 'lucide-react';
 import { ReelVideo, ReelRedemption } from '../types';
 import { idbStorage } from '../utils/idbStorage';
@@ -47,6 +48,7 @@ import { ReelsVideoCard } from './ReelsVideoCard';
 
 interface ReelsFloatingWidgetProps {
   reels: ReelVideo[];
+  token?: string;
   isAdmin?: boolean;
   currentUserName?: string;
   currentUserId?: string;
@@ -58,6 +60,8 @@ interface ReelsFloatingWidgetProps {
   onDeleteReel: (id: string) => void;
   onLikeReel: (id: string, delta?: number) => void;
   onWatchRewardReel?: (id: string) => void;
+  onOpenProduct?: (product: any) => void;
+  onOpenCreatorProfile?: (userId: string) => void;
   triggerNotification?: (message: string, type?: 'success' | 'info' | 'error') => void;
   onRefreshReels?: () => void;
 }
@@ -132,6 +136,7 @@ export function parseVideoUrl(inputUrl: string): { embedUrl: string; platform: '
 
 export default function ReelsFloatingWidget({
   reels,
+  token = '',
   isAdmin = false,
   currentUserName,
   currentUserId,
@@ -143,9 +148,12 @@ export default function ReelsFloatingWidget({
   onDeleteReel,
   onLikeReel,
   onWatchRewardReel,
+  onOpenProduct,
+  onOpenCreatorProfile,
   triggerNotification,
   onRefreshReels
 }: ReelsFloatingWidgetProps) {
+  const authToken = token ? (token.startsWith('Bearer ') ? token : `Bearer ${token}`) : '';
   const [isOpen, setIsOpen] = useState(true);
 
   // Sorting and filtering tabs: 'all' | 'low_likes' | 'popular'
@@ -207,7 +215,7 @@ export default function ReelsFloatingWidget({
     setIsLoadingActivity(true);
     try {
       const res = await fetch(`/api/reels/my-activity?userId=${currentUserId}`, {
-        headers: { 'Authorization': currentUserId }
+        headers: { ...(authToken ? { 'Authorization': authToken } : {}) }
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -244,7 +252,7 @@ export default function ReelsFloatingWidget({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': currentUserId
+          ...(authToken ? { 'Authorization': authToken } : {})
         },
         body: JSON.stringify({
           userId: currentUserId,
@@ -288,7 +296,7 @@ export default function ReelsFloatingWidget({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': currentUserId || ''
+          ...(authToken ? { 'Authorization': authToken } : {})
         },
         body: JSON.stringify({
           url: uploadUrl.trim(),
@@ -334,7 +342,7 @@ export default function ReelsFloatingWidget({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': currentUserId || ''
+          ...(authToken ? { 'Authorization': authToken } : {})
         },
         body: JSON.stringify({
           userId: currentUserId,
@@ -393,6 +401,104 @@ export default function ReelsFloatingWidget({
 
   const [watchProgress, setWatchProgress] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
+
+  // Comments Drawer State
+  const [commentsModalReel, setCommentsModalReel] = useState<ReelVideo | null>(null);
+  const [reelComments, setReelComments] = useState<Array<{ id: string; userId: string; userName: string; text: string; createdAt: string }>>([]);
+  const [isLoadingComments, setIsLoadingComments] = useState<boolean>(false);
+  const [newCommentText, setNewCommentText] = useState<string>('');
+  const [isSubmittingComment, setIsSubmittingComment] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!commentsModalReel) {
+      setReelComments([]);
+      return;
+    }
+    setIsLoadingComments(true);
+    fetch(`/api/reels/${commentsModalReel.id}/comments`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.success && Array.isArray(d.comments)) {
+          setReelComments(d.comments);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setIsLoadingComments(false));
+  }, [commentsModalReel]);
+
+  const handleSubmitComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!commentsModalReel || !newCommentText.trim() || isSubmittingComment) return;
+    if (!isLoggedIn) {
+      if (triggerNotification) triggerNotification('Mag-login muna upang makapag-comment.', 'error');
+      return;
+    }
+    setIsSubmittingComment(true);
+    try {
+      const res = await fetch(`/api/reels/${commentsModalReel.id}/comments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { 'Authorization': authToken } : {})
+        },
+        body: JSON.stringify({
+          text: newCommentText.trim(),
+          userName: currentUserName || 'Z-one Member'
+        })
+      });
+      const d = await res.json();
+      if (res.ok && d.success && d.comment) {
+        setReelComments(prev => [d.comment, ...prev]);
+        setNewCommentText('');
+        if (triggerNotification) triggerNotification('💬 Nai-post ang iyong komento!', 'success');
+      }
+    } catch {
+      if (triggerNotification) triggerNotification('Hindi nai-post ang komento.', 'error');
+    } finally {
+      setIsSubmittingComment(false);
+    }
+  };
+
+  // Deep Link and Custom Event Handler for opening specific reels
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const targetId = p.get('reel') || p.get('video');
+      if (targetId && reels && reels.length > 0) {
+        const idx = reels.findIndex(r => r.id === targetId);
+        if (idx !== -1) {
+          setCurrentIndex(idx);
+          setIsOpen(true);
+          setTimeout(() => {
+            if (containerRef.current) {
+              containerRef.current.scrollTop = idx * containerRef.current.clientHeight;
+            }
+          }, 150);
+        }
+      }
+    } catch {}
+  }, [reels]);
+
+  useEffect(() => {
+    const handleOpenReelEvent = (e: any) => {
+      const targetId = e.detail?.reelId;
+      if (targetId && reels) {
+        const idx = reels.findIndex(r => r.id === targetId);
+        if (idx !== -1) {
+          setCurrentIndex(idx);
+          setIsOpen(true);
+          setTimeout(() => {
+            if (containerRef.current) {
+              containerRef.current.scrollTop = idx * containerRef.current.clientHeight;
+            }
+          }, 150);
+        }
+      }
+    };
+    window.addEventListener('open-reel-detail', handleOpenReelEvent);
+    return () => window.removeEventListener('open-reel-detail', handleOpenReelEvent);
+  }, [reels]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetRef = useRef<HTMLDivElement>(null);
@@ -1032,6 +1138,9 @@ export default function ReelsFloatingWidget({
                     onClaimReward={handleClaimWatchReward}
                     onDelete={onDeleteReel}
                     onOpenUploadModal={() => setShowUploadModal(true)}
+                    onOpenComments={(targetReel) => setCommentsModalReel(targetReel)}
+                    onOpenProduct={onOpenProduct}
+                    onOpenCreatorProfile={onOpenCreatorProfile}
                     triggerNotification={triggerNotification}
                   />
                 );
@@ -1154,6 +1263,84 @@ export default function ReelsFloatingWidget({
                   <span>I-PUBLISH ANG REEL VIDEO</span>
                 </button>
               </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= 💬 REEL COMMENTS DRAWER / BOTTOM SHEET ================= */}
+      {commentsModalReel && (
+        <div 
+          className="fixed inset-0 z-[9999] bg-black/75 backdrop-blur-xs flex flex-col justify-end sm:justify-center sm:items-center p-0 sm:p-4 animate-fadeIn"
+          onClick={() => setCommentsModalReel(null)}
+        >
+          <div 
+            className="bg-slate-900 border border-slate-700/80 rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md max-h-[82vh] flex flex-col shadow-2xl text-slate-100 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Drawer Header */}
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MessageCircle className="w-5 h-5 text-amber-400" />
+                <h3 className="text-sm font-black text-white">
+                  {language === 'tl' ? 'Mga Komento sa Reel' : 'Reel Comments'} ({reelComments.length})
+                </h3>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setCommentsModalReel(null)}
+                className="p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Comments List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[200px] max-h-[50vh]">
+              {isLoadingComments ? (
+                <div className="flex items-center justify-center h-32 text-xs text-slate-400">
+                  {language === 'tl' ? 'Kinukuha ang mga komento...' : 'Loading comments...'}
+                </div>
+              ) : reelComments.length > 0 ? (
+                reelComments.map((c) => (
+                  <div key={c.id} className="flex items-start gap-2.5 bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
+                    <div className="w-7 h-7 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-200 shrink-0">
+                      {c.userName?.charAt(0).toUpperCase() || 'U'}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs font-black text-slate-200">{c.userName}</span>
+                        <span className="text-[10px] text-slate-400">{new Date(c.createdAt).toLocaleDateString()}</span>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-0.5 whitespace-pre-wrap">{c.text}</p>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center h-32 text-center text-xs text-slate-400 space-y-1">
+                  <span>💬 Walang komento pa.</span>
+                  <span className="text-[11px] text-slate-500">Maging una sa pag-comment sa viral reel na ito!</span>
+                </div>
+              )}
+            </div>
+
+            {/* Comment Input Form */}
+            <form onSubmit={handleSubmitComment} className="p-3 border-t border-slate-800 bg-slate-950/90 flex items-center gap-2">
+              <input 
+                type="text"
+                value={newCommentText}
+                onChange={(e) => setNewCommentText(e.target.value)}
+                placeholder={isLoggedIn ? (language === 'tl' ? 'Mag-iwan ng komento...' : 'Write a comment...') : (language === 'tl' ? 'Mag-login muna para mag-comment' : 'Log in to comment')}
+                disabled={!isLoggedIn || isSubmittingComment}
+                className="flex-1 bg-slate-900 border border-slate-700 rounded-full px-4 py-2 text-xs text-white placeholder-slate-400 focus:outline-hidden focus:border-amber-400"
+              />
+              <button
+                type="submit"
+                disabled={!isLoggedIn || !newCommentText.trim() || isSubmittingComment}
+                className="bg-rose-600 hover:bg-rose-500 disabled:bg-slate-800 text-white font-black text-xs px-4 py-2 rounded-full cursor-pointer transition shadow-md shrink-0"
+              >
+                {isSubmittingComment ? '...' : (language === 'tl' ? 'I-post' : 'Post')}
+              </button>
             </form>
           </div>
         </div>
