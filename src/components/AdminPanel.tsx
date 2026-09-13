@@ -52,7 +52,8 @@ import {
   Server,
   FileJson
 } from 'lucide-react';
-import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd, WebsiteCampaign, CreatorChallenge, ChallengeEntry, SponsoredMission, DepositRequest, SubscriptionPayment, SocialReport } from '../types';
+import { ActivityLog, UserStats, WithdrawalRequest, Subscription, MerchantAd, WebsiteCampaign, CreatorChallenge, ChallengeEntry, SponsoredMission, DepositRequest, SubscriptionPayment, SocialReport, SocialShareSettings } from '../types';
+import { Button } from './ui/Button';
 
 interface AdminDashboardData {
   users: {
@@ -95,7 +96,7 @@ export default function AdminPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'campaigns' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'shop_management' | 'settings' | 'database' | 'challenges' | 'deposit_requests' | 'moderation'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'campaigns' | 'subscriptions' | 'users' | 'merchant_ads' | 'reels' | 'shop_management' | 'settings' | 'social_preview' | 'database' | 'challenges' | 'deposit_requests' | 'moderation'>('overview');
   const [adminCampaigns, setAdminCampaigns] = useState<WebsiteCampaign[]>([]);
   const [showAddCampaignModal, setShowAddCampaignModal] = useState<boolean>(false);
   const [campaignSearch, setCampaignSearch] = useState<string>('');
@@ -683,6 +684,142 @@ export default function AdminPanel({
       triggerNotification('❌ Hindi makakonekta sa server.', 'error');
     } finally {
       setQrUploading(false);
+    }
+  };
+
+  // Social Media Link Preview (Open Graph) States & Handlers
+  const [socialSettings, setSocialSettings] = useState<SocialShareSettings | null>(null);
+  const [socialLoading, setSocialLoading] = useState(false);
+  const [socialSaving, setSocialSaving] = useState(false);
+  const [socialPreviewImage, setSocialPreviewImage] = useState<string | null>(null);
+  const [socialTitle, setSocialTitle] = useState('Z-oneApp: Website Viewer & PPV Rewards');
+  const [socialDescription, setSocialDescription] = useState('Z-oneApp - Ang premier Website Viewer & PPV Rewards platform sa Pilipinas. Manood ng verified websites at reels, mag-earn ng real GCash cashout rewards araw-araw!');
+  const [socialDimensionWarning, setSocialDimensionWarning] = useState<string | null>(null);
+  const [socialDimensions, setSocialDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [socialR2Available, setSocialR2Available] = useState<boolean>(false);
+  const [socialTimestamp, setSocialTimestamp] = useState<number>(Date.now());
+
+  const fetchSocialShareSettings = async () => {
+    setSocialLoading(true);
+    try {
+      const res = await fetch('/api/admin/social-share', {
+        headers: { 'Authorization': token }
+      });
+      if (res.ok) {
+        const payload = await res.json();
+        setSocialSettings(payload.settings);
+        setSocialTitle(payload.settings.title || 'Z-oneApp: Website Viewer & PPV Rewards');
+        setSocialDescription(payload.settings.description || 'Z-oneApp - Ang premier Website Viewer & PPV Rewards platform sa Pilipinas. Manood ng verified websites at reels, mag-earn ng real GCash cashout rewards araw-araw!');
+        setSocialR2Available(!!payload.r2Available);
+      }
+    } catch (err) {
+      console.error('Error loading social share settings:', err);
+    } finally {
+      setSocialLoading(false);
+    }
+  };
+
+  const handleSocialImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const validMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!validMimes.includes(file.type.toLowerCase())) {
+      triggerNotification('Hindi suportadong format. Pumili ng JPG, PNG, o WEBP na imahe.', 'error');
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      triggerNotification('Masyadong malaki ang imahe. Ang maximum na sukat ay 10MB.', 'error');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const img = new Image();
+      img.onload = () => {
+        setSocialDimensions({ width: img.width, height: img.height });
+        if (img.width < 600 || img.height < 315) {
+          setSocialDimensionWarning(`⚠️ Babala sa sukat: Ang napiling imahe ay ${img.width} × ${img.height} px lamang. Inirerekomenda ang 1200 × 630 px (1.91:1 ratio) para sa pinakamalinaw na preview sa Facebook, Messenger, at Twitter.`);
+        } else {
+          setSocialDimensionWarning(null);
+        }
+        setSocialPreviewImage(result);
+      };
+      img.src = result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveSocialSettings = async () => {
+    setSocialSaving(true);
+    try {
+      const res = await fetch('/api/admin/social-share', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({
+          dataUrl: socialPreviewImage || undefined,
+          title: socialTitle,
+          description: socialDescription
+        })
+      });
+
+      if (res.ok) {
+        const payload = await res.json();
+        setSocialSettings(payload.settings);
+        setSocialPreviewImage(null);
+        setSocialTimestamp(Date.now());
+        triggerNotification('🎉 Matagumpay na nai-publish ang Social Media Preview settings!', 'success');
+      } else {
+        const err = await res.json();
+        triggerNotification(`❌ Error: ${err.error || 'Hindi ma-save ang Social Preview settings.'}`, 'error');
+      }
+    } catch (err) {
+      console.error('Error saving social share settings:', err);
+      triggerNotification('❌ Hindi makakonekta sa server.', 'error');
+    } finally {
+      setSocialSaving(false);
+    }
+  };
+
+  const handleResetSocialSettings = async () => {
+    if (!window.confirm('Sigurado ka bang nais mong ibalik sa default cover image at metadata ang Social Media Preview?')) {
+      return;
+    }
+    setSocialSaving(true);
+    try {
+      const res = await fetch('/api/admin/social-share', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ resetToDefault: true })
+      });
+
+      if (res.ok) {
+        const payload = await res.json();
+        setSocialSettings(payload.settings);
+        setSocialPreviewImage(null);
+        setSocialTitle(payload.settings.title || 'Z-oneApp: Website Viewer & PPV Rewards');
+        setSocialDescription(payload.settings.description || 'Z-oneApp - Ang premier Website Viewer & PPV Rewards platform sa Pilipinas. Manood ng verified websites at reels, mag-earn ng real GCash cashout rewards araw-araw!');
+        setSocialDimensionWarning(null);
+        setSocialDimensions(null);
+        setSocialTimestamp(Date.now());
+        triggerNotification('🔄 Naibalik na sa default cover image ang Social Media Preview.', 'info');
+      } else {
+        const err = await res.json();
+        triggerNotification(`❌ Error: ${err.error || 'Hindi ma-reset ang Social Preview.'}`, 'error');
+      }
+    } catch (err) {
+      console.error('Error resetting social share settings:', err);
+      triggerNotification('❌ Hindi makakonekta sa server.', 'error');
+    } finally {
+      setSocialSaving(false);
     }
   };
 
@@ -1481,6 +1618,17 @@ export default function AdminPanel({
         >
           <Settings className="w-3.5 h-3.5" />
           <span>App Settings</span>
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('social_preview'); fetchSocialShareSettings(); }}
+          className={`px-3.5 py-2 font-black transition-all border-b-2 rounded-t-xl cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+            activeSubTab === 'social_preview'
+              ? 'border-indigo-600 text-indigo-600 bg-white/70'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Globe className="w-3.5 h-3.5 text-blue-600" />
+          <span>🌐 Social Media Preview</span>
         </button>
         <button
           onClick={() => { setActiveSubTab('database'); fetchDbStatus(); }}
@@ -3428,6 +3576,282 @@ export default function AdminPanel({
           token={token}
           triggerNotification={triggerNotification}
         />
+      )}
+
+      {/* SECTION: SOCIAL MEDIA LINK PREVIEW / OPEN GRAPH SYSTEM */}
+      {activeSubTab === 'social_preview' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* HEADER CARD */}
+          <div className="bg-gradient-to-r from-slate-950 via-blue-950 to-indigo-950 border-2 border-blue-500/40 p-6 rounded-3xl shadow-xl text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="inline-flex items-center gap-2 bg-blue-500/30 text-blue-200 border border-blue-400/30 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full">
+                <Sparkles className="w-3 h-3 text-blue-300" />
+                <span>Open Graph & Twitter / X Cards Engine</span>
+              </div>
+              <h3 className="text-xl font-black tracking-tight text-white flex items-center gap-2">
+                <Globe className="w-6 h-6 text-blue-400" />
+                <span>Social Media Link Preview Management</span>
+              </h3>
+              <p className="text-xs text-slate-300 max-w-2xl font-medium">
+                Kontrolin ang Cover Image, Pamagat, at Paglalarawan na awtomatikong lumalabas kapag ibinabahagi ang Z-oneApp link (<span className="text-blue-300 font-mono">https://z-oneapp.onrender.com</span>) sa Facebook, Messenger, X/Twitter, Discord, Telegram, atbp.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={fetchSocialShareSettings}
+                disabled={socialLoading}
+                className="zone-btn zone-btn-secondary text-xs px-3.5 py-2 flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white border-white/20"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${socialLoading ? 'animate-spin' : ''}`} />
+                <span>I-refresh</span>
+              </button>
+            </div>
+          </div>
+
+          {/* MAIN 2-COLUMN LAYOUT: PREVIEW SIMULATOR vs CONFIG CONTROLS */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+            {/* LEFT COLUMN: LIVE SOCIAL MEDIA PREVIEW SIMULATOR (5 COLUMNS) */}
+            <div className="lg:col-span-5 space-y-4">
+              <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xs space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-150 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Eye className="w-4 h-4 text-blue-600" />
+                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                      Live Share Preview Simulator
+                    </h4>
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200/60">
+                    Facebook / Messenger / X
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                  Ito ang eksaktong hitsura ng link snippet kapag nai-post o naipadala sa chat sa social media:
+                </p>
+
+                {/* SIMULATED SOCIAL MEDIA CARD */}
+                <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm bg-white hover:border-blue-300 transition group">
+                  {/* IMAGE CONTAINER WITH 1.91:1 ASPECT RATIO */}
+                  <div className="relative aspect-[1.91/1] w-full bg-slate-900 overflow-hidden flex items-center justify-center">
+                    <img
+                      src={
+                        socialPreviewImage ||
+                        (socialSettings?.imageUrl ? `${socialSettings.imageUrl}` : '/default-share-cover.jpg')
+                      }
+                      alt="Social Media Preview Cover"
+                      className="w-full h-full object-cover group-hover:scale-[1.01] transition duration-300"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.src = '/default-share-cover.jpg';
+                      }}
+                    />
+
+                    {/* BADGES ON IMAGE */}
+                    <div className="absolute top-2.5 left-2.5 bg-black/70 backdrop-blur-md text-white text-[10px] font-mono px-2 py-0.5 rounded-md flex items-center gap-1.5 border border-white/20">
+                      <Globe className="w-3 h-3 text-blue-400" />
+                      <span>1200 × 630</span>
+                    </div>
+
+                    {socialPreviewImage && (
+                      <div className="absolute top-2.5 right-2.5 bg-emerald-500 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-md shadow-md animate-pulse">
+                        Bagong Napili
+                      </div>
+                    )}
+                  </div>
+
+                  {/* METADATA BAR (SIMULATING FACEBOOK / X CARD FOOTER) */}
+                  <div className="p-3.5 bg-slate-50/80 border-t border-slate-150 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block font-mono">
+                      Z-ONEAPP.ONRENDER.COM
+                    </span>
+                    <h5 className="font-extrabold text-slate-950 text-sm leading-snug line-clamp-2">
+                      {socialTitle || 'Z-oneApp: Website Viewer & PPV Rewards'}
+                    </h5>
+                    <p className="text-[11px] text-slate-600 font-medium line-clamp-2 leading-relaxed">
+                      {socialDescription || 'Z-oneApp - Ang premier Website Viewer & PPV Rewards platform sa Pilipinas. Manood ng verified websites at reels, mag-earn ng real GCash cashout rewards araw-araw!'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* DIMENSION FEEDBACK */}
+                {socialDimensionWarning ? (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-amber-900 text-xs">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <span className="leading-snug">{socialDimensionWarning}</span>
+                  </div>
+                ) : socialDimensions ? (
+                  <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-emerald-800 text-xs font-semibold">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Laki ng imahe: {socialDimensions.width} × {socialDimensions.height} px (Magandang kalidad)</span>
+                  </div>
+                ) : null}
+
+                {/* ACTIVE IMAGE STATUS */}
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3.5 space-y-2 text-xs">
+                  <div className="flex items-center justify-between text-slate-600">
+                    <span className="font-semibold text-slate-500">Kasalukuyang Status:</span>
+                    <span className={`font-black px-2 py-0.5 rounded-full text-[10px] ${
+                      socialSettings?.customImage
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {socialSettings?.customImage ? 'Custom Cover Image' : 'Default System Cover'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-600">
+                    <span className="font-semibold text-slate-500">Storage Engine:</span>
+                    <span className="font-mono text-[11px] text-indigo-700 font-bold">
+                      {socialR2Available ? 'Cloudflare R2 Object Storage' : 'Render Persistent Static Mirror'}
+                    </span>
+                  </div>
+                  {socialSettings?.updatedAt && (
+                    <div className="flex items-center justify-between text-slate-500 text-[10px]">
+                      <span>Huling Na-update:</span>
+                      <span className="font-mono">{new Date(socialSettings.updatedAt).toLocaleString('en-PH')}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* RIGHT COLUMN: CONFIGURATION, UPLOAD & CONTROLS (7 COLUMNS) */}
+            <div className="lg:col-span-7 space-y-5">
+              <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-6">
+
+                {/* UPLOAD NEW COVER IMAGE */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-black text-slate-950 text-sm flex items-center gap-2">
+                        <Upload className="w-4 h-4 text-blue-600" />
+                        <span>Mag-upload o Magpalit ng Share Cover Image</span>
+                      </h4>
+                      <p className="text-[11px] text-slate-500 font-medium">
+                        Pumili ng larawan mula sa iyong device o photo gallery.
+                      </p>
+                    </div>
+                    <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                      1200 × 630 px Rec.
+                    </span>
+                  </div>
+
+                  {/* DRAG & DROP / FILE INPUT */}
+                  <div className="border-2 border-dashed border-slate-200 hover:border-blue-500 rounded-2xl p-6 transition text-center space-y-3 bg-slate-50/60 relative group cursor-pointer">
+                    <input
+                      type="file"
+                      id="social-cover-input"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                      onChange={handleSocialImageSelect}
+                    />
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <div className="bg-blue-50 group-hover:bg-blue-100 p-3 rounded-2xl text-blue-600 transition">
+                        <Upload className="w-6 h-6" />
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-xs font-black text-slate-800 block">
+                          {socialPreviewImage ? 'May bagong larawan nang napili (I-click para palitan)' : 'I-click o i-drag ang larawan dito'}
+                        </span>
+                        <span className="text-[11px] text-slate-500 block">
+                          Suportado: JPG, PNG, WEBP (Maximum: 10MB)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* TITLE & DESCRIPTION FIELDS */}
+                <div className="space-y-4 pt-2 border-t border-slate-100">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-black text-slate-800 block">
+                      Social Share Title (og:title)
+                    </label>
+                    <input
+                      type="text"
+                      value={socialTitle}
+                      onChange={(e) => setSocialTitle(e.target.value)}
+                      placeholder="Hal. Z-oneApp: Website Viewer & PPV Rewards"
+                      maxLength={120}
+                      className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 bg-slate-50/50"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400 font-medium">
+                      <span>Lumalabas bilang pangunahing header sa card ng Facebook/Twitter.</span>
+                      <span>{socialTitle.length}/120</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-black text-slate-800 block">
+                      Social Share Description (og:description)
+                    </label>
+                    <textarea
+                      value={socialDescription}
+                      onChange={(e) => setSocialDescription(e.target.value)}
+                      placeholder="Hal. Z-oneApp - Ang premier Website Viewer & PPV Rewards platform sa Pilipinas..."
+                      rows={3}
+                      maxLength={300}
+                      className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 bg-slate-50/50 resize-none"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400 font-medium">
+                      <span>Maikling buod o tagline ng website para sa mga makakakita sa social media.</span>
+                      <span>{socialDescription.length}/300</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* CACHING ADVISORY NOTE (REQUIREMENT 7) */}
+                <div className="p-3.5 bg-blue-50/60 border border-blue-200/80 rounded-2xl flex items-start gap-3 text-slate-700">
+                  <AlertCircle className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1 text-xs">
+                    <span className="font-black text-blue-950 block">
+                      Paalala tungkol sa Social Media Caching
+                    </span>
+                    <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
+                      Ang Facebook, Messenger, X/Twitter, at Discord ay may sariling independent cache para sa link previews. Pagkatapos magpalit ng larawan, ang mga naunang naibahaging post sa Facebook/Messenger ay maaaring magpatuloy na magpakita ng lumang preview hanggang sa ma-expire o ma-refresh ang kanilang cache gamit ang <strong>Facebook Sharing Debugger</strong>.
+                    </p>
+                  </div>
+                </div>
+
+                {/* ACTION BUTTONS (USING NEW BUTTON SYSTEM) */}
+                <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveSocialSettings}
+                    disabled={socialSaving}
+                    className="zone-btn zone-btn-primary w-full sm:flex-1 py-3 text-xs flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                  >
+                    {socialSaving ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Inia-apply at Inia-upload...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="w-4 h-4" />
+                        <span>I-save at I-publish ang Social Preview</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleResetSocialSettings}
+                    disabled={socialSaving || (!socialSettings?.customImage && !socialPreviewImage)}
+                    className="zone-btn zone-btn-secondary w-full sm:w-auto py-3 px-4 text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Ibalik sa Default</span>
+                  </button>
+                </div>
+
+              </div>
+            </div>
+
+          </div>
+        </div>
       )}
 
       {/* SECTION 9: DATABASE & PERSISTENT STORAGE MANAGEMENT */}

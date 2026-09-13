@@ -1097,6 +1097,15 @@ export interface SavedPostRef {
   savedAt: string;
 }
 
+export interface SocialShareSettings {
+  imageUrl: string;
+  imageKey?: string;
+  title: string;
+  description: string;
+  updatedAt: string;
+  customImage?: boolean;
+}
+
 
 
 

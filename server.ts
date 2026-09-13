@@ -2227,7 +2227,25 @@ interface DBStructure {
   userMutes?: Record<string, string[]>;
   userHiddenPosts?: Record<string, string[]>;
   creatorProductClicks?: any[];
+  socialShareSettings?: SocialShareSettings;
 }
+
+export interface SocialShareSettings {
+  imageUrl: string;
+  imageKey?: string;
+  title: string;
+  description: string;
+  updatedAt: string;
+  customImage?: boolean;
+}
+
+export const DEFAULT_SOCIAL_SHARE_SETTINGS: SocialShareSettings = {
+  imageUrl: 'https://z-oneapp.onrender.com/default-share-cover.jpg',
+  title: 'Z-oneApp: Website Viewer & PPV Rewards',
+  description: 'Z-oneApp - Ang premier Website Viewer & PPV Rewards platform sa Pilipinas. Manood ng verified websites at reels, mag-earn ng real GCash cashout rewards araw-araw!',
+  updatedAt: new Date().toISOString(),
+  customImage: false
+};
 
 interface SubscriptionPayment {
   id: string;
@@ -3150,6 +3168,15 @@ function loadDB(): DBStructure {
     }
     if (!loaded.creatorProductClicks) {
       loaded.creatorProductClicks = [];
+    }
+    if (!loaded.socialShareSettings) {
+      loaded.socialShareSettings = {
+        imageUrl: 'https://z-oneapp.onrender.com/default-share-cover.jpg',
+        title: 'Z-oneApp: Website Viewer & PPV Rewards',
+        description: 'Z-oneApp - Ang premier Website Viewer & PPV Rewards platform sa Pilipinas. Manood ng verified websites at reels, mag-earn ng real GCash cashout rewards araw-araw!',
+        updatedAt: new Date().toISOString(),
+        customImage: false
+      };
     }
 
     // Run auto-expiration on banners & unpaid baskets
@@ -4428,6 +4455,16 @@ async function uploadToFirestore(data: DBStructure) {
       }
     }
 
+    if (data.socialShareSettings) {
+      promises.push((async () => {
+        try {
+          await cloudDb.setDoc('system_config', 'social_share_settings', data.socialShareSettings);
+        } catch (scErr: any) {
+          console.error('Error saving socialShareSettings to Cloud DB:', scErr);
+        }
+      })());
+    }
+
     // Deletion syncs
     const currentStoryIds = new Set(data.stories ? data.stories.map(s => s.id) : []);
     for (const cachedId of lastSyncedCache.stories.keys()) {
@@ -4624,7 +4661,8 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
       'challenges',
       'challenge_entries',
       'sponsored_missions',
-      'subscription_payments'
+      'subscription_payments',
+      'system_config'
     ];
 
     // Completely isolated temporary recovery buffer
@@ -4668,12 +4706,15 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
     const dbEntries = fetched['challenge_entries'] || [];
     const dbMissions = fetched['sponsored_missions'] || [];
     const dbSubPayments = fetched['subscription_payments'] || [];
+    const dbSystemConfig = fetched['system_config'] || [];
+    const fetchedSocialSettingsDoc = dbSystemConfig.find((doc: any) => doc && (doc.id === 'social_share_settings' || doc._id === 'social_share_settings'));
 
     const hasAnyCloudData = dbUsers.length > 0 || dbStories.length > 0 || dbAlbums.length > 0 || dbGroupChats.length > 0 || 
                             dbGroupMessages.length > 0 || dbDMs.length > 0 || dbPosts.length > 0 || 
                             dbReels.length > 0 || dbShopOrders.length > 0 || dbCampaigns.length > 0 || 
                             dbMerchantAds.length > 0 || dbShopProducts.length > 0 || dbRegisteredDevices.length > 0 ||
-                            dbChallenges.length > 0 || dbMissions.length > 0 || dbSubPayments.length > 0;
+                            dbChallenges.length > 0 || dbMissions.length > 0 || dbSubPayments.length > 0 ||
+                            dbSystemConfig.length > 0;
 
     const localDB = loadDB(); // Read current local records
 
@@ -4728,6 +4769,19 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
       const finalEntries = mergeCloudFirst(localDB.challengeEntries || INITIAL_CHALLENGE_ENTRIES, dbEntries);
       const finalMissions = mergeCloudFirst(localDB.sponsoredMissions || INITIAL_SPONSORED_MISSIONS, dbMissions);
 
+      const restoredSocialSettings: SocialShareSettings = (fetchedSocialSettingsDoc && fetchedSocialSettingsDoc.imageUrl)
+        ? {
+            imageUrl: fetchedSocialSettingsDoc.imageUrl,
+            imageKey: fetchedSocialSettingsDoc.imageKey,
+            title: fetchedSocialSettingsDoc.title || DEFAULT_SOCIAL_SHARE_SETTINGS.title,
+            description: fetchedSocialSettingsDoc.description || DEFAULT_SOCIAL_SHARE_SETTINGS.description,
+            updatedAt: fetchedSocialSettingsDoc.updatedAt || new Date().toISOString(),
+            customImage: fetchedSocialSettingsDoc.customImage !== undefined
+              ? Boolean(fetchedSocialSettingsDoc.customImage)
+              : Boolean(fetchedSocialSettingsDoc.imageKey)
+          }
+        : (localDB.socialShareSettings || DEFAULT_SOCIAL_SHARE_SETTINGS);
+
       const mergedDB: DBStructure = {
         users: finalUsers.length > 0 ? finalUsers : localDB.users,
         campaigns: finalCampaigns,
@@ -4753,7 +4807,8 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
         creatorChallenges: finalChallenges.length > 0 ? finalChallenges : INITIAL_CREATOR_CHALLENGES,
         challengeEntries: finalEntries.length > 0 ? finalEntries : INITIAL_CHALLENGE_ENTRIES,
         sponsoredMissions: finalMissions.length > 0 ? finalMissions : INITIAL_SPONSORED_MISSIONS,
-        subscriptionPayments: mergeCloudFirst(localDB.subscriptionPayments || [], dbSubPayments)
+        subscriptionPayments: mergeCloudFirst(localDB.subscriptionPayments || [], dbSubPayments),
+        socialShareSettings: restoredSocialSettings
       };
 
       // Admin credential verification
@@ -8735,7 +8790,9 @@ app.post('/api/admin/db/rebuild-from-firestore', async (req, res) => {
       'kiddie_content',
       'challenges',
       'challenge_entries',
-      'sponsored_missions'
+      'sponsored_missions',
+      'subscription_payments',
+      'system_config'
     ];
 
     let fetchErrors = 0;
@@ -8813,6 +8870,9 @@ app.post('/api/admin/db/rebuild-from-firestore', async (req, res) => {
     const rawChallenges = fetched['challenges'] || [];
     const rawEntries = fetched['challenge_entries'] || [];
     const rawMissions = fetched['sponsored_missions'] || [];
+    const rawSubPayments = fetched['subscription_payments'] || [];
+    const rawSystemConfig = fetched['system_config'] || [];
+    const forceFetchedSocialSettingsDoc = rawSystemConfig.find((doc: any) => doc && (doc.id === 'social_share_settings' || doc._id === 'social_share_settings'));
 
     if (!Array.isArray(rawUsers)) {
       return res.status(500).json({
@@ -8846,7 +8906,20 @@ app.post('/api/admin/db/rebuild-from-firestore', async (req, res) => {
       deviceTransfers: [],
       creatorChallenges: rawChallenges,
       challengeEntries: rawEntries,
-      sponsoredMissions: rawMissions
+      sponsoredMissions: rawMissions,
+      subscriptionPayments: rawSubPayments,
+      socialShareSettings: (forceFetchedSocialSettingsDoc && forceFetchedSocialSettingsDoc.imageUrl)
+        ? {
+            imageUrl: forceFetchedSocialSettingsDoc.imageUrl,
+            imageKey: forceFetchedSocialSettingsDoc.imageKey,
+            title: forceFetchedSocialSettingsDoc.title || DEFAULT_SOCIAL_SHARE_SETTINGS.title,
+            description: forceFetchedSocialSettingsDoc.description || DEFAULT_SOCIAL_SHARE_SETTINGS.description,
+            updatedAt: forceFetchedSocialSettingsDoc.updatedAt || new Date().toISOString(),
+            customImage: forceFetchedSocialSettingsDoc.customImage !== undefined
+              ? Boolean(forceFetchedSocialSettingsDoc.customImage)
+              : Boolean(forceFetchedSocialSettingsDoc.imageKey)
+          }
+        : (loadDB().socialShareSettings || DEFAULT_SOCIAL_SHARE_SETTINGS)
     };
 
     // Create safety timestamped backup of the CURRENT database BEFORE replacing
@@ -9387,6 +9460,237 @@ app.post('/api/admin/update-qr', async (req, res) => {
     res.status(500).json({ error: 'May naganap na error habang sine-save ang QR code.' });
   }
 });
+
+// =========================================================================
+// SOCIAL MEDIA LINK PREVIEW / OPEN GRAPH SYSTEM
+// =========================================================================
+
+function getSocialShareMetadata(req?: express.Request) {
+  const db = loadDB();
+  const settings = db.socialShareSettings || DEFAULT_SOCIAL_SHARE_SETTINGS;
+
+  const canonicalUrl = 'https://z-oneapp.onrender.com';
+  let imageUrl = (settings.imageUrl || `${canonicalUrl}/default-share-cover.jpg`).trim();
+  if (imageUrl.startsWith('/')) {
+    imageUrl = `${canonicalUrl}${imageUrl}`;
+  }
+
+  return {
+    title: (settings.title || DEFAULT_SOCIAL_SHARE_SETTINGS.title).trim(),
+    description: (settings.description || DEFAULT_SOCIAL_SHARE_SETTINGS.description).trim(),
+    url: canonicalUrl,
+    imageUrl,
+    siteName: 'Z-oneApp',
+    updatedAt: settings.updatedAt || new Date().toISOString(),
+    customImage: !!settings.customImage,
+    imageKey: settings.imageKey
+  };
+}
+
+function injectSocialMetaTags(html: string, req?: express.Request): string {
+  const meta = getSocialShareMetadata(req);
+  let modified = html;
+
+  const replaceOrInsertMeta = (nameOrProp: string, content: string, isTwitter = false) => {
+    const attr = isTwitter ? 'name' : 'property';
+    const escaped = nameOrProp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`<meta\\s+${attr}=["']${escaped}["'][^>]*>`, 'gi');
+    const safeContent = content.replace(/"/g, '&quot;');
+    const newTag = `<meta ${attr}="${nameOrProp}" content="${safeContent}" />`;
+    if (regex.test(modified)) {
+      modified = modified.replace(regex, newTag);
+    } else {
+      modified = modified.replace('</head>', `    ${newTag}\n  </head>`);
+    }
+  };
+
+  replaceOrInsertMeta('og:type', 'website');
+  replaceOrInsertMeta('og:site_name', meta.siteName);
+  replaceOrInsertMeta('og:url', meta.url);
+  replaceOrInsertMeta('og:title', meta.title);
+  replaceOrInsertMeta('og:description', meta.description);
+  replaceOrInsertMeta('og:image', meta.imageUrl);
+  replaceOrInsertMeta('og:image:width', '1200');
+  replaceOrInsertMeta('og:image:height', '630');
+
+  replaceOrInsertMeta('twitter:card', 'summary_large_image', true);
+  replaceOrInsertMeta('twitter:title', meta.title, true);
+  replaceOrInsertMeta('twitter:description', meta.description, true);
+  replaceOrInsertMeta('twitter:image', meta.imageUrl, true);
+
+  return modified;
+}
+
+// Public static endpoints for Open Graph cover image (No auth required)
+app.get('/default-share-cover.jpg', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+  const pubPath = path.join(process.cwd(), 'public', 'default-share-cover.jpg');
+  if (fs.existsSync(pubPath)) {
+    return res.sendFile(pubPath);
+  }
+  const fallback = path.join(process.cwd(), 'public', 'pwa-icon-512.jpg');
+  if (fs.existsSync(fallback)) {
+    return res.sendFile(fallback);
+  }
+  res.status(404).send('Default share image not found');
+});
+
+app.get('/social-share-cover.jpg', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+  const customPath = path.join(process.cwd(), 'public', 'social-share-cover.jpg');
+  if (fs.existsSync(customPath)) {
+    return res.sendFile(customPath);
+  }
+  const defPath = path.join(process.cwd(), 'public', 'default-share-cover.jpg');
+  if (fs.existsSync(defPath)) {
+    return res.sendFile(defPath);
+  }
+  res.status(404).send('Social share image not found');
+});
+
+// Public API to inspect current social preview configuration
+app.get('/api/public/social-share', (req, res) => {
+  const meta = getSocialShareMetadata(req);
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.json({
+    status: 'ok',
+    ...meta
+  });
+});
+
+// Admin API to read current social preview settings (Protected by requireAdmin)
+app.get('/api/admin/social-share', (req, res) => {
+  const db = loadDB();
+  const settings = db.socialShareSettings || DEFAULT_SOCIAL_SHARE_SETTINGS;
+  const hasR2 = !!(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY);
+  
+  res.json({
+    status: 'ok',
+    settings,
+    defaultSettings: DEFAULT_SOCIAL_SHARE_SETTINGS,
+    r2Available: hasR2,
+    r2PublicDomain: getR2PublicDomain(),
+    canonicalUrl: 'https://z-oneapp.onrender.com'
+  });
+});
+
+// Admin API to update/replace/reset social share cover image (Protected by requireAdmin)
+app.post('/api/admin/social-share', async (req, res) => {
+  const { dataUrl, title, description, resetToDefault } = req.body;
+  const db = loadDB();
+
+  if (resetToDefault) {
+    db.socialShareSettings = {
+      imageUrl: 'https://z-oneapp.onrender.com/default-share-cover.jpg',
+      imageKey: undefined,
+      title: 'Z-oneApp: Website Viewer & PPV Rewards',
+      description: 'Z-oneApp - Ang premier Website Viewer & PPV Rewards platform sa Pilipinas. Manood ng verified websites at reels, mag-earn ng real GCash cashout rewards araw-araw!',
+      updatedAt: new Date().toISOString(),
+      customImage: false
+    };
+
+    saveDB(db);
+    safeCloudSync('set', 'system_config', 'social_share_settings', db.socialShareSettings);
+
+    return res.json({
+      success: true,
+      message: 'Matagumpay na naibalik sa default cover image ang Social Media Preview!',
+      settings: db.socialShareSettings
+    });
+  }
+
+  let newImageUrl = db.socialShareSettings?.imageUrl || DEFAULT_SOCIAL_SHARE_SETTINGS.imageUrl;
+  let newImageKey = db.socialShareSettings?.imageKey;
+  let isCustom = db.socialShareSettings?.customImage || false;
+
+  if (dataUrl) {
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+      return res.status(400).json({ error: 'Hindi valid ang imaheng ipinasa. Dapat ay valid data URL ng larawan.' });
+    }
+
+    const matches = dataUrl.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
+      return res.status(400).json({ error: 'Hindi maproseso ang image data format.' });
+    }
+
+    const mimeType = matches[1].toLowerCase();
+    const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!allowedMimes.includes(mimeType)) {
+      return res.status(400).json({ error: `Hindi suportadong format (${mimeType}). Tanging JPG, PNG, at WEBP lamang ang tinatanggap.` });
+    }
+
+    const base64Data = matches[2];
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    // Max 10MB
+    if (buffer.length > 10 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Masyadong malaki ang larawan. Ang maximum na sukat ay 10MB.' });
+    }
+
+    // Mirror to public directory and dist directory for instant, zero-downtime serving
+    const publicDir = path.join(process.cwd(), 'public');
+    if (!fs.existsSync(publicDir)) {
+      fs.mkdirSync(publicDir, { recursive: true });
+    }
+    fs.writeFileSync(path.join(publicDir, 'social-share-cover.jpg'), buffer);
+
+    const distDir = path.join(process.cwd(), 'dist');
+    if (fs.existsSync(distDir)) {
+      fs.writeFileSync(path.join(distDir, 'social-share-cover.jpg'), buffer);
+    }
+
+    // Upload to Cloudflare R2 Object Storage
+    let r2UploadUrl: string | null = null;
+    let r2Key: string | null = null;
+
+    try {
+      const r2Res = await uploadMediaToCloudflareR2Detailed(buffer, 'social-share', 'cover', mimeType);
+      if (r2Res.result && r2Res.result.url) {
+        r2UploadUrl = r2Res.result.url;
+        r2Key = r2Res.result.path;
+      }
+    } catch (r2Err: any) {
+      console.warn('⚠️ [SocialShare] Cloudflare R2 upload warning:', r2Err.message);
+    }
+
+    const timestamp = Date.now();
+    if (r2UploadUrl) {
+      newImageUrl = `${r2UploadUrl}?v=${timestamp}`;
+      newImageKey = r2Key || 'social-share-cover';
+    } else {
+      newImageUrl = `https://z-oneapp.onrender.com/social-share-cover.jpg?v=${timestamp}`;
+      newImageKey = 'social-share-cover';
+    }
+    isCustom = true;
+  }
+
+  const updatedTitle = typeof title === 'string' && title.trim().length > 0
+    ? title.trim()
+    : (db.socialShareSettings?.title || DEFAULT_SOCIAL_SHARE_SETTINGS.title);
+
+  const updatedDesc = typeof description === 'string' && description.trim().length > 0
+    ? description.trim()
+    : (db.socialShareSettings?.description || DEFAULT_SOCIAL_SHARE_SETTINGS.description);
+
+  db.socialShareSettings = {
+    imageUrl: newImageUrl,
+    imageKey: newImageKey,
+    title: updatedTitle,
+    description: updatedDesc,
+    updatedAt: new Date().toISOString(),
+    customImage: isCustom
+  };
+
+  saveDB(db);
+  safeCloudSync('set', 'system_config', 'social_share_settings', db.socialShareSettings);
+
+  res.json({
+    success: true,
+    message: 'Matagumpay na nai-save at nai-publish ang Social Media Preview settings!',
+    settings: db.socialShareSettings
+  });
+});
+
 
 // Dynamic Interceptor for serving legacy /uploads/ requests with transparent permanent Cloudflare R2 redirect
 app.get('/uploads/:filename', async (req, res) => {
@@ -18760,6 +19064,32 @@ async function startServer() {
       server: { middlewareMode: true },
       appType: 'spa',
     });
+
+    // Dynamic SSR / Crawler Open Graph Injection for HTML requests
+    app.use(async (req, res, next) => {
+      const isHtmlRequest = req.method === 'GET' &&
+        (req.path === '/' || (req.headers.accept && req.headers.accept.includes('text/html'))) &&
+        !req.path.startsWith('/api') &&
+        !req.path.startsWith('/@') &&
+        !req.path.startsWith('/src') &&
+        !req.path.startsWith('/node_modules') &&
+        !req.path.includes('.');
+
+      if (isHtmlRequest) {
+        try {
+          const rawHtml = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf-8');
+          let transformed = await vite.transformIndexHtml(req.originalUrl, rawHtml);
+          transformed = injectSocialMetaTags(transformed, req);
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          return res.status(200).send(transformed);
+        } catch (err) {
+          return next(err);
+        }
+      }
+      next();
+    });
+
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
@@ -18778,7 +19108,18 @@ async function startServer() {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
-      res.sendFile(path.join(distPath, 'index.html'));
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        try {
+          const rawHtml = fs.readFileSync(indexPath, 'utf-8');
+          const finalHtml = injectSocialMetaTags(rawHtml, req);
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          return res.send(finalHtml);
+        } catch (e) {
+          return res.sendFile(indexPath);
+        }
+      }
+      res.sendFile(indexPath);
     });
   }
 
