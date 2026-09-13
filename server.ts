@@ -68,7 +68,11 @@ const jsonParserUpload = express.json({ limit: '50mb' });
 const urlencodedParserStandard = express.urlencoded({ limit: '2mb', extended: true });
 
 app.use((req, res, next) => {
-  if (req.path === '/api/zone/upload' || req.path === '/api/challenges/upload-media') {
+  if (
+    req.path === '/api/zone/upload' ||
+    req.path === '/api/challenges/upload-media' ||
+    req.path === '/api/admin/social-share'
+  ) {
     return jsonParserUpload(req, res, next);
   }
   return jsonParserStandard(req, res, next);

@@ -775,8 +775,22 @@ export default function AdminPanel({
         setSocialTimestamp(Date.now());
         triggerNotification('🎉 Matagumpay na nai-publish ang Social Media Preview settings!', 'success');
       } else {
-        const err = await res.json();
-        triggerNotification(`❌ Error: ${err.error || 'Hindi ma-save ang Social Preview settings.'}`, 'error');
+        let errorMessage = 'Hindi ma-save ang Social Preview settings.';
+
+        try {
+          const err = await res.json();
+          if (err?.error) {
+            errorMessage = err.error;
+          }
+        } catch {
+          if (res.status === 413) {
+            errorMessage = 'Masyadong malaki ang imahe para sa server (limit: 10MB).';
+          } else {
+            errorMessage = `Server responded with status ${res.status}.`;
+          }
+        }
+
+        triggerNotification(`❌ Error: ${errorMessage}`, 'error');
       }
     } catch (err) {
       console.error('Error saving social share settings:', err);
