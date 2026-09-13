@@ -243,7 +243,7 @@ export const SubscriptionPaymentModal: React.FC<SubscriptionPaymentModalProps> =
           <button
             id="btn-close-subscription-payment"
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition cursor-pointer border border-white/20 active:scale-95 shrink-0"
+            className="zone-btn-icon zone-btn-icon-sm zone-btn-icon-dark text-white cursor-pointer shrink-0"
             title="Isara"
           >
             <X className="w-4 h-4" />
@@ -335,7 +335,7 @@ export const SubscriptionPaymentModal: React.FC<SubscriptionPaymentModalProps> =
                     onRefreshProfile?.();
                     onClose();
                   }}
-                  className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black py-3 rounded-2xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                  className="flex-1 zone-btn zone-btn-primary zone-btn-md text-xs cursor-pointer shadow-md"
                 >
                   <RefreshCw className="w-4 h-4" />
                   <span>Subaybayan ang Status sa Aking Account</span>
@@ -343,7 +343,7 @@ export const SubscriptionPaymentModal: React.FC<SubscriptionPaymentModalProps> =
                 <button
                   type="button"
                   onClick={onClose}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 px-6 rounded-2xl text-xs transition cursor-pointer"
+                  className="zone-btn zone-btn-secondary zone-btn-md text-xs px-6 cursor-pointer"
                 >
                   Isara (Close)
                 </button>
@@ -703,7 +703,7 @@ export const SubscriptionPaymentModal: React.FC<SubscriptionPaymentModalProps> =
                     type="submit"
                     id="btn-submit-payment-for-verification"
                     disabled={isSubmitting || !receiptScreenshot || !referenceNumber.trim() || !gcashAccountName.trim() || !gcashMobileNumber.trim()}
-                    className="w-full py-3.5 px-4 bg-gradient-to-r from-emerald-500 via-teal-600 to-emerald-600 hover:from-emerald-600 hover:to-teal-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black text-xs sm:text-sm rounded-2xl transition shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                    className="w-full zone-btn zone-btn-success zone-btn-lg text-xs sm:text-sm font-black cursor-pointer shadow-md"
                   >
                     {isSubmitting ? (
                       <>

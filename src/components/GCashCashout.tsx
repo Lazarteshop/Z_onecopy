@@ -413,9 +413,9 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
                   type="button"
                   id={`preset-${preset}`}
                   onClick={() => applyPresetAmount(preset)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer active:scale-95 ${
                     stats.balance >= preset
-                      ? 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+                      ? 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700 shadow-2xs'
                       : 'bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed'
                   }`}
                   disabled={stats.balance < preset}
@@ -433,7 +433,7 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
                     setErrorMsg(isTl ? '⚠️ Hindi sapat ang pondo upang i-withdraw lahat. Minimum ay ₱100.00.' : '⚠️ Insufficient balance to withdraw all. Minimum is ₱100.00.');
                   }
                 }}
-                className="px-3 py-1.5 rounded-lg text-xs font-bold border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition cursor-pointer"
+                className="px-3.5 py-1.5 rounded-xl text-xs font-bold border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition cursor-pointer active:scale-95 shadow-2xs"
               >
                 {isTl ? `I-Max Lahat (₱${Math.floor(stats.balance)})` : `Max All (₱${Math.floor(stats.balance)})`}
               </button>
@@ -475,11 +475,7 @@ export default function GCashCashout({ stats, withdrawals, onWithdrawSubmit, lan
             type="submit"
             id="withdraw-submit-btn"
             disabled={isSubmitting || stats.balance < 100}
-            className={`w-full py-3.5 rounded-xl font-bold text-sm text-white shadow-sm flex items-center justify-center gap-2 transition cursor-pointer ${
-              stats.balance >= 100
-                ? 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800'
-                : 'bg-slate-300 cursor-not-allowed text-slate-500'
-            }`}
+            className="w-full zone-btn zone-btn-primary zone-btn-lg text-sm shadow-sm flex items-center justify-center gap-2 cursor-pointer"
           >
             {isSubmitting ? (
               <>

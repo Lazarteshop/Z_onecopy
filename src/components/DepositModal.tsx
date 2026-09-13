@@ -169,7 +169,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 transition-all cursor-pointer"
+            className="zone-btn-icon zone-btn-icon-sm zone-btn-icon-ghost text-slate-400 hover:text-slate-700 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -211,7 +211,7 @@ export const DepositModal: React.FC<DepositModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="w-full py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition-all shadow-xs cursor-pointer"
+              className="w-full zone-btn zone-btn-success zone-btn-md text-xs cursor-pointer shadow-xs"
             >
               {isTl ? 'Sige, Naintindihan Ko' : 'Got it, Close'}
             </button>
@@ -388,14 +388,14 @@ export const DepositModal: React.FC<DepositModalProps> = ({
                 type="button"
                 onClick={onClose}
                 disabled={submitting}
-                className="flex-1 py-3 rounded-2xl border border-slate-200 text-slate-600 font-black text-xs hover:bg-slate-50 cursor-pointer"
+                className="flex-1 zone-btn zone-btn-secondary zone-btn-md text-xs cursor-pointer"
               >
                 {isTl ? 'Kanselahin' : 'Cancel'}
               </button>
               <button
                 type="submit"
                 disabled={submitting}
-                className="flex-1 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs cursor-pointer transition-all"
+                className="flex-1 zone-btn zone-btn-success zone-btn-md text-xs flex items-center justify-center gap-2 shadow-xs cursor-pointer"
               >
                 {submitting ? (
                   <>

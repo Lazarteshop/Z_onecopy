@@ -1891,7 +1891,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setShowEditProfileModal(false)}
-                  className="text-white hover:text-blue-100 p-1 transition text-xs sm:text-sm font-black cursor-pointer shrink-0 ml-2"
+                  className="zone-btn-icon zone-btn-icon-sm zone-btn-icon-dark text-white text-xs font-black cursor-pointer shrink-0 ml-2"
                 >
                   ✕
                 </button>
@@ -2026,14 +2026,14 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setShowEditProfileModal(false)}
-                    className="flex-1 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 transition py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-slate-700 font-black text-xs cursor-pointer text-center"
+                    className="flex-1 zone-btn zone-btn-secondary zone-btn-md text-xs cursor-pointer text-center"
                   >
                     {language === 'tl' ? 'I-cancel' : 'Cancel'}
                   </button>
                   <button
                     type="submit"
                     disabled={isUpdatingProfile}
-                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 active:bg-indigo-800 transition py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-white font-black text-xs cursor-pointer flex items-center justify-center gap-2 shadow-md"
+                    className="flex-1 zone-btn zone-btn-brand zone-btn-md text-xs cursor-pointer shadow-sm"
                   >
                     {isUpdatingProfile ? (
                       <span className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
@@ -2051,7 +2051,7 @@ export default function App() {
                       setShowEditProfileModal(false);
                       handleLogout();
                     }}
-                    className="w-full bg-rose-50 hover:bg-rose-100 active:bg-rose-200 border border-rose-200/80 text-rose-600 hover:text-rose-700 transition py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-extrabold text-xs cursor-pointer flex items-center justify-center gap-2 shadow-xs"
+                    className="w-full zone-btn zone-btn-danger zone-btn-md text-xs cursor-pointer"
                   >
                     <LogOut className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-500" />
                     <span>{language === 'tl' ? '🔴 I-Logout ang Account' : '🔴 Logout Account'}</span>
@@ -2106,14 +2106,14 @@ export default function App() {
                   <div className="space-y-3 pt-2">
                     <button
                       onClick={() => setShowPlansInWarning(true)}
-                      className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-black py-3.5 rounded-2xl text-xs cursor-pointer shadow-md transition duration-300 flex items-center justify-center gap-2"
+                      className="w-full zone-btn zone-btn-brand zone-btn-lg text-xs cursor-pointer shadow-md"
                     >
                       <Sparkles className="w-4 h-4 text-amber-300 animate-spin-slow" />
                       <span>{language === 'tl' ? 'Tingnan ang Earning Plans (Extend Access)' : 'View Earning Plans (Extend Access)'}</span>
                     </button>
                     <button
                       onClick={() => setShowExpiryWarningModal(false)}
-                      className="w-full bg-slate-100 hover:bg-slate-200 text-slate-650 font-black py-3 rounded-2xl text-xs cursor-pointer transition duration-300"
+                      className="w-full zone-btn zone-btn-secondary zone-btn-md text-xs cursor-pointer"
                     >
                       {language === 'tl' ? 'Pansamantalang I-dismiss (Close for Now)' : 'Dismiss for Now'}
                     </button>
@@ -2155,7 +2155,7 @@ export default function App() {
                               handleOpenSubscriptionPayment(plan.id);
                               setShowExpiryWarningModal(false);
                             }}
-                            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-[11px] px-4 py-2 rounded-xl cursor-pointer shadow-sm shrink-0"
+                            className="zone-btn zone-btn-brand zone-btn-sm text-[11px] px-4 cursor-pointer shadow-xs shrink-0"
                           >
                             {language === 'tl' ? 'Bilhin' : 'Buy'}
                           </button>
@@ -2166,13 +2166,13 @@ export default function App() {
                     <div className="flex gap-2 pt-2">
                       <button
                         onClick={() => setShowPlansInWarning(false)}
-                        className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-650 font-black py-2.5 rounded-xl text-xs cursor-pointer transition duration-300"
+                        className="flex-1 zone-btn zone-btn-secondary zone-btn-md text-xs cursor-pointer"
                       >
                         {language === 'tl' ? 'Bumalik' : 'Back'}
                       </button>
                       <button
                         onClick={() => setShowExpiryWarningModal(false)}
-                        className="flex-1 bg-rose-50 hover:bg-rose-100 text-rose-600 font-black py-2.5 rounded-xl text-xs cursor-pointer transition duration-300"
+                        className="flex-1 zone-btn zone-btn-danger zone-btn-md text-xs cursor-pointer"
                       >
                         {language === 'tl' ? 'I-dismiss' : 'Dismiss'}
                       </button>
@@ -2421,7 +2421,7 @@ export default function App() {
                 <button
                   type="submit"
                   disabled={authLoading}
-                  className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 transition py-3 rounded-xl text-white font-black text-xs uppercase tracking-wider cursor-pointer shadow-md flex items-center justify-center gap-2"
+                  className="w-full zone-btn zone-btn-primary zone-btn-lg text-xs uppercase tracking-wider cursor-pointer shadow-md flex items-center justify-center gap-2"
                 >
                   {authLoading ? (
                     <RefreshCw className="w-4 h-4 animate-spin" />
@@ -2498,7 +2498,7 @@ export default function App() {
                     setActiveTab(null);
                   }}
                   type="button"
-                  className="inline-flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-xs sm:text-sm px-4 py-2 rounded-xl transition cursor-pointer shadow-md hover:scale-[1.02] active:scale-[0.98] border border-blue-400/30 select-none"
+                  className="zone-btn zone-btn-primary zone-btn-sm text-xs sm:text-sm px-4 select-none cursor-pointer"
                 >
                   <ArrowLeft className="w-4 h-4" />
                   <span>{language === 'tl' ? 'Bumalik sa Launcher' : 'Back to Launcher'}</span>
@@ -2671,21 +2671,21 @@ export default function App() {
                     <div className="flex flex-col sm:flex-row gap-3 pt-2">
                       <button
                         onClick={() => handleOpenSubscriptionPayment(user.subscription?.planId || '1month')}
-                        className="bg-indigo-600 hover:bg-indigo-700 transition px-5 py-3 rounded-2xl text-white font-black text-xs cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                        className="zone-btn zone-btn-brand zone-btn-md text-xs cursor-pointer shadow-sm"
                       >
                         <Receipt className="w-4 h-4" />
                         <span>Isumite / Tingnan ang GCash InstaPay Payment</span>
                       </button>
                       <button
                         onClick={() => fetchUserProfile(token)}
-                        className="flex-1 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 transition py-3 rounded-2xl text-slate-950 font-black text-xs cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                        className="flex-1 zone-btn zone-btn-amber zone-btn-md text-xs cursor-pointer shadow-sm"
                       >
                         <RefreshCw className="w-4 h-4 animate-spin-slow" />
                         <span>I-refresh ang Status</span>
                       </button>
                       <button
                         onClick={handleLogout}
-                        className="bg-slate-100 hover:bg-slate-200 transition px-5 py-3 rounded-2xl text-slate-650 font-black text-xs cursor-pointer"
+                        className="zone-btn zone-btn-secondary zone-btn-md text-xs cursor-pointer"
                       >
                         Mag-logout
                       </button>
@@ -2733,7 +2733,7 @@ export default function App() {
                           
                           <button
                             onClick={() => handleOpenSubscriptionPayment(plan.id)}
-                            className="w-full bg-blue-600 hover:bg-blue-700 transition py-2.5 text-white font-black text-xs rounded-xl cursor-pointer shadow-sm text-center active:scale-98"
+                            className="w-full zone-btn zone-btn-primary zone-btn-md text-xs shadow-sm text-center"
                           >
                             Bilhin ang Plan na ito
                           </button>
@@ -2793,7 +2793,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => setActiveTab('kiddie')}
-                      className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black py-3 rounded-2xl text-xs cursor-pointer shadow-md flex items-center justify-center gap-2"
+                      className="w-full zone-btn zone-btn-brand zone-btn-lg text-xs cursor-pointer shadow-md flex items-center justify-center gap-2"
                     >
                       <span>{language === 'tl' ? 'Pumunta sa Z-oneKiddie Portal 🌟' : 'Open Z-oneKiddie Portal 🌟'}</span>
                     </button>
@@ -3371,7 +3371,7 @@ export default function App() {
                 setActiveTab(null);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
-              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer ${
+              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer active:scale-90 ${
                 activeTab === null
                   ? 'text-blue-600 font-black'
                   : 'text-slate-400 hover:text-slate-600 font-semibold'
@@ -3390,7 +3390,7 @@ export default function App() {
                 setActiveTab('earn');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
-              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer ${
+              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer active:scale-90 ${
                 activeTab === 'earn'
                   ? 'text-blue-600 font-black'
                   : 'text-slate-400 hover:text-slate-600 font-semibold'
@@ -3408,7 +3408,7 @@ export default function App() {
                 try { soundEffects.playClick(); } catch (e) {}
                 setShowSpinModal(true);
               }}
-              className="flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer text-slate-400 hover:text-indigo-600 font-semibold relative group"
+              className="flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer text-slate-400 hover:text-indigo-600 font-semibold relative group active:scale-90"
             >
               <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-yellow-400 to-amber-500 text-slate-950 flex items-center justify-center shadow-xs -mt-2 group-hover:scale-110 transition">
                 <Gift className="w-4 h-4 text-slate-950 stroke-[2.5]" />
@@ -3425,7 +3425,7 @@ export default function App() {
                 setActiveTab('cashout');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
-              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer ${
+              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer active:scale-90 ${
                 activeTab === 'cashout'
                   ? 'text-blue-600 font-black'
                   : 'text-slate-400 hover:text-slate-600 font-semibold'
@@ -3443,7 +3443,7 @@ export default function App() {
                 try { soundEffects.playClick(); } catch (e) {}
                 openEditProfileModal();
               }}
-              className="flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer text-slate-400 hover:text-slate-600 font-semibold"
+              className="flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer text-slate-400 hover:text-slate-600 font-semibold active:scale-90"
             >
               <User className="w-5 h-5" />
               <span className="text-[10px] mt-0.5">Account</span>

@@ -219,3 +219,276 @@ body {
   perspective: none !important;
 }
 
+/* ==========================================================================
+   Z-ONEAPP UNIFIED BUTTON DESIGN SYSTEM
+   Modern, responsive, touch-friendly button primitives with active feedback,
+   accessible tap targets, and consistent micro-interactions.
+   ========================================================================== */
+
+/* Universal button normalization */
+button, [role="button"], .zone-btn {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+/* Base button class */
+.zone-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-family: var(--font-sans);
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  white-space: nowrap;
+  vertical-align: middle;
+  border-radius: 0.75rem; /* 12px default modern rounded */
+  border: 1px solid transparent;
+  cursor: pointer;
+  outline: none;
+  position: relative;
+  overflow: hidden;
+  transition: all 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+}
+
+.zone-btn:active:not(:disabled) {
+  transform: scale(0.975);
+}
+
+.zone-btn:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+.zone-btn:disabled {
+  opacity: 0.45 !important;
+  cursor: not-allowed !important;
+  pointer-events: none !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+/* SIZES */
+.zone-btn-sm {
+  min-height: 36px;
+  padding: 0.375rem 0.875rem;
+  font-size: 0.75rem; /* 12px */
+  border-radius: 0.625rem; /* 10px */
+}
+
+.zone-btn-md {
+  min-height: 42px;
+  padding: 0.5625rem 1.125rem;
+  font-size: 0.8125rem; /* 13px */
+  border-radius: 0.75rem; /* 12px */
+}
+
+.zone-btn-lg {
+  min-height: 48px;
+  padding: 0.75rem 1.5rem;
+  font-size: 0.875rem; /* 14px */
+  border-radius: 0.875rem; /* 14px */
+}
+
+.zone-btn-pill {
+  border-radius: 9999px !important;
+}
+
+.zone-btn-full {
+  width: 100%;
+}
+
+/* VARIANTS */
+
+/* 1. PRIMARY BUTTON (High-prominence CTA) */
+.zone-btn-primary {
+  background: #2563eb linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+  color: #ffffff !important;
+  border-color: #1d4ed8;
+  box-shadow: 0 1px 3px 0 rgba(37, 99, 235, 0.25), 0 1px 2px -1px rgba(37, 99, 235, 0.2);
+}
+.zone-btn-primary:hover:not(:disabled) {
+  background: #1d4ed8 linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+  box-shadow: 0 4px 12px -2px rgba(37, 99, 235, 0.35), 0 2px 4px -2px rgba(37, 99, 235, 0.25);
+}
+.zone-btn-primary:active:not(:disabled) {
+  background: #1e40af;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* 1b. INDIGO PRIMARY (for Brand Actions) */
+.zone-btn-brand {
+  background: #4f46e5 linear-gradient(180deg, #6366f1 0%, #4f46e5 100%);
+  color: #ffffff !important;
+  border-color: #4338ca;
+  box-shadow: 0 1px 3px 0 rgba(79, 70, 229, 0.25), 0 1px 2px -1px rgba(79, 70, 229, 0.2);
+}
+.zone-btn-brand:hover:not(:disabled) {
+  background: #4338ca linear-gradient(180deg, #4f46e5 0%, #4338ca 100%);
+  box-shadow: 0 4px 12px -2px rgba(79, 70, 229, 0.35), 0 2px 4px -2px rgba(79, 70, 229, 0.25);
+}
+.zone-btn-brand:active:not(:disabled) {
+  background: #3730a3;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* 2. SECONDARY BUTTON (Clean neutral / soft background) */
+.zone-btn-secondary {
+  background-color: #f1f5f9;
+  color: #1e293b !important;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+}
+.zone-btn-secondary:hover:not(:disabled) {
+  background-color: #e2e8f0;
+  border-color: #cbd5e1;
+  color: #0f172a !important;
+}
+.zone-btn-secondary:active:not(:disabled) {
+  background-color: #cbd5e1;
+}
+
+/* Dark context secondary */
+.dark .zone-btn-secondary,
+.bg-slate-900 .zone-btn-secondary,
+.bg-slate-950 .zone-btn-secondary {
+  background-color: #1e293b;
+  color: #f1f5f9 !important;
+  border-color: #334155;
+}
+.dark .zone-btn-secondary:hover:not(:disabled),
+.bg-slate-900 .zone-btn-secondary:hover:not(:disabled),
+.bg-slate-950 .zone-btn-secondary:hover:not(:disabled) {
+  background-color: #334155;
+  border-color: #475569;
+}
+
+/* 3. SUCCESS BUTTON (Positive / earning / confirm) */
+.zone-btn-success {
+  background: #059669 linear-gradient(180deg, #10b981 0%, #059669 100%);
+  color: #ffffff !important;
+  border-color: #047857;
+  box-shadow: 0 1px 3px 0 rgba(16, 185, 129, 0.25);
+}
+.zone-btn-success:hover:not(:disabled) {
+  background: #047857 linear-gradient(180deg, #059669 0%, #047857 100%);
+  box-shadow: 0 4px 12px -2px rgba(16, 185, 129, 0.35);
+}
+.zone-btn-success:active:not(:disabled) {
+  background: #065f46;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* 4. DANGER BUTTON (Delete, logout, reject, revoke) */
+.zone-btn-danger {
+  background-color: #fff1f2;
+  color: #e11d48 !important;
+  border: 1px solid #fecdd3;
+}
+.zone-btn-danger:hover:not(:disabled) {
+  background-color: #e11d48;
+  color: #ffffff !important;
+  border-color: #be123c;
+  box-shadow: 0 4px 12px -2px rgba(225, 29, 72, 0.3);
+}
+.zone-btn-danger:active:not(:disabled) {
+  background-color: #be123c;
+  color: #ffffff !important;
+}
+
+.zone-btn-danger-solid {
+  background: #e11d48 linear-gradient(180deg, #f43f5e 0%, #e11d48 100%);
+  color: #ffffff !important;
+  border-color: #be123c;
+  box-shadow: 0 1px 3px 0 rgba(225, 29, 72, 0.25);
+}
+.zone-btn-danger-solid:hover:not(:disabled) {
+  background: #be123c linear-gradient(180deg, #e11d48 0%, #be123c 100%);
+  box-shadow: 0 4px 12px -2px rgba(225, 29, 72, 0.35);
+}
+
+/* 5. GHOST / TEXT BUTTON (Low priority, inline actions) */
+.zone-btn-ghost {
+  background-color: transparent;
+  color: #64748b;
+  border-color: transparent;
+}
+.zone-btn-ghost:hover:not(:disabled) {
+  background-color: rgba(148, 163, 184, 0.12);
+  color: #0f172a;
+}
+.zone-btn-ghost:active:not(:disabled) {
+  background-color: rgba(148, 163, 184, 0.2);
+}
+
+/* 6. ICON BUTTON (Standardized circular / rounded-square tap targets) */
+.zone-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 9999px;
+  background-color: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+  cursor: pointer;
+  transition: all 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.zone-btn-icon:hover:not(:disabled) {
+  background-color: #e2e8f0;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+.zone-btn-icon:active:not(:disabled) {
+  transform: scale(0.92);
+}
+.zone-btn-icon-sm {
+  width: 34px;
+  height: 34px;
+  font-size: 0.75rem;
+}
+.zone-btn-icon-lg {
+  width: 46px;
+  height: 46px;
+}
+.zone-btn-icon-ghost {
+  background-color: transparent;
+  border-color: transparent;
+  color: #64748b;
+}
+.zone-btn-icon-ghost:hover:not(:disabled) {
+  background-color: rgba(148, 163, 184, 0.14);
+  color: #0f172a;
+}
+.zone-btn-icon-dark {
+  background-color: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f1f5f9;
+}
+.zone-btn-icon-dark:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+/* AMBER / REWARD ACCENT BUTTON */
+.zone-btn-amber {
+  background: #f59e0b linear-gradient(180deg, #fbbf24 0%, #d97706 100%);
+  color: #0f172a !important;
+  font-weight: 800;
+  border-color: #b45309;
+  box-shadow: 0 1px 3px 0 rgba(245, 158, 11, 0.3);
+}
+.zone-btn-amber:hover:not(:disabled) {
+  background: #d97706 linear-gradient(180deg, #f59e0b 0%, #b45309 100%);
+  box-shadow: 0 4px 12px -2px rgba(245, 158, 11, 0.4);
+}
+.zone-btn-amber:active:not(:disabled) {
+  background: #b45309;
+}
+
