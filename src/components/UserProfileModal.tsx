@@ -31,7 +31,10 @@ import {
   Flag,
   Copy,
   ExternalLink,
-  BarChart3
+  BarChart3,
+  Users,
+  UserX,
+  Clock
 } from 'lucide-react';
 import { UserAlbum, UserPhoto, UserProfileInfo } from '../types';
 import { CreatorAnalyticsDashboard } from './CreatorAnalyticsDashboard';
@@ -68,9 +71,14 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const [profile, setProfile] = useState<UserProfileInfo & { albums?: UserAlbum[]; posts?: any[]; reels?: any[]; challenges?: any[]; taggedProducts?: any[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'posts' | 'reels' | 'challenges' | 'products' | 'albums'>('posts');
+  const [activeTab, setActiveTab] = useState<'posts' | 'reels' | 'challenges' | 'products' | 'albums' | 'friends'>('posts');
   const [selectedAlbum, setSelectedAlbum] = useState<UserAlbum | null>(null);
   const [lightboxPhoto, setLightboxPhoto] = useState<UserPhoto | null>(null);
+
+  // Friends State
+  const [profileFriends, setProfileFriends] = useState<any[]>([]);
+  const [loadingFriends, setLoadingFriends] = useState(false);
+  const [friendActionLoading, setFriendActionLoading] = useState(false);
 
   // Follow State
   const [followingLoading, setFollowingLoading] = useState(false);
@@ -182,6 +190,150 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       alert('Error updating follow status.');
     } finally {
       setFollowingLoading(false);
+    }
+  };
+
+  // Handle Friend Actions (Phase 1 Social Graph)
+  const handleSendFriendRequest = async () => {
+    if (!currentUserId) {
+      alert('Mag-login muna upang magpadala ng friend request.');
+      return;
+    }
+    if (friendActionLoading || !profile) return;
+    setFriendActionLoading(true);
+    try {
+      const res = await fetch('/api/zone/friends/request', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {})
+        },
+        body: JSON.stringify({ targetUserId: profile.id })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setProfile(prev => prev ? {
+          ...prev,
+          friendshipStatus: data.autoAccepted ? 'friends' : 'pending_sent',
+          friendCount: data.autoAccepted ? (prev.friendCount || 0) + 1 : prev.friendCount,
+          pendingRequestId: data.requestId
+        } : null);
+      } else {
+        alert(data.error || 'Bigo ang pagpadala ng friend request.');
+      }
+    } catch (err) {
+      alert('Error sending friend request.');
+    } finally {
+      setFriendActionLoading(false);
+    }
+  };
+
+  const handleCancelFriendRequest = async () => {
+    if (!currentUserId || !profile) return;
+    setFriendActionLoading(true);
+    try {
+      const res = await fetch('/api/zone/friends/cancel', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {})
+        },
+        body: JSON.stringify({ targetUserId: profile.id, requestId: profile.pendingRequestId })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setProfile(prev => prev ? {
+          ...prev,
+          friendshipStatus: 'none',
+          pendingRequestId: undefined
+        } : null);
+      } else {
+        alert(data.error || 'Bigo ang pag-cancel ng friend request.');
+      }
+    } catch (err) {
+      alert('Error cancelling friend request.');
+    } finally {
+      setFriendActionLoading(false);
+    }
+  };
+
+  const handleRespondFriendRequest = async (action: 'accept' | 'decline') => {
+    if (!currentUserId || !profile || !profile.pendingRequestId) return;
+    setFriendActionLoading(true);
+    try {
+      const res = await fetch('/api/zone/friends/respond', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {})
+        },
+        body: JSON.stringify({ requestId: profile.pendingRequestId, action })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setProfile(prev => prev ? {
+          ...prev,
+          friendshipStatus: action === 'accept' ? 'friends' : 'none',
+          friendCount: action === 'accept' ? (prev.friendCount || 0) + 1 : prev.friendCount,
+          pendingRequestId: undefined
+        } : null);
+      } else {
+        alert(data.error || 'Bigo ang pagsagot sa request.');
+      }
+    } catch (err) {
+      alert('Error responding to friend request.');
+    } finally {
+      setFriendActionLoading(false);
+    }
+  };
+
+  const handleUnfriend = async () => {
+    if (!currentUserId || !profile) return;
+    if (!window.confirm(`Sigurado ka bang nais mong alisin si ${profile.name} sa iyong mga kaibigan?`)) return;
+    setFriendActionLoading(true);
+    try {
+      const res = await fetch('/api/zone/friends/unfriend', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {})
+        },
+        body: JSON.stringify({ targetUserId: profile.id })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setProfile(prev => prev ? {
+          ...prev,
+          friendshipStatus: 'none',
+          friendCount: Math.max(0, (prev.friendCount || 0) - 1)
+        } : null);
+      } else {
+        alert(data.error || 'Bigo ang pag-unfriend.');
+      }
+    } catch (err) {
+      alert('Error unfriending.');
+    } finally {
+      setFriendActionLoading(false);
+    }
+  };
+
+  const loadProfileFriends = async () => {
+    if (!profile?.id) return;
+    setLoadingFriends(true);
+    try {
+      const res = await fetch(`/api/zone/friends/${profile.id}`, {
+        headers: authHeader ? { Authorization: authHeader } : {}
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setProfileFriends(data.friends || []);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching friends', err);
+    } finally {
+      setLoadingFriends(false);
     }
   };
 
@@ -603,6 +755,69 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                           )}
                         </button>
 
+                        {/* Friend Action Button */}
+                        {profile.friendshipStatus === 'friends' && (
+                          <button
+                            id="profile-friend-status-btn"
+                            onClick={handleUnfriend}
+                            disabled={friendActionLoading}
+                            className="px-3.5 py-2 bg-emerald-950/70 hover:bg-rose-950/60 text-emerald-300 hover:text-rose-300 border border-emerald-500/40 hover:border-rose-500/40 font-semibold text-sm rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-sm group cursor-pointer"
+                            title="I-click upang mag-unfriend"
+                          >
+                            <UserCheck className="w-4 h-4 text-emerald-400 group-hover:hidden" />
+                            <UserX className="w-4 h-4 text-rose-400 hidden group-hover:block" />
+                            <span className="group-hover:hidden">Kaibigan ✓</span>
+                            <span className="hidden group-hover:inline">I-unfriend</span>
+                          </button>
+                        )}
+
+                        {profile.friendshipStatus === 'pending_sent' && (
+                          <button
+                            id="profile-cancel-req-btn"
+                            onClick={handleCancelFriendRequest}
+                            disabled={friendActionLoading}
+                            className="px-3.5 py-2 bg-amber-950/60 hover:bg-slate-800 text-amber-300 hover:text-slate-300 border border-amber-500/40 hover:border-slate-700 font-semibold text-sm rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                            title="I-click upang i-cancel ang friend request"
+                          >
+                            <Clock className="w-4 h-4 text-amber-400" />
+                            <span>Pending Request</span>
+                          </button>
+                        )}
+
+                        {profile.friendshipStatus === 'pending_received' && (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              id="profile-accept-req-btn"
+                              onClick={() => handleRespondFriendRequest('accept')}
+                              disabled={friendActionLoading}
+                              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                            >
+                              <Check className="w-4 h-4" />
+                              <span>Tanggapin</span>
+                            </button>
+                            <button
+                              id="profile-decline-req-btn"
+                              onClick={() => handleRespondFriendRequest('decline')}
+                              disabled={friendActionLoading}
+                              className="px-2.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-sm rounded-xl border border-slate-700 transition-all cursor-pointer"
+                            >
+                              Tanggihan
+                            </button>
+                          </div>
+                        )}
+
+                        {profile.friendshipStatus === 'none' && (
+                          <button
+                            id="profile-add-friend-btn"
+                            onClick={handleSendFriendRequest}
+                            disabled={friendActionLoading}
+                            className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-blue-500/20 cursor-pointer"
+                          >
+                            <UserPlus className="w-4 h-4" />
+                            <span>+ Add Friend</span>
+                          </button>
+                        )}
+
                         <button
                           id="profile-dm-btn"
                           onClick={() => {
@@ -686,8 +901,43 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   </p>
                 </div>
 
-                {/* 5-Column Stats Summary Bar */}
-                <div className="grid grid-cols-5 gap-1 sm:gap-2 p-3 bg-slate-950/70 border border-slate-800 rounded-xl text-center mb-5">
+                {/* Mutual Friends Banner */}
+                {profile.mutualFriendCount && profile.mutualFriendCount > 0 ? (
+                  <div
+                    onClick={() => {
+                      setActiveTab('friends');
+                      loadProfileFriends();
+                    }}
+                    className="flex items-center justify-between gap-2 mb-4 px-3.5 py-2.5 bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 rounded-xl text-xs text-slate-300 cursor-pointer transition"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Users className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span className="font-medium text-slate-200">
+                        <strong className="text-white">{profile.mutualFriendCount}</strong> mutual friend{profile.mutualFriendCount > 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    {profile.mutualFriends && profile.mutualFriends.length > 0 && (
+                      <div className="flex items-center -space-x-2">
+                        {profile.mutualFriends.slice(0, 4).map((mf: any) => (
+                          <div
+                            key={mf.id}
+                            className="w-6 h-6 rounded-full bg-slate-700 border-2 border-slate-900 overflow-hidden text-[10px] flex items-center justify-center font-bold"
+                            title={mf.name}
+                          >
+                            {mf.avatar && mf.avatar.startsWith('http') ? (
+                              <img src={mf.avatar} alt={mf.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <span>{mf.avatar || '👤'}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+
+                {/* 6-Column Stats Summary Bar */}
+                <div className="grid grid-cols-6 gap-1 sm:gap-2 p-3 bg-slate-950/70 border border-slate-800 rounded-xl text-center mb-5">
                   <div className="border-r border-slate-800/60 pr-1">
                     <span className="block text-base sm:text-lg font-black text-blue-400">{profile.followerCount || 0}</span>
                     <span className="text-[10px] sm:text-xs text-slate-400 font-medium">Followers</span>
@@ -695,6 +945,16 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   <div className="border-r border-slate-800/60 pr-1">
                     <span className="block text-base sm:text-lg font-black text-slate-200">{profile.followingCount || 0}</span>
                     <span className="text-[10px] sm:text-xs text-slate-400 font-medium">Following</span>
+                  </div>
+                  <div
+                    className="border-r border-slate-800/60 pr-1 cursor-pointer hover:bg-slate-900/60 rounded-lg transition"
+                    onClick={() => {
+                      setActiveTab('friends');
+                      loadProfileFriends();
+                    }}
+                  >
+                    <span className="block text-base sm:text-lg font-black text-emerald-400">{profile.friendCount || 0}</span>
+                    <span className="text-[10px] sm:text-xs text-slate-400 font-medium">Kaibigan</span>
                   </div>
                   <div className="border-r border-slate-800/60 pr-1">
                     <span className="block text-base sm:text-lg font-black text-white">{profile.postCount || 0}</span>
@@ -710,7 +970,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   </div>
                 </div>
 
-                {/* 5-Tab Profile Navigation */}
+                {/* 6-Tab Profile Navigation */}
                 <div className="flex border-b border-slate-800 mb-4 overflow-x-auto no-scrollbar">
                   <button
                     id="tab-posts-btn"
@@ -726,6 +986,23 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   >
                     <FileText className="w-4 h-4" />
                     <span>Posts ({profile.postCount || 0})</span>
+                  </button>
+
+                  <button
+                    id="tab-friends-btn"
+                    onClick={() => {
+                      setActiveTab('friends');
+                      setSelectedAlbum(null);
+                      loadProfileFriends();
+                    }}
+                    className={`px-4 py-2.5 text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 border-b-2 whitespace-nowrap transition-all ${
+                      activeTab === 'friends'
+                        ? 'border-emerald-500 text-emerald-400'
+                        : 'border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Users className="w-4 h-4" />
+                    <span>Kaibigan ({profile.friendCount || 0})</span>
                   </button>
 
                   <button
@@ -1298,6 +1575,69 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                                 <ExternalLink className="w-3 h-3" />
                               </button>
                             </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* TAB CONTENT: FRIENDS */}
+                {activeTab === 'friends' && (
+                  <div>
+                    {loadingFriends ? (
+                      <div className="flex flex-col items-center justify-center py-16 gap-3">
+                        <div className="w-8 h-8 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                        <p className="text-xs text-slate-400 font-medium">Kinukuha ang listahan ng mga kaibigan...</p>
+                      </div>
+                    ) : profileFriends.length === 0 ? (
+                      <div className="py-16 text-center text-slate-400 space-y-2">
+                        <Users className="w-12 h-12 mx-auto text-slate-600 opacity-60" />
+                        <h4 className="text-sm font-bold text-white">Wala pang mga kaibigan</h4>
+                        <p className="text-xs text-slate-500">Wala pang nakatalang kaibigan si {profile.name} sa Z-one.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {profileFriends.map((fr: any) => (
+                          <div
+                            key={fr.id}
+                            className="p-3 bg-slate-800/60 border border-slate-700/60 rounded-xl flex items-center justify-between gap-3 hover:border-slate-600 transition"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="relative">
+                                <div className="w-10 h-10 rounded-full bg-slate-700 border border-slate-600 overflow-hidden flex items-center justify-center text-base font-bold shrink-0">
+                                  {fr.avatar && (fr.avatar.startsWith('http') || fr.avatar.startsWith('data:')) ? (
+                                    <img src={fr.avatar} alt={fr.name} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <span>{fr.avatar || '👤'}</span>
+                                  )}
+                                </div>
+                                {fr.isOnline && (
+                                  <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-slate-900" />
+                                )}
+                              </div>
+                              <div>
+                                <h4 className="text-xs font-bold text-white hover:text-blue-400 transition">{fr.name}</h4>
+                                <p className="text-[11px] text-cyan-400 font-mono">{fr.handle}</p>
+                                {fr.mutualCount > 0 && (
+                                  <p className="text-[10px] text-emerald-400 font-medium mt-0.5">
+                                    {fr.mutualCount} mutual friend{fr.mutualCount > 1 ? 's' : ''}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            {onStartDM && (
+                              <button
+                                onClick={() => {
+                                  onStartDM(fr.id, fr.name, fr.avatar);
+                                  onClose();
+                                }}
+                                className="p-2 bg-slate-700 hover:bg-slate-600 text-cyan-400 rounded-lg transition cursor-pointer"
+                                title="Mensahe"
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>

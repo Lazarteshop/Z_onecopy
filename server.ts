@@ -29,6 +29,24 @@ import { BilibiliFeedItem, BilibiliFeedConfig } from './src/types';
 import { extractProductFromUrl } from './server/affiliateExtractor';
 import http from 'http';
 import { initChatWebSocket, notifyNewDirectMessage, getChatDiagnostics } from './server/chatSocket';
+import {
+  ReactionType,
+  ALLOWED_REACTIONS,
+  REACTION_EMOJIS,
+  REACTION_LABELS,
+  PostReactionRecord,
+  PostReactionCounts,
+  FriendshipRecord,
+  FriendRequestRecord,
+  rebuildFriendIndex,
+  addFriendshipToIndex,
+  removeFriendshipFromIndex,
+  areFriends,
+  getFriendIds,
+  getMutualFriendIds,
+  initPostReactions,
+  processPostReaction
+} from './server/phase1Social';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -2148,7 +2166,7 @@ interface SocialNotification {
   senderUserId?: string;
   senderUserName?: string;
   senderUserAvatar?: string;
-  type: 'like' | 'comment' | 'reply' | 'follow' | 'mention' | 'share' | 'challenge' | 'shop';
+  type: 'like' | 'comment' | 'reply' | 'follow' | 'mention' | 'share' | 'challenge' | 'shop' | 'reaction' | 'friend_request' | 'friend_accept';
   title: string;
   message: string;
   targetId?: string;
@@ -2232,6 +2250,8 @@ interface DBStructure {
   userHiddenPosts?: Record<string, string[]>;
   creatorProductClicks?: any[];
   socialShareSettings?: SocialShareSettings;
+  friendships?: FriendshipRecord[];
+  friendRequests?: FriendRequestRecord[];
 }
 
 export interface SocialShareSettings {
@@ -3173,6 +3193,13 @@ function loadDB(): DBStructure {
     if (!loaded.creatorProductClicks) {
       loaded.creatorProductClicks = [];
     }
+    if (!loaded.friendships) {
+      loaded.friendships = [];
+    }
+    if (!loaded.friendRequests) {
+      loaded.friendRequests = [];
+    }
+    rebuildFriendIndex(loaded.friendships);
     if (!loaded.socialShareSettings) {
       loaded.socialShareSettings = {
         imageUrl: 'https://z-oneapp.onrender.com/default-share-cover.jpg',
@@ -3451,7 +3478,9 @@ const lastSyncedCache = {
   creatorChallenges: new Map<string, string>(),
   challengeEntries: new Map<string, string>(),
   sponsoredMissions: new Map<string, string>(),
-  depositRequests: new Map<string, string>()
+  depositRequests: new Map<string, string>(),
+  friendships: new Map<string, string>(),
+  friendRequests: new Map<string, string>()
 };
 
 function initLastSyncedCache(data: DBStructure) {
@@ -3568,6 +3597,16 @@ function initLastSyncedCache(data: DBStructure) {
   if (lastSyncedCache.depositRequests.size === 0 && data.depositRequests && data.depositRequests.length > 0) {
     for (const dr of data.depositRequests) {
       lastSyncedCache.depositRequests.set(dr.id, JSON.stringify(dr));
+    }
+  }
+  if (lastSyncedCache.friendships && lastSyncedCache.friendships.size === 0 && data.friendships && data.friendships.length > 0) {
+    for (const f of data.friendships) {
+      lastSyncedCache.friendships.set(f.id, JSON.stringify(f));
+    }
+  }
+  if (lastSyncedCache.friendRequests && lastSyncedCache.friendRequests.size === 0 && data.friendRequests && data.friendRequests.length > 0) {
+    for (const fr of data.friendRequests) {
+      lastSyncedCache.friendRequests.set(fr.id, JSON.stringify(fr));
     }
   }
 }
@@ -4453,6 +4492,44 @@ async function uploadToFirestore(data: DBStructure) {
             } catch (drErr: any) {
               console.error(`Error saving deposit request ${dr.id} to Cloud DB:`, drErr);
               enqueueFirestoreSync('set', 'deposit_requests', dr.id, dr, drErr?.message || String(drErr));
+            }
+          })());
+        }
+      }
+    }
+
+    if (data.friendships) {
+      for (const f of data.friendships) {
+        const fStr = JSON.stringify(f);
+        if (lastSyncedCache.friendships && lastSyncedCache.friendships.get(f.id) !== fStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...fWithoutId } = f;
+              await cloudDb.setDoc('friendships', f.id, fWithoutId);
+              lastSyncedCache.friendships.set(f.id, fStr);
+              dequeueFirestoreSync('friendships', f.id);
+            } catch (fErr: any) {
+              console.error(`Error saving friendship ${f.id} to Cloud DB:`, fErr);
+              enqueueFirestoreSync('set', 'friendships', f.id, f, fErr?.message || String(fErr));
+            }
+          })());
+        }
+      }
+    }
+
+    if (data.friendRequests) {
+      for (const fr of data.friendRequests) {
+        const frStr = JSON.stringify(fr);
+        if (lastSyncedCache.friendRequests && lastSyncedCache.friendRequests.get(fr.id) !== frStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...frWithoutId } = fr;
+              await cloudDb.setDoc('friend_requests', fr.id, frWithoutId);
+              lastSyncedCache.friendRequests.set(fr.id, frStr);
+              dequeueFirestoreSync('friend_requests', fr.id);
+            } catch (frErr: any) {
+              console.error(`Error saving friend request ${fr.id} to Cloud DB:`, frErr);
+              enqueueFirestoreSync('set', 'friend_requests', fr.id, fr, frErr?.message || String(frErr));
             }
           })());
         }
@@ -10524,10 +10601,25 @@ app.get('/api/zone/posts', (req, res) => {
     : sortedPosts.slice(0, startIndex + limit);
   const hasMore = (startIndex + limit) < sortedPosts.length;
 
-  const enrichedPosts = paginatedPosts.map(p => ({
-    ...p,
-    isSaved: userSavedSet.has(p.id)
-  }));
+  const enrichedPosts = paginatedPosts.map(p => {
+    initPostReactions(p);
+    let userReaction: ReactionType | null = null;
+    if (requesterId) {
+      const rRecord = (p.reactions || []).find((r: any) => r.userId === requesterId);
+      if (rRecord) {
+        userReaction = rRecord.type;
+      } else if (p.likes && p.likes.includes(requesterId)) {
+        userReaction = 'like';
+      }
+    }
+    return {
+      ...p,
+      reactions: (p.reactions || []).slice(0, 100),
+      reactionCounts: p.reactionCounts,
+      userReaction,
+      isSaved: userSavedSet.has(p.id)
+    };
+  });
 
   res.json({ 
     posts: enrichedPosts,
@@ -10633,13 +10725,32 @@ app.get('/api/search', (req, res) => {
 
 // GET SINGLE POST BY ID (FOR DEEP LINKS)
 app.get('/api/zone/posts/:id', (req, res) => {
+  const requesterId = req.headers.authorization;
   const { id } = req.params;
   const db = loadDB();
   const post = (db.posts || []).find((p: any) => p.id === id);
   if (!post) {
     return res.status(404).json({ error: 'Hindi mahanap ang post.' });
   }
-  res.json({ success: true, post });
+  initPostReactions(post);
+  let userReaction: ReactionType | null = null;
+  if (requesterId) {
+    const rRecord = (post.reactions || []).find((r: any) => r.userId === requesterId);
+    if (rRecord) {
+      userReaction = rRecord.type;
+    } else if (post.likes && post.likes.includes(requesterId)) {
+      userReaction = 'like';
+    }
+  }
+  res.json({
+    success: true,
+    post: {
+      ...post,
+      reactions: (post.reactions || []).slice(0, 100),
+      reactionCounts: post.reactionCounts,
+      userReaction
+    }
+  });
 });
 
 // Explicit endpoint to force refresh RSS feeds on demand
@@ -11315,7 +11426,118 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
   res.json({ success: true, post: newPost, message: 'Matagumpay na na-post sa Z-one!' });
 });
 
-// 3. TOGGLE LIKE (LIKE ONLY - NO UNLIKE & AWARD ₱0.05)
+// 3. MULTI-REACTIONS & LEGACY LIKE (AWARD ₱0.05 ONCE PER POST)
+app.post('/api/zone/posts/:postId/react', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login upang mag-react at kumita ng ₱0.05.' });
+  }
+
+  const { postId } = req.params;
+  const rawReaction = req.body?.reaction !== undefined ? req.body.reaction : req.body?.type;
+  if (
+    typeof rawReaction !== 'string' ||
+    !rawReaction ||
+    !(ALLOWED_REACTIONS as readonly string[]).includes(rawReaction)
+  ) {
+    return res.status(400).json({ error: 'Invalid reaction type' });
+  }
+
+  const reaction: ReactionType = rawReaction as ReactionType;
+
+  const db = loadDB();
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa Z-one.' });
+  }
+
+  if (!db.posts) db.posts = [];
+  const post = db.posts.find(p => p.id === postId);
+  if (!post) {
+    return res.status(404).json({ error: 'Hindi mahanap ang post.' });
+  }
+
+  const user = db.users.find(u => u.id === userId);
+  const result = processPostReaction(post, userId, reaction, {
+    name: user?.name,
+    avatar: user?.avatar
+  });
+
+  if (user && result.rewardAwarded > 0) {
+    user.stats.balance = Number(((user.stats.balance || 0) + result.rewardAwarded).toFixed(2));
+    user.stats.completedTasksCount = (user.stats.completedTasksCount || 0) + 1;
+    user.activityLogs = user.activityLogs || [];
+    user.activityLogs.unshift({
+      id: 'act-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+      type: 'reward',
+      title: '₱0.05 Social Post Reaction Reward',
+      amount: result.rewardAwarded,
+      timestamp: new Date().toISOString(),
+      details: `Nakatanggap ng ₱0.05 reward sa pag-react (${reaction}) sa post sa Z-one Social Feed.`
+    });
+  }
+
+  saveDB(db, true);
+
+  const { id: _, ...postWithoutId } = post;
+  safeCloudSync('set', 'posts', post.id, postWithoutId);
+  if (user && result.rewardAwarded > 0) {
+    const { id: uid, ...uWithoutId } = user;
+    safeCloudSync('set', 'users', user.id, uWithoutId);
+  }
+
+  if (result.shouldNotify && post.userId && post.userId !== userId && user) {
+    createSocialNotification(db, {
+      recipientUserId: post.userId,
+      senderUserId: user.id,
+      senderUserName: user.name,
+      senderUserAvatar: user.avatar,
+      type: 'reaction',
+      title: `${REACTION_EMOJIS[reaction]} Bagong Reaksyon sa iyong Post`,
+      message: `Nag-react si ${user.name} ng ${REACTION_LABELS[reaction]} sa iyong post.`,
+      targetId: post.id,
+      targetType: 'post'
+    });
+
+    sendPushNotificationToUser(post.userId, {
+      title: `${REACTION_EMOJIS[reaction]} Bagong Reaksyon sa iyong Post`,
+      body: `Nag-react si ${user.name} ng ${REACTION_LABELS[reaction]} sa iyong post sa Z-one!`,
+      url: '/?tab=zone',
+      tag: `post-react-${postId}`
+    }).catch(() => {});
+  }
+
+  res.json({
+    success: true,
+    action: result.action,
+    userReaction: result.userReaction,
+    likes: post.likes,
+    reactions: (post.reactions || []).slice(0, 100),
+    reactionCounts: post.reactionCounts,
+    reward: result.rewardAwarded > 0,
+    newBalance: user ? user.stats.balance : undefined,
+    message: result.rewardAwarded > 0 ? `🎉 +₱0.05 Reward! ${result.message}` : result.message
+  });
+});
+
+// GET POST REACTIONS SUMMARY
+app.get('/api/zone/posts/:postId/reactions', (req, res) => {
+  const { postId } = req.params;
+  const db = loadDB();
+  const post = (db.posts || []).find(p => p.id === postId);
+  if (!post) {
+    return res.status(404).json({ error: 'Hindi mahanap ang post.' });
+  }
+
+  initPostReactions(post);
+  res.json({
+    success: true,
+    reactions: post.reactions || [],
+    reactionCounts: post.reactionCounts,
+    total: (post.reactions || []).length
+  });
+});
+
+// LEGACY TOGGLE LIKE (BACKWARD COMPATIBILITY)
 app.post('/api/zone/posts/:postId/like', enforceCommunitySafety, (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
@@ -11335,18 +11557,13 @@ app.post('/api/zone/posts/:postId/like', enforceCommunitySafety, (req, res) => {
     return res.status(404).json({ error: 'Hindi mahanap ang post.' });
   }
 
-  post.likes = post.likes || [];
-  const hasLiked = post.likes.includes(userId);
-  if (hasLiked) {
-    return res.status(400).json({ error: 'Naliked mo na ang post na ito! Hindi na ito pwedeng i-unlike.', likes: post.likes });
-  }
-
-  // Record user like (No unliking allowed)
-  post.likes.push(userId);
-
-  // Award ₱0.05 to registered user's balance
   const user = db.users.find(u => u.id === userId);
-  if (user) {
+  const result = processPostReaction(post, userId, 'like', {
+    name: user?.name,
+    avatar: user?.avatar
+  });
+
+  if (user && result.rewardAwarded > 0) {
     user.stats.balance = Number(((user.stats.balance || 0) + 0.05).toFixed(2));
     user.stats.completedTasksCount = (user.stats.completedTasksCount || 0) + 1;
     user.activityLogs = user.activityLogs || [];
@@ -11364,16 +11581,15 @@ app.post('/api/zone/posts/:postId/like', enforceCommunitySafety, (req, res) => {
 
   const { id: _, ...postWithoutId } = post;
   safeCloudSync('set', 'posts', post.id, postWithoutId);
-  if (user) {
+  if (user && result.rewardAwarded > 0) {
     const { id: uid, ...uWithoutId } = user;
     safeCloudSync('set', 'users', user.id, uWithoutId);
   }
 
-  // Send push notification to post author if someone else liked the post
-  if (post.userId && post.userId !== userId) {
+  if (result.shouldNotify && post.userId && post.userId !== userId && user) {
     sendPushNotificationToUser(post.userId, {
       title: '❤️ Bagong Like sa iyong Post',
-      body: `Nag-like si ${user ? user.name : 'isang user'} sa iyong post sa Z-one!`,
+      body: `Nag-like si ${user.name} sa iyong post sa Z-one!`,
       url: '/?tab=zone',
       tag: `post-like-${postId}`
     }).catch(() => {});
@@ -11382,9 +11598,11 @@ app.post('/api/zone/posts/:postId/like', enforceCommunitySafety, (req, res) => {
   res.json({ 
     success: true, 
     likes: post.likes, 
-    reward: 0.05, 
+    userReaction: result.userReaction,
+    reactionCounts: post.reactionCounts,
+    reward: result.rewardAwarded > 0 ? 0.05 : 0, 
     newBalance: user ? user.stats.balance : undefined, 
-    message: '🎉 +₱0.05 Reward sa pag-like ng post!' 
+    message: result.rewardAwarded > 0 ? '🎉 +₱0.05 Reward sa pag-like ng post!' : result.message
   });
 });
 
@@ -14382,6 +14600,42 @@ app.get('/api/zone/profile/:targetUserId', (req, res) => {
   const userChallenges = (db.creatorChallenges || []).filter(c => c.hostId === targetUserId);
   const userProducts = (db.shopProducts || []).filter(p => p.creatorId === targetUserId || p.sellerId === targetUserId);
 
+  const targetFriendIds = getFriendIds(targetUserId);
+  const friendCount = targetFriendIds.length;
+  
+  let friendshipStatus: 'self' | 'friends' | 'pending_sent' | 'pending_received' | 'none' = 'none';
+  let pendingRequestId: string | undefined = undefined;
+
+  if (isOwner) {
+    friendshipStatus = 'self';
+  } else if (requesterId && areFriends(requesterId, targetUserId)) {
+    friendshipStatus = 'friends';
+  } else if (requesterId) {
+    const pendingReq = (db.friendRequests || []).find(fr => 
+      fr.status === 'pending' && (
+        (fr.fromUserId === requesterId && fr.toUserId === targetUserId) ||
+        (fr.fromUserId === targetUserId && fr.toUserId === requesterId)
+      )
+    );
+    if (pendingReq) {
+      pendingRequestId = pendingReq.id;
+      friendshipStatus = pendingReq.fromUserId === requesterId ? 'pending_sent' : 'pending_received';
+    }
+  }
+
+  const mutualFriendIds = (requesterId && !isOwner) ? getMutualFriendIds(requesterId, targetUserId) : [];
+  const mutualFriendCount = mutualFriendIds.length;
+  const mutualFriends = mutualFriendIds.slice(0, 5).map(mId => {
+    const u = db.users.find(x => x.id === mId);
+    if (!u) return null;
+    return {
+      id: u.id,
+      name: u.name,
+      avatar: u.avatar || '👤',
+      handle: '@' + (u.name || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_')
+    };
+  }).filter(Boolean);
+
   res.json({
     success: true,
     profile: {
@@ -14398,6 +14652,11 @@ app.get('/api/zone/profile/:targetUserId', (req, res) => {
       followerCount,
       followingCount,
       isFollowing,
+      friendCount,
+      friendshipStatus,
+      pendingRequestId,
+      mutualFriendCount,
+      mutualFriends,
       postCount: userPosts.length,
       albumCount: filteredAlbums.length,
       photoCount: totalPhotosCount,
@@ -14407,6 +14666,514 @@ app.get('/api/zone/profile/:targetUserId', (req, res) => {
       challenges: userChallenges,
       taggedProducts: userProducts
     }
+  });
+});
+
+// ==========================================
+//   SOCIAL GRAPH & FRIENDSHIPS APIS (PHASE 1)
+// ==========================================
+
+// --- SHARED FRIENDSHIP HANDLERS (SUPPORTS BOTH BODY-BASED & PARAMETER-BASED RESTFUL SIGNATURES) ---
+
+function handleSendFriendRequest(req: express.Request, res: express.Response) {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang magpadala ng friend request.' });
+  }
+
+  const targetUserId = req.params.targetUserId || req.body?.targetUserId;
+  if (!targetUserId) {
+    return res.status(400).json({ error: 'Target user ID is required.' });
+  }
+
+  if (userId === targetUserId) {
+    return res.status(400).json({ error: 'Hindi mo pwedeng i-add friend ang iyong sarili!' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  const targetUser = db.users.find(u => u.id === targetUserId);
+  if (!user || !targetUser) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  // Check if blocked
+  if (db.userBlocks) {
+    if (db.userBlocks[userId]?.includes(targetUserId) || db.userBlocks[targetUserId]?.includes(userId)) {
+      return res.status(403).json({ error: 'Hindi maaring mag-send ng friend request sa user na ito.' });
+    }
+  }
+
+  // Check if already friends
+  if (areFriends(userId, targetUserId)) {
+    return res.status(400).json({ error: 'Magkaibigan na kayo!' });
+  }
+
+  if (!db.friendRequests) db.friendRequests = [];
+  if (!db.friendships) db.friendships = [];
+
+  // Check if target has already sent us a request -> auto accept!
+  const reverseReqIndex = db.friendRequests.findIndex(fr => 
+    fr.fromUserId === targetUserId && fr.toUserId === userId && fr.status === 'pending'
+  );
+  if (reverseReqIndex > -1) {
+    const reverseReq = db.friendRequests[reverseReqIndex];
+    reverseReq.status = 'accepted';
+    reverseReq.updatedAt = new Date().toISOString();
+
+    const f1: FriendshipRecord = {
+      id: 'f-' + Date.now() + '-1',
+      userId,
+      friendId: targetUserId,
+      createdAt: new Date().toISOString()
+    };
+    const f2: FriendshipRecord = {
+      id: 'f-' + Date.now() + '-2',
+      userId: targetUserId,
+      friendId: userId,
+      createdAt: new Date().toISOString()
+    };
+    db.friendships.push(f1, f2);
+    addFriendshipToIndex(userId, targetUserId);
+
+    // Mutual follow as well for smooth feed integration
+    if (!user.zonedUsers) user.zonedUsers = [];
+    if (!user.zonedUsers.includes(targetUserId)) user.zonedUsers.push(targetUserId);
+    if (!targetUser.zonedUsers) targetUser.zonedUsers = [];
+    if (!targetUser.zonedUsers.includes(userId)) targetUser.zonedUsers.push(userId);
+
+    saveDB(db, true);
+    safeCloudSync('set', 'friendships', f1.id, f1);
+    safeCloudSync('set', 'friendships', f2.id, f2);
+    safeCloudSync('set', 'friend_requests', reverseReq.id, reverseReq);
+
+    createSocialNotification(db, {
+      recipientUserId: targetUserId,
+      senderUserId: userId,
+      senderUserName: user.name,
+      senderUserAvatar: user.avatar,
+      type: 'friend_accept',
+      title: '🤝 Tinanggap ang Friend Request!',
+      message: `Tinanggap ni ${user.name} ang iyong Friend Request. Magkaibigan na kayo!`,
+      targetId: userId,
+      targetType: 'profile'
+    });
+
+    sendPushNotificationToUser(targetUserId, {
+      title: '🤝 Tinanggap ang Friend Request!',
+      body: `Tinanggap ni ${user.name} ang iyong Friend Request. Magkaibigan na kayo!`,
+      url: `/?tab=profile&userId=${userId}`,
+      tag: `friend-accept-${userId}`
+    }).catch(() => {});
+
+    return res.json({
+      success: true,
+      autoAccepted: true,
+      status: 'friends',
+      message: 'Tinanggap ang request! Kayo ay magkaibigan na ngayon!'
+    });
+  }
+
+  // Check if we already have a pending request
+  const existingPending = db.friendRequests.find(fr => 
+    fr.fromUserId === userId && fr.toUserId === targetUserId && fr.status === 'pending'
+  );
+  if (existingPending) {
+    return res.status(400).json({ error: 'Mayroon ka nang naipadalang pending friend request.' });
+  }
+
+  const newRequest: FriendRequestRecord = {
+    id: 'freq-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+    fromUserId: userId,
+    toUserId: targetUserId,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  db.friendRequests.push(newRequest);
+  saveDB(db, true);
+  safeCloudSync('set', 'friend_requests', newRequest.id, newRequest);
+
+  createSocialNotification(db, {
+    recipientUserId: targetUserId,
+    senderUserId: userId,
+    senderUserName: user.name,
+    senderUserAvatar: user.avatar,
+    type: 'friend_request',
+    title: '👥 Bagong Friend Request',
+    message: `Nagpadala si ${user.name} ng Friend Request sa iyo.`,
+    targetId: userId,
+    targetType: 'profile'
+  });
+
+  sendPushNotificationToUser(targetUserId, {
+    title: '👥 Bagong Friend Request',
+    body: `Nagpadala si ${user.name} ng Friend Request sa iyo sa Z-one!`,
+    url: `/?tab=profile&userId=${userId}`,
+    tag: `friend-req-${newRequest.id}`
+  }).catch(() => {});
+
+  res.json({
+    success: true,
+    status: 'pending_sent',
+    requestId: newRequest.id,
+    message: 'Matagumpay na naipadala ang friend request!'
+  });
+}
+
+function handleRespondFriendRequest(req: express.Request, res: express.Response, explicitAction?: 'accept' | 'decline') {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const requestId = req.params.requestId || req.body?.requestId;
+  const action = explicitAction || req.body?.action;
+  if (!requestId || !['accept', 'decline'].includes(action)) {
+    return res.status(400).json({ error: 'Invalid requestId or action (must be accept or decline).' });
+  }
+
+  const db = loadDB();
+  if (!db.friendRequests) db.friendRequests = [];
+  if (!db.friendships) db.friendships = [];
+
+  const reqItem = db.friendRequests.find(fr => fr.id === requestId);
+  if (!reqItem) {
+    return res.status(404).json({ error: 'Hindi mahanap ang friend request.' });
+  }
+
+  if (reqItem.toUserId !== userId) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na sagutin ang request na ito.' });
+  }
+
+  if (reqItem.status !== 'pending') {
+    return res.status(400).json({ error: `Nasagot na ang request na ito (${reqItem.status}).` });
+  }
+
+  const user = db.users.find(u => u.id === userId);
+  const sender = db.users.find(u => u.id === reqItem.fromUserId);
+
+  if (action === 'accept') {
+    reqItem.status = 'accepted';
+    reqItem.updatedAt = new Date().toISOString();
+
+    const f1: FriendshipRecord = {
+      id: 'f-' + Date.now() + '-1',
+      userId: reqItem.fromUserId,
+      friendId: reqItem.toUserId,
+      createdAt: new Date().toISOString()
+    };
+    const f2: FriendshipRecord = {
+      id: 'f-' + Date.now() + '-2',
+      userId: reqItem.toUserId,
+      friendId: reqItem.fromUserId,
+      createdAt: new Date().toISOString()
+    };
+    db.friendships.push(f1, f2);
+    addFriendshipToIndex(reqItem.fromUserId, reqItem.toUserId);
+
+    if (user) {
+      if (!user.zonedUsers) user.zonedUsers = [];
+      if (!user.zonedUsers.includes(reqItem.fromUserId)) user.zonedUsers.push(reqItem.fromUserId);
+    }
+    if (sender) {
+      if (!sender.zonedUsers) sender.zonedUsers = [];
+      if (!sender.zonedUsers.includes(userId)) sender.zonedUsers.push(userId);
+    }
+
+    saveDB(db, true);
+    safeCloudSync('set', 'friendships', f1.id, f1);
+    safeCloudSync('set', 'friendships', f2.id, f2);
+    safeCloudSync('set', 'friend_requests', reqItem.id, reqItem);
+
+    if (user && sender) {
+      createSocialNotification(db, {
+        recipientUserId: sender.id,
+        senderUserId: user.id,
+        senderUserName: user.name,
+        senderUserAvatar: user.avatar,
+        type: 'friend_accept',
+        title: '🤝 Tinanggap ang Friend Request!',
+        message: `Tinanggap ni ${user.name} ang iyong Friend Request. Magkaibigan na kayo ngayon!`,
+        targetId: user.id,
+        targetType: 'profile'
+      });
+
+      sendPushNotificationToUser(sender.id, {
+        title: '🤝 Tinanggap ang Friend Request!',
+        body: `Tinanggap ni ${user.name} ang iyong Friend Request. Magkaibigan na kayo ngayon!`,
+        url: `/?tab=profile&userId=${user.id}`,
+        tag: `friend-accept-${user.id}`
+      }).catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      action: 'accepted',
+      message: 'Kayo ay magkaibigan na!'
+    });
+  } else {
+    reqItem.status = 'declined';
+    reqItem.updatedAt = new Date().toISOString();
+    saveDB(db, true);
+    safeCloudSync('set', 'friend_requests', reqItem.id, reqItem);
+
+    return res.json({
+      success: true,
+      action: 'declined',
+      message: 'Tinanggihan ang friend request.'
+    });
+  }
+}
+
+function handleCancelFriendRequest(req: express.Request, res: express.Response) {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const requestId = req.params.requestId || req.body?.requestId;
+  const targetUserId = req.body?.targetUserId;
+  const db = loadDB();
+  if (!db.friendRequests) db.friendRequests = [];
+
+  const reqIndex = db.friendRequests.findIndex(fr => 
+    fr.fromUserId === userId && 
+    fr.status === 'pending' && 
+    ((requestId && fr.id === requestId) || (targetUserId && fr.toUserId === targetUserId))
+  );
+
+  if (reqIndex === -1) {
+    return res.status(404).json({ error: 'Walang nahanap na pending friend request.' });
+  }
+
+  const cancelled = db.friendRequests[reqIndex];
+  cancelled.status = 'cancelled';
+  cancelled.updatedAt = new Date().toISOString();
+  saveDB(db, true);
+  safeCloudSync('set', 'friend_requests', cancelled.id, cancelled);
+
+  res.json({ success: true, message: 'Na-cancel ang friend request.' });
+}
+
+function handleUnfriend(req: express.Request, res: express.Response) {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const targetUserId = req.params.friendId || req.body?.targetUserId;
+  if (!targetUserId) {
+    return res.status(400).json({ error: 'Target user ID is required.' });
+  }
+
+  const db = loadDB();
+  if (!db.friendships) db.friendships = [];
+
+  const initialCount = db.friendships.length;
+  db.friendships = db.friendships.filter(f => 
+    !( (f.userId === userId && f.friendId === targetUserId) ||
+       (f.userId === targetUserId && f.friendId === userId) )
+  );
+
+  removeFriendshipFromIndex(userId, targetUserId);
+  saveDB(db, true);
+
+  res.json({
+    success: true,
+    removed: db.friendships.length < initialCount,
+    message: 'Naalis na sa iyong mga kaibigan.'
+  });
+}
+
+function handleGetFriendRequests(req: express.Request, res: express.Response) {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const db = loadDB();
+  const allReqs = db.friendRequests || [];
+
+  const incoming = allReqs
+    .filter(fr => fr.toUserId === userId && fr.status === 'pending')
+    .map(fr => {
+      const sender = db.users.find(u => u.id === fr.fromUserId);
+      const mutualCount = sender ? getMutualFriendIds(userId, sender.id).length : 0;
+      return {
+        id: fr.id,
+        fromUserId: fr.fromUserId,
+        toUserId: fr.toUserId,
+        status: fr.status,
+        createdAt: fr.createdAt,
+        user: sender ? {
+          id: sender.id,
+          name: sender.name,
+          avatar: sender.avatar || '👤',
+          handle: '@' + (sender.name || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+          bio: sender.bio
+        } : null,
+        mutualCount
+      };
+    });
+
+  const outgoing = allReqs
+    .filter(fr => fr.fromUserId === userId && fr.status === 'pending')
+    .map(fr => {
+      const recipient = db.users.find(u => u.id === fr.toUserId);
+      const mutualCount = recipient ? getMutualFriendIds(userId, recipient.id).length : 0;
+      return {
+        id: fr.id,
+        fromUserId: fr.fromUserId,
+        toUserId: fr.toUserId,
+        status: fr.status,
+        createdAt: fr.createdAt,
+        user: recipient ? {
+          id: recipient.id,
+          name: recipient.name,
+          avatar: recipient.avatar || '👤',
+          handle: '@' + (recipient.name || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+          bio: recipient.bio
+        } : null,
+        mutualCount
+      };
+    });
+
+  res.json({
+    success: true,
+    incoming,
+    outgoing,
+    totalIncoming: incoming.length,
+    totalOutgoing: outgoing.length
+  });
+}
+
+function handleGetMutualFriends(req: express.Request, res: express.Response) {
+  const requesterId = req.headers.authorization;
+  if (!requesterId) {
+    return res.status(401).json({ error: 'Mag-login upang makita ang mutual friends.' });
+  }
+
+  const { targetUserId } = req.params;
+  const db = loadDB();
+
+  const mutualIds = getMutualFriendIds(requesterId, targetUserId);
+  const mutualFriends = mutualIds.map(mId => {
+    const u = db.users.find(x => x.id === mId);
+    if (!u) return null;
+    return {
+      id: u.id,
+      name: u.name,
+      avatar: u.avatar || '👤',
+      handle: '@' + (u.name || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+      bio: u.bio,
+      isOnline: Boolean(activeUsersMap[u.id])
+    };
+  }).filter(Boolean);
+
+  res.json({
+    success: true,
+    mutualFriends,
+    total: mutualFriends.length
+  });
+}
+
+// SEND FRIEND REQUEST (Body-based + RESTful param-based)
+app.post('/api/zone/friends/request', enforceCommunitySafety, handleSendFriendRequest);
+app.post('/api/zone/friends/request/:targetUserId', enforceCommunitySafety, handleSendFriendRequest);
+
+// RESPOND TO FRIEND REQUEST (ACCEPT / DECLINE - Body-based + RESTful param-based)
+app.post('/api/zone/friends/respond', enforceCommunitySafety, (req, res) => handleRespondFriendRequest(req, res));
+app.post('/api/zone/friends/accept/:requestId', enforceCommunitySafety, (req, res) => handleRespondFriendRequest(req, res, 'accept'));
+app.post('/api/zone/friends/decline/:requestId', enforceCommunitySafety, (req, res) => handleRespondFriendRequest(req, res, 'decline'));
+
+// CANCEL OUTGOING FRIEND REQUEST (Body-based + RESTful param-based)
+app.post('/api/zone/friends/cancel', handleCancelFriendRequest);
+app.post('/api/zone/friends/cancel/:requestId', handleCancelFriendRequest);
+
+// UNFRIEND / REMOVE FRIENDSHIP (Body-based + RESTful param-based)
+app.post('/api/zone/friends/unfriend', handleUnfriend);
+app.post('/api/zone/friends/unfriend/:friendId', handleUnfriend);
+
+// GET PENDING FRIEND REQUESTS (Both /requests and /pending/requests)
+app.get('/api/zone/friends/requests', handleGetFriendRequests);
+app.get('/api/zone/friends/pending/requests', handleGetFriendRequests);
+
+// GET FRIEND SUGGESTIONS
+app.get('/api/zone/friends/suggestions', (req, res) => {
+  const requesterId = req.headers.authorization;
+  if (!requesterId) {
+    return res.status(401).json({ error: 'Mag-login muna.' });
+  }
+
+  const db = loadDB();
+  const existingFriends = new Set(getFriendIds(requesterId));
+  existingFriends.add(requesterId);
+
+  const pendingSet = new Set<string>();
+  (db.friendRequests || []).forEach(fr => {
+    if (fr.status === 'pending') {
+      if (fr.fromUserId === requesterId) pendingSet.add(fr.toUserId);
+      if (fr.toUserId === requesterId) pendingSet.add(fr.fromUserId);
+    }
+  });
+
+  const blockedSet = new Set<string>(db.userBlocks?.[requesterId] || []);
+
+  const candidates = (db.users || [])
+    .filter(u => !existingFriends.has(u.id) && !pendingSet.has(u.id) && !blockedSet.has(u.id))
+    .map(u => {
+      const mutualIds = getMutualFriendIds(requesterId, u.id);
+      return {
+        id: u.id,
+        name: u.name,
+        avatar: u.avatar || '👤',
+        handle: '@' + (u.name || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+        bio: u.bio,
+        isOnline: Boolean(activeUsersMap[u.id]),
+        mutualCount: mutualIds.length
+      };
+    })
+    .sort((a, b) => b.mutualCount - a.mutualCount)
+    .slice(0, 15);
+
+  res.json({
+    success: true,
+    suggestions: candidates
+  });
+});
+
+// GET MUTUAL FRIENDS (Both /mutual/:targetUserId and /:targetUserId/mutual)
+app.get('/api/zone/friends/mutual/:targetUserId', handleGetMutualFriends);
+app.get('/api/zone/friends/:targetUserId/mutual', handleGetMutualFriends);
+
+// GET USER'S FRIENDS LIST
+app.get('/api/zone/friends/:targetUserId', (req, res) => {
+  const requesterId = req.headers.authorization;
+  const { targetUserId } = req.params;
+  const db = loadDB();
+
+  const friendIds = getFriendIds(targetUserId);
+  const friends = friendIds.map(fId => {
+    const u = db.users.find(x => x.id === fId);
+    if (!u) return null;
+    const mutualCount = requesterId ? getMutualFriendIds(requesterId, fId).length : 0;
+    return {
+      id: u.id,
+      name: u.name,
+      avatar: u.avatar || '👤',
+      handle: '@' + (u.name || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+      bio: u.bio,
+      isOnline: Boolean(activeUsersMap[u.id]),
+      mutualCount
+    };
+  }).filter(Boolean);
+
+  res.json({
+    success: true,
+    friends,
+    total: friends.length
   });
 });
 

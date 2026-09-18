@@ -210,6 +210,68 @@ export interface ZonePost {
     embedUrl?: string;
     createdAt: string;
   };
+  reactions?: PostReactionRecord[];
+  reactionCounts?: PostReactionCounts;
+  userReaction?: ReactionType | null;
+}
+
+export type ReactionType = 'like' | 'love' | 'haha' | 'wow' | 'sad' | 'angry' | 'care';
+
+export interface PostReactionRecord {
+  userId: string;
+  type: ReactionType;
+  createdAt: string;
+  userName?: string;
+  userAvatar?: string;
+}
+
+export interface PostReactionCounts {
+  like?: number;
+  love?: number;
+  haha?: number;
+  wow?: number;
+  sad?: number;
+  angry?: number;
+  care?: number;
+  [key: string]: number | undefined;
+}
+
+export interface Friendship {
+  id: string;
+  userId: string;
+  friendId: string;
+  createdAt: string;
+}
+
+export interface FriendRequest {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled';
+  createdAt: string;
+  updatedAt: string;
+  sender?: {
+    id: string;
+    name: string;
+    avatar: string;
+    handle?: string;
+  };
+  receiver?: {
+    id: string;
+    name: string;
+    avatar: string;
+    handle?: string;
+  };
+  mutualCount?: number;
+}
+
+export interface MutualFriendInfo {
+  id: string;
+  name: string;
+  avatar: string;
+  handle?: string;
+  bio?: string;
+  isOnline?: boolean;
 }
 
 export interface MerchantAd {
@@ -748,6 +810,11 @@ export interface UserProfileInfo {
   reels?: any[];
   challenges?: any[];
   taggedProducts?: any[];
+  friendCount?: number;
+  friendshipStatus?: 'none' | 'pending_sent' | 'pending_received' | 'friends' | 'self';
+  pendingRequestId?: string;
+  mutualFriendCount?: number;
+  mutualFriends?: Array<{ id: string; name: string; avatar: string; handle?: string }>;
 }
 
 export interface AdminUser {

@@ -75,6 +75,9 @@ import { BilibiliPlayerModal } from './BilibiliPlayerModal';
 import { ProductTagSelectorModal } from './ProductTagSelectorModal';
 import { SocialNotificationCenter } from './SocialNotificationCenter';
 import { CreatorAnalyticsDashboard } from './CreatorAnalyticsDashboard';
+import { FriendsManagerModal } from './FriendsManagerModal';
+import { PostReactionsBar, PostReactionsSummary } from './PostReactionsBar';
+import { ReactionType } from '../types';
 import { trackContentView, trackProductClick } from '../utils/analyticsTracker';
 
 interface ZoneFeedProps {
@@ -359,6 +362,30 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const [bilibiliActiveModalItem, setBilibiliActiveModalItem] = useState<BilibiliFeedItem | null>(null);
   const [bilibiliCreatorFilter, setBilibiliCreatorFilter] = useState<string>('all');
   const [bilibiliSearch, setBilibiliSearch] = useState<string>('');
+
+  // Phase 1 Social Graph & Friends State
+  const [showFriendsModal, setShowFriendsModal] = useState(false);
+  const [pendingIncomingCount, setPendingIncomingCount] = useState(0);
+
+  useEffect(() => {
+    if (!token) return;
+    const checkPendingFriends = async () => {
+      try {
+        const res = await fetch('/api/zone/friends/requests', {
+          headers: { 'Authorization': token }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.incoming)) {
+            setPendingIncomingCount(data.incoming.length);
+          }
+        }
+      } catch {}
+    };
+    checkPendingFriends();
+    const interval = setInterval(checkPendingFriends, 45000);
+    return () => clearInterval(interval);
+  }, [token]);
 
   const fetchBilibiliFeed = async (silent = false) => {
     if (!silent) setLoadingBilibili(true);
@@ -2583,6 +2610,110 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     }
   };
 
+  // Phase 1 Multi-Reactions Handler with Optimistic UI & Safety
+  const handleReactToPost = async (postId: string, reactionType: ReactionType) => {
+    const postToUpdate = posts.find(p => p.id === postId);
+    if (!postToUpdate) return;
+
+    const prevReaction = postToUpdate.userReaction;
+    const prevReactionCounts = { ...(postToUpdate.reactionCounts || {}) };
+    const prevReactions = [...(postToUpdate.reactions || [])];
+    const prevLikes = [...(postToUpdate.likes || [])];
+
+    // Optimistic calculation
+    const newCounts: Record<string, number> = { ...prevReactionCounts };
+    if (prevReaction && newCounts[prevReaction]) {
+      newCounts[prevReaction] = Math.max(0, newCounts[prevReaction] - 1);
+    }
+    newCounts[reactionType] = (newCounts[reactionType] || 0) + 1;
+
+    let newLikes = [...prevLikes];
+    if (!newLikes.includes(user.id)) {
+      newLikes.push(user.id);
+    }
+
+    // Optimistically update post in state
+    setPosts(prev => prev.map(p => {
+      if (p.id === postId) {
+        return {
+          ...p,
+          userReaction: reactionType,
+          reactionCounts: newCounts,
+          likes: newLikes
+        };
+      }
+      return p;
+    }));
+
+    try {
+      const res = await fetch(`/api/zone/posts/${postId}/react`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        },
+        body: JSON.stringify({ reaction: reactionType })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setPosts(prev => prev.map(p => {
+          if (p.id === postId) {
+            return {
+              ...p,
+              userReaction: data.userReaction || reactionType,
+              reactionCounts: data.reactionCounts || newCounts,
+              reactions: data.reactions || p.reactions,
+              likes: data.likes || newLikes
+            };
+          }
+          return p;
+        }));
+
+        if (data.reward && data.reward > 0) {
+          triggerNotification(
+            language === 'tl'
+              ? `🎉 +₱${data.reward.toFixed(2)} Reward sa pag-react!`
+              : `🎉 +₱${data.reward.toFixed(2)} Reward for reacting!`,
+            'success'
+          );
+          window.dispatchEvent(new Event('refresh-user-profile'));
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        // Revert on error
+        setPosts(prev => prev.map(p => {
+          if (p.id === postId) {
+            return {
+              ...p,
+              userReaction: prevReaction,
+              reactionCounts: prevReactionCounts,
+              reactions: prevReactions,
+              likes: prevLikes
+            };
+          }
+          return p;
+        }));
+        triggerNotification(errData.error || (language === 'tl' ? 'Hindi magawa ang reaksyon.' : 'Failed to register reaction.'), 'info');
+      }
+    } catch (err) {
+      console.error('Error reacting to post:', err);
+      // Revert on network failure
+      setPosts(prev => prev.map(p => {
+        if (p.id === postId) {
+          return {
+            ...p,
+            userReaction: prevReaction,
+            reactionCounts: prevReactionCounts,
+            reactions: prevReactions,
+            likes: prevLikes
+          };
+        }
+        return p;
+      }));
+    }
+  };
+
   const handlePostComment = async (postId: string) => {
     const commentText = commentInputs[postId];
     if (!commentText || !commentText.trim()) return;
@@ -3495,6 +3626,22 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
               </button>
             )}
             
+            {/* 👥 Mga Kaibigan / Friends Manager */}
+            <button
+              id="friends-manager-feed-btn"
+              onClick={() => setShowFriendsModal(true)}
+              className="relative bg-white/95 hover:bg-white text-emerald-900 border border-white/60 font-black text-xs px-3.5 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-1.5 shadow-xs hover:scale-[1.02] active:scale-[0.98]"
+              title={language === 'tl' ? 'Pamahalaan ang mga Kaibigan at Requests' : 'Manage Friends & Requests'}
+            >
+              <Users className="w-4 h-4 text-emerald-600" />
+              <span className="hidden sm:inline">{language === 'tl' ? 'Mga Kaibigan' : 'Friends'}</span>
+              {pendingIncomingCount > 0 && (
+                <span className="ml-0.5 bg-rose-500 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full animate-pulse">
+                  {pendingIncomingCount}
+                </span>
+              )}
+            </button>
+
             {/* 👤 My Profile Inspection */}
             {onOpenProfile && (
               <button
@@ -5347,28 +5494,33 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
                     {!isPending && !isFailed && (
                       <>
-                        {/* Likes & Comments Counters */}
+                        {/* Likes & Comments Counters & Multi-Reactions Summary */}
                         <div className="px-4 py-2 border-t border-b border-slate-50 flex items-center justify-between text-[10px] text-slate-450 font-bold">
-                          <span className="flex items-center gap-1">
-                            <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500 shrink-0" />
-                            <span>{post.likes.length} Likes</span>
-                          </span>
+                          <PostReactionsSummary
+                            postId={post.id}
+                            likesCount={post.likes.length}
+                            reactions={post.reactions}
+                            reactionCounts={post.reactionCounts as any}
+                            onOpenBreakdown={() => {}}
+                          />
                           <span>{post.comments?.length || 0} Comments</span>
                         </div>
 
                         {/* Interaction Actions */}
                         <div className="px-4 py-1.5 bg-slate-50/50 flex items-center justify-around gap-2 border-b border-slate-50">
-                          <button
-                            onClick={() => handleLikePost(post.id)}
-                            className={`flex-1 py-2 rounded-xl text-xs font-black cursor-pointer transition flex items-center justify-center gap-1.5 ${
-                              hasLiked 
-                                ? 'text-rose-600 bg-rose-50' 
-                                : 'text-slate-650 hover:bg-slate-100'
-                            }`}
-                          >
-                            <Heart className={`w-4 h-4 ${hasLiked ? 'fill-rose-500 text-rose-500' : 'text-slate-500'}`} />
-                            <span>{hasLiked ? 'Liked' : 'Like'}</span>
-                          </button>
+                          <PostReactionsBar
+                            postId={post.id}
+                            userReaction={post.userReaction as any}
+                            hasLiked={hasLiked}
+                            likesCount={post.likes.length}
+                            reactions={post.reactions}
+                            reactionCounts={post.reactionCounts as any}
+                            onReact={(rType) => handleReactToPost(post.id, rType)}
+                            token={token}
+                            onViewProfile={(uid) => {
+                              if (onOpenProfile) onOpenProfile(uid);
+                            }}
+                          />
 
                           <button
                             onClick={() => {
@@ -8037,6 +8189,19 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           }}
         />
       )}
+
+      {/* 👥 PHASE 1 FRIENDS & SOCIAL GRAPH MANAGER MODAL */}
+      <FriendsManagerModal
+        isOpen={showFriendsModal}
+        onClose={() => setShowFriendsModal(false)}
+        currentUserId={user.id}
+        token={token}
+        onViewProfile={(uid) => {
+          setShowFriendsModal(false);
+          if (onOpenProfile) onOpenProfile(uid);
+        }}
+        language={language}
+      />
 
     </div>
   );
