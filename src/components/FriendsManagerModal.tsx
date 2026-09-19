@@ -34,6 +34,9 @@ interface FriendItem {
   bio?: string;
   isOnline?: boolean;
   mutualCount?: number;
+  reasonCode?: string;
+  reasonLabel?: string;
+  isFollowing?: boolean;
 }
 
 interface RequestItem {
@@ -99,17 +102,41 @@ export const FriendsManagerModal: React.FC<FriendsManagerModalProps> = ({
 
   const loadSuggestions = async () => {
     try {
-      const res = await fetch('/api/zone/friends/suggestions', {
+      // Phase 2A: Query intelligent discovery candidates first
+      const res = await fetch('/api/zone/discovery/people-you-may-know', {
         headers: authHeader ? { Authorization: authHeader } : {}
       });
       if (res.ok) {
         const data = await res.json();
+        if (data.success && Array.isArray(data.candidates)) {
+          setSuggestions(data.candidates);
+          return;
+        }
+      }
+      // Backward-compatible fallback
+      const fallbackRes = await fetch('/api/zone/friends/suggestions', {
+        headers: authHeader ? { Authorization: authHeader } : {}
+      });
+      if (fallbackRes.ok) {
+        const data = await fallbackRes.json();
         if (data.success) {
           setSuggestions(data.suggestions || []);
         }
       }
     } catch (err) {
       console.error('Failed to load suggestions', err);
+    }
+  };
+
+  const handleDismissSuggestion = async (targetUserId: string) => {
+    try {
+      setSuggestions(prev => prev.filter(s => s.id !== targetUserId));
+      await fetch(`/api/zone/discovery/dismiss/${targetUserId}`, {
+        method: 'POST',
+        headers: authHeader ? { Authorization: authHeader } : {}
+      });
+    } catch (err) {
+      console.error('Failed to dismiss suggestion', err);
     }
   };
 
@@ -562,7 +589,12 @@ export const FriendsManagerModal: React.FC<FriendsManagerModalProps> = ({
                               {sug.name}
                             </h4>
                             <p className="text-xs text-cyan-400 font-mono">{sug.handle}</p>
-                            {(sug.mutualCount || 0) > 0 ? (
+                            {sug.reasonLabel ? (
+                              <p className="text-[11px] text-amber-400/90 font-medium mt-0.5 flex items-center gap-1">
+                                <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />
+                                <span>{sug.reasonLabel}</span>
+                              </p>
+                            ) : (sug.mutualCount || 0) > 0 ? (
                               <p className="text-[11px] text-emerald-400 font-medium mt-0.5 flex items-center gap-1">
                                 <Users className="w-3 h-3" />
                                 <span>{sug.mutualCount} mutual friend{sug.mutualCount! > 1 ? 's' : ''}</span>
@@ -572,14 +604,23 @@ export const FriendsManagerModal: React.FC<FriendsManagerModalProps> = ({
                             ) : null}
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleSendRequest(sug.id)}
-                          disabled={isLoading}
-                          className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg shadow-sm flex items-center gap-1.5 transition disabled:opacity-50 shrink-0 cursor-pointer"
-                        >
-                          <UserPlus className="w-3.5 h-3.5" />
-                          <span>+ Add Friend</span>
-                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => handleSendRequest(sug.id)}
+                            disabled={isLoading}
+                            className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg shadow-sm flex items-center gap-1.5 transition disabled:opacity-50 cursor-pointer"
+                          >
+                            <UserPlus className="w-3.5 h-3.5" />
+                            <span>+ Add Friend</span>
+                          </button>
+                          <button
+                            onClick={() => handleDismissSuggestion(sug.id)}
+                            title="I-dismiss ang mungkahi"
+                            className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-700/50 rounded-lg transition cursor-pointer"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}

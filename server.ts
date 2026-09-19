@@ -47,6 +47,22 @@ import {
   initPostReactions,
   processPostReaction
 } from './server/phase1Social';
+import {
+  RelationshipState,
+  UserRelationship,
+  DiscoveryCandidate,
+  SuggestedCreator,
+  rebuildFollowIndex,
+  addFollowToIndex,
+  removeFollowFromIndex,
+  isFollowing,
+  getFollowerIds,
+  getFollowingIds,
+  resolveRelationship,
+  dismissDiscoveryUser,
+  generatePeopleYouMayKnow,
+  generateSuggestedCreators
+} from './server/phase2Discovery';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -2252,6 +2268,7 @@ interface DBStructure {
   socialShareSettings?: SocialShareSettings;
   friendships?: FriendshipRecord[];
   friendRequests?: FriendRequestRecord[];
+  discoveryDismissals?: Record<string, string[]>;
 }
 
 export interface SocialShareSettings {
@@ -3200,6 +3217,10 @@ function loadDB(): DBStructure {
       loaded.friendRequests = [];
     }
     rebuildFriendIndex(loaded.friendships);
+    rebuildFollowIndex(loaded.users);
+    if (!loaded.discoveryDismissals) {
+      loaded.discoveryDismissals = {};
+    }
     if (!loaded.socialShareSettings) {
       loaded.socialShareSettings = {
         imageUrl: 'https://z-oneapp.onrender.com/default-share-cover.jpg',
@@ -12041,8 +12062,10 @@ app.post('/api/zone/users/:targetUserId/follow', enforceCommunitySafety, (req, r
   let isFollowing = false;
   if (zonedIndex > -1) {
     user.zonedUsers.splice(zonedIndex, 1);
+    removeFollowFromIndex(userId, targetUserId);
   } else {
     user.zonedUsers.push(targetUserId);
+    addFollowToIndex(userId, targetUserId);
     isFollowing = true;
 
     createSocialNotification(db, {
@@ -12066,6 +12089,7 @@ app.post('/api/zone/users/:targetUserId/follow', enforceCommunitySafety, (req, r
   }
 
   saveDB(db);
+  safeCloudSync('update', 'users', user.id, { zonedUsers: user.zonedUsers });
   const followerCount = db.users.filter(u => (u.zonedUsers || []).includes(targetUserId)).length;
   const followingCount = (targetUser.zonedUsers || []).length;
   res.json({
@@ -15176,6 +15200,341 @@ app.get('/api/zone/friends/:targetUserId', (req, res) => {
     total: friends.length
   });
 });
+
+// =========================================================================
+//   PHASE 2A: SOCIAL GRAPH & DISCOVERY FOUNDATION (SAFE ADDITIVE MOUNT)
+// =========================================================================
+
+// 1. DEDICATED FOLLOW ENDPOINT (POST /api/zone/follow/:targetUserId)
+app.post('/api/zone/follow/:targetUserId', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang mag-follow.' });
+  }
+
+  const { targetUserId } = req.params;
+  if (userId === targetUserId) {
+    return res.status(400).json({ error: 'Hindi mo maaaring i-follow ang iyong sarili!' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  const targetUser = db.users.find(u => u.id === targetUserId);
+
+  if (!user || !targetUser) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  // Block awareness (mutual blocking check)
+  if (db.userBlocks) {
+    if (db.userBlocks[userId]?.includes(targetUserId) || db.userBlocks[targetUserId]?.includes(userId)) {
+      return res.status(403).json({ error: 'Hindi maaaring i-follow ang user na ito dahil sa block status.' });
+    }
+  }
+
+  if (!user.zonedUsers) {
+    user.zonedUsers = [];
+  }
+
+  const isAlreadyFollowing = user.zonedUsers.includes(targetUserId);
+  if (!isAlreadyFollowing) {
+    user.zonedUsers.push(targetUserId);
+    addFollowToIndex(userId, targetUserId);
+
+    createSocialNotification(db, {
+      recipientUserId: targetUser.id,
+      senderUserId: user.id,
+      senderUserName: user.name,
+      senderUserAvatar: user.avatar,
+      type: 'follow',
+      title: `${user.name} ay nag-follow sa iyo!`,
+      message: 'Nagsimula nang sumubaybay sa iyong mga lathalain.',
+      targetId: user.id,
+      targetType: 'profile'
+    });
+
+    sendPushNotificationToUser(targetUser.id, {
+      title: '👤 May bagong follower ka sa Z-one!',
+      body: `Nagsimula nang mag-follow sa iyo si ${user.name}!`,
+      url: `/?tab=profile&userId=${user.id}`,
+      tag: `follow-${user.id}`
+    }).catch(() => {});
+
+    saveDB(db);
+    safeCloudSync('update', 'users', user.id, { zonedUsers: user.zonedUsers });
+  }
+
+  const followerCount = getFollowerIds(targetUserId).length || db.users.filter(u => (u.zonedUsers || []).includes(targetUserId)).length;
+  const followingCount = (targetUser.zonedUsers || []).length;
+
+  res.json({
+    success: true,
+    isFollowing: true,
+    isZoned: true,
+    followerCount,
+    followingCount
+  });
+});
+
+// 2. DEDICATED UNFOLLOW ENDPOINT (POST /api/zone/unfollow/:targetUserId)
+app.post('/api/zone/unfollow/:targetUserId', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang mag-unfollow.' });
+  }
+
+  const { targetUserId } = req.params;
+  if (userId === targetUserId) {
+    return res.status(400).json({ error: 'Hindi mo maaaring i-unfollow ang iyong sarili!' });
+  }
+
+  const db = loadDB();
+  const user = db.users.find(u => u.id === userId);
+  const targetUser = db.users.find(u => u.id === targetUserId);
+
+  if (!user || !targetUser) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  if (user.zonedUsers && user.zonedUsers.includes(targetUserId)) {
+    user.zonedUsers = user.zonedUsers.filter(id => id !== targetUserId);
+    removeFollowFromIndex(userId, targetUserId);
+    saveDB(db);
+    safeCloudSync('update', 'users', user.id, { zonedUsers: user.zonedUsers });
+  }
+
+  const followerCount = getFollowerIds(targetUserId).length || db.users.filter(u => (u.zonedUsers || []).includes(targetUserId)).length;
+  const followingCount = (targetUser.zonedUsers || []).length;
+
+  res.json({
+    success: true,
+    isFollowing: false,
+    isZoned: false,
+    followerCount,
+    followingCount
+  });
+});
+
+// 3. GET FOLLOWERS LIST (GET /api/zone/followers/:targetUserId)
+app.get('/api/zone/followers/:targetUserId', (req, res) => {
+  const requesterId = req.headers.authorization;
+  const { targetUserId } = req.params;
+  const db = loadDB();
+
+  const targetUser = db.users.find(u => u.id === targetUserId);
+  if (!targetUser) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  // Block awareness
+  if (requesterId && db.userBlocks) {
+    if (db.userBlocks[requesterId]?.includes(targetUserId) || db.userBlocks[targetUserId]?.includes(requesterId)) {
+      return res.status(403).json({ error: 'Hindi ma-access ang listahan dahil sa block status.' });
+    }
+  }
+
+  const followerIds = getFollowerIds(targetUserId);
+  const limit = Math.max(1, Math.min(Number(req.query.limit) || 20, 50));
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+
+  const followers = followerIds
+    .map(fId => {
+      const u = db.users.find(x => x.id === fId);
+      if (!u || u.isBanned) return null;
+      const mutualCount = requesterId ? getMutualFriendIds(requesterId, fId).length : 0;
+      const isRequesterFollowing = requesterId ? isFollowing(requesterId, fId) : false;
+      return {
+        id: u.id,
+        name: u.name,
+        avatar: u.avatar || '👤',
+        handle: '@' + (u.name || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+        bio: u.bio,
+        isOnline: Boolean(activeUsersMap[u.id]),
+        mutualCount,
+        isFollowing: isRequesterFollowing
+      };
+    })
+    .filter(Boolean);
+
+  const total = followers.length;
+  const paged = followers.slice(offset, offset + limit);
+  const hasMore = offset + limit < total;
+
+  res.json({
+    success: true,
+    followers: paged,
+    total,
+    hasMore,
+    nextCursor: hasMore ? String(offset + limit) : undefined
+  });
+});
+
+// 4. GET FOLLOWING LIST (GET /api/zone/following/:targetUserId)
+app.get('/api/zone/following/:targetUserId', (req, res) => {
+  const requesterId = req.headers.authorization;
+  const { targetUserId } = req.params;
+  const db = loadDB();
+
+  const targetUser = db.users.find(u => u.id === targetUserId);
+  if (!targetUser) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  // Block awareness
+  if (requesterId && db.userBlocks) {
+    if (db.userBlocks[requesterId]?.includes(targetUserId) || db.userBlocks[targetUserId]?.includes(requesterId)) {
+      return res.status(403).json({ error: 'Hindi ma-access ang listahan dahil sa block status.' });
+    }
+  }
+
+  const followingIds = getFollowingIds(targetUserId);
+  const limit = Math.max(1, Math.min(Number(req.query.limit) || 20, 50));
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+
+  const following = followingIds
+    .map(fId => {
+      const u = db.users.find(x => x.id === fId);
+      if (!u || u.isBanned) return null;
+      const mutualCount = requesterId ? getMutualFriendIds(requesterId, fId).length : 0;
+      const isRequesterFollowing = requesterId ? isFollowing(requesterId, fId) : false;
+      return {
+        id: u.id,
+        name: u.name,
+        avatar: u.avatar || '👤',
+        handle: '@' + (u.name || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+        bio: u.bio,
+        isOnline: Boolean(activeUsersMap[u.id]),
+        mutualCount,
+        isFollowing: isRequesterFollowing
+      };
+    })
+    .filter(Boolean);
+
+  const total = following.length;
+  const paged = following.slice(offset, offset + limit);
+  const hasMore = offset + limit < total;
+
+  res.json({
+    success: true,
+    following: paged,
+    total,
+    hasMore,
+    nextCursor: hasMore ? String(offset + limit) : undefined
+  });
+});
+
+// 5. RESOLVE RELATIONSHIP (GET /api/zone/relationship/:targetUserId)
+app.get('/api/zone/relationship/:targetUserId', (req, res) => {
+  const requesterId = req.headers.authorization;
+  const { targetUserId } = req.params;
+  const db = loadDB();
+
+  const targetUser = db.users.find(u => u.id === targetUserId);
+  if (!targetUser) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  const relationship = resolveRelationship(db, requesterId, targetUserId);
+  res.json({
+    success: true,
+    relationship
+  });
+});
+
+// 6. PEOPLE YOU MAY KNOW (GET /api/zone/discovery/people-you-may-know)
+app.get('/api/zone/discovery/people-you-may-know', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang ma-access ang discovery.' });
+  }
+
+  const db = loadDB();
+  const limit = Number(req.query.limit) || 10;
+  const offset = Number(req.query.offset) || 0;
+
+  const result = generatePeopleYouMayKnow(db, userId, {
+    limit,
+    offset,
+    activeUsersMap
+  });
+
+  res.json({
+    success: true,
+    ...result
+  });
+});
+
+// 7. SUGGESTED CREATORS (GET /api/zone/discovery/suggested-creators)
+app.get('/api/zone/discovery/suggested-creators', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang ma-access ang discovery.' });
+  }
+
+  const db = loadDB();
+  const limit = Number(req.query.limit) || 10;
+  const offset = Number(req.query.offset) || 0;
+
+  const result = generateSuggestedCreators(db, userId, {
+    limit,
+    offset,
+    activeUsersMap
+  });
+
+  res.json({
+    success: true,
+    ...result
+  });
+});
+
+// 8. UNIFIED DISCOVERY (GET /api/zone/discovery)
+app.get('/api/zone/discovery', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang ma-access ang discovery.' });
+  }
+
+  const db = loadDB();
+  const limit = Math.max(1, Math.min(Number(req.query.limit) || 6, 20));
+
+  const pymk = generatePeopleYouMayKnow(db, userId, { limit, offset: 0, activeUsersMap });
+  const creators = generateSuggestedCreators(db, userId, { limit, offset: 0, activeUsersMap });
+  const followingSuggestions = pymk.candidates.filter(c => !c.isFollowing).slice(0, limit);
+
+  res.json({
+    success: true,
+    peopleYouMayKnow: pymk.candidates,
+    suggestedCreators: creators.creators,
+    followingSuggestions
+  });
+});
+
+// 9. DISMISS DISCOVERY USER (POST /api/zone/discovery/dismiss/:targetUserId and body-based)
+const handleDismissDiscovery = (req: express.Request, res: express.Response) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang mag-dismiss.' });
+  }
+
+  const targetUserId = req.params.targetUserId || req.body?.targetUserId;
+  if (!targetUserId) {
+    return res.status(400).json({ error: 'Target user ID is required.' });
+  }
+
+  const db = loadDB();
+  dismissDiscoveryUser(db, userId, targetUserId);
+  saveDB(db);
+  safeCloudSync('set', 'discoveryDismissals', userId, { dismissedUserIds: db.discoveryDismissals?.[userId] || [] });
+
+  res.json({
+    success: true,
+    message: 'Na-dismiss ang suhestiyon.',
+    dismissedUserId: targetUserId
+  });
+};
+
+app.post('/api/zone/discovery/dismiss/:targetUserId', enforceCommunitySafety, handleDismissDiscovery);
+app.post('/api/zone/discovery/dismiss', enforceCommunitySafety, handleDismissDiscovery);
 
 // 2. UPDATE PROFILE (BIO, COVER PHOTO, AVATAR)
 app.put('/api/zone/profile', enforceCommunitySafety, async (req, res) => {

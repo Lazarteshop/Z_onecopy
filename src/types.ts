@@ -274,6 +274,74 @@ export interface MutualFriendInfo {
   isOnline?: boolean;
 }
 
+export type RelationshipState =
+  | 'self'
+  | 'friend'
+  | 'following'
+  | 'follower'
+  | 'mutual_following'
+  | 'pending_outgoing_request'
+  | 'pending_incoming_request'
+  | 'blocked'
+  | 'blocked_by'
+  | 'muted'
+  | 'none';
+
+export interface UserRelationship {
+  isSelf: boolean;
+  isFriend: boolean;
+  isFollowing: boolean;
+  isFollower: boolean;
+  hasPendingOutgoingRequest: boolean;
+  hasPendingIncomingRequest: boolean;
+  pendingRequestId?: string;
+  isBlocked: boolean;
+  isBlockedBy: boolean;
+  isMuted: boolean;
+  mutualFriendsCount: number;
+  mutualFriendIds: string[];
+  primaryState: RelationshipState;
+}
+
+export interface DiscoveryCandidate {
+  id: string;
+  name: string;
+  avatar: string;
+  handle: string;
+  bio?: string;
+  isOnline?: boolean;
+  mutualCount: number;
+  mutualFriendsPreview?: Array<{ id: string; name: string; avatar: string }>;
+  relationshipState: RelationshipState;
+  isFollowing: boolean;
+  reasonCode: 'MUTUAL_FRIENDS' | 'SHARED_COMMUNITY' | 'FOLLOWING_OVERLAP' | 'INTERACTION_OVERLAP' | 'ACTIVE_MEMBER';
+  reasonLabel: string;
+}
+
+export interface SuggestedCreator {
+  id: string;
+  name: string;
+  avatar: string;
+  handle: string;
+  bio?: string;
+  isOnline?: boolean;
+  followerCount: number;
+  followingCount: number;
+  postCount: number;
+  reelCount: number;
+  totalEngagement: number;
+  isFollowing: boolean;
+  reasonCode: 'TOP_CREATOR' | 'POPULAR_REELS' | 'COMMUNITY_STAR' | 'ACTIVE_CREATOR';
+  reasonLabel: string;
+}
+
+export interface UnifiedDiscoveryResponse {
+  success: boolean;
+  peopleYouMayKnow: DiscoveryCandidate[];
+  suggestedCreators: SuggestedCreator[];
+  followingSuggestions: DiscoveryCandidate[];
+}
+
 export interface MerchantAd {
   id: string;
   userId: string;
