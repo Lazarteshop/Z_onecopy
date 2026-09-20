@@ -63,6 +63,33 @@ import {
   generatePeopleYouMayKnow,
   generateSuggestedCreators
 } from './server/phase2Discovery';
+import {
+  CommunityRecord,
+  CommunityRole,
+  CommunityPrivacy,
+  CommunityVisibility,
+  rebuildCommunityIndexes,
+  addCommunityToIndex,
+  removeCommunityFromIndex,
+  addUserToCommunityIndex,
+  removeUserFromCommunityIndex,
+  getUserCommunityIds,
+  getCommunityMemberIds,
+  isUserInCommunity,
+  resolveUserRole,
+  canManageCommunity,
+  canApproveRequests,
+  canInviteMembers,
+  canRemoveTarget,
+  canPromoteTarget,
+  canDemoteTarget,
+  getMutualCommunities,
+  formatCommunityPreview,
+  queryCommunitiesDiscovery,
+  generateCommunityRecommendations,
+  formatCommunityMembers,
+  createDefaultSeedCommunities
+} from './server/phase2bCommunities';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -2182,11 +2209,11 @@ interface SocialNotification {
   senderUserId?: string;
   senderUserName?: string;
   senderUserAvatar?: string;
-  type: 'like' | 'comment' | 'reply' | 'follow' | 'mention' | 'share' | 'challenge' | 'shop' | 'reaction' | 'friend_request' | 'friend_accept';
+  type: 'like' | 'comment' | 'reply' | 'follow' | 'mention' | 'share' | 'challenge' | 'shop' | 'reaction' | 'friend_request' | 'friend_accept' | 'community_request' | 'community_accept' | 'community_invite' | 'community_role';
   title: string;
   message: string;
   targetId?: string;
-  targetType?: 'post' | 'reel' | 'challenge' | 'product' | 'profile';
+  targetType?: 'post' | 'reel' | 'challenge' | 'product' | 'profile' | 'community';
   read: boolean;
   createdAt: string;
 }
@@ -2269,6 +2296,7 @@ interface DBStructure {
   friendships?: FriendshipRecord[];
   friendRequests?: FriendRequestRecord[];
   discoveryDismissals?: Record<string, string[]>;
+  communities?: CommunityRecord[];
 }
 
 export interface SocialShareSettings {
@@ -3218,6 +3246,10 @@ function loadDB(): DBStructure {
     }
     rebuildFriendIndex(loaded.friendships);
     rebuildFollowIndex(loaded.users);
+    if (!loaded.communities || !Array.isArray(loaded.communities) || loaded.communities.length === 0) {
+      loaded.communities = createDefaultSeedCommunities(loaded.users);
+    }
+    rebuildCommunityIndexes(loaded.communities);
     if (!loaded.discoveryDismissals) {
       loaded.discoveryDismissals = {};
     }
@@ -3501,7 +3533,8 @@ const lastSyncedCache = {
   sponsoredMissions: new Map<string, string>(),
   depositRequests: new Map<string, string>(),
   friendships: new Map<string, string>(),
-  friendRequests: new Map<string, string>()
+  friendRequests: new Map<string, string>(),
+  communities: new Map<string, string>()
 };
 
 function initLastSyncedCache(data: DBStructure) {
@@ -3628,6 +3661,11 @@ function initLastSyncedCache(data: DBStructure) {
   if (lastSyncedCache.friendRequests && lastSyncedCache.friendRequests.size === 0 && data.friendRequests && data.friendRequests.length > 0) {
     for (const fr of data.friendRequests) {
       lastSyncedCache.friendRequests.set(fr.id, JSON.stringify(fr));
+    }
+  }
+  if (lastSyncedCache.communities && lastSyncedCache.communities.size === 0 && data.communities && data.communities.length > 0) {
+    for (const c of data.communities) {
+      lastSyncedCache.communities.set(c.id, JSON.stringify(c));
     }
   }
 }
@@ -4551,6 +4589,25 @@ async function uploadToFirestore(data: DBStructure) {
             } catch (frErr: any) {
               console.error(`Error saving friend request ${fr.id} to Cloud DB:`, frErr);
               enqueueFirestoreSync('set', 'friend_requests', fr.id, fr, frErr?.message || String(frErr));
+            }
+          })());
+        }
+      }
+    }
+
+    if (data.communities) {
+      for (const c of data.communities) {
+        const cStr = JSON.stringify(c);
+        if (lastSyncedCache.communities && lastSyncedCache.communities.get(c.id) !== cStr) {
+          promises.push((async () => {
+            try {
+              const { id, ...cWithoutId } = c;
+              await cloudDb.setDoc('communities', c.id, cWithoutId);
+              lastSyncedCache.communities.set(c.id, cStr);
+              dequeueFirestoreSync('communities', c.id);
+            } catch (cErr: any) {
+              console.error(`Error saving community ${c.id} to Cloud DB:`, cErr);
+              enqueueFirestoreSync('set', 'communities', c.id, c, cErr?.message || String(cErr));
             }
           })());
         }
@@ -13718,7 +13775,7 @@ app.delete('/api/zone/messages/:messageId', enforceCommunitySafety, (req, res) =
 
 // --- GROUP CHAT (GC) ENDPOINTS ---
 
-// 1. GET ALL GROUP CHATS FOR CURRENT USER
+// 1. GET ALL GROUP CHATS FOR CURRENT USER (WITH DISCOVERY SUPPORT)
 app.get('/api/zone/groups', (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
@@ -13726,6 +13783,37 @@ app.get('/api/zone/groups', (req, res) => {
   }
 
   const db = loadDB();
+
+  // If discovery parameters are requested, delegate to Communities discovery
+  if (
+    req.query.discover === 'true' ||
+    req.query.scope === 'communities' ||
+    req.query.type === 'community' ||
+    req.query.search !== undefined ||
+    req.query.category !== undefined ||
+    req.query.page !== undefined
+  ) {
+    if (!db.communities || !Array.isArray(db.communities) || db.communities.length === 0) {
+      db.communities = createDefaultSeedCommunities(db.users);
+      saveDB(db, true);
+    }
+    const friendIds = getFriendIds(userId);
+    const discovery = queryCommunitiesDiscovery(db.communities, userId, {
+      search: typeof req.query.search === 'string' ? req.query.search : undefined,
+      category: typeof req.query.category === 'string' ? req.query.category : undefined,
+      privacy: typeof req.query.privacy === 'string' ? req.query.privacy : undefined,
+      page: Number(req.query.page) || 1,
+      limit: Number(req.query.limit) || 12,
+      sort: typeof req.query.sort === 'string' ? req.query.sort : 'popular'
+    }, db.users, friendIds);
+
+    return res.json({
+      success: true,
+      ...discovery,
+      groups: discovery.communities
+    });
+  }
+
   if (!db.groupChats) db.groupChats = [];
   if (!db.groupMessages) db.groupMessages = [];
 
@@ -15873,6 +15961,953 @@ app.put('/api/zone/albums/:albumId/photos/:photoId/privacy', enforceCommunitySaf
   safeCloudSync('set', 'albums', album.id, albumWithoutId);
 
   res.json({ success: true, photo, message: `Naitakda ang photo privacy sa ${photo.privacy === 'only_me' ? 'Only Me (Pribado)' : 'Public (Lahat makakakita)'}!` });
+});
+
+// =========================================================================
+//   PHASE 2B: GROUPS & COMMUNITIES GRAPH (SAFE ADDITIVE MOUNT)
+// =========================================================================
+
+// 1. DISCOVER / SEARCH COMMUNITIES (GET /api/zone/communities)
+app.get('/api/zone/communities', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const db = loadDB();
+  if (!db.communities || !Array.isArray(db.communities) || db.communities.length === 0) {
+    db.communities = createDefaultSeedCommunities(db.users);
+    saveDB(db, true);
+  }
+
+  const friendIds = getFriendIds(userId);
+  const discovery = queryCommunitiesDiscovery(db.communities, userId, {
+    search: typeof req.query.search === 'string' ? req.query.search : undefined,
+    category: typeof req.query.category === 'string' ? req.query.category : undefined,
+    privacy: typeof req.query.privacy === 'string' ? req.query.privacy : undefined,
+    page: Number(req.query.page) || 1,
+    limit: Number(req.query.limit) || 12,
+    sort: typeof req.query.sort === 'string' ? req.query.sort : 'popular'
+  }, db.users, friendIds);
+
+  res.json({
+    success: true,
+    ...discovery
+  });
+});
+
+// 2. GET CURRENT USER'S JOINED & MANAGED COMMUNITIES (GET /api/zone/communities/my)
+app.get('/api/zone/communities/my', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const db = loadDB();
+  if (!db.communities || !Array.isArray(db.communities) || db.communities.length === 0) {
+    db.communities = createDefaultSeedCommunities(db.users);
+    saveDB(db, true);
+  }
+
+  const friendIds = getFriendIds(userId);
+  const joined = db.communities
+    .filter(c => (c.members || []).includes(userId))
+    .map(c => formatCommunityPreview(c, userId, db.users, friendIds));
+
+  const pending = db.communities
+    .filter(c => (c.pendingMembers || []).includes(userId))
+    .map(c => formatCommunityPreview(c, userId, db.users, friendIds));
+
+  const invited = db.communities
+    .filter(c => (c.invitedMembers || []).includes(userId))
+    .map(c => formatCommunityPreview(c, userId, db.users, friendIds));
+
+  res.json({
+    success: true,
+    communities: joined,
+    pending,
+    invited,
+    totalJoined: joined.length
+  });
+});
+
+// 3. GET BOUNDED COMMUNITY RECOMMENDATIONS (GET /api/zone/communities/recommendations)
+app.get('/api/zone/communities/recommendations', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const db = loadDB();
+  if (!db.communities || !Array.isArray(db.communities) || db.communities.length === 0) {
+    db.communities = createDefaultSeedCommunities(db.users);
+    saveDB(db, true);
+  }
+
+  const friendIds = getFriendIds(userId);
+  const followingIds = getFollowingIds(userId);
+  const limit = Math.min(Number(req.query.limit) || 6, 20);
+  const recommendations = generateCommunityRecommendations(db.communities, userId, db.users, friendIds, followingIds, limit);
+
+  res.json({
+    success: true,
+    recommendations,
+    total: recommendations.length
+  });
+});
+
+// 4. GET MUTUAL COMMUNITIES WITH ANOTHER USER (GET /api/zone/communities/mutual/:targetUserId)
+app.get('/api/zone/communities/mutual/:targetUserId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { targetUserId } = req.params;
+  if (!targetUserId || targetUserId === userId) {
+    return res.json({ success: true, mutualCommunities: [], total: 0 });
+  }
+
+  const db = loadDB();
+  if (!db.communities || !Array.isArray(db.communities) || db.communities.length === 0) {
+    db.communities = createDefaultSeedCommunities(db.users);
+    saveDB(db, true);
+  }
+
+  // Block check
+  const myBlocks = db.userBlocks?.[userId] || [];
+  const theirBlocks = db.userBlocks?.[targetUserId] || [];
+  if (myBlocks.includes(targetUserId) || theirBlocks.includes(userId)) {
+    return res.json({ success: true, mutualCommunities: [], total: 0 });
+  }
+
+  const friendIds = getFriendIds(userId);
+  const mutuals = getMutualCommunities(userId, targetUserId, db.communities, userId);
+  const formatted = mutuals.map(c => formatCommunityPreview(c, userId, db.users, friendIds));
+
+  res.json({
+    success: true,
+    mutualCommunities: formatted,
+    total: formatted.length
+  });
+});
+
+// 5. GET SINGLE COMMUNITY DETAILS (GET /api/zone/communities/:communityId)
+app.get('/api/zone/communities/:communityId', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId } = req.params;
+  const db = loadDB();
+  if (!db.communities || !Array.isArray(db.communities) || db.communities.length === 0) {
+    db.communities = createDefaultSeedCommunities(db.users);
+    saveDB(db, true);
+  }
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  const role = resolveUserRole(community, userId);
+  if (community.visibility === 'hidden' && role === 'none') {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  const friendIds = getFriendIds(userId);
+  const preview = formatCommunityPreview(community, userId, db.users, friendIds);
+
+  res.json({
+    success: true,
+    community: {
+      ...preview,
+      rules: community.rules || [],
+      linkedChatGroupId: community.linkedChatGroupId
+    }
+  });
+});
+
+// 6. GET COMMUNITY MEMBERS LIST (GET /api/zone/communities/:communityId/members)
+app.get('/api/zone/communities/:communityId/members', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId } = req.params;
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  const role = resolveUserRole(community, userId);
+  // If private and user not member, prevent unauthorized member listing
+  if (community.privacy === 'private' && (role === 'none' || role === 'pending' || role === 'invited')) {
+    return res.status(403).json({ error: 'Pribado ang komunidad na ito. Kailangan maging miyembro upang makita ang mga kasapi.' });
+  }
+
+  const friendIds = getFriendIds(userId);
+  const page = Math.max(Number(req.query.page) || 1, 1);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+  const filterRole = typeof req.query.role === 'string' ? req.query.role : undefined;
+
+  const membersResult = formatCommunityMembers(community, userId, db.users, {
+    page,
+    limit,
+    role: filterRole as any
+  });
+
+  res.json({
+    success: true,
+    ...membersResult
+  });
+});
+
+// 7. GET PENDING MEMBERSHIP REQUESTS (GET /api/zone/communities/:communityId/requests)
+app.get('/api/zone/communities/:communityId/requests', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId } = req.params;
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  if (!canApproveRequests(community, userId)) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na tingnan ang mga membership request ng komunidad na ito.' });
+  }
+
+  const userMap = new Map(db.users.map(u => [u.id, u]));
+  const friendIds = getFriendIds(userId);
+  const requests = (community.pendingMembers || []).map(mid => {
+    const u = userMap.get(mid);
+    const theirFriends = getFriendIds(mid);
+    const mutualCount = theirFriends.filter(fid => friendIds.includes(fid)).length;
+    return {
+      id: mid,
+      name: u ? u.name : 'Ka-Zone User',
+      avatar: u?.avatar || '👤',
+      handle: u ? `@${u.name.toLowerCase().replace(/[^a-z0-9_]/g, '')}` : '@kazone',
+      bio: u?.bio || '',
+      mutualFriendsCount: mutualCount,
+      requestedAt: community.updatedAt
+    };
+  });
+
+  res.json({
+    success: true,
+    requests,
+    total: requests.length
+  });
+});
+
+// 8. CREATE COMMUNITY (POST /api/zone/communities)
+app.post('/api/zone/communities', enforceCommunitySafety, async (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Mag-login muna upang gumawa ng komunidad.' });
+  }
+
+  const { name, description, avatar, coverImage, category, privacy, rules } = req.body;
+  if (!name || typeof name !== 'string' || name.trim().length < 3) {
+    return res.status(400).json({ error: 'Kinakailangan ang wastong pangalan ng komunidad (hindi bababa sa 3 titik).' });
+  }
+
+  const cleanName = filterSwearWords(name.trim().slice(0, 60));
+  const cleanDesc = description ? filterSwearWords(description.trim().slice(0, 500)) : '';
+  const cleanCategory = category ? filterSwearWords(category.trim().slice(0, 40)) : 'Pangkalahatan';
+  const validPrivacy: CommunityPrivacy = privacy === 'private' ? 'private' : 'public';
+
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const communityId = `comm-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const now = new Date().toISOString();
+
+  // Create linked group chat for messaging
+  const linkedGcId = `gc-comm-${communityId}`;
+  if (!db.groupChats) db.groupChats = [];
+  const user = db.users.find(u => u.id === userId);
+
+  const newGc: GroupChat = {
+    id: linkedGcId,
+    name: `${cleanName} (Chat)`,
+    avatar: avatar || '👥',
+    description: `Official Chat Channel para sa komunidad na ${cleanName}`,
+    createdBy: userId,
+    creatorName: user ? user.name : 'Ka-Zone Member',
+    members: [userId],
+    createdAt: now,
+    updatedAt: now
+  };
+  db.groupChats.push(newGc);
+
+  const cleanRules = Array.isArray(rules)
+    ? rules.slice(0, 10).map(r => filterSwearWords(String(r).trim().slice(0, 200))).filter(Boolean)
+    : [
+        'Maging magalang at magiliw sa kapwa Ka-Zone.',
+        'Bawal ang spam, panlilinlang, o mapanirang nilalaman.',
+        'Ibahagi lamang ang mga kapaki-pakinabang na kaalaman at tips.'
+      ];
+
+  const newCommunity: CommunityRecord = {
+    id: communityId,
+    name: cleanName,
+    description: cleanDesc,
+    avatar: avatar || '👥',
+    coverImage: coverImage || undefined,
+    category: cleanCategory,
+    privacy: validPrivacy,
+    visibility: 'visible',
+    ownerId: userId,
+    admins: [userId],
+    moderators: [],
+    members: [userId],
+    pendingMembers: [],
+    invitedMembers: [],
+    rules: cleanRules,
+    linkedChatGroupId: linkedGcId,
+    createdAt: now,
+    updatedAt: now
+  };
+
+  db.communities.push(newCommunity);
+  saveDB(db, true);
+
+  // Update indexes
+  addCommunityToIndex(newCommunity);
+
+  // Sync to Cloud
+  const { id: _, ...commWithoutId } = newCommunity;
+  safeCloudSync('set', 'communities', newCommunity.id, commWithoutId);
+  const { id: _gc, ...gcWithoutId } = newGc;
+  safeCloudSync('set', 'group_chats', newGc.id, gcWithoutId);
+
+  const friendIds = getFriendIds(userId);
+  const preview = formatCommunityPreview(newCommunity, userId, db.users, friendIds);
+
+  res.json({
+    success: true,
+    community: preview,
+    message: 'Matagumpay na nagawa ang komunidad!'
+  });
+});
+
+// 9. JOIN COMMUNITY (POST /api/zone/communities/:communityId/join)
+app.post('/api/zone/communities/:communityId/join', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId } = req.params;
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  if ((community.members || []).includes(userId)) {
+    return res.json({ success: true, message: 'Miyembro ka na ng komunidad na ito.' });
+  }
+
+  // If private, require request workflow unless user is already invited
+  const isInvited = (community.invitedMembers || []).includes(userId);
+  if (community.privacy === 'private' && !isInvited) {
+    return res.status(400).json({ error: 'Pribado ang komunidad na ito. Mangyaring magpadala ng membership request.' });
+  }
+
+  if (!community.members) community.members = [];
+  community.members.push(userId);
+
+  // Clean up pending and invited
+  community.pendingMembers = (community.pendingMembers || []).filter(id => id !== userId);
+  community.invitedMembers = (community.invitedMembers || []).filter(id => id !== userId);
+  community.updatedAt = new Date().toISOString();
+
+  // Also add to linked group chat if exists
+  if (community.linkedChatGroupId && db.groupChats) {
+    const gc = db.groupChats.find(g => g.id === community.linkedChatGroupId);
+    if (gc && !gc.members.includes(userId)) {
+      gc.members.push(userId);
+      gc.updatedAt = new Date().toISOString();
+    }
+  }
+
+  saveDB(db, true);
+  addUserToCommunityIndex(userId, community.id);
+
+  const { id: _, ...commWithoutId } = community;
+  safeCloudSync('set', 'communities', community.id, commWithoutId);
+
+  res.json({
+    success: true,
+    message: 'Maligayang pagdating! Sumali ka na sa komunidad.'
+  });
+});
+
+// 10. REQUEST TO JOIN PRIVATE COMMUNITY (POST /api/zone/communities/:communityId/request)
+app.post('/api/zone/communities/:communityId/request', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId } = req.params;
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  if ((community.members || []).includes(userId)) {
+    return res.status(400).json({ error: 'Miyembro ka na ng komunidad na ito.' });
+  }
+
+  if (!community.pendingMembers) community.pendingMembers = [];
+  if (community.pendingMembers.includes(userId)) {
+    return res.json({ success: true, message: 'Napadala na ang iyong request sa mga tagapamahala.' });
+  }
+
+  // If public, automatically join
+  if (community.privacy === 'public') {
+    if (!community.members) community.members = [];
+    community.members.push(userId);
+    community.updatedAt = new Date().toISOString();
+    saveDB(db, true);
+    addUserToCommunityIndex(userId, community.id);
+    const { id: _, ...commWithoutId } = community;
+    safeCloudSync('set', 'communities', community.id, commWithoutId);
+    return res.json({ success: true, message: 'Maligayang pagdating! Sumali ka na sa komunidad.' });
+  }
+
+  community.pendingMembers.push(userId);
+  community.updatedAt = new Date().toISOString();
+
+  // Create notification for owner
+  const applicant = db.users.find(u => u.id === userId);
+  createSocialNotification(db, {
+    recipientUserId: community.ownerId,
+    senderUserId: userId,
+    senderUserName: applicant ? applicant.name : 'Ka-Zone Member',
+    senderUserAvatar: applicant?.avatar || '👤',
+    type: 'community_request',
+    title: 'Membership Request',
+    message: `${applicant ? applicant.name : 'Isang Ka-Zone'} ay nagpadala ng request na sumali sa "${community.name}".`,
+    targetId: community.id,
+    targetType: 'community'
+  });
+
+  saveDB(db, true);
+
+  const { id: _, ...commWithoutId } = community;
+  safeCloudSync('set', 'communities', community.id, commWithoutId);
+
+  res.json({
+    success: true,
+    message: 'Napadala na ang iyong membership request!'
+  });
+});
+
+// 11. CANCEL MEMBERSHIP REQUEST (POST /api/zone/communities/:communityId/requests/cancel)
+app.post('/api/zone/communities/:communityId/requests/cancel', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId } = req.params;
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  community.pendingMembers = (community.pendingMembers || []).filter(id => id !== userId);
+  community.updatedAt = new Date().toISOString();
+  saveDB(db, true);
+
+  const { id: _, ...commWithoutId } = community;
+  safeCloudSync('set', 'communities', community.id, commWithoutId);
+
+  res.json({
+    success: true,
+    message: 'Kinansela ang iyong membership request.'
+  });
+});
+
+// 12. ACCEPT MEMBERSHIP REQUEST (POST /api/zone/communities/:communityId/requests/:targetUserId/accept)
+app.post('/api/zone/communities/:communityId/requests/:targetUserId/accept', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId, targetUserId } = req.params;
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  if (!canApproveRequests(community, userId)) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na mag-apruba ng mga membership request.' });
+  }
+
+  if (!(community.pendingMembers || []).includes(targetUserId)) {
+    return res.status(400).json({ error: 'Walang nakabinbing membership request mula sa user na ito.' });
+  }
+
+  // Remove from pending, add to members
+  community.pendingMembers = community.pendingMembers.filter(id => id !== targetUserId);
+  if (!community.members) community.members = [];
+  if (!community.members.includes(targetUserId)) {
+    community.members.push(targetUserId);
+  }
+  community.updatedAt = new Date().toISOString();
+
+  // Add to linked chat group
+  if (community.linkedChatGroupId && db.groupChats) {
+    const gc = db.groupChats.find(g => g.id === community.linkedChatGroupId);
+    if (gc && !gc.members.includes(targetUserId)) {
+      gc.members.push(targetUserId);
+      gc.updatedAt = new Date().toISOString();
+    }
+  }
+
+  saveDB(db, true);
+  addUserToCommunityIndex(targetUserId, community.id);
+
+  const { id: _, ...commWithoutId } = community;
+  safeCloudSync('set', 'communities', community.id, commWithoutId);
+
+  // Notify target user
+  const approver = db.users.find(u => u.id === userId);
+  createSocialNotification(db, {
+    recipientUserId: targetUserId,
+    senderUserId: userId,
+    senderUserName: approver ? approver.name : 'Ka-Zone Admin',
+    senderUserAvatar: approver?.avatar || '👤',
+    type: 'community_accept',
+    title: 'Accepted into Community',
+    message: `Inaprubahan ang iyong pagsali sa komunidad na "${community.name}".`,
+    targetId: community.id,
+    targetType: 'community'
+  });
+
+  res.json({
+    success: true,
+    message: 'Inaprubahan ang membership request!'
+  });
+});
+
+// 13. DECLINE MEMBERSHIP REQUEST (POST /api/zone/communities/:communityId/requests/:targetUserId/decline)
+app.post('/api/zone/communities/:communityId/requests/:targetUserId/decline', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId, targetUserId } = req.params;
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  if (!canApproveRequests(community, userId)) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na tumanggi sa mga membership request.' });
+  }
+
+  community.pendingMembers = (community.pendingMembers || []).filter(id => id !== targetUserId);
+  community.updatedAt = new Date().toISOString();
+  saveDB(db, true);
+
+  const { id: _, ...commWithoutId } = community;
+  safeCloudSync('set', 'communities', community.id, commWithoutId);
+
+  res.json({
+    success: true,
+    message: 'Tinanggihan ang membership request.'
+  });
+});
+
+// 14. LEAVE COMMUNITY (POST /api/zone/communities/:communityId/leave)
+app.post('/api/zone/communities/:communityId/leave', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId } = req.params;
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  if (!(community.members || []).includes(userId)) {
+    return res.status(400).json({ error: 'Hindi ka miyembro ng komunidad na ito.' });
+  }
+
+  // Handle owner leaving
+  if (community.ownerId === userId) {
+    const remainingMembers = (community.members || []).filter(id => id !== userId);
+    if (remainingMembers.length > 0) {
+      // Find successor: highest admin or oldest member
+      const adminSuccessor = (community.admins || []).find(id => id !== userId && remainingMembers.includes(id));
+      community.ownerId = adminSuccessor || remainingMembers[0];
+      if (!community.admins.includes(community.ownerId)) {
+        community.admins.push(community.ownerId);
+      }
+    }
+  }
+
+  community.members = (community.members || []).filter(id => id !== userId);
+  community.admins = (community.admins || []).filter(id => id !== userId);
+  community.moderators = (community.moderators || []).filter(id => id !== userId);
+  community.updatedAt = new Date().toISOString();
+
+  // Remove from linked chat group
+  if (community.linkedChatGroupId && db.groupChats) {
+    const gc = db.groupChats.find(g => g.id === community.linkedChatGroupId);
+    if (gc) {
+      gc.members = (gc.members || []).filter(id => id !== userId);
+      gc.updatedAt = new Date().toISOString();
+    }
+  }
+
+  saveDB(db, true);
+  removeUserFromCommunityIndex(userId, community.id);
+
+  const { id: _, ...commWithoutId } = community;
+  safeCloudSync('set', 'communities', community.id, commWithoutId);
+
+  res.json({
+    success: true,
+    message: 'Nakaalis ka na sa komunidad.'
+  });
+});
+
+// 15. INVITE USER TO COMMUNITY (POST /api/zone/communities/:communityId/invite)
+app.post('/api/zone/communities/:communityId/invite', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId } = req.params;
+  const { targetUserId } = req.body;
+  if (!targetUserId || targetUserId === userId) {
+    return res.status(400).json({ error: 'Pumili ng wastong user na aanyayahan.' });
+  }
+
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  if (!canInviteMembers(community, userId)) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na mag-imbita sa komunidad na ito.' });
+  }
+
+  const targetUser = db.users.find(u => u.id === targetUserId);
+  if (!targetUser) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  // Block check
+  const myBlocks = db.userBlocks?.[userId] || [];
+  const theirBlocks = db.userBlocks?.[targetUserId] || [];
+  if (myBlocks.includes(targetUserId) || theirBlocks.includes(userId)) {
+    return res.status(403).json({ error: 'Hindi maaaring mag-imbita sa kasalukuyan.' });
+  }
+
+  if ((community.members || []).includes(targetUserId)) {
+    return res.status(400).json({ error: 'Miyembro na ng komunidad ang user na ito.' });
+  }
+
+  if (!community.invitedMembers) community.invitedMembers = [];
+  if (!community.invitedMembers.includes(targetUserId)) {
+    community.invitedMembers.push(targetUserId);
+    community.updatedAt = new Date().toISOString();
+    saveDB(db, true);
+
+    const { id: _, ...commWithoutId } = community;
+    safeCloudSync('set', 'communities', community.id, commWithoutId);
+
+    const sender = db.users.find(u => u.id === userId);
+    createSocialNotification(db, {
+      recipientUserId: targetUserId,
+      senderUserId: userId,
+      senderUserName: sender ? sender.name : 'Ka-Zone Member',
+      senderUserAvatar: sender?.avatar || '👤',
+      type: 'community_invite',
+      title: 'Community Invitation',
+      message: `Inanyayahan ka ni ${sender ? sender.name : 'isang Ka-Zone'} na sumali sa "${community.name}".`,
+      targetId: community.id,
+      targetType: 'community'
+    });
+  }
+
+  res.json({
+    success: true,
+    message: 'Naimbita na ang user sa komunidad!'
+  });
+});
+
+// 16. REMOVE MEMBER FROM COMMUNITY (POST /api/zone/communities/:communityId/members/:targetUserId/remove)
+app.post('/api/zone/communities/:communityId/members/:targetUserId/remove', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId, targetUserId } = req.params;
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  if (!canRemoveTarget(community, userId, targetUserId)) {
+    return res.status(403).json({ error: 'Wala kang sapat na antas upang alisin ang miyembrong ito.' });
+  }
+
+  community.members = (community.members || []).filter(id => id !== targetUserId);
+  community.admins = (community.admins || []).filter(id => id !== targetUserId);
+  community.moderators = (community.moderators || []).filter(id => id !== targetUserId);
+  community.updatedAt = new Date().toISOString();
+
+  // Remove from linked chat group
+  if (community.linkedChatGroupId && db.groupChats) {
+    const gc = db.groupChats.find(g => g.id === community.linkedChatGroupId);
+    if (gc) {
+      gc.members = (gc.members || []).filter(id => id !== targetUserId);
+      gc.updatedAt = new Date().toISOString();
+    }
+  }
+
+  saveDB(db, true);
+  removeUserFromCommunityIndex(targetUserId, community.id);
+
+  const { id: _, ...commWithoutId } = community;
+  safeCloudSync('set', 'communities', community.id, commWithoutId);
+
+  res.json({
+    success: true,
+    message: 'Matagumpay na naalis ang miyembro sa komunidad.'
+  });
+});
+
+// 17. PROMOTE MEMBER (POST /api/zone/communities/:communityId/members/:targetUserId/promote)
+app.post('/api/zone/communities/:communityId/members/:targetUserId/promote', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId, targetUserId } = req.params;
+  const { newRole } = req.body;
+  if (newRole !== 'admin' && newRole !== 'moderator') {
+    return res.status(400).json({ error: 'Maling posisyon (pumili ng "admin" o "moderator").' });
+  }
+
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  if (!canPromoteTarget(community, userId, targetUserId, newRole)) {
+    return res.status(403).json({ error: 'Wala kang sapat na antas upang i-promote ang miyembrong ito sa posisyong ito.' });
+  }
+
+  if (newRole === 'admin') {
+    if (!community.admins) community.admins = [];
+    if (!community.admins.includes(targetUserId)) {
+      community.admins.push(targetUserId);
+    }
+    community.moderators = (community.moderators || []).filter(id => id !== targetUserId);
+  } else if (newRole === 'moderator') {
+    if (!community.moderators) community.moderators = [];
+    if (!community.moderators.includes(targetUserId)) {
+      community.moderators.push(targetUserId);
+    }
+  }
+
+  community.updatedAt = new Date().toISOString();
+  saveDB(db, true);
+
+  const { id: _, ...commWithoutId } = community;
+  safeCloudSync('set', 'communities', community.id, commWithoutId);
+
+  // Notify target user
+  const promoter = db.users.find(u => u.id === userId);
+  createSocialNotification(db, {
+    recipientUserId: targetUserId,
+    senderUserId: userId,
+    senderUserName: promoter ? promoter.name : 'Ka-Zone Admin',
+    senderUserAvatar: promoter?.avatar || '👤',
+    type: 'community_role',
+    title: 'Community Role Update',
+    message: `Na-promote ka bilang ${newRole === 'admin' ? 'Admin' : 'Moderator'} sa "${community.name}".`,
+    targetId: community.id,
+    targetType: 'community'
+  });
+
+  res.json({
+    success: true,
+    message: `Na-promote ang miyembro bilang ${newRole}!`
+  });
+});
+
+// 18. DEMOTE OFFICER (POST /api/zone/communities/:communityId/members/:targetUserId/demote)
+app.post('/api/zone/communities/:communityId/members/:targetUserId/demote', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId, targetUserId } = req.params;
+  const { newRole } = req.body;
+  if (newRole !== 'moderator' && newRole !== 'member') {
+    return res.status(400).json({ error: 'Maling posisyon (pumili ng "moderator" o "member").' });
+  }
+
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  if (!canDemoteTarget(community, userId, targetUserId, newRole)) {
+    return res.status(403).json({ error: 'Wala kang sapat na antas upang i-demote ang opisyal na ito.' });
+  }
+
+  if (newRole === 'moderator') {
+    community.admins = (community.admins || []).filter(id => id !== targetUserId);
+    if (!community.moderators) community.moderators = [];
+    if (!community.moderators.includes(targetUserId)) {
+      community.moderators.push(targetUserId);
+    }
+  } else if (newRole === 'member') {
+    community.admins = (community.admins || []).filter(id => id !== targetUserId);
+    community.moderators = (community.moderators || []).filter(id => id !== targetUserId);
+  }
+
+  community.updatedAt = new Date().toISOString();
+  saveDB(db, true);
+
+  const { id: _, ...commWithoutId } = community;
+  safeCloudSync('set', 'communities', community.id, commWithoutId);
+
+  res.json({
+    success: true,
+    message: `Na-demote ang opisyal bilang ${newRole}!`
+  });
+});
+
+// 19. UPDATE COMMUNITY SETTINGS (PUT /api/zone/communities/:communityId)
+app.put('/api/zone/communities/:communityId', enforceCommunitySafety, (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthenticated.' });
+  }
+
+  const { communityId } = req.params;
+  const db = loadDB();
+  if (!db.communities) db.communities = [];
+
+  const community = db.communities.find(c => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
+  }
+
+  if (!canManageCommunity(community, userId)) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na baguhin ang mga setting ng komunidad na ito.' });
+  }
+
+  const { name, description, avatar, coverImage, category, privacy, rules } = req.body;
+  if (name && typeof name === 'string' && name.trim().length >= 3) {
+    community.name = filterSwearWords(name.trim().slice(0, 60));
+  }
+  if (description !== undefined && typeof description === 'string') {
+    community.description = filterSwearWords(description.trim().slice(0, 500));
+  }
+  if (avatar && typeof avatar === 'string') {
+    community.avatar = avatar;
+  }
+  if (coverImage !== undefined && typeof coverImage === 'string') {
+    community.coverImage = coverImage || undefined;
+  }
+  if (category && typeof category === 'string') {
+    community.category = filterSwearWords(category.trim().slice(0, 40));
+  }
+  if (privacy === 'public' || privacy === 'private') {
+    community.privacy = privacy;
+  }
+  if (Array.isArray(rules)) {
+    community.rules = rules.slice(0, 10).map(r => filterSwearWords(String(r).trim().slice(0, 200))).filter(Boolean);
+  }
+
+  community.updatedAt = new Date().toISOString();
+  saveDB(db, true);
+
+  const { id: _, ...commWithoutId } = community;
+  safeCloudSync('set', 'communities', community.id, commWithoutId);
+
+  const friendIds = getFriendIds(userId);
+  const preview = formatCommunityPreview(community, userId, db.users, friendIds);
+
+  res.json({
+    success: true,
+    community: preview,
+    message: 'Matagumpay na na-update ang mga impormasyon ng komunidad!'
+  });
+});
+
+// 20. ALIASES FOR GROUPS GRAPH (MUTUAL, RECOMMENDATIONS)
+app.get('/api/zone/groups/mutual/:targetUserId', (req, res, next) => {
+  req.url = `/api/zone/communities/mutual/${req.params.targetUserId}`;
+  (app as any).handle(req, res, next);
+});
+
+app.get('/api/zone/groups/recommendations', (req, res, next) => {
+  req.url = '/api/zone/communities/recommendations';
+  (app as any).handle(req, res, next);
 });
 
 // --- PROMPT-BASED VIDEO TOUR GENERATOR ENDPOINT ---

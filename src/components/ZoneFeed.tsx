@@ -61,7 +61,8 @@ import {
   EyeOff,
   CornerDownRight,
   Flame,
-  BarChart3
+  BarChart3,
+  Globe
 } from 'lucide-react';
 import { ZonePost, GroupChat, GroupMessage, ZoneStory, DirectMessage, BilibiliFeedItem, BilibiliFeedConfig, SocialProductRef, SocialReport } from '../types';
 import { ZoneStories } from './ZoneStories';
@@ -76,6 +77,7 @@ import { ProductTagSelectorModal } from './ProductTagSelectorModal';
 import { SocialNotificationCenter } from './SocialNotificationCenter';
 import { CreatorAnalyticsDashboard } from './CreatorAnalyticsDashboard';
 import { FriendsManagerModal } from './FriendsManagerModal';
+import { CommunityDiscoveryModal } from './CommunityDiscoveryModal';
 import { PostReactionsBar, PostReactionsSummary } from './PostReactionsBar';
 import { ReactionType } from '../types';
 import { trackContentView, trackProductClick } from '../utils/analyticsTracker';
@@ -366,6 +368,9 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   // Phase 1 Social Graph & Friends State
   const [showFriendsModal, setShowFriendsModal] = useState(false);
   const [pendingIncomingCount, setPendingIncomingCount] = useState(0);
+
+  // Phase 2B Communities State
+  const [showCommunityModal, setShowCommunityModal] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -3640,6 +3645,17 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   {pendingIncomingCount}
                 </span>
               )}
+            </button>
+
+            {/* 🌐 Mga Komunidad / Communities (Phase 2B) */}
+            <button
+              id="communities-manager-feed-btn"
+              onClick={() => setShowCommunityModal(true)}
+              className="relative bg-white/95 hover:bg-white text-indigo-900 border border-white/60 font-black text-xs px-3.5 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-1.5 shadow-xs hover:scale-[1.02] active:scale-[0.98]"
+              title={language === 'tl' ? 'Tuklasin ang mga Komunidad at Grupo' : 'Discover Communities & Groups'}
+            >
+              <Globe className="w-4 h-4 text-indigo-600" />
+              <span className="hidden sm:inline">{language === 'tl' ? 'Komunidad' : 'Communities'}</span>
             </button>
 
             {/* 👤 My Profile Inspection */}
@@ -7858,30 +7874,48 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
                       return (
                         <div className="space-y-2">
-                          {/* Create Group Button Banner */}
-                          <div
-                            onClick={() => {
-                              setShowCreateGroupModal(true);
-                              fetchAllUsersList();
-                            }}
-                            className="p-3 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 text-white flex items-center justify-between cursor-pointer hover:shadow-md transition duration-150 group select-none"
-                          >
-                            <div className="flex items-center gap-2.5">
-                              <div className="p-2 bg-white/20 rounded-xl group-hover:scale-105 transition">
-                                <Plus className="w-4 h-4 text-white" />
-                              </div>
-                              <div className="text-left">
-                                <h4 className="text-xs font-black text-white leading-tight">
-                                  {language === 'tl' ? '+ Gumawa ng Group Chat' : '+ Create Group Chat'}
-                                </h4>
-                                <p className="text-[9.5px] text-indigo-100 font-semibold">
-                                  {language === 'tl' ? 'Kwentuhan, team, at click-earning GC' : 'Create team or friend group'}
-                                </p>
+                          {/* Communities & GC Header Actions */}
+                          <div className="grid grid-cols-2 gap-2">
+                            <div
+                              onClick={() => {
+                                setShowCreateGroupModal(true);
+                                fetchAllUsersList();
+                              }}
+                              className="p-2.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white flex items-center justify-between cursor-pointer hover:shadow-md transition duration-150 group select-none"
+                            >
+                              <div className="flex items-center gap-2">
+                                <div className="p-1.5 bg-white/20 rounded-xl group-hover:scale-105 transition">
+                                  <Plus className="w-3.5 h-3.5 text-white" />
+                                </div>
+                                <div className="text-left">
+                                  <h4 className="text-[11px] font-black text-white leading-tight">
+                                    {language === 'tl' ? '+ Bagong GC' : '+ New GC'}
+                                  </h4>
+                                  <p className="text-[9px] text-indigo-100 font-semibold">
+                                    {language === 'tl' ? 'Group chat' : 'Friend group'}
+                                  </p>
+                                </div>
                               </div>
                             </div>
-                            <span className="text-[10px] font-black px-2.5 py-1 bg-white text-indigo-700 rounded-xl shadow-xs">
-                              {language === 'tl' ? 'Bagong GC' : 'New'}
-                            </span>
+
+                            <div
+                              onClick={() => setShowCommunityModal(true)}
+                              className="p-2.5 rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white flex items-center justify-between cursor-pointer hover:shadow-md transition duration-150 group select-none"
+                            >
+                              <div className="flex items-center gap-2">
+                                <div className="p-1.5 bg-white/20 rounded-xl group-hover:scale-105 transition">
+                                  <Globe className="w-3.5 h-3.5 text-white" />
+                                </div>
+                                <div className="text-left">
+                                  <h4 className="text-[11px] font-black text-white leading-tight">
+                                    {language === 'tl' ? '🌐 Komunidad' : '🌐 Communities'}
+                                  </h4>
+                                  <p className="text-[9px] text-purple-100 font-semibold">
+                                    {language === 'tl' ? 'Tuklasin at Sumali' : 'Discover & Join'}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
                           </div>
 
                           {filtered.length === 0 ? (
@@ -8201,6 +8235,33 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           if (onOpenProfile) onOpenProfile(uid);
         }}
         language={language}
+      />
+
+      {/* 🌐 PHASE 2B COMMUNITIES & GROUPS MODAL */}
+      <CommunityDiscoveryModal
+        isOpen={showCommunityModal}
+        onClose={() => setShowCommunityModal(false)}
+        token={token}
+        currentUserId={user.id}
+        language={language}
+        onOpenGroupChat={(groupId) => {
+          const matched = groupChats.find(g => g.id === groupId);
+          if (matched) {
+            setActiveGroupChat(matched);
+          } else {
+            fetch('/api/zone/groups', { headers: { 'Authorization': token } })
+              .then(r => r.json())
+              .then(d => {
+                if (d.groups) {
+                  setGroupChats(d.groups);
+                  const found = d.groups.find((g: GroupChat) => g.id === groupId);
+                  if (found) setActiveGroupChat(found);
+                }
+              })
+              .catch(err => console.error(err));
+          }
+        }}
+        triggerNotification={triggerNotification}
       />
 
     </div>

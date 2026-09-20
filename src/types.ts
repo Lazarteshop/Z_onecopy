@@ -342,6 +342,80 @@ export interface UnifiedDiscoveryResponse {
   followingSuggestions: DiscoveryCandidate[];
 }
 
+// ============================================================
+//   PHASE 2B: GROUPS & COMMUNITIES GRAPH TYPES
+// ============================================================
+
+export type CommunityPrivacy = 'public' | 'private';
+export type CommunityVisibility = 'visible' | 'hidden';
+export type CommunityRole = 'owner' | 'admin' | 'moderator' | 'member' | 'pending' | 'invited' | 'none';
+
+export interface CommunityRecord {
+  id: string;
+  name: string;
+  description: string;
+  avatar: string;
+  coverImage?: string;
+  category?: string;
+  privacy: CommunityPrivacy;
+  visibility: CommunityVisibility;
+  ownerId: string;
+  admins: string[];
+  moderators: string[];
+  members: string[];
+  pendingMembers: string[];
+  invitedMembers: string[];
+  rules?: string[];
+  linkedChatGroupId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommunityMemberPreview {
+  id: string;
+  name: string;
+  avatar: string;
+  handle: string;
+  role: 'owner' | 'admin' | 'moderator' | 'member';
+  joinedAt: string;
+  isFriend?: boolean;
+}
+
+export interface CommunityPreview {
+  id: string;
+  name: string;
+  description: string;
+  avatar: string;
+  coverImage?: string;
+  category: string;
+  privacy: CommunityPrivacy;
+  visibility: CommunityVisibility;
+  memberCount: number;
+  userRole: CommunityRole;
+  membershipState: CommunityRole;
+  isMember: boolean;
+  isPending: boolean;
+  isInvited: boolean;
+  canManage: boolean;
+  ownerId: string;
+  rules?: string[];
+  linkedChatGroupId?: string;
+  mutualMembersCount?: number;
+  mutualFriendsPreview?: { id: string; name: string; avatar: string }[];
+  recommendationReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommunityDiscoveryResponse {
+  success: boolean;
+  communities: CommunityPreview[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 export interface MerchantAd {
   id: string;
   userId: string;
