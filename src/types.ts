@@ -198,6 +198,9 @@ export interface ZonePost {
   episodeTitle?: string;
   productRef?: SocialProductRef;
   hashtags?: string[];
+  normalizedHashtags?: string[];
+  communityId?: string;
+  communityName?: string;
   sharedPost?: {
     id: string;
     userId: string;
@@ -464,9 +467,50 @@ export interface ReelVideo {
   sharesCount?: number;
   productRef?: SocialProductRef;
   hashtags?: string[];
+  normalizedHashtags?: string[];
   status?: 'approved' | 'pending' | 'disapproved';
   disapproveReason?: string;
   createdAt: string;
+}
+
+export interface HashtagRecord {
+  id: string;
+  displayName: string;
+  normalizedName: string;
+  usageCount: number;
+  postCount: number;
+  reelCount: number;
+  recentActivity: string;
+  createdAt: string;
+}
+
+export interface ContentGraphSummary {
+  id: string;
+  type: 'post' | 'reel';
+  title?: string;
+  text?: string;
+  authorId: string;
+  authorName: string;
+  authorAvatar?: string;
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video' | 'embed';
+  mediaUrls?: string[];
+  thumbnailUrl?: string;
+  hashtags: string[];
+  normalizedHashtags: string[];
+  communityId?: string;
+  communityName?: string;
+  likesCount: number;
+  commentsCount: number;
+  sharesCount: number;
+  createdAt: string;
+}
+
+export interface RelatedContentCandidate extends ContentGraphSummary {
+  relationScore: number;
+  sharedHashtags: string[];
+  isSameCommunity: boolean;
+  isSameAuthor: boolean;
 }
 
 export interface ReelRedemption {
@@ -542,6 +586,8 @@ export interface SearchResults {
     commissionRate?: number;
     inStock?: boolean;
   }>;
+  hashtags?: Array<HashtagRecord>;
+  communities?: Array<any>;
 }
 
 export interface DirectMessage {
@@ -1313,6 +1359,52 @@ export interface SocialShareSettings {
   description: string;
   updatedAt: string;
   customImage?: boolean;
+}
+
+// ==========================================
+// PHASE 2C: CONTENT GRAPH & HASHTAGS TYPES
+// ==========================================
+
+export interface HashtagRecord {
+  id: string; // Normalized name e.g. "zoneapp"
+  displayName: string; // e.g. "#Z-oneApp"
+  normalizedName: string; // e.g. "zoneapp"
+  usageCount: number;
+  postCount: number;
+  reelCount: number;
+  recentActivity: string; // ISO date of latest content
+  createdAt: string; // ISO date of creation
+}
+
+export type ContentGraphType = 'post' | 'reel';
+
+export interface ContentGraphSummary {
+  id: string;
+  type: ContentGraphType;
+  title?: string;
+  text?: string;
+  authorId: string;
+  authorName: string;
+  authorAvatar?: string;
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video' | 'embed';
+  mediaUrls?: string[];
+  thumbnailUrl?: string;
+  hashtags: string[];
+  normalizedHashtags: string[];
+  communityId?: string;
+  communityName?: string;
+  likesCount: number;
+  commentsCount: number;
+  sharesCount: number;
+  createdAt: string;
+}
+
+export interface RelatedContentCandidate extends ContentGraphSummary {
+  relationScore: number;
+  sharedHashtags: string[];
+  isSameCommunity: boolean;
+  isSameAuthor: boolean;
 }
 
 

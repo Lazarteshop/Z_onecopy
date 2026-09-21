@@ -14,15 +14,17 @@ import {
   Heart,
   MessageCircle,
   Eye,
-  CheckCircle2
+  CheckCircle2,
+  Hash,
+  Users
 } from 'lucide-react';
-import { SearchResults, SocialProductRef } from '../types';
+import { SearchResults, SocialProductRef, HashtagRecord } from '../types';
 
 interface UnifiedSearchDiscoveryModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialQuery?: string;
-  initialType?: 'all' | 'people' | 'posts' | 'reels' | 'challenges' | 'products';
+  initialType?: 'all' | 'people' | 'posts' | 'reels' | 'challenges' | 'products' | 'hashtags' | 'communities';
   language?: 'tl' | 'en';
   onSelectCreator?: (userId: string) => void;
   onSelectProduct?: (product: SocialProductRef) => void;
@@ -31,7 +33,7 @@ interface UnifiedSearchDiscoveryModalProps {
   onSelectChallenge?: (challengeId: string) => void;
 }
 
-const TRENDING_HASHTAGS = [
+const DEFAULT_TRENDING_HASHTAGS = [
   'pinoy',
   'reels',
   'watchandearn',
@@ -55,9 +57,10 @@ export const UnifiedSearchDiscoveryModal: React.FC<UnifiedSearchDiscoveryModalPr
   onSelectChallenge
 }) => {
   const [query, setQuery] = useState(initialQuery);
-  const [activeTab, setActiveTab] = useState<'all' | 'people' | 'posts' | 'reels' | 'challenges' | 'products'>(initialType);
+  const [activeTab, setActiveTab] = useState<'all' | 'people' | 'posts' | 'reels' | 'challenges' | 'products' | 'hashtags' | 'communities'>(initialType);
   const [results, setResults] = useState<SearchResults | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [trendingList, setTrendingList] = useState<string[]>(DEFAULT_TRENDING_HASHTAGS);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -65,6 +68,16 @@ export const UnifiedSearchDiscoveryModal: React.FC<UnifiedSearchDiscoveryModalPr
       if (initialQuery) setQuery(initialQuery);
       if (initialType) setActiveTab(initialType);
       setTimeout(() => inputRef.current?.focus(), 150);
+
+      // Load live trending tags
+      fetch('/api/zone/hashtags/trending?limit=10')
+        .then(r => r.json())
+        .then(d => {
+          if (d.success && Array.isArray(d.trending) && d.trending.length > 0) {
+            setTrendingList(d.trending.map((t: HashtagRecord) => t.normalizedName));
+          }
+        })
+        .catch(() => {});
     }
   }, [isOpen, initialQuery, initialType]);
 
@@ -95,7 +108,13 @@ export const UnifiedSearchDiscoveryModal: React.FC<UnifiedSearchDiscoveryModalPr
   if (!isOpen) return null;
 
   const totalResultsCount = results
-    ? (results.people.length + results.posts.length + results.reels.length + results.challenges.length + results.products.length)
+    ? (results.people.length + 
+       results.posts.length + 
+       results.reels.length + 
+       results.challenges.length + 
+       results.products.length + 
+       (results.hashtags?.length || 0) + 
+       (results.communities?.length || 0))
     : 0;
 
   return (
@@ -149,13 +168,16 @@ export const UnifiedSearchDiscoveryModal: React.FC<UnifiedSearchDiscoveryModalPr
               <TrendingUp className="w-3 h-3" />
               <span>Trending:</span>
             </span>
-            {TRENDING_HASHTAGS.map((tag) => (
+            {trendingList.map((tag) => (
               <button
                 key={tag}
                 type="button"
-                onClick={() => setQuery(tag)}
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent('open-hashtag-modal', { detail: { hashtag: tag } }));
+                  onClose();
+                }}
                 className={`text-[11px] font-bold px-2.5 py-1 rounded-full border transition shrink-0 cursor-pointer ${
-                  query.toLowerCase() === tag
+                  query.toLowerCase() === tag.toLowerCase()
                     ? 'bg-amber-400 text-slate-950 border-amber-300 font-black shadow-xs'
                     : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700'
                 }`}
@@ -169,6 +191,8 @@ export const UnifiedSearchDiscoveryModal: React.FC<UnifiedSearchDiscoveryModalPr
           <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-1">
             {[
               { id: 'all', label: language === 'tl' ? 'Lahat' : 'All', icon: Sparkles },
+              { id: 'hashtags', label: '# Hashtags', icon: Hash },
+              { id: 'communities', label: language === 'tl' ? 'Komunidad' : 'Communities', icon: Users },
               { id: 'people', label: language === 'tl' ? 'Creators' : 'People', icon: User },
               { id: 'reels', label: 'Reels', icon: Film },
               { id: 'posts', label: language === 'tl' ? 'Posts' : 'Posts', icon: FileText },
@@ -451,6 +475,88 @@ export const UnifiedSearchDiscoveryModal: React.FC<UnifiedSearchDiscoveryModalPr
                             Sumali
                           </span>
                         </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* 6. HASHTAGS (PHASE 2C CONTENT GRAPH) */}
+              {(activeTab === 'all' || activeTab === 'hashtags') && results?.hashtags && results.hashtags.length > 0 && (
+                <section className="space-y-2.5">
+                  <div className="flex items-center justify-between text-xs font-black text-slate-400 uppercase tracking-wider">
+                    <span className="flex items-center gap-1 text-blue-400">
+                      <Hash className="w-3.5 h-3.5" />
+                      <span>{language === 'tl' ? 'Mga Hashtag' : 'Hashtags'} ({results.hashtags.length})</span>
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {results.hashtags.map(tag => (
+                      <div
+                        key={tag.id}
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent('open-hashtag-modal', { detail: { hashtag: tag.normalizedName } }));
+                          onClose();
+                        }}
+                        className="bg-slate-950/60 hover:bg-slate-850 border border-slate-800 hover:border-blue-500/50 rounded-2xl p-3 flex items-center justify-between gap-2.5 cursor-pointer transition group"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-9 h-9 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30 flex items-center justify-center shrink-0">
+                            <Hash className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-black text-white group-hover:text-blue-300 truncate">
+                              #{tag.displayName.replace(/^#/, '')}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              {tag.usageCount} {language === 'tl' ? 'gamit' : 'uses'} • {tag.postCount} posts, {tag.reelCount} reels
+                            </div>
+                          </div>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-white shrink-0" />
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* 7. COMMUNITIES (PHASE 2B & 2C CONTENT GRAPH) */}
+              {(activeTab === 'all' || activeTab === 'communities') && results?.communities && results.communities.length > 0 && (
+                <section className="space-y-2.5">
+                  <div className="flex items-center justify-between text-xs font-black text-slate-400 uppercase tracking-wider">
+                    <span className="flex items-center gap-1 text-indigo-400">
+                      <Users className="w-3.5 h-3.5" />
+                      <span>{language === 'tl' ? 'Mga Komunidad' : 'Communities'} ({results.communities.length})</span>
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {results.communities.map((comm: any) => (
+                      <div
+                        key={comm.id}
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent('open-community-modal', { detail: { communityId: comm.id } }));
+                          onClose();
+                        }}
+                        className="bg-slate-950/60 hover:bg-slate-850 border border-slate-800 hover:border-indigo-500/50 rounded-2xl p-3 flex items-center justify-between gap-2.5 cursor-pointer transition group"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-9 h-9 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center text-base shrink-0 overflow-hidden">
+                            {comm.avatar?.startsWith('http') ? (
+                              <img src={comm.avatar} alt={comm.name} className="w-full h-full object-cover" />
+                            ) : (
+                              comm.avatar || '🌐'
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-black text-white group-hover:text-indigo-300 truncate">
+                              {comm.name}
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">
+                              {comm.memberCount || 1} {language === 'tl' ? 'miyembro' : 'members'} • {comm.category || 'General'}
+                            </div>
+                          </div>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-white shrink-0" />
                       </div>
                     ))}
                   </div>

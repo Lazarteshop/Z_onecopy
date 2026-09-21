@@ -806,11 +806,27 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
             </span>
           </div>
 
-          {/* Title & Expandable Description */}
+          {/* Title & Expandable Description with Clickable Hashtags */}
           {reel.title && (
             <div className="text-xs sm:text-sm text-slate-100 font-medium leading-snug drop-shadow">
               <p className={`${expandedDesc ? '' : 'line-clamp-2'}`}>
-                <span className="font-bold text-white mr-1.5">{reel.title}</span>
+                {reel.title.split(/(#[a-zA-Z0-9_\u00C0-\u017F]+)/g).map((part, idx) => {
+                  if (part.startsWith('#')) {
+                    return (
+                      <span
+                        key={idx}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          window.dispatchEvent(new CustomEvent('open-hashtag-modal', { detail: { hashtag: part.replace('#', '') } }));
+                        }}
+                        className="text-amber-300 hover:text-amber-200 hover:underline font-bold cursor-pointer inline-block mr-1"
+                      >
+                        {part}
+                      </span>
+                    );
+                  }
+                  return <span key={idx} className="font-bold text-white mr-1.5">{part}</span>;
+                })}
               </p>
               {reel.title.length > 50 && (
                 <button
@@ -824,6 +840,25 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                   {expandedDesc ? 'less' : 'more'}
                 </button>
               )}
+            </div>
+          )}
+
+          {/* Hashtags list if explicitly provided and not in title */}
+          {reel.hashtags && reel.hashtags.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              {reel.hashtags.map((tag, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.dispatchEvent(new CustomEvent('open-hashtag-modal', { detail: { hashtag: tag.replace(/^#/, '') } }));
+                  }}
+                  className="text-[10px] font-bold text-amber-300/90 hover:text-white bg-slate-900/60 hover:bg-slate-800 px-2 py-0.5 rounded-full border border-amber-400/30 cursor-pointer transition"
+                >
+                  #{tag.replace(/^#/, '')}
+                </button>
+              ))}
             </div>
           )}
 

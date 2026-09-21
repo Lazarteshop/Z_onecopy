@@ -5003,7 +5003,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                       key={idx}
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        window.dispatchEvent(new CustomEvent('open-unified-search', { detail: { query: part.replace('#', '') } }));
+                                        window.dispatchEvent(new CustomEvent('open-hashtag-modal', { detail: { hashtag: part.replace('#', '') } }));
                                       }}
                                       className="text-blue-600 hover:text-blue-800 hover:underline font-bold cursor-pointer inline-block"
                                     >

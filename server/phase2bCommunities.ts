@@ -376,8 +376,8 @@ export function getMutualCommunities(
  */
 export function formatCommunityPreview(
   community: CommunityRecord,
-  userId: string,
-  dbUsers: any[],
+  userId: string = '',
+  dbUsers: any[] = [],
   userFriendIds?: string[]
 ): CommunityPreview {
   const role = resolveUserRole(community, userId);

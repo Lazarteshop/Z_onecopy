@@ -90,6 +90,20 @@ import {
   formatCommunityMembers,
   createDefaultSeedCommunities
 } from './server/phase2bCommunities';
+import {
+  HashtagRecord,
+  normalizeHashtag,
+  extractHashtags,
+  rebuildContentGraphIndexes,
+  queryHashtagContent,
+  searchHashtags,
+  getTrendingHashtags,
+  getRelatedContent,
+  onContentCreated,
+  onContentEdited,
+  onContentDeleted,
+  isContentVisibleToUser
+} from './server/phase2cContentGraph';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -1989,6 +2003,7 @@ interface ReelVideo {
   sharesCount?: number;
   productRef?: any;
   hashtags?: string[];
+  normalizedHashtags?: string[];
   status?: 'approved' | 'pending' | 'disapproved';
   disapproveReason?: string;
   createdAt: string;
@@ -2297,6 +2312,7 @@ interface DBStructure {
   friendRequests?: FriendRequestRecord[];
   discoveryDismissals?: Record<string, string[]>;
   communities?: CommunityRecord[];
+  hashtags?: HashtagRecord[];
 }
 
 export interface SocialShareSettings {
@@ -3250,6 +3266,10 @@ function loadDB(): DBStructure {
       loaded.communities = createDefaultSeedCommunities(loaded.users);
     }
     rebuildCommunityIndexes(loaded.communities);
+    if (!loaded.hashtags) {
+      loaded.hashtags = [];
+    }
+    rebuildContentGraphIndexes(loaded);
     if (!loaded.discoveryDismissals) {
       loaded.discoveryDismissals = {};
     }
@@ -6360,15 +6380,20 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
       });
     }
 
+    const reelTitle = title?.trim() || (finalPlatform === 'tiktok' ? '🎵 TikTok Reel Video' : finalPlatform === 'facebook' ? '📘 FB Reel Video' : finalPlatform === 'youtube' ? '▶️ YouTube Short' : '🎬 Reel Video');
+    const userReelTags = extractHashtags(reelTitle);
+
     const newReel: ReelVideo = {
       id: 'reel-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
       url: url.trim(),
       embedUrl: finalEmbedUrl,
       platform: finalPlatform,
-      title: title?.trim() || (finalPlatform === 'tiktok' ? '🎵 TikTok Reel Video' : finalPlatform === 'facebook' ? '📘 FB Reel Video' : finalPlatform === 'youtube' ? '▶️ YouTube Short' : '🎬 Reel Video'),
+      title: reelTitle,
       likes: 0,
       addedBy: user ? user.name : (addedBy || 'User'),
       addedByUserId: user ? user.id : undefined,
+      hashtags: userReelTags.length > 0 ? userReelTags.map(t => t.display) : undefined,
+      normalizedHashtags: userReelTags.length > 0 ? userReelTags.map(t => t.normalized) : undefined,
       status: 'pending',
       createdAt: new Date().toISOString()
     };
@@ -6385,20 +6410,29 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
   }
 
   // Admin upload (Auto-approved, no tokens needed)
+  const adminReelTitle = title?.trim() || '🎬 Official Reel Video';
+  const adminReelTags = extractHashtags(adminReelTitle);
+
   const newReel: ReelVideo = {
     id: 'reel-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
     url: url.trim(),
     embedUrl: finalEmbedUrl,
     platform: finalPlatform,
-    title: title?.trim() || '🎬 Official Reel Video',
+    title: adminReelTitle,
     likes: 0,
     addedBy: 'Admin',
+    hashtags: adminReelTags.length > 0 ? adminReelTags.map(t => t.display) : undefined,
+    normalizedHashtags: adminReelTags.length > 0 ? adminReelTags.map(t => t.normalized) : undefined,
     status: 'approved',
     createdAt: new Date().toISOString()
   };
 
   db.reels.unshift(newReel);
   saveDB(db, true);
+
+  if (adminReelTags.length > 0) {
+    onContentCreated(`reel:${newReel.id}`, adminReelTags.map(t => t.display), undefined, undefined, newReel.createdAt);
+  }
 
   const { id: _, ...rWithoutId } = newReel;
   safeCloudSync('set', 'reels', newReel.id, rWithoutId);
@@ -6614,6 +6648,11 @@ app.post('/api/admin/reels/:id/approve', (req, res) => {
   }
 
   saveDB(db);
+
+  if (reel.hashtags && reel.hashtags.length > 0) {
+    onContentCreated(`reel:${reel.id}`, reel.hashtags, undefined, reel.addedByUserId, reel.createdAt);
+  }
+
   res.json({ success: true, reel, reels: db.reels, message: 'Matagumpay na na-approve ang Reel at nabawasan ng 0.50 tokens ang user!' });
 });
 
@@ -6754,6 +6793,7 @@ app.delete('/api/reels/:id', enforceCommunitySafety, (req, res) => {
   const { id } = req.params;
   const db = loadDB();
   db.reels = (db.reels || [...INITIAL_REELS]).filter(r => r.id !== id);
+  onContentDeleted(`reel:${id}`);
   saveDB(db, true);
 
   safeCloudSync('delete', 'reels', id);
@@ -10790,13 +10830,31 @@ app.get('/api/search', (req, res) => {
         .slice(0, 15)
     : [];
 
-  const totalMatches = people.length + posts.length + reels.length + challenges.length + products.length;
+  // 6. Search Hashtags (Phase 2C Content Graph)
+  const hashtags = (filterType === 'all' || filterType === 'hashtags')
+    ? searchHashtags(query, { limit: 15 }).results
+    : [];
+
+  // 7. Search Communities (Phase 2B & 2C Content Graph)
+  const communities = (filterType === 'all' || filterType === 'communities')
+    ? (db.communities || [])
+        .filter((c: any) =>
+          c.visibility !== 'hidden' &&
+          ((c.name && c.name.toLowerCase().includes(query)) ||
+           (c.description && c.description.toLowerCase().includes(query)) ||
+           (c.category && c.category.toLowerCase().includes(query)))
+        )
+        .slice(0, 15)
+        .map((c: any) => formatCommunityPreview(c, req.headers.authorization))
+    : [];
+
+  const totalMatches = people.length + posts.length + reels.length + challenges.length + products.length + hashtags.length + communities.length;
 
   res.json({
     success: true,
     query,
     filterType,
-    results: { people, posts, reels, challenges, products },
+    results: { people, posts, reels, challenges, products, hashtags, communities },
     totalMatches
   });
 });
@@ -11391,7 +11449,7 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
     return res.status(401).json({ error: 'Mag-login muna upang makapag-post.' });
   }
 
-  const { text, mediaUrl, mediaType, mediaUrls, productRef } = req.body;
+  const { text, mediaUrl, mediaType, mediaUrls, productRef, communityId } = req.body;
   const db = loadDB();
 
   if (isUserBanned(db, userId)) {
@@ -11401,6 +11459,21 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
   const user = db.users.find(u => u.id === userId);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  // Community verification & privacy check
+  let verifiedCommunityId: string | undefined = undefined;
+  let verifiedCommunityName: string | undefined = undefined;
+  if (communityId) {
+    const comm = (db.communities || []).find((c: any) => c.id === communityId);
+    if (!comm) {
+      return res.status(404).json({ error: 'Hindi mahanap ang tinukoy na community.' });
+    }
+    if (comm.privacy === 'private' && !(comm.members || []).includes(userId)) {
+      return res.status(403).json({ error: 'Kailangan mong maging miyembro ng pribadong komunidad na ito upang makapag-post.' });
+    }
+    verifiedCommunityId = comm.id;
+    verifiedCommunityName = comm.name;
   }
 
   // Auto-delete / Reject inappropriate posts (porn, nude, bastos)
@@ -11454,7 +11527,9 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
     finalMediaUrls = uploadedList;
   }
 
-  const extractedHashtags = (cleanedText.match(/#[a-zA-Z0-9_\u0590-\u05ff]+/g) || []).map((t: string) => t.toLowerCase());
+  const parsedTags = extractHashtags(cleanedText);
+  const tagDisplays = parsedTags.map(t => t.display);
+  const tagNormalized = parsedTags.map(t => t.normalized);
 
   const newPost = {
     id: 'post-' + Date.now(),
@@ -11465,6 +11540,8 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
     mediaUrl: finalMediaUrl || undefined,
     mediaType: mediaType || undefined,
     mediaUrls: finalMediaUrls || undefined,
+    communityId: verifiedCommunityId,
+    communityName: verifiedCommunityName,
     productRef: productRef ? {
       id: productRef.id,
       name: productRef.name,
@@ -11475,7 +11552,8 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
       isAffiliate: productRef.isAffiliate,
       platform: productRef.platform
     } : undefined,
-    hashtags: extractedHashtags.length > 0 ? extractedHashtags : undefined,
+    hashtags: tagDisplays.length > 0 ? tagDisplays : undefined,
+    normalizedHashtags: tagNormalized.length > 0 ? tagNormalized : undefined,
     likes: [],
     comments: [],
     createdAt: new Date().toISOString()
@@ -11485,6 +11563,7 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
     db.posts = [];
   }
   db.posts.push(newPost);
+  onContentCreated(`post:${newPost.id}`, tagDisplays, verifiedCommunityId, user.id, newPost.createdAt);
   saveDB(db, true);
 
   const { id: _, ...pWithoutId } = newPost;
@@ -11870,7 +11949,15 @@ app.put('/api/zone/posts/:postId', enforceCommunitySafety, (req, res) => {
     });
   }
 
-  post.text = filterSwearWords(text);
+  const oldTags = (post.hashtags || []).map(String);
+  const cleanedEdited = filterSwearWords(text);
+  post.text = cleanedEdited;
+  const parsedTags = extractHashtags(cleanedEdited);
+  const tagDisplays = parsedTags.map(t => t.display);
+  const tagNormalized = parsedTags.map(t => t.normalized);
+  post.hashtags = tagDisplays.length > 0 ? tagDisplays : undefined;
+  post.normalizedHashtags = tagNormalized.length > 0 ? tagNormalized : undefined;
+  onContentEdited(`post:${post.id}`, oldTags, tagDisplays, post.communityId);
   saveDB(db, true);
 
   const { id: _, ...postWithoutId } = post;
@@ -11914,6 +12001,7 @@ app.delete('/api/zone/posts/:postId', enforceCommunitySafety, (req, res) => {
     }
   }
 
+  onContentDeleted(`post:${postId}`);
   db.posts.splice(postIndex, 1);
   saveDB(db, true);
 
@@ -16908,6 +16996,134 @@ app.get('/api/zone/groups/mutual/:targetUserId', (req, res, next) => {
 app.get('/api/zone/groups/recommendations', (req, res, next) => {
   req.url = '/api/zone/communities/recommendations';
   (app as any).handle(req, res, next);
+});
+
+// ============================================================================
+// PHASE 2C: CONTENT GRAPH & HASHTAGS API ENDPOINTS
+// ============================================================================
+
+// 1. SEARCH HASHTAGS (GET /api/zone/hashtags/search?q=...&limit=...&page=...)
+app.get('/api/zone/hashtags/search', (req, res) => {
+  const query = (req.query.q as string || '').trim();
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 15, 1), 50);
+
+  const searchResult = searchHashtags(query, { page, limit });
+  res.json({
+    success: true,
+    query,
+    ...searchResult
+  });
+});
+
+// 2. GET TRENDING HASHTAGS (GET /api/zone/hashtags/trending?limit=...&days=...)
+app.get('/api/zone/hashtags/trending', (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 10, 1), 30);
+  const days = Math.min(Math.max(parseInt(req.query.days as string) || 7, 1), 30);
+
+  const trending = getTrendingHashtags({ limit, days });
+  res.json({
+    success: true,
+    trending,
+    total: trending.length
+  });
+});
+
+// 3. GET HASHTAG DETAILS & DISCOVER FEED (GET /api/zone/hashtags/:hashtag?page=...&limit=...&type=...&sort=...)
+app.get('/api/zone/hashtags/:hashtag', (req, res) => {
+  const { hashtag } = req.params;
+  const requesterId = req.headers.authorization;
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 20, 1), 50);
+  const type = (req.query.type as 'all' | 'post' | 'reel') || 'all';
+  const sort = (req.query.sort as 'recent' | 'popular') || 'recent';
+
+  const db = loadDB();
+  const result = queryHashtagContent(hashtag, db, requesterId, { page, limit, type, sort });
+
+  if (!result.success) {
+    return res.status(400).json(result);
+  }
+
+  res.json(result);
+});
+
+// 4. GET RELATED CONTENT (GET /api/zone/content/:contentId/related?limit=...&type=...)
+app.get('/api/zone/content/:contentId/related', (req, res) => {
+  const { contentId } = req.params;
+  const requesterId = req.headers.authorization;
+  const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 8, 1), 20);
+  const type = (req.query.type as 'all' | 'post' | 'reel') || 'all';
+
+  const db = loadDB();
+
+  let targetKey = contentId;
+  if (!contentId.startsWith('post:') && !contentId.startsWith('reel:')) {
+    if (contentId.startsWith('post-')) targetKey = `post:${contentId}`;
+    else if (contentId.startsWith('reel-')) targetKey = `reel:${contentId}`;
+    else {
+      const isPost = (db.posts || []).some((p: any) => p.id === contentId);
+      targetKey = isPost ? `post:${contentId}` : `reel:${contentId}`;
+    }
+  }
+
+  const result = getRelatedContent(targetKey, db, requesterId, { limit, type });
+  if (!result.success) {
+    return res.status(404).json({ error: 'Hindi mahanap ang tinukoy na content upang maghanap ng kaugnay na nilalaman.' });
+  }
+
+  res.json(result);
+});
+
+// 5. GET COMMUNITY POSTS FEED (GET /api/zone/communities/:communityId/posts)
+app.get('/api/zone/communities/:communityId/posts', (req, res) => {
+  const { communityId } = req.params;
+  const requesterId = req.headers.authorization;
+  const db = loadDB();
+
+  const community = (db.communities || []).find((c: any) => c.id === communityId);
+  if (!community) {
+    return res.status(404).json({ error: 'Hindi mahanap ang community.' });
+  }
+
+  // Privacy Rule: Private community posts only accessible to approved members
+  if (community.privacy === 'private') {
+    if (!requesterId || !(community.members || []).includes(requesterId)) {
+      return res.status(403).json({ error: 'Kailangan mong maging miyembro ng pribadong komunidad na ito upang makita ang mga posts.' });
+    }
+  }
+
+  const hiddenPostIds = (requesterId && db.userHiddenPosts?.[requesterId]) || [];
+  const blockedUserIds = (requesterId && db.userBlocks?.[requesterId]) || [];
+  const mutedUserIds = (requesterId && db.userMutes?.[requesterId]) || [];
+
+  const communityPosts = (db.posts || []).filter((p: any) => {
+    if (p.communityId !== communityId) return false;
+    if (hiddenPostIds.includes(p.id)) return false;
+    if (p.userId && blockedUserIds.includes(p.userId)) return false;
+    if (p.userId && mutedUserIds.includes(p.userId)) return false;
+    return true;
+  });
+
+  communityPosts.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 20, 1), 50);
+  const total = communityPosts.length;
+  const totalPages = Math.ceil(total / limit) || 1;
+  const startIndex = (page - 1) * limit;
+  const items = communityPosts.slice(startIndex, startIndex + limit);
+
+  res.json({
+    success: true,
+    communityId,
+    communityName: community.name,
+    items,
+    total,
+    page,
+    totalPages,
+    hasMore: startIndex + limit < total
+  });
 });
 
 // --- PROMPT-BASED VIDEO TOUR GENERATOR ENDPOINT ---

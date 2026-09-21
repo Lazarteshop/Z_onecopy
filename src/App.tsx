@@ -90,6 +90,7 @@ import { PublicEntryLandingModal } from './components/PublicEntryLandingModal';
 import { VerificationFlowModal } from './components/VerificationFlowModal';
 import { DeviceTransferModal } from './components/DeviceTransferModal';
 import { UnifiedSearchDiscoveryModal } from './components/UnifiedSearchDiscoveryModal';
+import { HashtagDiscoveryModal } from './components/HashtagDiscoveryModal';
 import { UserProfileModal } from './components/UserProfileModal';
 import { getOrCreateDeviceKeyId, getDeviceSecurityHeaders } from './utils/deviceSecurity';
 import { dataSaver, generateIdempotencyKey } from './utils/dataSaver';
@@ -402,7 +403,11 @@ export default function App() {
   // 🔍 Unified Search Discovery Modal State
   const [isSearchModalOpen, setIsSearchModalOpen] = useState<boolean>(false);
   const [searchModalQuery, setSearchModalQuery] = useState<string>('');
-  const [searchModalType, setSearchModalType] = useState<'all' | 'people' | 'posts' | 'reels' | 'challenges' | 'products'>('all');
+  const [searchModalType, setSearchModalType] = useState<'all' | 'people' | 'posts' | 'reels' | 'challenges' | 'products' | 'hashtags' | 'communities'>('all');
+
+  // #️⃣ Phase 2C Hashtag Discovery Modal State
+  const [isHashtagModalOpen, setIsHashtagModalOpen] = useState<boolean>(false);
+  const [activeHashtagQuery, setActiveHashtagQuery] = useState<string>('');
 
   // 👤 User Profile Inspection Modal State
   const [viewingProfileUserId, setViewingProfileUserId] = useState<string | null>(null);
@@ -429,13 +434,20 @@ export default function App() {
         setIsViewingProfileOpen(true);
       }
     };
+    const handleOpenHashtag = (e: any) => {
+      const tag = e.detail?.hashtag;
+      if (tag) setActiveHashtagQuery(tag);
+      setIsHashtagModalOpen(true);
+    };
     window.addEventListener('open-unified-search', handleSearchEvent);
     window.addEventListener('open-shop-product-detail', handleOpenProduct);
     window.addEventListener('open-user-profile-modal', handleOpenProfile);
+    window.addEventListener('open-hashtag-modal', handleOpenHashtag);
     return () => {
       window.removeEventListener('open-unified-search', handleSearchEvent);
       window.removeEventListener('open-shop-product-detail', handleOpenProduct);
       window.removeEventListener('open-user-profile-modal', handleOpenProfile);
+      window.removeEventListener('open-hashtag-modal', handleOpenHashtag);
     };
   }, []);
 
@@ -3547,6 +3559,21 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
         }}
         onSelectChallenge={() => {
           setActiveTab('challenges');
+        }}
+      />
+
+      {/* #️⃣ PHASE 2C HASHTAG DISCOVERY MODAL */}
+      <HashtagDiscoveryModal
+        isOpen={isHashtagModalOpen}
+        onClose={() => setIsHashtagModalOpen(false)}
+        initialHashtag={activeHashtagQuery}
+        token={token || ''}
+        language={language}
+        onSelectReel={(reelId) => {
+          window.dispatchEvent(new CustomEvent('open-reel-detail', { detail: { reelId } }));
+        }}
+        onSelectPost={() => {
+          setActiveTab('zone');
         }}
       />
 
