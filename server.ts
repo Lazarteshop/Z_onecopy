@@ -104,6 +104,11 @@ import {
   onContentDeleted,
   isContentVisibleToUser
 } from './server/phase2cContentGraph';
+import {
+  generateSmartFeed,
+  generateSmartFeedFallback,
+  invalidateSmartFeedCache
+} from './server/phase3SmartFeed';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -4841,7 +4846,8 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
       'challenge_entries',
       'sponsored_missions',
       'subscription_payments',
-      'system_config'
+      'system_config',
+      'communities'
     ];
 
     // Completely isolated temporary recovery buffer
@@ -8991,7 +8997,8 @@ app.post('/api/admin/db/rebuild-from-firestore', async (req, res) => {
       'challenge_entries',
       'sponsored_missions',
       'subscription_payments',
-      'system_config'
+      'system_config',
+      'communities'
     ];
 
     let fetchErrors = 0;
@@ -11564,6 +11571,7 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
   }
   db.posts.push(newPost);
   onContentCreated(`post:${newPost.id}`, tagDisplays, verifiedCommunityId, user.id, newPost.createdAt);
+  invalidateSmartFeedCache(user.id);
   saveDB(db, true);
 
   const { id: _, ...pWithoutId } = newPost;
@@ -12002,6 +12010,7 @@ app.delete('/api/zone/posts/:postId', enforceCommunitySafety, (req, res) => {
   }
 
   onContentDeleted(`post:${postId}`);
+  invalidateSmartFeedCache(userId);
   db.posts.splice(postIndex, 1);
   saveDB(db, true);
 
@@ -17124,6 +17133,36 @@ app.get('/api/zone/communities/:communityId/posts', (req, res) => {
     totalPages,
     hasMore: startIndex + limit < total
   });
+});
+
+// ============================================================================
+// PHASE 3: SMART HOME FEED & PERSONALIZED DISCOVERY (GET /api/zone/feed/smart)
+// ============================================================================
+app.get('/api/zone/feed/smart', (req, res) => {
+  const requesterId = req.headers.authorization;
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 20, 1), 30);
+  const section = (req.query.section as string) || 'for-you';
+
+  const db = loadDB();
+
+  try {
+    const result = generateSmartFeed(db, requesterId, {
+      page,
+      limit,
+      section
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('⚠️ [Phase 3 Smart Feed Error - Falling back to Standard Feed]:', err);
+    const fallbackResult = generateSmartFeedFallback(db, requesterId, {
+      page,
+      limit,
+      section: section as any,
+      reason: 'Server controller exception'
+    });
+    res.json(fallbackResult);
+  }
 });
 
 // --- PROMPT-BASED VIDEO TOUR GENERATOR ENDPOINT ---

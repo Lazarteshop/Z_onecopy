@@ -13,6 +13,7 @@ import {
   Tv, 
   Users, 
   Sparkles, 
+  Compass,
   AlertCircle, 
   CheckCircle2, 
   Ban, 
@@ -332,7 +333,8 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     ];
   });
   const [loadingPosts, setLoadingPosts] = useState(false);
-  const [postFilter, setPostFilter] = useState<'all' | 'following' | 'popular' | 'trending' | 'saved' | 'news' | 'community' | 'teleserye' | 'bilibili'>('all');
+  const [postFilter, setPostFilter] = useState<'forYou' | 'friends' | 'following' | 'popular' | 'trending' | 'communities' | 'all' | 'saved' | 'news' | 'community' | 'teleserye' | 'bilibili'>('forYou');
+  const [smartFeedFallbackActive, setSmartFeedFallbackActive] = useState<boolean>(false);
   const [savedPostIds, setSavedPostIds] = useState<Set<string>>(new Set());
   const [replyInputOpenMap, setReplyInputOpenMap] = useState<Record<string, boolean>>({});
   const [replyTexts, setReplyTexts] = useState<Record<string, string>>({});
@@ -1978,7 +1980,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   const [loadingModReports, setLoadingModReports] = useState(false);
   const [processingReportActionId, setProcessingReportActionId] = useState<string | null>(null);
 
-  const fetchPosts = async (silent: boolean = false) => {
+  const fetchPosts = async (silent: boolean = false, sectionOverride?: string) => {
     if (!silent) setLoadingPosts(true);
     try {
       const applyLoadedPosts = (loadedPosts: ZonePost[]) => {
@@ -1990,7 +1992,8 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 post.id === loadedPost.id &&
                 post.text === loadedPost.text &&
                 (post.likes || []).length === (loadedPost.likes || []).length &&
-                (post.comments || []).length === (loadedPost.comments || []).length;
+                (post.comments || []).length === (loadedPost.comments || []).length &&
+                post.recommendationLabel === loadedPost.recommendationLabel;
             });
           
           if (isSame) {
@@ -2000,22 +2003,56 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         });
       };
 
+      const requestedFilter = sectionOverride || postFilter;
+      let endpoint = '/api/zone/posts';
+      let cacheKey = 'zone_posts_cache';
+
+      if (['forYou', 'friends', 'communities', 'trending', 'following'].includes(requestedFilter)) {
+        const sectionParam = requestedFilter === 'forYou' ? 'for-you' : requestedFilter;
+        endpoint = `/api/zone/feed/smart?section=${encodeURIComponent(sectionParam)}&limit=30`;
+        cacheKey = `zone_smart_feed_${sectionParam}`;
+      }
+
       const result = await dataSaver.swrFetch<ZonePost[]>(
-        'zone_posts_cache',
+        cacheKey,
         async () => {
-          const res = await fetch('/api/zone/posts', {
+          try {
+            const res = await fetch(endpoint, {
+              headers: {
+                'Authorization': token
+              }
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (Array.isArray(data.savedPostIds)) {
+                setSavedPostIds(new Set(data.savedPostIds));
+              }
+              if (data.fallback !== undefined) {
+                setSmartFeedFallbackActive(Boolean(data.fallback));
+              } else {
+                setSmartFeedFallbackActive(false);
+              }
+              return data.items || data.posts || [];
+            }
+          } catch (endpointErr) {
+            console.warn('Smart feed fetch failed, falling back to standard feed:', endpointErr);
+          }
+
+          // Fallback to standard chronological feed
+          const fallbackRes = await fetch('/api/zone/posts', {
             headers: {
               'Authorization': token
             }
           });
-          if (res.ok) {
-            const data = await res.json();
+          if (fallbackRes.ok) {
+            const data = await fallbackRes.json();
             if (Array.isArray(data.savedPostIds)) {
               setSavedPostIds(new Set(data.savedPostIds));
             }
+            setSmartFeedFallbackActive(true);
             return data.posts || [];
           }
-          throw new Error(`Failed to fetch posts: ${res.status}`);
+          throw new Error(`Failed to fetch posts: fallback failed`);
         },
         (freshPosts) => {
           if (freshPosts && Array.isArray(freshPosts)) {
@@ -2411,9 +2448,19 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
   // Memoized filtered posts list based on selected filter
   const filteredPosts = React.useMemo(() => {
+    if (postFilter === 'forYou') {
+      return visiblePosts;
+    }
+    if (postFilter === 'friends') {
+      const friendSet = new Set((user as any).friends || []);
+      return visiblePosts.filter(p => p.recommendationReason === 'friend' || friendSet.has(p.userId) || p.userId === user.id);
+    }
     if (postFilter === 'following') {
       const zonedSet = new Set(user.zonedUsers || []);
-      return visiblePosts.filter(p => zonedSet.has(p.userId) || p.userId === user.id);
+      return visiblePosts.filter(p => p.recommendationReason === 'following' || zonedSet.has(p.userId) || p.userId === user.id);
+    }
+    if (postFilter === 'communities') {
+      return visiblePosts.filter(p => Boolean(p.communityId) || p.recommendationReason === 'community');
     }
     if (postFilter === 'popular' || postFilter === 'trending') {
       return [...visiblePosts].sort((a, b) => {
@@ -2449,7 +2496,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       return visiblePosts.filter(p => !(p as any).isRss && p.userId !== 'balita-rss-author' && p.userId !== 'teleserye-feed-author');
     }
     return visiblePosts;
-  }, [visiblePosts, postFilter, teleseryeSearch, teleseryeStreamFilter, user.zonedUsers, user.id, savedPostIds]);
+  }, [visiblePosts, postFilter, teleseryeSearch, teleseryeStreamFilter, user.zonedUsers, user.id, (user as any).friends, savedPostIds]);
 
   // Progressive posts slicing for ultra-fast 60 FPS performance (like Facebook News Feed)
   const displayedPosts = React.useMemo(() => {
@@ -4320,24 +4367,40 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 {/* 🏷️ Interactive Post Filter Tabs */}
                 <div className="bg-slate-150/60 p-1.5 rounded-2xl flex flex-wrap gap-1.5 border border-slate-200/50">
                   <button
-                    onClick={() => setPostFilter('all')}
+                    onClick={() => {
+                      setPostFilter('forYou');
+                      fetchPosts(true, 'for-you');
+                    }}
                     className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
-                      postFilter === 'all'
+                      postFilter === 'forYou'
                         ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
                         : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
                     }`}
                   >
-                    <Sparkles className={`w-3.5 h-3.5 ${postFilter === 'all' ? 'text-indigo-600' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Lahat' : 'All'}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
-                      postFilter === 'all' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-200/60 text-slate-550'
-                    }`}>
-                      {visiblePosts.length}
-                    </span>
+                    <Compass className={`w-3.5 h-3.5 ${postFilter === 'forYou' ? 'text-indigo-600' : 'text-slate-400'}`} />
+                    <span>{language === 'tl' ? 'Para sa Iyo ✨' : 'For You ✨'}</span>
                   </button>
 
                   <button
-                    onClick={() => setPostFilter('following')}
+                    onClick={() => {
+                      setPostFilter('friends');
+                      fetchPosts(true, 'friends');
+                    }}
+                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                      postFilter === 'friends'
+                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                    }`}
+                  >
+                    <Users className={`w-3.5 h-3.5 ${postFilter === 'friends' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                    <span>{language === 'tl' ? 'Kaibigan 👥' : 'Friends 👥'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setPostFilter('following');
+                      fetchPosts(true, 'following');
+                    }}
                     className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
                       postFilter === 'following'
                         ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
@@ -4345,7 +4408,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                     }`}
                   >
                     <UserCheck className={`w-3.5 h-3.5 ${postFilter === 'following' ? 'text-indigo-600' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Sinusubaybayan (Zoned)' : 'Following'}</span>
+                    <span>{language === 'tl' ? 'Sinusubaybayan' : 'Following'}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
                       postFilter === 'following' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-200/60 text-slate-550'
                     }`}>
@@ -4354,15 +4417,53 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   </button>
 
                   <button
-                    onClick={() => setPostFilter('popular')}
+                    onClick={() => {
+                      setPostFilter('communities');
+                      fetchPosts(true, 'communities');
+                    }}
                     className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
-                      postFilter === 'popular'
+                      postFilter === 'communities'
                         ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
                         : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
                     }`}
                   >
-                    <Flame className={`w-3.5 h-3.5 ${postFilter === 'popular' ? 'text-orange-500' : 'text-slate-400'}`} />
+                    <Users className={`w-3.5 h-3.5 ${postFilter === 'communities' ? 'text-blue-600' : 'text-slate-400'}`} />
+                    <span>{language === 'tl' ? 'Komunidad' : 'Communities'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setPostFilter('popular');
+                      fetchPosts(true, 'trending');
+                    }}
+                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                      postFilter === 'popular' || postFilter === 'trending'
+                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                    }`}
+                  >
+                    <Flame className={`w-3.5 h-3.5 ${postFilter === 'popular' || postFilter === 'trending' ? 'text-orange-500' : 'text-slate-400'}`} />
                     <span>{language === 'tl' ? 'Trending 🔥' : 'Trending 🔥'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setPostFilter('all');
+                      fetchPosts(true, 'all');
+                    }}
+                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                      postFilter === 'all'
+                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                    }`}
+                  >
+                    <Clock className={`w-3.5 h-3.5 ${postFilter === 'all' ? 'text-indigo-600' : 'text-slate-400'}`} />
+                    <span>{language === 'tl' ? 'Lahat (Oras)' : 'Latest'}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
+                      postFilter === 'all' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-200/60 text-slate-550'
+                    }`}>
+                      {visiblePosts.length}
+                    </span>
                   </button>
 
                   <button
@@ -4450,6 +4551,22 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                     </span>
                   </button>
                 </div>
+
+                {smartFeedFallbackActive && ['forYou', 'friends', 'communities', 'trending', 'popular'].includes(postFilter) && (
+                  <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-2.5 px-3.5 flex items-center justify-between text-xs text-slate-600 animate-fadeIn">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span>{language === 'tl' ? 'Kasalukuyang naka-fallback sa standard feed.' : 'Showing standard feed fallback.'}</span>
+                    </div>
+                    <button
+                      onClick={() => fetchPosts(false, postFilter === 'forYou' ? 'for-you' : postFilter)}
+                      className="px-2 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg font-bold text-[11px] cursor-pointer transition flex items-center gap-1"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>{language === 'tl' ? 'Subukan Uli' : 'Retry'}</span>
+                    </button>
+                  </div>
+                )}
 
                 {/* 🎬 BiliBili FLIX Discovery & Search Toolbar */}
                 {postFilter === 'bilibili' && (
@@ -4802,6 +4919,21 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                       isPending ? 'opacity-70 saturate-75 bg-slate-50/50' : ''
                     } ${isFailed ? 'border-rose-200 bg-rose-50/10' : ''}`}
                   >
+                    {/* Recommendation Reason Badge */}
+                    {post.recommendationLabel && (
+                      <div className="bg-slate-50 px-4 py-1.5 border-b border-slate-100 flex items-center justify-between text-[11px] font-semibold text-slate-700">
+                        <div className="flex items-center gap-1.5">
+                          <Sparkles className="w-3 h-3 text-amber-500 shrink-0" />
+                          <span>{post.recommendationLabel}</span>
+                        </div>
+                        {post.recommendationReason && (
+                          <span className="text-[10px] text-slate-400 font-medium capitalize">
+                            {post.recommendationReason.replace('_', ' ')}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
                     {/* Header */}
                     <div className="p-4 flex items-center justify-between gap-3 border-b border-slate-50">
                       <div className="flex items-center gap-3">

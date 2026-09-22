@@ -216,6 +216,8 @@ export interface ZonePost {
   reactions?: PostReactionRecord[];
   reactionCounts?: PostReactionCounts;
   userReaction?: ReactionType | null;
+  recommendationReason?: 'friend' | 'following' | 'community' | 'hashtag' | 'trending' | 'popular' | 'fresh' | 'suggested_creator';
+  recommendationLabel?: string;
 }
 
 export type ReactionType = 'like' | 'love' | 'haha' | 'wow' | 'sad' | 'angry' | 'care';
@@ -1407,6 +1409,31 @@ export interface RelatedContentCandidate extends ContentGraphSummary {
   isSameAuthor: boolean;
 }
 
+// ==========================================
+// PHASE 3: SMART HOME FEED & PERSONALIZATION
+// ==========================================
 
+export type SmartFeedSection = 'for-you' | 'friends' | 'following' | 'communities' | 'trending' | 'explore';
 
+export interface SmartFeedItem {
+  id: string;
+  type: 'post' | 'reel';
+  post?: ZonePost;
+  reel?: any;
+  recommendationReason?: 'friend' | 'following' | 'community' | 'hashtag' | 'trending' | 'popular' | 'fresh' | 'suggested_creator';
+  recommendationLabel?: string;
+  candidateSource?: string;
+  score?: number;
+}
 
+export interface SmartFeedResponse {
+  success: boolean;
+  items: ZonePost[];
+  section: SmartFeedSection;
+  page: number;
+  limit: number;
+  total: number;
+  hasMore: boolean;
+  fallback: boolean;
+  nextCursor?: string;
+}
