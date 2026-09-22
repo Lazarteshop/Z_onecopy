@@ -22,7 +22,12 @@ import {
   TrendingUp,
   RefreshCw
 } from 'lucide-react';
-import { CommunityPreview, CommunityRecord, CommunityRole } from '../types';
+import { CommunityPreview, CommunityRole } from '../types';
+
+type CommunityDetail = CommunityPreview & {
+  rules?: string[];
+  linkedChatGroupId?: string;
+};
 
 interface CommunityDiscoveryModalProps {
   isOpen: boolean;
@@ -75,7 +80,7 @@ export const CommunityDiscoveryModal: React.FC<CommunityDiscoveryModalProps> = (
   const [isSubmittingCreate, setIsSubmittingCreate] = useState(false);
 
   // Selected community detail view
-  const [selectedCommunity, setSelectedCommunity] = useState<CommunityRecord | null>(null);
+  const [selectedCommunity, setSelectedCommunity] = useState<CommunityDetail | null>(null);
   const [communityMembers, setCommunityMembers] = useState<any[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [memberRoleFilter, setMemberRoleFilter] = useState<string>('all');
@@ -431,7 +436,7 @@ export const CommunityDiscoveryModal: React.FC<CommunityDiscoveryModalProps> = (
                     {selectedCommunity.description || (language === 'tl' ? 'Walang paglalarawan' : 'No description')}
                   </p>
                   <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-500 font-bold">
-                    <span>👥 {selectedCommunity.members.length} {language === 'tl' ? 'kasapi' : 'members'}</span>
+                    <span>👥 {selectedCommunity.memberCount ?? 0} {language === 'tl' ? 'kasapi' : 'members'}</span>
                     <span>📂 {selectedCommunity.category || 'General'}</span>
                   </div>
                 </div>
@@ -451,7 +456,7 @@ export const CommunityDiscoveryModal: React.FC<CommunityDiscoveryModalProps> = (
                   </button>
                 )}
 
-                {selectedCommunity.members.includes(currentUserId) && selectedCommunity.ownerId !== currentUserId && (
+                {selectedCommunity.isMember && selectedCommunity.ownerId !== currentUserId && (
                   <button
                     onClick={() => handleLeave(selectedCommunity.id)}
                     className="px-3 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
@@ -485,7 +490,7 @@ export const CommunityDiscoveryModal: React.FC<CommunityDiscoveryModalProps> = (
                     const isOwner = m.role === 'owner';
                     const isAdmin = m.role === 'admin';
                     const isMod = m.role === 'moderator';
-                    const canManage = (selectedCommunity.ownerId === currentUserId || selectedCommunity.admins.includes(currentUserId)) && m.id !== currentUserId;
+                    const canManage = selectedCommunity.canManage && m.id !== currentUserId;
 
                     return (
                       <div key={m.id} className="p-3 flex items-center justify-between hover:bg-slate-50/80 transition">
