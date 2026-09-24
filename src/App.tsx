@@ -550,17 +550,31 @@ export default function App() {
     fetchReels();
     const pollTime = dataSaver.getPollingInterval(25000);
     const interval = setInterval(() => {
-      if (!document.hidden) {
+      // Lifecycle-aware: polling runs only when document is visible and Reels viewer is active
+      const isViewerOpen = Boolean(document.getElementById('reels-widget-close-btn'));
+      if (!document.hidden && isViewerOpen) {
         fetchReels();
       }
     }, pollTime);
+
     const handleOpen = () => fetchReels();
     window.addEventListener('open-reels-widget', handleOpen);
     window.addEventListener('refresh-reels', handleOpen);
+
+    // Trigger immediate fresh fetch when the floating open button is clicked
+    const handleDocumentClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.id === 'reels-widget-open-btn' || target.closest('#reels-widget-open-btn'))) {
+        fetchReels();
+      }
+    };
+    document.addEventListener('click', handleDocumentClick, true);
+
     return () => {
       clearInterval(interval);
       window.removeEventListener('open-reels-widget', handleOpen);
       window.removeEventListener('refresh-reels', handleOpen);
+      document.removeEventListener('click', handleDocumentClick, true);
     };
   }, []);
 

@@ -406,7 +406,9 @@ function collectCandidates(
 
   // F. Approved Reels Integration
   for (const r of rawReels) {
-    if (!r || r.isApproved === false) continue;
+    if (!r) continue;
+    // Canonical reel status check: exclude pending/disapproved reels; include approved and legacy reels with no status
+    if (r.status === 'pending' || r.status === 'disapproved' || r.isApproved === false) continue;
     const key = `reel:${r.id}`;
     if (candidatesMap.has(key)) continue;
 
@@ -445,7 +447,7 @@ function filterCandidatePrivacy(
   } else if (candidate.type === 'reel') {
     const exists = (db.reels || []).some((r: any) => r && r.id === item.id);
     if (!exists) return false;
-    if (item.isApproved === false) return false;
+    if (item.status === 'pending' || item.status === 'disapproved' || item.isApproved === false) return false;
   }
 
   // 2. Requester-specific blocks, mutes, and hidden items

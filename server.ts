@@ -6346,8 +6346,24 @@ app.get('/api/reels', (req, res) => {
   const user = (req as any).user;
   const isAdmin = Boolean(user?.isAdmin);
 
-  let filtered = db.reels;
-  // Always return all reels so no user videos are lost
+  let filtered: ReelVideo[];
+  if (isAdmin) {
+    // Admins may view all reels
+    filtered = db.reels;
+  } else if (user && user.id) {
+    // Authenticated regular users: approved reels, legacy reels with no status, plus their own pending/disapproved reels
+    filtered = db.reels.filter(r => {
+      const isApprovedOrLegacy = !r.status || r.status === 'approved';
+      if (isApprovedOrLegacy) return true;
+      const isOwner = r.addedByUserId === user.id ||
+        Boolean(r.addedBy && user.name && r.addedBy.toLowerCase().trim() === user.name.toLowerCase().trim());
+      return isOwner;
+    });
+  } else {
+    // Anonymous visitors: only approved reels and legacy reels with no status
+    filtered = db.reels.filter(r => !r.status || r.status === 'approved');
+  }
+
   res.json({ 
     reels: filtered,
     reelsTokens: user ? (user.reelsTokens || 0) : 0,
@@ -6487,13 +6503,10 @@ app.post('/api/reels/token-subscription', (req, res) => {
 
 // ADMIN: GET ALL REELS & REEL SUBSCRIPTIONS & REDEMPTIONS
 app.get('/api/admin/reels', (req, res) => {
-  const adminId = req.headers.authorization;
-  if (!adminId) return res.status(401).json({ error: 'Unauthenticated.' });
-
-  const db = loadDB();
-  const admin = db.users.find(u => u.id === adminId);
+  const admin = (req as any).user;
   if (!admin || !admin.isAdmin) return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
 
+  const db = loadDB();
   res.json({
     reels: db.reels || [],
     reelSubscriptions: db.reelSubscriptions || [],
@@ -6623,13 +6636,10 @@ app.post('/api/reels/redeem-profit', checkIdempotency, (req, res) => {
 
 // ADMIN: APPROVE REEL (Deducts 0.50 tokens from user)
 app.post('/api/admin/reels/:id/approve', (req, res) => {
-  const adminId = req.headers.authorization;
-  if (!adminId) return res.status(401).json({ error: 'Unauthenticated.' });
-
-  const db = loadDB();
-  const admin = db.users.find(u => u.id === adminId);
+  const admin = (req as any).user;
   if (!admin || !admin.isAdmin) return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
 
+  const db = loadDB();
   const { id } = req.params;
   const reel = (db.reels || []).find(r => r.id === id);
   if (!reel) return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
@@ -6664,13 +6674,10 @@ app.post('/api/admin/reels/:id/approve', (req, res) => {
 
 // ADMIN: DISAPPROVE REEL (0 tokens deducted!)
 app.post('/api/admin/reels/:id/disapprove', (req, res) => {
-  const adminId = req.headers.authorization;
-  if (!adminId) return res.status(401).json({ error: 'Unauthenticated.' });
-
-  const db = loadDB();
-  const admin = db.users.find(u => u.id === adminId);
+  const admin = (req as any).user;
   if (!admin || !admin.isAdmin) return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
 
+  const db = loadDB();
   const { id } = req.params;
   const { reason } = req.body;
   const reel = (db.reels || []).find(r => r.id === id);
@@ -6701,13 +6708,10 @@ app.post('/api/admin/reels/:id/disapprove', (req, res) => {
 
 // ADMIN: APPROVE REEL TOKEN SUBSCRIPTION (Credits +10 tokens = 20 Reels)
 app.post('/api/admin/reels/subscriptions/:id/approve', (req, res) => {
-  const adminId = req.headers.authorization;
-  if (!adminId) return res.status(401).json({ error: 'Unauthenticated.' });
-
-  const db = loadDB();
-  const admin = db.users.find(u => u.id === adminId);
+  const admin = (req as any).user;
   if (!admin || !admin.isAdmin) return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
 
+  const db = loadDB();
   const { id } = req.params;
   db.reelSubscriptions = db.reelSubscriptions || [];
   const sub = db.reelSubscriptions.find(s => s.id === id);
@@ -6756,13 +6760,10 @@ app.post('/api/admin/reels/subscriptions/:id/approve', (req, res) => {
 
 // ADMIN: DECLINE REEL TOKEN SUBSCRIPTION
 app.post('/api/admin/reels/subscriptions/:id/decline', (req, res) => {
-  const adminId = req.headers.authorization;
-  if (!adminId) return res.status(401).json({ error: 'Unauthenticated.' });
-
-  const db = loadDB();
-  const admin = db.users.find(u => u.id === adminId);
+  const admin = (req as any).user;
   if (!admin || !admin.isAdmin) return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
 
+  const db = loadDB();
   const { id } = req.params;
   db.reelSubscriptions = db.reelSubscriptions || [];
   const sub = db.reelSubscriptions.find(s => s.id === id);
@@ -6776,13 +6777,10 @@ app.post('/api/admin/reels/subscriptions/:id/decline', (req, res) => {
 
 // ADMIN: DIRECTLY ADJUST USER REEL TOKENS
 app.post('/api/admin/users/:userId/tokens', (req, res) => {
-  const adminId = req.headers.authorization;
-  if (!adminId) return res.status(401).json({ error: 'Unauthenticated.' });
-
-  const db = loadDB();
-  const admin = db.users.find(u => u.id === adminId);
+  const admin = (req as any).user;
   if (!admin || !admin.isAdmin) return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
 
+  const db = loadDB();
   const { userId } = req.params;
   const { tokens } = req.body;
   const user = db.users.find(u => u.id === userId);
@@ -6797,8 +6795,29 @@ app.post('/api/admin/users/:userId/tokens', (req, res) => {
 
 app.delete('/api/reels/:id', enforceCommunitySafety, (req, res) => {
   const { id } = req.params;
+  const user = (req as any).user;
+  if (!user) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang makapag-delete ng Reel.' });
+  }
+
   const db = loadDB();
-  db.reels = (db.reels || [...INITIAL_REELS]).filter(r => r.id !== id);
+  db.reels = db.reels || [...INITIAL_REELS];
+  const reel = db.reels.find(r => r.id === id);
+  if (!reel) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
+  }
+
+  const isAdmin = Boolean(user.isAdmin);
+  const isOwner = Boolean(
+    (reel.addedByUserId && reel.addedByUserId === user.id) ||
+    (reel.addedBy && user.name && reel.addedBy.toLowerCase().trim() === user.name.toLowerCase().trim())
+  );
+
+  if (!isAdmin && !isOwner) {
+    return res.status(403).json({ error: 'You are not authorized to delete this reel.' });
+  }
+
+  db.reels = db.reels.filter(r => r.id !== id);
   onContentDeleted(`reel:${id}`);
   saveDB(db, true);
 
