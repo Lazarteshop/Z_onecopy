@@ -468,11 +468,23 @@ export interface ReelVideo {
   commentsCount?: number;
   sharesCount?: number;
   productRef?: SocialProductRef;
+  productRefs?: SocialProductRef[];
+  communityId?: string;
+  communityName?: string;
+  description?: string;
+  isSaved?: boolean;
   hashtags?: string[];
   normalizedHashtags?: string[];
   status?: 'approved' | 'pending' | 'disapproved';
   disapproveReason?: string;
   createdAt: string;
+}
+
+export interface SavedReelRef {
+  id: string;
+  userId: string;
+  reelId: string;
+  savedAt: string;
 }
 
 export interface HashtagRecord {

@@ -1994,11 +1994,13 @@ interface ReelVideo {
   embedUrl: string;
   platform: 'tiktok' | 'facebook' | 'youtube' | 'direct';
   title?: string;
+  description?: string;
   thumbnailUrl?: string;
   likes: number;
   likedBy?: string[];
   watchedBy?: string[];
   views?: number;
+  audienceCountry?: 'Philippines' | 'India' | 'Indonesia' | 'US' | 'Canada' | 'UK';
   addedBy?: string;
   addedByUserId?: string;
   authorAvatar?: string;
@@ -2007,6 +2009,10 @@ interface ReelVideo {
   commentsCount?: number;
   sharesCount?: number;
   productRef?: any;
+  productRefs?: any[];
+  communityId?: string;
+  communityName?: string;
+  isSaved?: boolean;
   hashtags?: string[];
   normalizedHashtags?: string[];
   status?: 'approved' | 'pending' | 'disapproved';
@@ -2273,6 +2279,25 @@ interface SavedPostRef {
   savedAt: string;
 }
 
+interface SavedReelRef {
+  id: string;
+  userId: string;
+  reelId: string;
+  savedAt: string;
+}
+
+interface SocialProductRef {
+  id: string;
+  name: string;
+  price: number;
+  originalPrice?: number;
+  image?: string;
+  category?: string;
+  commissionRate?: number;
+  affiliateUrl?: string;
+  isAffiliate?: boolean;
+}
+
 interface DBStructure {
   users: UserSession[];
   campaigns?: any[];
@@ -2308,6 +2333,7 @@ interface DBStructure {
   socialNotifications?: SocialNotification[];
   socialReports?: SocialReport[];
   savedPosts?: SavedPostRef[];
+  savedReels?: SavedReelRef[];
   userBlocks?: Record<string, string[]>;
   userMutes?: Record<string, string[]>;
   userHiddenPosts?: Record<string, string[]>;
@@ -3258,6 +3284,9 @@ function loadDB(): DBStructure {
     }
     if (!loaded.creatorProductClicks) {
       loaded.creatorProductClicks = [];
+    }
+    if (!loaded.savedReels) {
+      loaded.savedReels = [];
     }
     if (!loaded.friendships) {
       loaded.friendships = [];
@@ -6372,7 +6401,7 @@ app.get('/api/reels', (req, res) => {
 });
 
 app.post('/api/reels', enforceCommunitySafety, (req, res) => {
-  const { url, embedUrl, platform, title, addedBy } = req.body;
+  const { url, embedUrl, platform, title, description, thumbnailUrl, addedBy, communityId, productRef, productRefs } = req.body;
   if (!url || !url.trim()) {
     return res.status(400).json({ error: 'Kailangan ibigay ang Video URL.' });
   }
@@ -6390,6 +6419,47 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
   const { embedUrl: autoEmbedUrl, platform: autoPlatform } = formatEmbedUrlServer(url.trim());
   const finalEmbedUrl = embedUrl || autoEmbedUrl;
   const finalPlatform = platform || autoPlatform;
+
+  // Optional Community association & privacy validation
+  let verifiedCommunityId: string | undefined = undefined;
+  let verifiedCommunityName: string | undefined = undefined;
+  if (communityId) {
+    const comm = (db.communities || []).find((c: any) => c.id === communityId);
+    if (!comm) {
+      return res.status(404).json({ error: 'Hindi mahanap ang tinukoy na community.' });
+    }
+    const isMember = (comm.members || []).some((m: any) => 
+      typeof m === 'string' ? m === authUserId : (m?.userId === authUserId || m?.id === authUserId)
+    );
+    const isPrivileged = isAdmin || comm.ownerId === authUserId || (comm.admins || []).includes(authUserId) || isMember;
+    if (comm.privacy === 'private' && !isPrivileged) {
+      return res.status(403).json({ error: 'Kailangan mong maging miyembro ng pribadong komunidad na ito upang makapag-post ng Reel.' });
+    }
+    verifiedCommunityId = comm.id;
+    verifiedCommunityName = comm.name;
+  }
+
+  // Optional Product tagging validation (Max 3 products, no duplicate IDs)
+  let validProductRefs: SocialProductRef[] = [];
+  const rawProductList = Array.isArray(productRefs) ? productRefs : (productRef ? [productRef] : []);
+  const seenProductIds = new Set<string>();
+  for (const p of rawProductList) {
+    if (p && p.id && !seenProductIds.has(p.id) && validProductRefs.length < 3) {
+      seenProductIds.add(p.id);
+      validProductRefs.push({
+        id: String(p.id),
+        name: String(p.name || 'Product'),
+        price: Number(p.price) || 0,
+        originalPrice: p.originalPrice ? Number(p.originalPrice) : undefined,
+        image: String(p.image || ''),
+        category: p.category ? String(p.category) : undefined,
+        commissionRate: p.commissionRate ? Number(p.commissionRate) : undefined,
+        affiliateUrl: p.affiliateUrl ? String(p.affiliateUrl) : undefined,
+        isAffiliate: Boolean(p.isAffiliate)
+      });
+    }
+  }
+  const finalProductRef = validProductRefs.length > 0 ? validProductRefs[0] : undefined;
 
   if (!isAdmin) {
     // User upload: Check token balance (0.50 tokens per reel upload required)
@@ -6411,6 +6481,12 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
       embedUrl: finalEmbedUrl,
       platform: finalPlatform,
       title: reelTitle,
+      description: description?.trim() || undefined,
+      thumbnailUrl: thumbnailUrl?.trim() || undefined,
+      communityId: verifiedCommunityId,
+      communityName: verifiedCommunityName,
+      productRef: finalProductRef,
+      productRefs: validProductRefs.length > 0 ? validProductRefs : undefined,
       likes: 0,
       addedBy: user ? user.name : (addedBy || 'User'),
       addedByUserId: user ? user.id : undefined,
@@ -6441,6 +6517,12 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
     embedUrl: finalEmbedUrl,
     platform: finalPlatform,
     title: adminReelTitle,
+    description: description?.trim() || undefined,
+    thumbnailUrl: thumbnailUrl?.trim() || undefined,
+    communityId: verifiedCommunityId,
+    communityName: verifiedCommunityName,
+    productRef: finalProductRef,
+    productRefs: validProductRefs.length > 0 ? validProductRefs : undefined,
     likes: 0,
     addedBy: 'Admin',
     hashtags: adminReelTags.length > 0 ? adminReelTags.map(t => t.display) : undefined,
@@ -6818,6 +6900,9 @@ app.delete('/api/reels/:id', enforceCommunitySafety, (req, res) => {
   }
 
   db.reels = db.reels.filter(r => r.id !== id);
+  if (db.savedReels) {
+    db.savedReels = db.savedReels.filter(s => s.reelId !== id);
+  }
   onContentDeleted(`reel:${id}`);
   saveDB(db, true);
 
@@ -7014,6 +7099,166 @@ app.post('/api/reels/:id/share', (req, res) => {
     saveDB(db);
   }
   res.json({ success: true, sharesCount: reel?.sharesCount || 1 });
+});
+
+// --- PHASE 4B: REELS 2.0 SAVED / BOOKMARKS & COMMUNITY ENDPOINTS ---
+
+// 1. POST /api/reels/:id/save (User-scoped bookmark/save toggle)
+app.post('/api/reels/:id/save', enforceCommunitySafety, (req, res) => {
+  const { id } = req.params;
+  const user = (req as any).user;
+  if (!user) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang mag-save ng Reel.' });
+  }
+  const userId = user.id;
+
+  const db = loadDB();
+  const reel = (db.reels || []).find((r: any) => r.id === id);
+  if (!reel) {
+    return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
+  }
+
+  if (!db.savedReels) db.savedReels = [];
+  const existingIdx = db.savedReels.findIndex(s => s.userId === userId && s.reelId === id);
+  let isSaved = false;
+
+  const { action } = req.body || {};
+  if (action === 'save') {
+    if (existingIdx === -1) {
+      db.savedReels.push({
+        id: 'saved-reel-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+        userId,
+        reelId: id,
+        savedAt: new Date().toISOString()
+      });
+    }
+    isSaved = true;
+  } else if (action === 'unsave') {
+    if (existingIdx > -1) {
+      db.savedReels.splice(existingIdx, 1);
+    }
+    isSaved = false;
+  } else {
+    // Default idempotent toggle
+    if (existingIdx > -1) {
+      db.savedReels.splice(existingIdx, 1);
+      isSaved = false;
+    } else {
+      db.savedReels.push({
+        id: 'saved-reel-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+        userId,
+        reelId: id,
+        savedAt: new Date().toISOString()
+      });
+      isSaved = true;
+    }
+  }
+
+  saveDB(db);
+  res.json({ success: true, isSaved, reelId: id });
+});
+
+// 2. GET /api/reels/saved (Paginated user-scoped saved reels, handles deleted reels gracefully)
+app.get('/api/reels/saved', enforceCommunitySafety, (req, res) => {
+  const user = (req as any).user;
+  if (!user) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang makita ang iyong saved reels.' });
+  }
+  const userId = user.id;
+
+  const db = loadDB();
+  const savedRefs = (db.savedReels || []).filter(s => s.userId === userId);
+  const savedReelMap = new Map<string, string>();
+  for (const s of savedRefs) {
+    savedReelMap.set(s.reelId, s.savedAt);
+  }
+
+  // Filter existing accessible reels and sort by savedAt descending
+  const allReels = db.reels || [];
+  const eligibleSaved = allReels
+    .filter(r => {
+      if (!savedReelMap.has(r.id)) return false;
+      // Visibility check: approved/legacy, or author is self, or admin
+      if (user.isAdmin) return true;
+      if (!r.status || r.status === 'approved') return true;
+      return r.addedByUserId === userId || Boolean(r.addedBy && user.name && r.addedBy.toLowerCase().trim() === user.name.toLowerCase().trim());
+    })
+    .map(r => ({
+      ...r,
+      isSaved: true
+    }))
+    .sort((a, b) => {
+      const timeA = new Date(savedReelMap.get(a.id) || a.createdAt).getTime();
+      const timeB = new Date(savedReelMap.get(b.id) || b.createdAt).getTime();
+      return timeB - timeA;
+    });
+
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const limitParam = parseInt(req.query.limit as string) || 20;
+  const limit = Math.min(Math.max(limitParam, 1), 50);
+
+  const total = eligibleSaved.length;
+  const startIndex = (page - 1) * limit;
+  const pageSlice = eligibleSaved.slice(startIndex, startIndex + limit);
+
+  res.json({
+    success: true,
+    savedReels: pageSlice,
+    total,
+    page,
+    limit,
+    hasMore: startIndex + limit < total
+  });
+});
+
+// 3. GET /api/reels/saved/ids & GET /api/reels/saved-ids (Quick array of saved reel IDs for current user)
+const handleGetSavedReelIds = (req: express.Request, res: express.Response) => {
+  const user = (req as any).user;
+  if (!user) {
+    return res.json({ success: true, savedIds: [] });
+  }
+  const db = loadDB();
+  const savedIds = (db.savedReels || [])
+    .filter(s => s.userId === user.id)
+    .map(s => s.reelId);
+  res.json({ success: true, savedIds });
+};
+
+app.get('/api/reels/saved/ids', handleGetSavedReelIds);
+app.get('/api/reels/saved-ids', handleGetSavedReelIds);
+
+// 4. GET /api/zone/communities/:communityId/reels (Approved reels associated with a community)
+app.get('/api/zone/communities/:communityId/reels', (req, res) => {
+  const { communityId } = req.params;
+  const db = loadDB();
+  const comm = (db.communities || []).find((c: any) => c.id === communityId);
+  if (!comm) {
+    return res.status(404).json({ error: 'Hindi mahanap ang community.' });
+  }
+
+  const user = (req as any).user;
+  const userId = user?.id;
+  const isAdmin = Boolean(user?.isAdmin);
+
+  // Privacy verification for private communities
+  if (comm.privacy === 'private' && !isAdmin) {
+    const isMember = userId && (comm.members || []).some((m: any) => 
+      typeof m === 'string' ? m === userId : (m?.userId === userId || m?.id === userId)
+    );
+    if (!isMember && comm.ownerId !== userId) {
+      return res.status(403).json({ error: 'Kailangan mong maging miyembro ng pribadong komunidad upang makita ang mga Reels nito.' });
+    }
+  }
+
+  const communityReels = (db.reels || []).filter(r => 
+    r.communityId === communityId && (!r.status || r.status === 'approved')
+  );
+
+  res.json({
+    success: true,
+    reels: communityReels,
+    total: communityReels.length
+  });
 });
 
 // --- CAMPAIGNS ENDPOINTS ---

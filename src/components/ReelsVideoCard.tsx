@@ -15,7 +15,10 @@ import {
   Volume2,
   VolumeX,
   MessageCircle,
-  ShoppingBag
+  ShoppingBag,
+  Bookmark,
+  Users,
+  RotateCcw
 } from 'lucide-react';
 import { ReelVideo, SocialProductRef } from '../types';
 import { formatEmbedUrl } from '../utils/reels';
@@ -32,15 +35,22 @@ interface ReelsVideoCardProps {
   fitMode: 'contain' | 'cover';
   isAdmin?: boolean;
   language?: 'tl' | 'en';
+  currentUserId?: string;
+  isSaved?: boolean;
+  isFollowing?: boolean;
+  token?: string;
   onTogglePlay: () => void;
   onToggleFitMode: () => void;
   onLike: (id: string, e?: React.MouseEvent) => void;
+  onSave?: (id: string, e?: React.MouseEvent) => void;
+  onFollowToggle?: (creatorId: string) => void;
   onClaimReward: (id: string) => void;
   onDelete?: (id: string) => void;
   onOpenUploadModal?: () => void;
   onOpenComments?: (reel: ReelVideo) => void;
   onOpenProduct?: (product: SocialProductRef) => void;
   onOpenCreatorProfile?: (userId: string) => void;
+  onFilterByCreator?: (creatorId: string, creatorName: string) => void;
   triggerNotification?: (message: string, type?: 'success' | 'info' | 'error') => void;
 }
 
@@ -56,15 +66,22 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
   fitMode,
   isAdmin = false,
   language = 'tl',
+  currentUserId,
+  isSaved = false,
+  isFollowing = false,
+  token = '',
   onTogglePlay,
   onToggleFitMode,
   onLike,
+  onSave,
+  onFollowToggle,
   onClaimReward,
   onDelete,
   onOpenUploadModal,
   onOpenComments,
   onOpenProduct,
   onOpenCreatorProfile,
+  onFilterByCreator,
   triggerNotification
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -73,6 +90,18 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
   const [showHeartBurst, setShowHeartBurst] = useState<boolean>(false);
   const [heartBurstPos, setHeartBurstPos] = useState<{ x: number; y: number }>({ x: 50, y: 50 });
   const lastTapRef = useRef<number>(0);
+
+  // Direct video playback states
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(0);
+  const [isDirectMuted, setIsDirectMuted] = useState<boolean>(false);
+
+  const formatTime = (secs: number) => {
+    if (isNaN(secs) || secs < 0) return '0:00';
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
 
   // TikTok Audio State Management
   const [isTikTokMuted, setIsTikTokMuted] = useState<boolean>(() => {
@@ -336,6 +365,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
               playsInline
               loop
               autoPlay={isPlaying}
+              muted={isDirectMuted}
               className={`relative z-10 w-full max-w-full transition-all duration-300 ${
                 fitMode === 'contain'
                   ? 'aspect-video object-contain drop-shadow-[0_10px_35px_rgba(0,0,0,0.85)] max-h-[85vh]'
@@ -343,9 +373,15 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
               }`}
               onPlay={() => {}}
               onPause={() => {}}
+              onLoadedMetadata={(e) => {
+                const v = e.currentTarget;
+                if (v.duration) setDuration(v.duration);
+              }}
               onTimeUpdate={(e) => {
                 const v = e.currentTarget;
+                setCurrentTime(v.currentTime);
                 if (v.duration && v.duration > 0) {
+                  setDuration(v.duration);
                   const pct = Math.min(100, Math.floor((v.currentTime / v.duration) * 100));
                   if (pct >= 100) {
                     onClaimReward(reel.id);
@@ -687,6 +723,54 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
           </span>
         </div>
 
+        {/* 4.5 Save / Bookmark Reel Button */}
+        <div className="flex flex-col items-center gap-0.5">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onSave) onSave(reel.id, e);
+            }}
+            className="p-1.5 active:scale-125 transition duration-200 cursor-pointer select-none"
+            title={isSaved ? (language === 'tl' ? 'Alisin sa Saved Reels' : 'Unsave Reel') : (language === 'tl' ? 'I-save ang Reel' : 'Save Reel')}
+          >
+            <Bookmark 
+              className={`w-7 h-7 drop-shadow-md transition duration-200 ${
+                isSaved 
+                  ? 'text-amber-400 fill-amber-400 scale-110' 
+                  : 'text-white fill-black/30 hover:text-amber-300'
+              }`} 
+            />
+          </button>
+          <span className="text-[10px] font-extrabold text-white drop-shadow">
+            {isSaved ? (language === 'tl' ? 'Saved' : 'Saved') : (language === 'tl' ? 'I-save' : 'Save')}
+          </span>
+        </div>
+
+        {/* 4.6 Direct Video Sound Toggle */}
+        {isDirectVideo && (
+          <div className="flex flex-col items-center gap-0.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsDirectMuted(!isDirectMuted);
+              }}
+              className="p-1.5 active:scale-125 transition duration-200 cursor-pointer text-white hover:text-amber-300"
+              title={isDirectMuted ? 'I-unmute ang video' : 'I-mute ang video'}
+            >
+              {isDirectMuted ? (
+                <VolumeX className="w-6 h-6 drop-shadow-md text-amber-400" />
+              ) : (
+                <Volume2 className="w-6 h-6 drop-shadow-md text-emerald-400" />
+              )}
+            </button>
+            <span className="text-[9px] font-bold text-slate-300">
+              {isDirectMuted ? 'Muted' : 'Sound'}
+            </span>
+          </div>
+        )}
+
         {/* 4. Original Source Link */}
         <div className="flex flex-col items-center gap-0.5">
           <a
@@ -800,11 +884,52 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                 ✓
               </span>
             </h2>
+
+            {/* Creator Follow / Unfollow Button */}
+            {currentUserId && reel.addedByUserId && currentUserId !== reel.addedByUserId && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onFollowToggle) onFollowToggle(reel.addedByUserId!);
+                }}
+                className={`px-2.5 py-0.5 rounded-full text-[10px] font-black transition active:scale-95 shadow-md cursor-pointer ${
+                  isFollowing 
+                    ? 'bg-slate-800/90 text-slate-300 border border-slate-600' 
+                    : 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white'
+                }`}
+              >
+                {isFollowing ? (language === 'tl' ? '✓ Naka-Zone' : '✓ Following') : '+ Follow'}
+              </button>
+            )}
+
+            {/* Optional Community Badge */}
+            {reel.communityName && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.dispatchEvent(new CustomEvent('open-community-modal', { detail: { communityId: reel.communityId } }));
+                }}
+                className="text-[9px] font-black text-indigo-200 bg-indigo-900/80 border border-indigo-400/40 px-2 py-0.5 rounded-md flex items-center gap-1 cursor-pointer hover:bg-indigo-800 transition shadow"
+              >
+                <Users className="w-3 h-3 text-indigo-300" />
+                <span>{reel.communityName}</span>
+              </button>
+            )}
+
             {platformBadge()}
             <span className="text-[9px] font-bold text-slate-300 bg-white/10 px-1.5 py-0.5 rounded-md backdrop-blur-xs">
               #{index + 1}/{totalCount}
             </span>
           </div>
+
+          {/* Description if explicitly provided */}
+          {reel.description && (
+            <p className="text-xs text-slate-300 leading-snug drop-shadow line-clamp-2">
+              {reel.description}
+            </p>
+          )}
 
           {/* Title & Expandable Description with Clickable Hashtags */}
           {reel.title && (
@@ -862,49 +987,80 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
             </div>
           )}
 
-          {/* 🛍️ Social Commerce Product Tag Card (Z-oneShop Integration) */}
-          {reel.productRef && (
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onOpenProduct) {
-                  onOpenProduct(reel.productRef!);
-                } else {
-                  window.dispatchEvent(new CustomEvent('open-shop-product-detail', { detail: { product: reel.productRef } }));
-                }
-              }}
-              className="bg-slate-900/90 hover:bg-slate-850 border border-amber-400/40 rounded-xl p-2 pr-3 flex items-center gap-2.5 shadow-xl cursor-pointer active:scale-95 transition-all backdrop-blur-md group"
-            >
-              {reel.productRef.image ? (
-                <img 
-                  src={reel.productRef.image} 
-                  alt={reel.productRef.name} 
-                  className="w-10 h-10 rounded-lg object-cover shrink-0 border border-white/20 bg-slate-800" 
-                />
-              ) : (
-                <div className="w-10 h-10 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0">
-                  <ShoppingBag className="w-5 h-5" />
-                </div>
-              )}
-              <div className="flex-1 min-w-0">
-                <div className="text-[10px] font-bold text-amber-300 flex items-center gap-1">
+          {/* 🛍️ Social Commerce Product Tag Cards (Z-oneShop Multi-Product Tagging, Max 3) */}
+          {(() => {
+            const taggedProducts = reel.productRefs && reel.productRefs.length > 0 
+              ? reel.productRefs 
+              : (reel.productRef ? [reel.productRef] : []);
+
+            if (taggedProducts.length === 0) return null;
+
+            const handleProductClick = (prod: SocialProductRef, e: React.MouseEvent) => {
+              e.stopPropagation();
+              // Server-side affiliate & creator attribution tracker
+              const authHeader = token ? (token.startsWith('Bearer ') ? token : `Bearer ${token}`) : '';
+              fetch('/api/zone/analytics/product-click', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(authHeader ? { 'Authorization': authHeader } : {})
+                },
+                body: JSON.stringify({
+                  productId: prod.id,
+                  creatorId: reel.addedByUserId || reel.addedBy,
+                  sourceType: 'reel',
+                  sourceId: reel.id
+                })
+              }).catch(() => {});
+
+              if (onOpenProduct) {
+                onOpenProduct(prod);
+              } else {
+                window.dispatchEvent(new CustomEvent('open-shop-product-detail', { detail: { product: prod } }));
+              }
+            };
+
+            return (
+              <div className="space-y-1 pt-1">
+                <div className="flex items-center gap-1 text-[10px] font-bold text-amber-300">
                   <ShoppingBag className="w-3 h-3 text-amber-400" />
-                  <span>Z-oneShop Tagged</span>
+                  <span>{taggedProducts.length > 1 ? `Tagged Products (${taggedProducts.length}/3)` : 'Z-oneShop Tagged Product'}</span>
                 </div>
-                <div className="text-xs font-black text-white truncate group-hover:text-amber-200">
-                  {reel.productRef.name}
+                <div className="flex flex-wrap gap-1.5">
+                  {taggedProducts.slice(0, 3).map((prod) => (
+                    <div
+                      key={prod.id}
+                      onClick={(e) => handleProductClick(prod, e)}
+                      className="bg-slate-900/90 hover:bg-slate-850 border border-amber-400/40 rounded-xl p-1.5 pr-2.5 flex items-center gap-2 shadow-xl cursor-pointer active:scale-95 transition-all backdrop-blur-md max-w-xs group"
+                    >
+                      {prod.image ? (
+                        <img 
+                          src={prod.image} 
+                          alt={prod.name} 
+                          className="w-8 h-8 rounded-lg object-cover shrink-0 border border-white/20 bg-slate-800" 
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0">
+                          <ShoppingBag className="w-4 h-4" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[11px] font-black text-white truncate group-hover:text-amber-200">
+                          {prod.name}
+                        </div>
+                        <div className="text-[10px] font-black text-emerald-400">
+                          ₱{prod.price.toLocaleString()}
+                        </div>
+                      </div>
+                      <span className="text-[9px] font-black text-cyan-300 bg-cyan-950/70 border border-cyan-400/40 px-1.5 py-0.5 rounded shrink-0">
+                        Buy ➔
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
-              <div className="text-right shrink-0">
-                <div className="text-xs font-black text-emerald-400">
-                  ₱{reel.productRef.price.toLocaleString()}
-                </div>
-                <span className="inline-block text-[9px] font-black text-cyan-300 bg-cyan-950/70 border border-cyan-400/40 px-2 py-0.5 rounded-md">
-                  Buy ➔
-                </span>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Hashtags */}
           <div className="flex flex-wrap gap-1 text-[11px] font-bold text-amber-300 drop-shadow">

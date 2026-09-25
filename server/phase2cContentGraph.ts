@@ -415,15 +415,16 @@ export function isContentVisibleToUser(
 
   // 5. Community Privacy Guard (Phase 2B Integration)
   // Private communities must NEVER leak content to public or non-members
-  if (type === 'post' && item.communityId) {
+  if ((type === 'post' || type === 'reel') && item.communityId) {
     const comm = (db.communities || []).find((c: any) => c && c.id === item.communityId);
     if (comm && (comm.privacy === 'private' || comm.isPrivate === true)) {
-      if (!requesterId) return false; // Anonymous requests cannot view private community posts
+      if (!requesterId) return false; // Anonymous requests cannot view private community content
       const isMember = (comm.members || []).some((m: any) => {
         if (typeof m === 'string') return m === requesterId;
         return m?.userId === requesterId || m?.id === requesterId;
       });
-      if (!isMember && requesterId !== comm.ownerId && requesterId !== comm.adminId && requesterId !== item.userId) {
+      const creatorId = item.addedByUserId || item.userId;
+      if (!isMember && requesterId !== comm.ownerId && requesterId !== comm.adminId && requesterId !== creatorId) {
         return false; // Must be an accepted member or creator
       }
     }

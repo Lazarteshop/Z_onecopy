@@ -3407,6 +3407,27 @@ export default function App() {
               <span className="text-[10px] mt-0.5">Home</span>
             </button>
 
+            {/* Reels 🎬 */}
+            <button
+              type="button"
+              id="bottom-nav-reels"
+              onClick={() => {
+                try { soundEffects.playClick(); } catch (e) {}
+                window.dispatchEvent(new Event('open-reels-widget'));
+                const openBtn = document.getElementById('reels-widget-open-btn');
+                if (openBtn) {
+                  openBtn.click();
+                }
+              }}
+              className="flex flex-col items-center justify-center py-1 px-2 rounded-xl transition cursor-pointer text-rose-500 hover:text-rose-600 font-semibold active:scale-90"
+            >
+              <div className="relative">
+                <Tv className="w-5 h-5" />
+                <span className="absolute -top-1 -right-1.5 w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+              </div>
+              <span className="text-[10px] mt-0.5 font-bold">Reels</span>
+            </button>
+
             {/* Campaigns / Earn */}
             <button
               type="button"
