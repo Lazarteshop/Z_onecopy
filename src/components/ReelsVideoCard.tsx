@@ -18,7 +18,9 @@ import {
   ShoppingBag,
   Bookmark,
   Users,
-  RotateCcw
+  RotateCcw,
+  X,
+  Tv
 } from 'lucide-react';
 import { ReelVideo, SocialProductRef } from '../types';
 import { formatEmbedUrl } from '../utils/reels';
@@ -90,6 +92,46 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
   const [showHeartBurst, setShowHeartBurst] = useState<boolean>(false);
   const [heartBurstPos, setHeartBurstPos] = useState<{ x: number; y: number }>({ x: 50, y: 50 });
   const lastTapRef = useRef<number>(0);
+
+  // Phase 4C: Related Reels Drawer State
+  const [showRelatedDrawer, setShowRelatedDrawer] = useState<boolean>(false);
+  const [relatedItems, setRelatedItems] = useState<any[]>([]);
+  const [isLoadingRelated, setIsLoadingRelated] = useState<boolean>(false);
+
+  const handleOpenRelatedDrawer = async () => {
+    setShowRelatedDrawer(true);
+    if (relatedItems.length > 0) return;
+
+    setIsLoadingRelated(true);
+    try {
+      const authHeader = token ? (token.startsWith('Bearer ') ? token : `Bearer ${token}`) : '';
+      const res = await fetch(`/api/zone/content/reel:${reel.id}/related?type=reel&limit=8`, {
+        headers: { ...(authHeader ? { 'Authorization': authHeader } : {}) }
+      });
+      const data = await res.json();
+      if (res.ok && data.success && Array.isArray(data.related)) {
+        setRelatedItems(data.related.map((r: any) => ({
+          id: r.id,
+          key: r.key || (r.id ? `reel:${r.id}` : ''),
+          title: r.title,
+          sharedTags: r.sharedHashtags || r.hashtags || [],
+          score: r.relationScore || 0,
+          summary: {
+            id: r.id,
+            title: r.title,
+            mediaUrl: r.mediaUrl || r.thumbnailUrl,
+            thumbnailUrl: r.thumbnailUrl || r.mediaUrl,
+            userName: r.authorName || r.userName || 'Creator',
+            viewsCount: r.viewsCount || r.views || 0
+          }
+        })));
+      }
+    } catch (err) {
+      console.error('Failed to fetch related reels:', err);
+    } finally {
+      setIsLoadingRelated(false);
+    }
+  };
 
   // Direct video playback states
   const [currentTime, setCurrentTime] = useState<number>(0);
@@ -747,6 +789,24 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
           </span>
         </div>
 
+        {/* 4.55 Kaugnay na Reels (Phase 4C Related Reels Drawer Button) */}
+        <div className="flex flex-col items-center gap-0.5">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleOpenRelatedDrawer();
+            }}
+            className="p-1.5 active:scale-125 transition duration-200 cursor-pointer select-none text-white hover:text-cyan-300"
+            title={language === 'tl' ? 'Tingnan ang Kaugnay na Reels' : 'View Related Reels'}
+          >
+            <Sparkles className="w-7 h-7 text-cyan-400 drop-shadow-md hover:scale-110 transition" />
+          </button>
+          <span className="text-[10px] font-extrabold text-white drop-shadow">
+            {language === 'tl' ? 'Kaugnay' : 'Related'}
+          </span>
+        </div>
+
         {/* 4.6 Direct Video Sound Toggle */}
         {isDirectVideo && (
           <div className="flex flex-col items-center gap-0.5">
@@ -1112,8 +1172,110 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
             </span>
           </button>
         </div>
-
       </div>
+
+      {/* ================= 🌟 PHASE 4C: RELATED REELS BOTTOM DRAWER ================= */}
+      {showRelatedDrawer && (
+        <div 
+          onClick={(e) => e.stopPropagation()}
+          className="absolute inset-x-0 bottom-0 z-40 bg-slate-950/95 backdrop-blur-xl border-t border-slate-700/80 rounded-t-3xl max-h-[75vh] flex flex-col p-4 shadow-2xl animate-slideUp text-slate-100"
+        >
+          {/* Drawer Header */}
+          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-gradient-to-tr from-cyan-500 to-blue-600 rounded-xl text-white shadow-md">
+                <Sparkles className="w-4 h-4 text-white" />
+              </div>
+              <div>
+                <h4 className="text-xs font-black text-white">
+                  {language === 'tl' ? 'Kaugnay na Reels' : 'Related Reels'}
+                </h4>
+                <p className="text-[10px] text-slate-400 font-semibold">
+                  {language === 'tl' ? 'Tuklasin ang kaparehong tema o hashtags' : 'Explore reels with similar tags or topics'}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowRelatedDrawer(false)}
+              className="p-1.5 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Drawer Content */}
+          <div className="flex-1 overflow-y-auto py-3 space-y-2.5 max-h-[50vh]">
+            {isLoadingRelated ? (
+              <div className="py-8 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                <span className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                <span>Naghahanap ng kaugnay na Reels...</span>
+              </div>
+            ) : relatedItems.length === 0 ? (
+              <div className="py-8 text-center text-xs text-slate-400 space-y-1">
+                <p>Walang direktang kaugnay na Reels sa kasalukuyan.</p>
+                <p className="text-[10px] text-slate-500">I-explore ang For You o Trending para sa iba pang video!</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {relatedItems.map((item: any) => {
+                  const rId = item.id || (item.key ? item.key.replace('reel:', '') : '');
+                  return (
+                    <div
+                      key={item.key || rId}
+                      onClick={() => {
+                        setShowRelatedDrawer(false);
+                        window.dispatchEvent(new CustomEvent('open-reel-detail', { detail: { reelId: rId } }));
+                      }}
+                      className="group bg-slate-900 border border-slate-800 hover:border-cyan-500/50 p-2 rounded-2xl cursor-pointer transition flex flex-col gap-1.5"
+                    >
+                      <div className="relative aspect-[9/14] bg-slate-950 rounded-xl overflow-hidden flex items-center justify-center">
+                        {item.summary?.mediaUrl || item.summary?.thumbnailUrl ? (
+                          <img
+                            src={item.summary?.mediaUrl || item.summary?.thumbnailUrl}
+                            alt=""
+                            className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <Tv className="w-8 h-8 text-slate-700" />
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                        {item.score > 0 && (
+                          <span className="absolute top-1.5 right-1.5 bg-cyan-500/90 text-slate-950 text-[9px] font-black px-1.5 py-0.5 rounded-full shadow-sm">
+                            Match
+                          </span>
+                        )}
+                        <span className="absolute bottom-1.5 left-1.5 text-[9px] font-bold text-white flex items-center gap-1">
+                          <Play className="w-2.5 h-2.5 fill-white" />
+                          <span>{item.summary?.viewsCount || 0}</span>
+                        </span>
+                      </div>
+                      <div className="space-y-0.5">
+                        <h5 className="text-[11px] font-bold text-slate-200 truncate group-hover:text-cyan-300">
+                          {item.title || item.summary?.title || 'Reel'}
+                        </h5>
+                        <p className="text-[10px] text-slate-400 truncate">
+                          @{item.summary?.userName || 'Creator'}
+                        </p>
+                        {item.sharedTags && item.sharedTags.length > 0 && (
+                          <div className="flex gap-1 overflow-hidden">
+                            {item.sharedTags.slice(0, 2).map((t: string) => (
+                              <span key={t} className="text-[9px] text-cyan-400 font-semibold truncate">
+                                #{t}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
     </div>
   );

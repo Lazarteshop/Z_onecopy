@@ -21,10 +21,13 @@ import {
   Plus, 
   Trash2,
   FileVideo,
-  Play
+  Play,
+  BarChart3,
+  ChevronRight
 } from 'lucide-react';
 import { ReelVideo, ReelRedemption, SocialProductRef } from '../../types';
 import { formatEmbedUrl, calculateReelRevenue, AUDIENCE_CPM_RATES, AudienceCountry } from '../../utils/reels';
+import { CreatorAnalyticsDashboard } from '../CreatorAnalyticsDashboard';
 
 interface ReelsUploadModalProps {
   isOpen: boolean;
@@ -85,6 +88,8 @@ export const ReelsUploadModal: React.FC<ReelsUploadModalProps> = ({
   const [isLoadingActivity, setIsLoadingActivity] = useState(false);
   const [isRedeemingProfit, setIsRedeemingProfit] = useState(false);
   const [reelCountries, setReelCountries] = useState<Record<string, AudienceCountry>>({});
+  // Phase 4C: Creator Analytics Shortcut Modal state
+  const [showAnalyticsModal, setShowAnalyticsModal] = useState<boolean>(false);
 
   useEffect(() => {
     setLocalTokens(userTokens);
@@ -822,6 +827,27 @@ export const ReelsUploadModal: React.FC<ReelsUploadModalProps> = ({
               );
             })()}
 
+            {/* Phase 4C: Creator Analytics Shortcut */}
+            <div className="bg-slate-950 border border-indigo-500/30 rounded-2xl p-3 flex items-center justify-between gap-3 shadow-md">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 bg-gradient-to-tr from-indigo-500 to-purple-600 rounded-xl text-white shrink-0 shadow-sm">
+                  <BarChart3 className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <h4 className="text-xs font-black text-white truncate">Creator Growth & Analytics</h4>
+                  <p className="text-[10px] text-slate-400 truncate">Suriin ang kabuuang views, followers, at product clicks</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAnalyticsModal(true)}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-xl text-xs transition cursor-pointer shrink-0 shadow-md flex items-center gap-1 active:scale-95"
+              >
+                <span>Buksan</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
             {/* List of user's reels */}
             <div className="space-y-2">
               <h4 className="text-xs font-black text-slate-300">Mga Naka-upload na Reels ({myReelsList.length})</h4>
@@ -866,6 +892,17 @@ export const ReelsUploadModal: React.FC<ReelsUploadModalProps> = ({
         )}
 
       </div>
+
+      {/* Creator Analytics Dashboard Modal (Phase 4C) */}
+      {showAnalyticsModal && (
+        <CreatorAnalyticsDashboard
+          isOpen={showAnalyticsModal}
+          onClose={() => setShowAnalyticsModal(false)}
+          token={token || ''}
+          currentUserId={currentUserId || ''}
+          currentUserName={currentUserName || 'Creator'}
+        />
+      )}
     </div>
   );
 };

@@ -41,7 +41,8 @@ import {
   Zap,
   Radio,
   MessageCircle,
-  Bookmark
+  Bookmark,
+  Users
 } from 'lucide-react';
 import { ReelVideo, ReelRedemption } from '../types';
 import { idbStorage } from '../utils/idbStorage';
@@ -158,32 +159,78 @@ export default function ReelsFloatingWidget({
   const authToken = token ? (token.startsWith('Bearer ') ? token : `Bearer ${token}`) : '';
   const [isOpen, setIsOpen] = useState(true);
 
-  // Sorting and filtering tabs: 'all' | 'low_likes' | 'popular' | 'saved'
-  const [activeTab, setActiveTab] = useState<'all' | 'low_likes' | 'popular' | 'saved'>('all');
+  // Sorting and filtering tabs: 'all' | 'for_you' | 'following' | 'popular' | 'low_likes' | 'saved' (Phase 4C)
+  const [activeTab, setActiveTab] = useState<'all' | 'for_you' | 'following' | 'popular' | 'low_likes' | 'saved'>('for_you');
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchInput, setShowSearchInput] = useState(false);
   const [fitMode, setFitMode] = useState<'contain' | 'cover'>('contain');
 
   // Saved Reels state (Phase 4B)
   const [savedReelIds, setSavedReelIds] = useState<string[]>([]);
+  // Followed creators state (Phase 4C Following Tab)
+  const [userFollowingIds, setUserFollowingIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (!currentUserId) return;
-    const fetchSavedIds = async () => {
+    const fetchUserData = async () => {
       try {
-        const res = await fetch('/api/reels/saved-ids', {
-          headers: { ...(authToken ? { 'Authorization': authToken } : {}) }
-        });
-        const data = await res.json();
-        if (res.ok && data.success && Array.isArray(data.savedIds)) {
-          setSavedReelIds(data.savedIds);
+        const [savedRes, profileRes] = await Promise.all([
+          fetch('/api/reels/saved-ids', {
+            headers: { ...(authToken ? { 'Authorization': authToken } : {}) }
+          }),
+          fetch('/api/user/profile', {
+            headers: { ...(authToken ? { 'Authorization': authToken } : {}) }
+          })
+        ]);
+
+        const savedData = await savedRes.json();
+        if (savedRes.ok && savedData.success && Array.isArray(savedData.savedIds)) {
+          setSavedReelIds(savedData.savedIds);
+        }
+
+        const profileData = await profileRes.json();
+        if (profileRes.ok && profileData.user && Array.isArray(profileData.user.zonedUsers)) {
+          setUserFollowingIds(profileData.user.zonedUsers);
         }
       } catch (err) {
-        console.error('Failed to fetch saved reel IDs:', err);
+        console.error('Failed to fetch user reels state:', err);
       }
     };
-    fetchSavedIds();
+    fetchUserData();
   }, [currentUserId, authToken]);
+
+  const handleFollowToggle = async (creatorId: string) => {
+    if (!currentUserId) {
+      if (triggerNotification) triggerNotification('Kailangan mag-login muna upang mag-follow.', 'error');
+      return;
+    }
+    if (creatorId === currentUserId) return;
+
+    const isFollowing = userFollowingIds.includes(creatorId);
+    const updated = isFollowing
+      ? userFollowingIds.filter(id => id !== creatorId)
+      : [...userFollowingIds, creatorId];
+    setUserFollowingIds(updated);
+
+    if (triggerNotification) {
+      triggerNotification(
+        isFollowing
+          ? (language === 'tl' ? 'Inalis sa Following.' : 'Unfollowed creator.')
+          : (language === 'tl' ? '✅ Naka-Follow ka na sa creator na ito!' : '✅ Following creator!'),
+        'success'
+      );
+    }
+
+    try {
+      await fetch(`/api/zone/users/${creatorId}/toggle-zone`, {
+        method: 'POST',
+        headers: { ...(authToken ? { 'Authorization': authToken } : {}) }
+      });
+    } catch (err) {
+      console.error('Failed to toggle follow creator:', err);
+      setUserFollowingIds(userFollowingIds);
+    }
+  };
 
   const handleToggleSave = async (id: string, e?: React.MouseEvent) => {
     if (e) {
@@ -391,7 +438,7 @@ export default function ReelsFloatingWidget({
   const widgetRef = useRef<HTMLDivElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
 
-  // Filter and sort reels based on tab & search
+  // Filter and sort reels based on tab & search (Phase 4C: Added 'for_you' and 'following')
   const activeReels = React.useMemo(() => {
     let list = reels && reels.length > 0 ? [...reels] : [];
 
@@ -406,6 +453,52 @@ export default function ReelsFloatingWidget({
 
     if (activeTab === 'saved') {
       list = list.filter(r => savedReelIds.includes(r.id));
+    } else if (activeTab === 'following') {
+      // Phase 4C: Following Tab (Reels from creators the authenticated user follows)
+      if (currentUserId && userFollowingIds.length > 0) {
+        list = list.filter(r => r.addedByUserId && userFollowingIds.includes(r.addedByUserId));
+      } else {
+        // If user is not following anyone yet or is anonymous, safe public approved list
+        list = list.filter(r => !r.status || r.status === 'approved');
+      }
+    } else if (activeTab === 'for_you') {
+      // Phase 4C: For You Personalized Tab reusing Phase 3 Smart Feed scoring signals
+      const approvedOnly = list.filter(r => !r.status || r.status === 'approved');
+      const creatorCounts: Record<string, number> = {};
+
+      const scored = approvedOnly.map(r => {
+        // 1. Recency decay (14-hour half-life matching Phase 3 SMART_FEED_WEIGHTS)
+        const ageHours = (Date.now() - new Date(r.createdAt || Date.now()).getTime()) / (1000 * 60 * 60);
+        const freshness = Math.max(0, 100 * Math.pow(0.5, ageHours / 14));
+
+        // 2. Engagement score (LIKE: 1.5, COMMENT: 2.5)
+        const likes = r.likes || (r.likedBy ? r.likedBy.length : 0);
+        const comments = r.commentsCount || (r.comments ? r.comments.length : 0);
+        const engagement = (likes * 1.5) + (comments * 2.5);
+
+        // 3. Affinity bonus (Following: +30, Bookmarked: +20)
+        let affinity = 0;
+        if (currentUserId) {
+          if (r.addedByUserId && userFollowingIds.includes(r.addedByUserId)) {
+            affinity += 30;
+          }
+          if (savedReelIds.includes(r.id)) {
+            affinity += 20;
+          }
+        }
+
+        // 4. Creator repetition penalty (-15 per prior item by same creator)
+        const creatorKey = r.addedByUserId || r.addedBy || 'unknown';
+        const priorCount = creatorCounts[creatorKey] || 0;
+        const diversityPenalty = priorCount * 15;
+        creatorCounts[creatorKey] = priorCount + 1;
+
+        const score = freshness + engagement + affinity - diversityPenalty;
+        return { reel: r, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      list = scored.map(s => s.reel);
     } else if (activeTab === 'low_likes') {
       list.sort((a, b) => (a.likes || 0) - (b.likes || 0));
     } else if (activeTab === 'popular') {
@@ -413,7 +506,7 @@ export default function ReelsFloatingWidget({
     }
 
     return list;
-  }, [reels, activeTab, searchQuery, savedReelIds]);
+  }, [reels, activeTab, searchQuery, savedReelIds, userFollowingIds, currentUserId]);
 
   // Draggable position state for the Watch Reels floating button
   const [btnPos, setBtnPos] = useState<{ x: number; y: number } | null>(null);
@@ -876,12 +969,40 @@ export default function ReelsFloatingWidget({
               </div>
             </div>
 
-            {/* Center: Sorting / Filter Tabs (TikTok Style) */}
-            <div className="flex items-center gap-1 bg-black/40 backdrop-blur-md p-1 rounded-full border border-white/10 text-xs font-black">
+            {/* Center: Sorting / Filter Tabs (TikTok Style - Phase 4C) */}
+            <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md p-1 rounded-full border border-white/10 text-xs font-black overflow-x-auto max-w-[58vw] sm:max-w-none no-scrollbar">
+              <button
+                type="button"
+                onClick={() => { setActiveTab('for_you'); scrollToCard(0); }}
+                className={`px-2.5 py-1 rounded-full transition cursor-pointer flex items-center gap-1 text-[11px] shrink-0 ${
+                  activeTab === 'for_you'
+                    ? 'bg-gradient-to-r from-rose-500 to-amber-500 text-white shadow-md'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+                title="Personalized Discovery"
+              >
+                <Sparkles className="w-3 h-3 text-amber-300" />
+                <span>For You</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => { setActiveTab('following'); scrollToCard(0); }}
+                className={`px-2.5 py-1 rounded-full transition cursor-pointer flex items-center gap-1 text-[11px] shrink-0 ${
+                  activeTab === 'following'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+                title="Reels ng Sinusundan mong Creators"
+              >
+                <Users className="w-3 h-3 text-indigo-300" />
+                <span>Following</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => { setActiveTab('all'); scrollToCard(0); }}
-                className={`px-2.5 py-1 rounded-full transition cursor-pointer text-[11px] ${
+                className={`px-2.5 py-1 rounded-full transition cursor-pointer text-[11px] shrink-0 ${
                   activeTab === 'all'
                     ? 'bg-white text-black shadow-md'
                     : 'text-slate-300 hover:text-white'
@@ -892,22 +1013,8 @@ export default function ReelsFloatingWidget({
 
               <button
                 type="button"
-                onClick={() => { setActiveTab('low_likes'); scrollToCard(0); }}
-                className={`px-2.5 py-1 rounded-full transition cursor-pointer flex items-center gap-1 text-[11px] ${
-                  activeTab === 'low_likes'
-                    ? 'bg-rose-600 text-white shadow-md'
-                    : 'text-slate-300 hover:text-white'
-                }`}
-                title="Pinakamababang likes muna"
-              >
-                <Zap className="w-3 h-3 text-amber-300" />
-                <span>Low Likes</span>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => { setActiveTab('popular'); scrollToCard(0); }}
-                className={`px-2.5 py-1 rounded-full transition cursor-pointer flex items-center gap-1 text-[11px] ${
+                className={`px-2.5 py-1 rounded-full transition cursor-pointer flex items-center gap-1 text-[11px] shrink-0 ${
                   activeTab === 'popular'
                     ? 'bg-amber-500 text-black shadow-md'
                     : 'text-slate-300 hover:text-white'
@@ -918,11 +1025,25 @@ export default function ReelsFloatingWidget({
                 <span>Popular</span>
               </button>
 
+              <button
+                type="button"
+                onClick={() => { setActiveTab('low_likes'); scrollToCard(0); }}
+                className={`px-2.5 py-1 rounded-full transition cursor-pointer flex items-center gap-1 text-[11px] shrink-0 ${
+                  activeTab === 'low_likes'
+                    ? 'bg-rose-600 text-white shadow-md'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+                title="Pinakamababang likes muna"
+              >
+                <Zap className="w-3 h-3 text-amber-300" />
+                <span>Low Likes</span>
+              </button>
+
               {isLoggedIn && (
                 <button
                   type="button"
                   onClick={() => { setActiveTab('saved'); scrollToCard(0); }}
-                  className={`px-2.5 py-1 rounded-full transition cursor-pointer flex items-center gap-1 text-[11px] ${
+                  className={`px-2.5 py-1 rounded-full transition cursor-pointer flex items-center gap-1 text-[11px] shrink-0 ${
                     activeTab === 'saved'
                       ? 'bg-amber-400 text-black shadow-md'
                       : 'text-slate-300 hover:text-white'
@@ -1013,6 +1134,36 @@ export default function ReelsFloatingWidget({
             {activeReels.length > 0 ? (
               activeReels.map((reel, index) => {
                 const isActive = index === currentIndex;
+                const isWithinWindow = Math.abs(index - currentIndex) <= 2;
+
+                // Viewport Windowing: Non-adjacent cards render lightweight snap-safe slot
+                if (!isWithinWindow) {
+                  return (
+                    <div
+                      key={reel.id}
+                      data-reel-index={index}
+                      className="relative w-full h-full snap-start shrink-0 bg-slate-950 flex flex-col items-center justify-center p-4 select-none overflow-hidden"
+                    >
+                      {reel.thumbnailUrl && (
+                        <img
+                          src={reel.thumbnailUrl}
+                          alt=""
+                          className="absolute inset-0 w-full h-full object-cover opacity-20 filter blur-xs pointer-events-none"
+                          loading="lazy"
+                        />
+                      )}
+                      <div className="relative z-10 space-y-2 text-center">
+                        <div className="w-10 h-10 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto text-slate-500">
+                          <Tv className="w-5 h-5 opacity-40" />
+                        </div>
+                        <p className="text-[11px] font-bold text-slate-400 truncate max-w-[200px]">
+                          {reel.title || 'Reel Video'}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+
                 const isReelClaimed = Boolean(
                   (currentUserId && reel.watchedBy?.includes(currentUserId)) ||
                   watchedIds.includes(reel.id)
@@ -1035,6 +1186,8 @@ export default function ReelsFloatingWidget({
                     isLiked={isReelLiked}
                     isClaimed={isReelClaimed}
                     isSaved={savedReelIds.includes(reel.id)}
+                    isFollowing={Boolean(reel.addedByUserId && userFollowingIds.includes(reel.addedByUserId))}
+                    onFollowToggle={handleFollowToggle}
                     fitMode={fitMode}
                     isAdmin={isAdmin}
                     language={language}
