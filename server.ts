@@ -1444,6 +1444,7 @@ if (!fs.existsSync(DATA_DIRECTORY)) {
 
 const DB_FILE_PATH = path.join(DATA_DIRECTORY, 'db.json');
 const DB_BACKUP_PATH = path.join(DATA_DIRECTORY, 'db.json.bak');
+const DB_BACKUP_TMP_PATH = path.join(DATA_DIRECTORY, 'db.json.bak.tmp');
 const DB_TMP_PATH = path.join(DATA_DIRECTORY, 'db.json.tmp');
 const FIRESTORE_QUEUE_FILE_PATH = path.join(DATA_DIRECTORY, 'firestore_sync_queue.json');
 const FIRESTORE_QUEUE_TMP_PATH = path.join(DATA_DIRECTORY, 'firestore_sync_queue.json.tmp');
@@ -3728,6 +3729,58 @@ function initLastSyncedCache(data: DBStructure) {
 //   PERSISTENT FIRESTORE SYNC QUEUE ON /var/data
 // ============================================
 
+export const FIRESTORE_COLLECTION_TO_DB_PROPERTY: Record<string, keyof DBStructure> = {
+  direct_messages: 'directMessages',
+  challenges: 'creatorChallenges',
+  group_chats: 'groupChats',
+  group_messages: 'groupMessages',
+  merchant_ads: 'merchantAds',
+  shop_orders: 'shopOrders',
+  shop_products: 'shopProducts',
+  shop_baskets: 'shopBaskets',
+  va_banners: 'vaBanners',
+  registered_devices: 'registeredDevices',
+  user_verifications: 'userVerifications',
+  kiddie_content: 'kiddieContent',
+  challenge_entries: 'challengeEntries',
+  sponsored_missions: 'sponsoredMissions',
+  deposit_requests: 'depositRequests',
+  reel_subscriptions: 'reelSubscriptions',
+  friend_requests: 'friendRequests',
+  subscription_payments: 'subscriptionPayments',
+  users: 'users',
+  campaigns: 'campaigns',
+  posts: 'posts',
+  reels: 'reels',
+  stories: 'stories',
+  albums: 'albums',
+  friendships: 'friendships',
+  communities: 'communities',
+  discoveryDismissals: 'discoveryDismissals',
+  directMessages: 'directMessages',
+  creatorChallenges: 'creatorChallenges',
+  groupChats: 'groupChats',
+  groupMessages: 'groupMessages',
+  merchantAds: 'merchantAds',
+  shopOrders: 'shopOrders',
+  shopProducts: 'shopProducts',
+  shopBaskets: 'shopBaskets',
+  vaBanners: 'vaBanners',
+  registeredDevices: 'registeredDevices',
+  userVerifications: 'userVerifications',
+  kiddieContent: 'kiddieContent',
+  challengeEntries: 'challengeEntries',
+  sponsoredMissions: 'sponsoredMissions',
+  depositRequests: 'depositRequests',
+  reelSubscriptions: 'reelSubscriptions',
+  friendRequests: 'friendRequests',
+  subscriptionPayments: 'subscriptionPayments'
+};
+
+export function getDbPropertyForCollection(collection: string): string {
+  return (FIRESTORE_COLLECTION_TO_DB_PROPERTY as Record<string, string>)[collection] || collection;
+}
+
 interface FirestoreSyncQueueItem {
   id: string; // collection:docId
   opId: string; // Unique idempotency operation ID
@@ -4021,7 +4074,8 @@ async function processPersistentSyncQueue(): Promise<{ processed: number; failed
         let payload = currentQueueItem.data;
         if (currentQueueItem.op === 'set') {
           const liveDb = loadDB();
-          const collectionData = (liveDb as any)[currentQueueItem.collection];
+          const propName = getDbPropertyForCollection(currentQueueItem.collection);
+          const collectionData = (liveDb as any)[propName];
           if (Array.isArray(collectionData)) {
             const liveDoc = collectionData.find((d: any) => d && d.id === currentQueueItem.docId);
             if (liveDoc) {
@@ -4106,6 +4160,46 @@ let saveDBTimeout: NodeJS.Timeout | null = null;
 let firestoreSyncTimeout: NodeJS.Timeout | null = null;
 let lastCloudSyncTimestamp: string | null = null;
 
+export function writeDatabaseFilesAtomic(data: DBStructure): void {
+  const jsonStr = JSON.stringify(data, null, 2);
+
+  // 1. Durable atomic primary write (write to tmp, fsync, rename)
+  const fd = fs.openSync(DB_TMP_PATH, 'w');
+  try {
+    fs.writeSync(fd, jsonStr, 0, 'utf-8');
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(DB_TMP_PATH, DB_FILE_PATH);
+  try {
+    const dirFd = fs.openSync(path.dirname(DB_FILE_PATH), 'r');
+    try {
+      fs.fsyncSync(dirFd);
+    } finally {
+      fs.closeSync(dirFd);
+    }
+  } catch {}
+
+  // 2. Durable atomic backup replacement (write to tmp, fsync, rename)
+  const bakFd = fs.openSync(DB_BACKUP_TMP_PATH, 'w');
+  try {
+    fs.writeSync(bakFd, jsonStr, 0, 'utf-8');
+    fs.fsyncSync(bakFd);
+  } finally {
+    fs.closeSync(bakFd);
+  }
+  fs.renameSync(DB_BACKUP_TMP_PATH, DB_BACKUP_PATH);
+  try {
+    const dirFd = fs.openSync(path.dirname(DB_BACKUP_PATH), 'r');
+    try {
+      fs.fsyncSync(dirFd);
+    } finally {
+      fs.closeSync(dirFd);
+    }
+  } catch {}
+}
+
 function saveDB(data: DBStructure, immediate: boolean = false) {
   if (!data || !Array.isArray(data.users) || data.users.length === 0) {
     console.error('⚠️ REFUSING TO SAVE EMPTY/CORRUPTED DB OBJECT TO DISK!');
@@ -4122,12 +4216,7 @@ function saveDB(data: DBStructure, immediate: boolean = false) {
   
   const doSave = () => {
     try {
-      const jsonStr = JSON.stringify(data, null, 2);
-      // 1. Atomic write using temp file + rename
-      fs.writeFileSync(DB_TMP_PATH, jsonStr, 'utf-8');
-      fs.renameSync(DB_TMP_PATH, DB_FILE_PATH);
-      // 2. Verified backup copy
-      fs.writeFileSync(DB_BACKUP_PATH, jsonStr, 'utf-8');
+      writeDatabaseFilesAtomic(data);
     } catch (err) {
       console.error('Error in atomic saveDB:', err);
     }
@@ -4950,38 +5039,114 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
         }
       }
 
-      // 2. Cloud-First authoritative merge of all collections:
-      // Cloud Firestore records always take precedence over stale container local defaults.
-      const mergeCloudFirst = (localArr: any[] = [], cloudArr: any[] = []) => {
+      // 2. Cloud-First authoritative merge of all collections with newer local data protection:
+      // Cloud Firestore records take precedence over stale container local defaults,
+      // while protecting newer local data that has pending sync queue items, newer timestamps,
+      // or uncommitted user financial entries (withdrawals/activity logs).
+      const mergeCloudFirst = (localArr: any[] = [], cloudArr: any[] = [], collectionName?: string) => {
         const map = new Map<string, any>();
         // First put local items as baseline
         localArr.forEach(it => { if (it && it.id) map.set(it.id, it); });
-        // Then overwrite with authoritative Cloud records
-        cloudArr.forEach(it => { if (it && it.id) map.set(it.id, it); });
+
+        const hasPendingSync = (docId: string): boolean => {
+          if (!collectionName) return false;
+          if (persistentSyncQueue.has(`${collectionName}:${docId}`)) return true;
+          for (const [fName, dbProp] of Object.entries(FIRESTORE_COLLECTION_TO_DB_PROPERTY)) {
+            if (dbProp === collectionName && persistentSyncQueue.has(`${fName}:${docId}`)) {
+              return true;
+            }
+          }
+          return false;
+        };
+
+        cloudArr.forEach(cloudItem => {
+          if (!cloudItem || !cloudItem.id) return;
+          const localItem = map.get(cloudItem.id);
+
+          if (!localItem) {
+            map.set(cloudItem.id, cloudItem);
+            return;
+          }
+
+          // If local item has a pending un-synced mutation in persistentSyncQueue, protect it!
+          if (hasPendingSync(cloudItem.id)) {
+            console.log(`🛡️ [Reconciliation Protected] Preserving newer local item ${collectionName}/${cloudItem.id} (pending sync queue entry)`);
+            return;
+          }
+
+          // If local item has explicit updatedAt newer than cloud, protect it
+          const localUpdated = localItem.updatedAt ? new Date(localItem.updatedAt).getTime() : 0;
+          const cloudUpdated = cloudItem.updatedAt ? new Date(cloudItem.updatedAt).getTime() : 0;
+          if (localUpdated > 0 && cloudUpdated > 0 && localUpdated > cloudUpdated) {
+            console.log(`🛡️ [Reconciliation Protected] Preserving newer local item ${collectionName}/${cloudItem.id} (local updatedAt ${localItem.updatedAt} > cloud ${cloudItem.updatedAt})`);
+            return;
+          }
+
+          // Special protection for users collection: preserve local withdrawals and activity logs
+          if (collectionName === 'users') {
+            const mergedWithdrawals = [...(localItem.withdrawals || [])];
+            if (Array.isArray(cloudItem.withdrawals)) {
+              for (const cw of cloudItem.withdrawals) {
+                const idx = mergedWithdrawals.findIndex(w => w.id === cw.id);
+                if (idx === -1) {
+                  mergedWithdrawals.push(cw);
+                } else if (cw.status === 'success' || cw.status === 'failed') {
+                  // Cloud final terminal status takes precedence
+                  mergedWithdrawals[idx] = cw;
+                }
+              }
+            }
+
+            const mergedActivityLogs = [...(localItem.activityLogs || [])];
+            if (Array.isArray(cloudItem.activityLogs)) {
+              for (const cal of cloudItem.activityLogs) {
+                if (!mergedActivityLogs.some(al => al.id === cal.id)) {
+                  mergedActivityLogs.push(cal);
+                }
+              }
+            }
+
+            // If local user has newer balance/stats activity or pending queue, protect local stats
+            const localHasMoreActivities = (localItem.activityLogs || []).length > (cloudItem.activityLogs || []).length;
+            const finalStats = localHasMoreActivities && localItem.stats ? localItem.stats : (cloudItem.stats || localItem.stats);
+
+            map.set(cloudItem.id, {
+              ...cloudItem,
+              stats: finalStats,
+              withdrawals: mergedWithdrawals,
+              activityLogs: mergedActivityLogs
+            });
+            return;
+          }
+
+          // Default: Cloud-First authoritative overwrite
+          map.set(cloudItem.id, cloudItem);
+        });
+
         return Array.from(map.values());
       };
 
-      const finalUsers = mergeCloudFirst(localDB.users, dbUsers);
-      const finalPosts = mergeCloudFirst(localDB.posts, dbPosts);
-      const finalDMs = mergeCloudFirst(localDB.directMessages, dbDMs);
-      const finalMerchantAds = mergeCloudFirst(localDB.merchantAds, dbMerchantAds);
-      const finalReels = mergeCloudFirst(localDB.reels, dbReels);
-      const finalReelSubs = mergeCloudFirst(localDB.reelSubscriptions, dbReelSubs);
-      const finalStories = mergeCloudFirst(localDB.stories, dbStories);
-      const finalAlbums = mergeCloudFirst(localDB.albums || [], dbAlbums);
-      const finalGroupChats = mergeCloudFirst(localDB.groupChats, dbGroupChats);
-      const finalGroupMessages = mergeCloudFirst(localDB.groupMessages, dbGroupMessages);
+      const finalUsers = mergeCloudFirst(localDB.users, dbUsers, 'users');
+      const finalPosts = mergeCloudFirst(localDB.posts, dbPosts, 'posts');
+      const finalDMs = mergeCloudFirst(localDB.directMessages, dbDMs, 'directMessages');
+      const finalMerchantAds = mergeCloudFirst(localDB.merchantAds, dbMerchantAds, 'merchantAds');
+      const finalReels = mergeCloudFirst(localDB.reels, dbReels, 'reels');
+      const finalReelSubs = mergeCloudFirst(localDB.reelSubscriptions, dbReelSubs, 'reelSubscriptions');
+      const finalStories = mergeCloudFirst(localDB.stories, dbStories, 'stories');
+      const finalAlbums = mergeCloudFirst(localDB.albums || [], dbAlbums, 'albums');
+      const finalGroupChats = mergeCloudFirst(localDB.groupChats, dbGroupChats, 'groupChats');
+      const finalGroupMessages = mergeCloudFirst(localDB.groupMessages, dbGroupMessages, 'groupMessages');
       const finalCampaigns = dbCampaigns.length > 0 ? dbCampaigns : (localDB.campaigns || INITIAL_CAMPAIGNS);
-      const finalShopProducts = mergeCloudFirst(localDB.shopProducts || INITIAL_SHOP_PRODUCTS, dbShopProducts);
-      const finalShopBaskets = mergeCloudFirst(localDB.shopBaskets || INITIAL_SHOP_BASKETS, dbShopBaskets);
-      const finalShopOrders = mergeCloudFirst(localDB.shopOrders || INITIAL_SHOP_ORDERS, dbShopOrders);
-      const finalVaBanners = mergeCloudFirst(localDB.vaBanners || [], dbVaBanners);
-      const finalRegisteredDevices = mergeCloudFirst(localDB.registeredDevices || [], dbRegisteredDevices);
-      const finalUserVerifications = mergeCloudFirst(localDB.userVerifications || [], dbUserVerifications);
-      const finalKiddieContent = mergeCloudFirst(localDB.kiddieContent || INITIAL_KIDDIE_CONTENT, dbKiddieContent);
-      const finalChallenges = mergeCloudFirst(localDB.creatorChallenges || INITIAL_CREATOR_CHALLENGES, dbChallenges);
-      const finalEntries = mergeCloudFirst(localDB.challengeEntries || INITIAL_CHALLENGE_ENTRIES, dbEntries);
-      const finalMissions = mergeCloudFirst(localDB.sponsoredMissions || INITIAL_SPONSORED_MISSIONS, dbMissions);
+      const finalShopProducts = mergeCloudFirst(localDB.shopProducts || INITIAL_SHOP_PRODUCTS, dbShopProducts, 'shopProducts');
+      const finalShopBaskets = mergeCloudFirst(localDB.shopBaskets || INITIAL_SHOP_BASKETS, dbShopBaskets, 'shopBaskets');
+      const finalShopOrders = mergeCloudFirst(localDB.shopOrders || INITIAL_SHOP_ORDERS, dbShopOrders, 'shopOrders');
+      const finalVaBanners = mergeCloudFirst(localDB.vaBanners || [], dbVaBanners, 'vaBanners');
+      const finalRegisteredDevices = mergeCloudFirst(localDB.registeredDevices || [], dbRegisteredDevices, 'registeredDevices');
+      const finalUserVerifications = mergeCloudFirst(localDB.userVerifications || [], dbUserVerifications, 'userVerifications');
+      const finalKiddieContent = mergeCloudFirst(localDB.kiddieContent || INITIAL_KIDDIE_CONTENT, dbKiddieContent, 'kiddieContent');
+      const finalChallenges = mergeCloudFirst(localDB.creatorChallenges || INITIAL_CREATOR_CHALLENGES, dbChallenges, 'creatorChallenges');
+      const finalEntries = mergeCloudFirst(localDB.challengeEntries || INITIAL_CHALLENGE_ENTRIES, dbEntries, 'challengeEntries');
+      const finalMissions = mergeCloudFirst(localDB.sponsoredMissions || INITIAL_SPONSORED_MISSIONS, dbMissions, 'sponsoredMissions');
 
       const restoredSocialSettings: SocialShareSettings = (fetchedSocialSettingsDoc && fetchedSocialSettingsDoc.imageUrl)
         ? {
@@ -5021,7 +5186,7 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
         creatorChallenges: finalChallenges.length > 0 ? finalChallenges : INITIAL_CREATOR_CHALLENGES,
         challengeEntries: finalEntries.length > 0 ? finalEntries : INITIAL_CHALLENGE_ENTRIES,
         sponsoredMissions: finalMissions.length > 0 ? finalMissions : INITIAL_SPONSORED_MISSIONS,
-        subscriptionPayments: mergeCloudFirst(localDB.subscriptionPayments || [], dbSubPayments),
+        subscriptionPayments: mergeCloudFirst(localDB.subscriptionPayments || [], dbSubPayments, 'subscriptionPayments'),
         socialShareSettings: restoredSocialSettings
       };
 
@@ -5036,8 +5201,7 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
       }
 
       cachedDB = mergedDB;
-      fs.writeFileSync(DB_FILE_PATH, JSON.stringify(mergedDB, null, 2), 'utf-8');
-      fs.writeFileSync(DB_BACKUP_PATH, JSON.stringify(mergedDB, null, 2), 'utf-8');
+      writeDatabaseFilesAtomic(mergedDB);
       initLastSyncedCache(mergedDB);
       lastCloudSyncTimestamp = new Date().toISOString();
       isAuthoritativeDatabaseReady = true;
@@ -6832,7 +6996,7 @@ app.post('/api/admin/reels/subscriptions/:id/approve', (req, res) => {
     });
   }
 
-  saveDB(db);
+  saveDB(db, true);
   res.json({ 
     success: true, 
     subscription: sub, 
@@ -6852,7 +7016,7 @@ app.post('/api/admin/reels/subscriptions/:id/decline', (req, res) => {
   if (!sub) return res.status(404).json({ error: 'Hindi mahanap ang subscription request.' });
 
   sub.status = 'declined';
-  saveDB(db);
+  saveDB(db, true);
 
   res.json({ success: true, subscription: sub, message: 'Nadecline ang Reel Token Subscription request.' });
 });
@@ -6869,7 +7033,7 @@ app.post('/api/admin/users/:userId/tokens', (req, res) => {
   if (!user) return res.status(404).json({ error: 'Hindi mahanap ang user.' });
 
   user.reelsTokens = Math.max(0, Number((Number(tokens) || 0).toFixed(2)));
-  saveDB(db);
+  saveDB(db, true);
 
   res.json({ success: true, reelsTokens: user.reelsTokens, message: `Na-update ang Reel Tokens ni ${user.name} sa ${user.reelsTokens} Tokens!` });
 });
@@ -7016,7 +7180,7 @@ app.post('/api/reels/:id/watch-reward', (req, res) => {
     details: `Nakatanggap ng ₱0.10 Red Pocket reward dahil sa 100% pagtatapos ng pagpanood sa Reel video ("${reel.title || 'Reel Video'}").`
   });
 
-  saveDB(db);
+  saveDB(db, true);
   res.json({ 
     success: true, 
     reels: db.reels, 
@@ -7929,7 +8093,7 @@ app.post('/api/user/task-complete', checkIdempotency, (req, res) => {
     }
   }
 
-  saveDB(db);
+  saveDB(db, true);
   const { password: _, ...userSafe } = user as any;
   res.json({ user: userSafe });
 });
@@ -7992,7 +8156,7 @@ app.post('/api/user/claim-referral-bonus', (req, res) => {
     details: `Salamat sa pag-akay kay ${friend.name}! Matagumpay nating naitala ang iyong ₱5.00 bonus.`
   });
 
-  saveDB(db);
+  saveDB(db, true);
   const { password: _, ...userSafe } = user as any;
   res.json({ user: userSafe });
 });
@@ -8087,7 +8251,7 @@ app.post('/api/user/withdraw', checkIdempotency, (req, res) => {
     details: `Humiling ka ng ₱${requestedAmount.toFixed(2)} cashout papunta sa GCash Number: ${gcashNumber}. Naghihintay ito ng pagsusuri ng Admin.`
   });
 
-  saveDB(db);
+  saveDB(db, true);
   const { password: _, ...userSafe } = user as any;
   res.json({ user: userSafe });
 });
@@ -8122,7 +8286,7 @@ app.post('/api/user/daily-checkin', checkIdempotency, (req, res) => {
     details: `Pumasok ka ngayong araw at ginawaran ka ng libreng ₱${checkinReward.toFixed(2)}.`
   });
 
-  saveDB(db);
+  saveDB(db, true);
   const { password: _, ...userSafe } = user as any;
   res.json({ user: userSafe });
 });
@@ -8397,7 +8561,7 @@ app.post('/api/admin/withdrawals/:withdrawId/action', (req, res) => {
     return res.status(400).json({ error: 'Maling desisyon. Approve o Decline lang ang pwedeng gawin.' });
   }
 
-  saveDB(db);
+  saveDB(db, true);
   res.json({ success: true, message: `Desisyon ay naitala nang matagumpay.` });
 });
 
@@ -8572,7 +8736,7 @@ app.post('/api/subscription/request', (req, res) => {
     details: `Humiling ka ng access para sa ${targetPlan.name} (₱${targetPlan.amount.toFixed(2)}). Naghihintay ito ng aprubal mula sa Admin.`
   });
 
-  saveDB(db);
+  saveDB(db, true);
   const { password: _, ...userSafe } = user as any;
   res.json({ user: userSafe });
 });
@@ -8629,7 +8793,7 @@ app.post('/api/admin/subscription/:userId/approve', (req, res) => {
     details: `Binuksan ng Admin ang iyong account para sa ${user.subscription.requestedPlanName}. Valid ang access mo hanggang sa ${new Date(expiresAt).toLocaleDateString('fil-PH', { month: 'long', day: 'numeric', year: 'numeric' })}.`
   });
 
-  saveDB(db);
+  saveDB(db, true);
   res.json({ success: true, message: `Subscription ay matagumpay na inaprubahan.` });
 });
 
@@ -8689,7 +8853,7 @@ app.post('/api/admin/subscription/:userId/decline', (req, res) => {
     safeCloudSync('update', 'subscription_payments', linkedPayment.id, linkedPayment);
   }
 
-  saveDB(db);
+  saveDB(db, true);
   safeCloudSync('update', 'users', user.id, { subscription: user.subscription });
   res.json({ success: true, message: `Subscription ay matagumpay na tinanggihan.` });
 });
@@ -8831,7 +8995,7 @@ app.post('/api/subscription/submit-payment', (req, res) => {
     details: `Nagsumite ka ng GCash InstaPay payment para sa ${targetPlan.name} (₱${targetPlan.amount.toFixed(2)}) na may Ref #${newPayment.referenceNumber}. Hinihintay ang pagsusuri ng Admin.`
   });
 
-  saveDB(db);
+  saveDB(db, true);
 
   // Firestore Quota Protection: transactional sync only on actual submission
   safeCloudSync('set', 'subscription_payments', newPayment.id, newPayment);
@@ -8946,7 +9110,7 @@ app.post('/api/admin/subscription-payments/:paymentId/approve', (req, res) => {
     details: `Inaprubahan ng Admin ang iyong GCash payment (Ref #${payment.referenceNumber}) para sa ${payment.planName}. Valid ang access mo hanggang sa ${new Date(expiresAt).toLocaleDateString('fil-PH', { month: 'long', day: 'numeric', year: 'numeric' })}.`
   });
 
-  saveDB(db);
+  saveDB(db, true);
 
   // Firestore Quota Protection: transactional sync only on genuine approval
   safeCloudSync('update', 'subscription_payments', payment.id, payment);
@@ -9026,7 +9190,7 @@ app.post('/api/admin/subscription-payments/:paymentId/reject', (req, res) => {
     safeCloudSync('update', 'users', user.id, { subscription: user.subscription });
   }
 
-  saveDB(db);
+  saveDB(db, true);
   safeCloudSync('update', 'subscription_payments', payment.id, payment);
 
   res.json({ 
@@ -17952,7 +18116,7 @@ app.post('/api/va/claim-500-reward', (req, res) => {
     details: `Unang nakarating sa 500 Hired Virtual Assistants bago ang Nov 15, 2026! Naidagdag na ang ₱3,000 sa iyong GCash wallet balance.`
   });
 
-  saveDB(db);
+  saveDB(db, true);
 
   return res.json({
     success: true,
@@ -18029,7 +18193,7 @@ app.post('/api/va/subscribe', checkIdempotency, (req, res) => {
       details: 'Na-activate ang 30-Day Paid Banner Access (7 Days Visibility, 5.0% Virtual Money Commission).'
     });
 
-    saveDB(db);
+    saveDB(db, true);
 
     return res.json({
       success: true,
@@ -18064,7 +18228,7 @@ app.post('/api/va/subscribe', checkIdempotency, (req, res) => {
       createdAt: new Date().toISOString()
     });
 
-    saveDB(db);
+    saveDB(db, true);
 
     return res.json({
       success: true,
@@ -18266,7 +18430,7 @@ app.post('/api/va/convert-vm', (req, res) => {
     details: `Nai-lipat ang ₱${requestedAmount.toFixed(2)} Virtual Money Commission sa iyong regular Wallet Balance para sa GCash cashout.`
   });
 
-  saveDB(db);
+  saveDB(db, true);
 
   return res.json({
     success: true,
@@ -18344,7 +18508,7 @@ app.post('/api/shop/simulate-action', (req, res) => {
       }
     }
 
-    saveDB(db);
+    saveDB(db, true);
 
     return res.json({
       success: true,
@@ -19718,7 +19882,7 @@ app.post(['/api/shop/orders/:id/cancel', '/api/shop/order/:id/cancel'], (req, re
     });
   }
 
-  saveDB(db);
+  saveDB(db, true);
 
   return res.json({
     success: true,
@@ -20007,7 +20171,7 @@ app.post('/api/admin/approve-va-subscription', (req, res) => {
     }
   }
 
-  saveDB(db);
+  saveDB(db, true);
 
   return res.json({
     success: true,
@@ -20276,7 +20440,7 @@ app.post('/api/challenges', (req, res) => {
   // Recalculate wallet state after locking funds
   const walletSummary = getUserWalletBreakdown(user, db);
 
-  saveDB(db);
+  saveDB(db, true);
   safeCloudSync('set', 'challenges', newChallenge.id, newChallenge);
   safeCloudSync('update', 'users', user.id, { stats: user.stats, activityLogs: user.activityLogs });
 
@@ -20895,7 +21059,7 @@ app.post('/api/sponsored-missions', (req, res) => {
   // Recalculate wallet state after locking funds
   const walletSummary = getUserWalletBreakdown(user, db);
 
-  saveDB(db);
+  saveDB(db, true);
   safeCloudSync('set', 'sponsored_missions', newMission.id, newMission);
   safeCloudSync('update', 'users', user.id, { stats: user.stats, activityLogs: user.activityLogs });
 
@@ -21158,7 +21322,7 @@ app.post('/api/admin/challenges/:id/distribute-prizes', (req, res) => {
 
   const result = disburseChallengePrizesAndEarnings(challenge, db);
 
-  saveDB(db);
+  saveDB(db, true);
   safeCloudSync('update', 'challenges', challenge.id, challenge);
 
   return res.json({
@@ -21463,7 +21627,7 @@ app.post('/api/user/deposit-requests', (req, res) => {
 
   const walletSummary = getUserWalletBreakdown(user, db);
 
-  saveDB(db);
+  saveDB(db, true);
   safeCloudSync('set', 'deposit_requests', newDeposit.id, newDeposit);
   safeCloudSync('update', 'users', user.id, { activityLogs: user.activityLogs });
 
@@ -21534,7 +21698,7 @@ app.post('/api/admin/deposit-requests/:id/approve', (req, res) => {
 
   const walletSummary = getUserWalletBreakdown(targetUser, db);
 
-  saveDB(db);
+  saveDB(db, true);
   safeCloudSync('update', 'deposit_requests', depositReq.id, {
     status: 'approved',
     reviewedAt: depositReq.reviewedAt,
@@ -21592,7 +21756,7 @@ app.post('/api/admin/deposit-requests/:id/reject', (req, res) => {
     safeCloudSync('update', 'users', targetUser.id, { activityLogs: targetUser.activityLogs });
   }
 
-  saveDB(db);
+  saveDB(db, true);
   safeCloudSync('update', 'deposit_requests', depositReq.id, {
     status: 'rejected',
     reviewedAt: depositReq.reviewedAt,
