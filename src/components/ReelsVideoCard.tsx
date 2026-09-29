@@ -20,7 +20,8 @@ import {
   Users,
   RotateCcw,
   X,
-  Tv
+  Tv,
+  Loader2
 } from 'lucide-react';
 import { ReelVideo, SocialProductRef } from '../types';
 import { formatEmbedUrl } from '../utils/reels';
@@ -97,6 +98,8 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
   const [showRelatedDrawer, setShowRelatedDrawer] = useState<boolean>(false);
   const [relatedItems, setRelatedItems] = useState<any[]>([]);
   const [isLoadingRelated, setIsLoadingRelated] = useState<boolean>(false);
+  // Local deletion UI state to provide immediate visual feedback & prevent duplicate taps (FIX 6)
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   const handleOpenRelatedDrawer = async () => {
     setShowRelatedDrawer(true);
@@ -638,7 +641,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
       )}
 
       {/* ================= RIGHT SIDEBAR ACTION BUTTONS (TikTok Style) ================= */}
-      <aside className="absolute right-3.5 bottom-24 z-30 flex flex-col items-center gap-3.5 pointer-events-auto">
+      <aside className="absolute right-3.5 bottom-24 z-40 flex flex-col items-center gap-3.5 pointer-events-auto">
         
         {/* Creator / Channel Avatar with Profile Click and '+' Upload / Follow Badge */}
         <div className="relative group">
@@ -755,7 +758,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                 }
               }
             }}
-            className="p-1.5 active:scale-125 transition duration-200 hover:text-cyan-400 cursor-pointer"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center p-1.5 active:scale-125 transition duration-200 hover:text-cyan-400 cursor-pointer touch-manipulation"
             title="I-share ang Reel"
           >
             <Share2 className="w-7 h-7 text-white fill-black/30 drop-shadow-md" />
@@ -773,7 +776,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
               e.stopPropagation();
               if (onSave) onSave(reel.id, e);
             }}
-            className="p-1.5 active:scale-125 transition duration-200 cursor-pointer select-none"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center p-1.5 active:scale-125 transition duration-200 cursor-pointer select-none touch-manipulation"
             title={isSaved ? (language === 'tl' ? 'Alisin sa Saved Reels' : 'Unsave Reel') : (language === 'tl' ? 'I-save ang Reel' : 'Save Reel')}
           >
             <Bookmark 
@@ -797,7 +800,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
               e.stopPropagation();
               handleOpenRelatedDrawer();
             }}
-            className="p-1.5 active:scale-125 transition duration-200 cursor-pointer select-none text-white hover:text-cyan-300"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center p-1.5 active:scale-125 transition duration-200 cursor-pointer select-none text-white hover:text-cyan-300 touch-manipulation"
             title={language === 'tl' ? 'Tingnan ang Kaugnay na Reels' : 'View Related Reels'}
           >
             <Sparkles className="w-7 h-7 text-cyan-400 drop-shadow-md hover:scale-110 transition" />
@@ -816,7 +819,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                 e.stopPropagation();
                 setIsDirectMuted(!isDirectMuted);
               }}
-              className="p-1.5 active:scale-125 transition duration-200 cursor-pointer text-white hover:text-amber-300"
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center p-1.5 active:scale-125 transition duration-200 cursor-pointer text-white hover:text-amber-300 touch-manipulation"
               title={isDirectMuted ? 'I-unmute ang video' : 'I-mute ang video'}
             >
               {isDirectMuted ? (
@@ -838,7 +841,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="p-1.5 active:scale-125 transition duration-200 text-white/90 hover:text-cyan-300"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center p-1.5 active:scale-125 transition duration-200 text-white/90 hover:text-cyan-300 touch-manipulation"
             title={
               formatted.platform === 'tiktok'
                 ? (language === 'tl' ? 'Panoorin na may Sound sa TikTok' : 'Watch with Sound on TikTok')
@@ -860,7 +863,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
               e.stopPropagation();
               onToggleFitMode();
             }}
-            className="p-1.5 active:scale-125 transition duration-200 text-white/90 hover:text-amber-300 cursor-pointer"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center p-1.5 active:scale-125 transition duration-200 text-white/90 hover:text-amber-300 cursor-pointer touch-manipulation"
             title={fitMode === 'contain' ? 'Widescreen Fit - I-click para i-Zoom Fill' : 'Zoom Fill - I-click para Makita Lahat'}
           >
             <Maximize2 className={`w-6 h-6 drop-shadow-md ${fitMode === 'contain' ? 'text-amber-400' : 'text-white'}`} />
@@ -877,7 +880,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
               type="button"
               id={`tiktok-sidebar-audio-toggle-${reel.id}`}
               onClick={handleToggleTikTokMute}
-              className={`p-1.5 active:scale-125 transition duration-200 cursor-pointer ${
+              className={`min-w-[44px] min-h-[44px] flex items-center justify-center p-1.5 active:scale-125 transition duration-200 cursor-pointer touch-manipulation ${
                 isTikTokMuted ? 'text-amber-300' : 'text-emerald-400'
               }`}
               title={isTikTokMuted ? 'I-on ang audio (Unmute)' : 'Naka-on ang audio (I-mute)'}
@@ -899,14 +902,27 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
           <div className="flex flex-col items-center gap-0.5">
             <button
               type="button"
-              onClick={(e) => {
+              disabled={isDeleting}
+              onClick={async (e) => {
                 e.stopPropagation();
-                onDelete(reel.id);
+                if (isDeleting) return;
+                setIsDeleting(true);
+                try {
+                  await Promise.resolve(onDelete(reel.id));
+                } catch {
+                  setIsDeleting(false);
+                }
               }}
-              className="p-1.5 bg-rose-600/80 hover:bg-rose-600 text-white rounded-full transition cursor-pointer shadow-md"
+              className={`min-w-[44px] min-h-[44px] flex items-center justify-center p-1.5 bg-rose-600/80 hover:bg-rose-600 text-white rounded-full transition cursor-pointer shadow-md touch-manipulation ${
+                isDeleting ? 'opacity-60 cursor-not-allowed' : ''
+              }`}
               title="Delete Reel (Admin)"
             >
-              <Trash2 className="w-4 h-4" />
+              {isDeleting ? (
+                <Loader2 className="w-4 h-4 animate-spin text-white" />
+              ) : (
+                <Trash2 className="w-4 h-4" />
+              )}
             </button>
           </div>
         )}
@@ -923,7 +939,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
       </aside>
 
       {/* ================= BOTTOM INFO OVERLAY & METADATA (TikTok Style) ================= */}
-      <div className="relative z-30 flex flex-col justify-end w-full pb-3 pointer-events-auto">
+      <div className="relative z-30 flex flex-col justify-end w-full pb-3 pointer-events-none">
         
         {/* Creator Info & Description */}
         <div className="px-4 pb-2 space-y-1.5 max-w-[80%]">
@@ -937,7 +953,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                   onOpenCreatorProfile(reel.addedByUserId || reel.addedBy);
                 }
               }}
-              className="text-sm sm:text-base font-extrabold text-white drop-shadow-md tracking-tight flex items-center gap-1.5 cursor-pointer hover:underline"
+              className="text-sm sm:text-base font-extrabold text-white drop-shadow-md tracking-tight flex items-center gap-1.5 cursor-pointer hover:underline pointer-events-auto touch-manipulation"
             >
               <span>@{reel.addedBy || 'Z-oneReels'}</span>
               <span className="w-3.5 h-3.5 rounded-full bg-blue-500 text-white flex items-center justify-center text-[8px] font-black">
@@ -953,7 +969,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                   e.stopPropagation();
                   if (onFollowToggle) onFollowToggle(reel.addedByUserId!);
                 }}
-                className={`px-2.5 py-0.5 rounded-full text-[10px] font-black transition active:scale-95 shadow-md cursor-pointer ${
+                className={`px-2.5 py-0.5 rounded-full text-[10px] font-black transition active:scale-95 shadow-md cursor-pointer pointer-events-auto touch-manipulation ${
                   isFollowing 
                     ? 'bg-slate-800/90 text-slate-300 border border-slate-600' 
                     : 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white'
@@ -971,7 +987,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                   e.stopPropagation();
                   window.dispatchEvent(new CustomEvent('open-community-modal', { detail: { communityId: reel.communityId } }));
                 }}
-                className="text-[9px] font-black text-indigo-200 bg-indigo-900/80 border border-indigo-400/40 px-2 py-0.5 rounded-md flex items-center gap-1 cursor-pointer hover:bg-indigo-800 transition shadow"
+                className="text-[9px] font-black text-indigo-200 bg-indigo-900/80 border border-indigo-400/40 px-2 py-0.5 rounded-md flex items-center gap-1 cursor-pointer hover:bg-indigo-800 transition shadow pointer-events-auto touch-manipulation"
               >
                 <Users className="w-3 h-3 text-indigo-300" />
                 <span>{reel.communityName}</span>
@@ -1004,7 +1020,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                           e.stopPropagation();
                           window.dispatchEvent(new CustomEvent('open-hashtag-modal', { detail: { hashtag: part.replace('#', '') } }));
                         }}
-                        className="text-amber-300 hover:text-amber-200 hover:underline font-bold cursor-pointer inline-block mr-1"
+                        className="text-amber-300 hover:text-amber-200 hover:underline font-bold cursor-pointer inline-block mr-1 pointer-events-auto touch-manipulation"
                       >
                         {part}
                       </span>
@@ -1020,7 +1036,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                     e.stopPropagation();
                     setExpandedDesc(!expandedDesc);
                   }}
-                  className="text-xs font-black text-amber-300 ml-1 hover:underline inline-block"
+                  className="text-xs font-black text-amber-300 ml-1 hover:underline inline-block pointer-events-auto touch-manipulation"
                 >
                   {expandedDesc ? 'less' : 'more'}
                 </button>
@@ -1039,7 +1055,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                     e.stopPropagation();
                     window.dispatchEvent(new CustomEvent('open-hashtag-modal', { detail: { hashtag: tag.replace(/^#/, '') } }));
                   }}
-                  className="text-[10px] font-bold text-amber-300/90 hover:text-white bg-slate-900/60 hover:bg-slate-800 px-2 py-0.5 rounded-full border border-amber-400/30 cursor-pointer transition"
+                  className="text-[10px] font-bold text-amber-300/90 hover:text-white bg-slate-900/60 hover:bg-slate-800 px-2 py-0.5 rounded-full border border-amber-400/30 cursor-pointer transition pointer-events-auto touch-manipulation"
                 >
                   #{tag.replace(/^#/, '')}
                 </button>
@@ -1091,7 +1107,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                     <div
                       key={prod.id}
                       onClick={(e) => handleProductClick(prod, e)}
-                      className="bg-slate-900/90 hover:bg-slate-850 border border-amber-400/40 rounded-xl p-1.5 pr-2.5 flex items-center gap-2 shadow-xl cursor-pointer active:scale-95 transition-all backdrop-blur-md max-w-xs group"
+                      className="bg-slate-900/90 hover:bg-slate-850 border border-amber-400/40 rounded-xl p-1.5 pr-2.5 flex items-center gap-2 shadow-xl cursor-pointer active:scale-95 transition-all backdrop-blur-md max-w-xs group pointer-events-auto touch-manipulation"
                     >
                       {prod.image ? (
                         <img 
@@ -1132,7 +1148,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                   e.stopPropagation();
                   window.dispatchEvent(new CustomEvent('open-unified-search', { detail: { query: tag.replace('#', '') } }));
                 }}
-                className="hover:underline hover:text-amber-200 cursor-pointer text-left"
+                className="hover:underline hover:text-amber-200 cursor-pointer text-left pointer-events-auto touch-manipulation"
               >
                 {tag.startsWith('#') ? tag : `#${tag}`}
               </button>
@@ -1159,7 +1175,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
               e.stopPropagation();
               if (onOpenUploadModal) onOpenUploadModal();
             }}
-            className="w-full bg-black/60 backdrop-blur-md border border-white/15 rounded-xl px-3.5 py-2 flex items-center justify-between text-xs text-slate-300 hover:bg-black/80 transition cursor-pointer shadow-lg"
+            className="w-full bg-black/60 backdrop-blur-md border border-white/15 rounded-xl px-3.5 py-2 flex items-center justify-between text-xs text-slate-300 hover:bg-black/80 transition cursor-pointer shadow-lg touch-manipulation"
           >
             <div className="flex items-center gap-2 truncate">
               <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
