@@ -949,15 +949,15 @@ export default function ReelsFloatingWidget({
         <div className="relative w-full h-full max-w-[480px] bg-black overflow-hidden flex flex-col justify-between shadow-2xl border-x border-white/5">
           
           {/* ================= FIXED TOP TIKTOK HEADER BAR ================= */}
-          <header className="absolute top-0 inset-x-0 z-40 pt-3 pb-2 px-3 flex items-center justify-between pointer-events-auto bg-gradient-to-b from-black/90 via-black/50 to-transparent">
+          <header className="absolute top-0 inset-x-0 z-40 pt-3 pb-2 px-3 flex items-center justify-between pointer-events-none bg-gradient-to-b from-black/90 via-black/50 to-transparent">
             
             {/* Left: Close/Back button & Feed Badge */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 pointer-events-auto">
               <button
                 id="reels-widget-close-btn"
                 type="button"
                 onClick={() => setIsOpen(false)}
-                className="w-9 h-9 rounded-full bg-black/50 backdrop-blur-md border border-white/15 flex items-center justify-center text-white active:scale-90 transition shadow-md hover:bg-black/80 cursor-pointer"
+                className="w-9 h-9 rounded-full bg-black/50 backdrop-blur-md border border-white/15 flex items-center justify-center text-white active:scale-90 transition shadow-md hover:bg-black/80 cursor-pointer touch-manipulation"
                 title={language === 'tl' ? 'Isara ang Reels' : 'Close Reels'}
               >
                 <ArrowLeft className="w-4 h-4" />
@@ -970,7 +970,7 @@ export default function ReelsFloatingWidget({
             </div>
 
             {/* Center: Sorting / Filter Tabs (TikTok Style - Phase 4C) */}
-            <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md p-1 rounded-full border border-white/10 text-xs font-black overflow-x-auto max-w-[58vw] sm:max-w-none no-scrollbar">
+            <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md p-1 rounded-full border border-white/10 text-xs font-black overflow-x-auto max-w-[58vw] sm:max-w-none no-scrollbar pointer-events-auto">
               <button
                 type="button"
                 onClick={() => { setActiveTab('for_you'); scrollToCard(0); }}
@@ -1057,12 +1057,12 @@ export default function ReelsFloatingWidget({
             </div>
 
             {/* Right: Upload & Admin Buttons */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 pointer-events-auto">
               {/* User Upload Reel Button */}
               <button
                 type="button"
                 onClick={() => setShowUploadModal(true)}
-                className="bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black px-2.5 py-1.5 rounded-full text-[10px] flex items-center gap-1 shadow-md active:scale-95 transition cursor-pointer border border-white/20"
+                className="bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black px-2.5 py-1.5 rounded-full text-[10px] flex items-center gap-1 shadow-md active:scale-95 transition cursor-pointer border border-white/20 touch-manipulation"
                 title="Mag-upload ng Reels (0.50 Tokens)"
               >
                 <Upload className="w-3 h-3" />
@@ -1074,7 +1074,7 @@ export default function ReelsFloatingWidget({
                 <button
                   type="button"
                   onClick={() => setShowAddForm(true)}
-                  className="w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center text-xs font-black shadow-md transition cursor-pointer border border-indigo-400"
+                  className="w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center text-xs font-black shadow-md transition cursor-pointer border border-indigo-400 touch-manipulation"
                   title="Admin: Magdagdag ng Reel"
                 >
                   <Plus className="w-4 h-4" />
@@ -1085,7 +1085,7 @@ export default function ReelsFloatingWidget({
               <button
                 type="button"
                 onClick={() => setShowSearchInput(!showSearchInput)}
-                className={`w-8 h-8 rounded-full flex items-center justify-center text-white backdrop-blur-md border transition cursor-pointer ${
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-white backdrop-blur-md border transition cursor-pointer touch-manipulation ${
                   showSearchInput ? 'bg-amber-500 text-black border-amber-400' : 'bg-black/40 border-white/10 hover:bg-black/60'
                 }`}
                 title="Mag-search ng Reel"
@@ -1098,7 +1098,7 @@ export default function ReelsFloatingWidget({
 
           {/* Search Bar Input Dropdown (When active) */}
           {showSearchInput && (
-            <div className="absolute top-14 inset-x-3 z-40 bg-black/90 backdrop-blur-md p-2 rounded-2xl border border-white/15 shadow-2xl flex items-center gap-2 animate-fadeIn">
+            <div className="absolute top-14 inset-x-3 z-40 bg-black/90 backdrop-blur-md p-2 rounded-2xl border border-white/15 shadow-2xl flex items-center gap-2 animate-fadeIn pointer-events-auto">
               <Search className="w-4 h-4 text-amber-400 shrink-0 ml-1" />
               <input
                 type="text"
@@ -1112,7 +1112,7 @@ export default function ReelsFloatingWidget({
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="text-slate-400 hover:text-white text-xs font-bold px-1"
+                  className="text-slate-400 hover:text-white text-xs font-bold px-1 cursor-pointer touch-manipulation"
                 >
                   ✕
                 </button>
@@ -1355,7 +1355,7 @@ export default function ReelsFloatingWidget({
               <button 
                 type="button"
                 onClick={() => setCommentsModalReel(null)}
-                className="p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer touch-manipulation"
               >
                 <X className="w-5 h-5" />
               </button>

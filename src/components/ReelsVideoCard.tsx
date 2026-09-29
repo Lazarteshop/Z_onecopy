@@ -581,7 +581,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
       )}
 
       {/* ================= RIGHT SIDEBAR ACTION BUTTONS (TikTok Style) ================= */}
-      <aside className="absolute right-3.5 bottom-24 z-40 flex flex-col items-center gap-3.5 pointer-events-auto">
+      <aside className="absolute right-3.5 bottom-20 sm:bottom-24 z-40 flex flex-col items-center gap-2.5 sm:gap-3.5 pointer-events-auto">
         
         {/* Creator / Channel Avatar with Profile Click and '+' Upload / Follow Badge */}
         <div className="relative group">
@@ -641,7 +641,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
               e.stopPropagation();
               if (onOpenComments) onOpenComments(reel);
             }}
-            className="p-1.5 active:scale-125 transition duration-200 hover:text-amber-300 cursor-pointer text-white"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center p-1.5 active:scale-125 transition duration-200 hover:text-amber-300 cursor-pointer text-white touch-manipulation"
             title="Tingnan at Mag-comment sa Reel"
           >
             <MessageCircle className="w-7 h-7 fill-black/30 drop-shadow-md" />
