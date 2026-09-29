@@ -11,7 +11,7 @@ export function formatEmbedUrl(rawUrl: string): FormattedReelUrl {
   const ytMatch = url.match(/(?:youtube\.com\/(?:shorts\/|watch\?v=|watch\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
   if (ytMatch && ytMatch[1]) {
     return {
-      embedUrl: `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=1&enablejsapi=1&rel=0`,
+      embedUrl: `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=1&mute=1&enablejsapi=1&rel=0`,
       platform: 'youtube'
     };
   }

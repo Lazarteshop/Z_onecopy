@@ -139,7 +139,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
   // Direct video playback states
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
-  const [isDirectMuted, setIsDirectMuted] = useState<boolean>(false);
+  const [isDirectMuted, setIsDirectMuted] = useState<boolean>(true);
 
   const formatTime = (secs: number) => {
     if (isNaN(secs) || secs < 0) return '0:00';
@@ -148,13 +148,8 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  // TikTok Audio State Management
-  const [isTikTokMuted, setIsTikTokMuted] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return sessionStorage.getItem('zone_reels_audio_enabled') !== '1';
-    }
-    return true;
-  });
+  // TikTok Audio State Management - strictly starts muted per active reel
+  const [isTikTokMuted, setIsTikTokMuted] = useState<boolean>(true);
 
   const sendTikTokCommand = useCallback((type: 'unMute' | 'mute' | 'play' | 'pause') => {
     if (!iframeRef.current?.contentWindow) return;
@@ -190,9 +185,6 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
     sendTikTokCommand('unMute');
     sendTikTokCommand('play');
     setIsTikTokMuted(false);
-    try {
-      sessionStorage.setItem('zone_reels_audio_enabled', '1');
-    } catch {}
     if (triggerNotification) {
       triggerNotification(
         language === 'tl' ? '🔊 Naka-on na ang sound ng TikTok!' : '🔊 TikTok audio enabled!',
@@ -209,9 +201,6 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
     } else {
       sendTikTokCommand('mute');
       setIsTikTokMuted(true);
-      try {
-        sessionStorage.removeItem('zone_reels_audio_enabled');
-      } catch {}
     }
   }, [isTikTokMuted, handleUnmuteTikTok, sendTikTokCommand]);
 
@@ -231,26 +220,13 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
         }
         if (typeof data === 'object' && data !== null && data['x-tiktok-player']) {
           if (data.type === 'onPlayerReady') {
-            const hasSessionAudio = typeof window !== 'undefined' && sessionStorage.getItem('zone_reels_audio_enabled') === '1';
-            if (hasSessionAudio) {
-              sendTikTokCommand('unMute');
-              setIsTikTokMuted(false);
-            }
             if (isPlaying) {
               sendTikTokCommand('play');
             }
           } else if (data.type === 'onMute') {
-            const hasSessionAudio = typeof window !== 'undefined' && sessionStorage.getItem('zone_reels_audio_enabled') === '1';
-            if (hasSessionAudio) {
-              sendTikTokCommand('unMute');
-            } else {
-              setIsTikTokMuted(true);
-            }
+            setIsTikTokMuted(true);
           } else if (data.type === 'onUnmute' || data.type === 'onUnMute') {
             setIsTikTokMuted(false);
-            try {
-              sessionStorage.setItem('zone_reels_audio_enabled', '1');
-            } catch {}
           }
         }
       } catch {
@@ -269,42 +245,10 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
     if (!isActive || formatted.platform !== 'tiktok') return;
     if (isPlaying) {
       sendTikTokCommand('play');
-      const hasSessionAudio = typeof window !== 'undefined' && sessionStorage.getItem('zone_reels_audio_enabled') === '1';
-      if (hasSessionAudio || !isTikTokMuted) {
-        sendTikTokCommand('unMute');
-      }
     } else {
       sendTikTokCommand('pause');
     }
-  }, [isPlaying, isActive, formatted.platform, isTikTokMuted, sendTikTokCommand]);
-
-  // Proactively attempt audio activation whenever session permits
-  useEffect(() => {
-    if (!isActive || formatted.platform !== 'tiktok') return;
-
-    const hasSessionAudio = typeof window !== 'undefined' && sessionStorage.getItem('zone_reels_audio_enabled') === '1';
-    if (hasSessionAudio) {
-      sendTikTokCommand('unMute');
-      if (isPlaying) {
-        sendTikTokCommand('play');
-      }
-
-      // Staggered attempts to ensure commands catch the iframe as its internal scripts ready
-      const delays = [150, 450, 900, 1500, 2200];
-      const timers = delays.map((delay) =>
-        setTimeout(() => {
-          sendTikTokCommand('unMute');
-          if (isPlaying) {
-            sendTikTokCommand('play');
-          }
-        }, delay)
-      );
-
-      return () => {
-        timers.forEach((t) => clearTimeout(t));
-      };
-    }
-  }, [isActive, formatted.platform, isPlaying, sendTikTokCommand]);
+  }, [isPlaying, isActive, formatted.platform, sendTikTokCommand]);
 
   // Sync HTML5 video play/pause
   useEffect(() => {
@@ -448,10 +392,6 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                 allowFullScreen
                 onLoad={() => {
                   if (formatted.platform === 'tiktok') {
-                    const hasSessionAudio = typeof window !== 'undefined' && sessionStorage.getItem('zone_reels_audio_enabled') === '1';
-                    if (hasSessionAudio) {
-                      sendTikTokCommand('unMute');
-                    }
                     if (isPlaying) {
                       sendTikTokCommand('play');
                     }
