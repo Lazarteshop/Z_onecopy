@@ -48,6 +48,7 @@ interface ReelsVideoCardProps {
   onSave?: (id: string, e?: React.MouseEvent) => void;
   onFollowToggle?: (creatorId: string) => void;
   onClaimReward: (id: string) => void;
+  onProgressUpdate?: (reelId: string, progressPct: number, isCompleted: boolean) => void;
   onDelete?: (id: string) => void;
   onOpenUploadModal?: () => void;
   onOpenComments?: (reel: ReelVideo) => void;
@@ -79,6 +80,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
   onSave,
   onFollowToggle,
   onClaimReward,
+  onProgressUpdate,
   onDelete,
   onOpenUploadModal,
   onOpenComments,
@@ -148,8 +150,26 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  // TikTok Audio State Management - strictly starts muted per active reel
+  // TikTok & YouTube Audio State Management - strictly starts muted per active reel
   const [isTikTokMuted, setIsTikTokMuted] = useState<boolean>(true);
+  const [isYouTubeMuted, setIsYouTubeMuted] = useState<boolean>(true);
+
+  // Direct video completion tracking guard (Anti-abuse duplicate prevention)
+  const hasClaimedDirectRewardRef = useRef<boolean>(isClaimed);
+
+  useEffect(() => {
+    hasClaimedDirectRewardRef.current = isClaimed;
+  }, [isClaimed, reel.id]);
+
+  // Reset audio state to strictly muted whenever a Reel becomes inactive, changes, or mounts
+  useEffect(() => {
+    setIsTikTokMuted(true);
+    setIsYouTubeMuted(true);
+    setIsDirectMuted(true);
+    if (videoRef.current) {
+      videoRef.current.muted = true;
+    }
+  }, [isActive, reel.id]);
 
   const sendTikTokCommand = useCallback((type: 'unMute' | 'mute' | 'play' | 'pause') => {
     if (!iframeRef.current?.contentWindow) return;
@@ -172,6 +192,23 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
           '*'
         );
       }
+    } catch {
+      // Safe cross-origin handling
+    }
+  }, []);
+
+  // Official YouTube IFrame Player API postMessage command sender (enablejsapi=1)
+  const sendYouTubeCommand = useCallback((func: 'playVideo' | 'pauseVideo' | 'unMute' | 'mute') => {
+    if (!iframeRef.current?.contentWindow) return;
+    try {
+      iframeRef.current.contentWindow.postMessage(
+        JSON.stringify({
+          event: 'command',
+          func,
+          args: []
+        }),
+        '*'
+      );
     } catch {
       // Safe cross-origin handling
     }
@@ -205,6 +242,43 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
   }, [isTikTokMuted, handleUnmuteTikTok, sendTikTokCommand]);
 
   const formatted = formatEmbedUrl(reel.embedUrl || reel.url || '');
+
+  const isDirectVideo = formatted.platform === 'direct' && (
+    Boolean(formatted.embedUrl?.match(/\.(mp4|webm|mov|ogg)($|\?)/i)) || 
+    Boolean(reel.url?.match(/\.(mp4|webm|mov|ogg)($|\?)/i)) ||
+    Boolean(reel.url?.startsWith('/uploads/')) ||
+    Boolean(reel.url?.startsWith('blob:')) ||
+    Boolean(reel.embedUrl?.startsWith('/uploads/')) ||
+    Boolean(reel.embedUrl?.startsWith('blob:'))
+  );
+
+  // Universal Explicit Play handler: unMute + play on user gesture
+  const handleExplicitPlay = useCallback(() => {
+    // 1. TikTok: play + unMute
+    if (formatted.platform === 'tiktok') {
+      sendTikTokCommand('unMute');
+      sendTikTokCommand('play');
+      setIsTikTokMuted(false);
+    }
+    // 2. YouTube: playVideo + unMute
+    else if (formatted.platform === 'youtube') {
+      sendYouTubeCommand('unMute');
+      sendYouTubeCommand('playVideo');
+      setIsYouTubeMuted(false);
+    }
+    // 3. Direct native video: play + unMute
+    else if (isDirectVideo && videoRef.current) {
+      videoRef.current.muted = false;
+      setIsDirectMuted(false);
+      videoRef.current.play().catch(() => {});
+    }
+    // 4. Facebook: provider-native playback (cross-origin limitation)
+
+    // Ensure playback state in parent
+    if (!isPlaying) {
+      onTogglePlay();
+    }
+  }, [formatted.platform, isDirectVideo, isPlaying, onTogglePlay, sendTikTokCommand, sendYouTubeCommand]);
 
   // Listen for TikTok embed player postMessage events
   useEffect(() => {
@@ -250,6 +324,16 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
     }
   }, [isPlaying, isActive, formatted.platform, sendTikTokCommand]);
 
+  // Synchronize play/pause commands with YouTube player
+  useEffect(() => {
+    if (!isActive || formatted.platform !== 'youtube') return;
+    if (isPlaying) {
+      sendYouTubeCommand('playVideo');
+    } else {
+      sendYouTubeCommand('pauseVideo');
+    }
+  }, [isPlaying, isActive, formatted.platform, sendYouTubeCommand]);
+
   // Sync HTML5 video play/pause
   useEffect(() => {
     if (videoRef.current && isActive) {
@@ -261,7 +345,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
     }
   }, [isPlaying, isActive]);
 
-  // Handle double tap for heart burst + like
+  // Handle double tap for heart burst + like, or single tap for Play / Unmute / Pause
   const handleCardTap = (e: React.MouseEvent<HTMLDivElement>) => {
     const now = Date.now();
     const rect = e.currentTarget.getBoundingClientRect();
@@ -277,26 +361,38 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
       }
       setTimeout(() => setShowHeartBurst(false), 800);
     } else {
-      // Single tap -> toggle play/pause or unmute TikTok if muted
-      if (formatted.platform === 'tiktok' && isTikTokMuted) {
-        handleUnmuteTikTok();
+      // Single tap -> If paused (!isPlaying), user explicitly presses PLAY -> resume + unmute!
+      if (!isPlaying) {
+        handleExplicitPlay();
       } else {
-        onTogglePlay();
+        // If already playing:
+        // - If TikTok is currently muted, tap to unmute
+        if (formatted.platform === 'tiktok' && isTikTokMuted) {
+          handleUnmuteTikTok();
+        } else if (formatted.platform === 'youtube' && isYouTubeMuted) {
+          sendYouTubeCommand('unMute');
+          setIsYouTubeMuted(false);
+        } else if (isDirectVideo && isDirectMuted) {
+          if (videoRef.current) videoRef.current.muted = false;
+          setIsDirectMuted(false);
+        } else {
+          // Toggle play/pause
+          onTogglePlay();
+        }
       }
     }
     lastTapRef.current = now;
   };
 
-  const isDirectVideo = formatted.platform === 'direct' && (
-    formatted.embedUrl.match(/\.(mp4|webm|mov|ogg)($|\?)/i) || 
-    reel.url?.match(/\.(mp4|webm|mov|ogg)($|\?)/i)
-  );
-
   const getIframeSrc = () => {
     if (formatted.platform === 'youtube') {
-      return formatted.embedUrl.includes('?') 
-        ? `${formatted.embedUrl}&autoplay=${isPlaying ? 1 : 0}` 
-        : `${formatted.embedUrl}?autoplay=${isPlaying ? 1 : 0}`;
+      let url = formatted.embedUrl;
+      if (!url.includes('enablejsapi=1')) {
+        url += (url.includes('?') ? '&' : '?') + 'enablejsapi=1';
+      }
+      return url.includes('autoplay=') 
+        ? url 
+        : `${url}${url.includes('?') ? '&' : '?'}autoplay=${isPlaying ? 1 : 0}`;
     }
     if (formatted.platform === 'tiktok') {
       let cleanUrl = formatted.embedUrl.replace(/[?&]autoplay=\d+/i, '');
@@ -364,20 +460,54 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
               onPause={() => {}}
               onLoadedMetadata={(e) => {
                 const v = e.currentTarget;
-                if (v.duration) setDuration(v.duration);
+                if (v.duration && !isNaN(v.duration) && isFinite(v.duration)) {
+                  setDuration(v.duration);
+                }
               }}
               onTimeUpdate={(e) => {
                 const v = e.currentTarget;
-                setCurrentTime(v.currentTime);
-                if (v.duration && v.duration > 0) {
-                  setDuration(v.duration);
-                  const pct = Math.min(100, Math.floor((v.currentTime / v.duration) * 100));
-                  if (pct >= 100) {
+                const cur = v.currentTime;
+                const dur = v.duration;
+                setCurrentTime(cur);
+
+                if (dur && !isNaN(dur) && isFinite(dur) && dur > 0) {
+                  setDuration(dur);
+
+                  // If already claimed, protect against looping regression or re-triggers
+                  if (hasClaimedDirectRewardRef.current || isClaimed) {
+                    return;
+                  }
+
+                  // Calculate actual watch progress percentage
+                  const pct = Math.min(100, Math.floor((cur / dur) * 100));
+
+                  // Genuine completion check:
+                  // Video has ended or current playback time reached genuine end of duration
+                  // (accounting for small frame delta / loop boundary within 0.25s)
+                  const isGenuineCompletion = v.ended || (cur >= dur - 0.25);
+
+                  if (isGenuineCompletion) {
+                    hasClaimedDirectRewardRef.current = true;
+                    if (onProgressUpdate) {
+                      onProgressUpdate(reel.id, 100, true);
+                    }
                     onClaimReward(reel.id);
+                  } else {
+                    if (onProgressUpdate) {
+                      onProgressUpdate(reel.id, pct, false);
+                    }
                   }
                 }
               }}
-              onEnded={() => onClaimReward(reel.id)}
+              onEnded={() => {
+                if (!hasClaimedDirectRewardRef.current && !isClaimed) {
+                  hasClaimedDirectRewardRef.current = true;
+                  if (onProgressUpdate) {
+                    onProgressUpdate(reel.id, 100, true);
+                  }
+                  onClaimReward(reel.id);
+                }
+              }}
             />
           ) : (
             <div className="relative z-10 w-full h-full flex items-center justify-center">
@@ -470,7 +600,11 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
         <div 
           onClick={(e) => {
             e.stopPropagation();
-            if (!isPlaying && !isClaimed) onTogglePlay();
+            if (!isPlaying && !isClaimed) {
+              handleExplicitPlay();
+            } else if (isPlaying) {
+              onTogglePlay();
+            }
           }}
           className={`flex items-center gap-2 p-1.5 pr-3 rounded-full backdrop-blur-md border transition cursor-pointer shadow-xl ${
             isClaimed
@@ -534,7 +668,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
 
       {/* ================= TIKTOK AUDIO UNMUTE & DIRECT LINK FLOATING CONTROLS ================= */}
       {formatted.platform === 'tiktok' && isActive && (
-        <div className="absolute top-16 right-3 sm:right-auto sm:left-1/2 sm:-translate-x-1/2 z-30 pointer-events-auto flex items-center gap-2">
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-auto flex items-center gap-2 max-w-[90vw] justify-center">
           {isTikTokMuted ? (
             <button
               type="button"
@@ -577,6 +711,41 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
             </span>
             <span className="xs:hidden">TikTok</span>
           </a>
+        </div>
+      )}
+
+      {/* ================= DIRECT VIDEO SOUND FLOATING PILL ================= */}
+      {isDirectVideo && isActive && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 pointer-events-auto flex items-center gap-2 max-w-[90vw] justify-center">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              const nextMuted = !isDirectMuted;
+              if (videoRef.current) videoRef.current.muted = nextMuted;
+              setIsDirectMuted(nextMuted);
+            }}
+            className={`px-3.5 py-1.5 rounded-full font-bold text-xs shadow-xl flex items-center gap-1.5 border backdrop-blur-md active:scale-95 transition cursor-pointer touch-manipulation ${
+              isDirectMuted 
+                ? 'bg-slate-950/90 text-amber-300 border-amber-500/50 hover:bg-slate-900 animate-pulse' 
+                : 'bg-slate-950/90 text-emerald-300 border-emerald-500/40 hover:bg-slate-900'
+            }`}
+            title={isDirectMuted ? 'I-unmute ang video' : 'I-mute ang video'}
+          >
+            {isDirectMuted ? (
+              <>
+                <div className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-400">
+                  <VolumeX className="w-3 h-3 fill-current" />
+                </div>
+                <span>{language === 'tl' ? '🔊 I-on ang Sound' : '🔊 Tap for Sound'}</span>
+              </>
+            ) : (
+              <>
+                <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Sound On</span>
+              </>
+            )}
+          </button>
         </div>
       )}
 
@@ -657,7 +826,11 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onTogglePlay();
+              if (!isPlaying) {
+                handleExplicitPlay();
+              } else {
+                onTogglePlay();
+              }
             }}
             className={`w-10 h-10 rounded-full flex items-center justify-center transition duration-200 cursor-pointer shadow-lg ${
               isClaimed
@@ -750,29 +923,6 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
           </span>
         </div>
 
-        {/* 4.6 Direct Video Sound Toggle */}
-        {isDirectVideo && (
-          <div className="flex flex-col items-center gap-0.5">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsDirectMuted(!isDirectMuted);
-              }}
-              className="min-w-[44px] min-h-[44px] flex items-center justify-center p-1.5 active:scale-125 transition duration-200 cursor-pointer text-white hover:text-amber-300 touch-manipulation"
-              title={isDirectMuted ? 'I-unmute ang video' : 'I-mute ang video'}
-            >
-              {isDirectMuted ? (
-                <VolumeX className="w-6 h-6 drop-shadow-md text-amber-400" />
-              ) : (
-                <Volume2 className="w-6 h-6 drop-shadow-md text-emerald-400" />
-              )}
-            </button>
-            <span className="text-[9px] font-bold text-slate-300">
-              {isDirectMuted ? 'Muted' : 'Sound'}
-            </span>
-          </div>
-        )}
 
         {/* 4. Original Source Link */}
         <div className="flex flex-col items-center gap-0.5">
@@ -813,29 +963,7 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
           </span>
         </div>
 
-        {/* 5.5 TikTok Audio Mute/Unmute Toggle */}
-        {formatted.platform === 'tiktok' && (
-          <div className="flex flex-col items-center gap-0.5">
-            <button
-              type="button"
-              id={`tiktok-sidebar-audio-toggle-${reel.id}`}
-              onClick={handleToggleTikTokMute}
-              className={`min-w-[44px] min-h-[44px] flex items-center justify-center p-1.5 active:scale-125 transition duration-200 cursor-pointer touch-manipulation ${
-                isTikTokMuted ? 'text-amber-300' : 'text-emerald-400'
-              }`}
-              title={isTikTokMuted ? 'I-on ang audio (Unmute)' : 'Naka-on ang audio (I-mute)'}
-            >
-              {isTikTokMuted ? (
-                <VolumeX className="w-6 h-6 drop-shadow-md text-amber-400 animate-pulse" />
-              ) : (
-                <Volume2 className="w-6 h-6 drop-shadow-md text-emerald-400" />
-              )}
-            </button>
-            <span className="text-[9px] font-bold text-slate-300">
-              {isTikTokMuted ? 'Muted' : 'Sound'}
-            </span>
-          </div>
-        )}
+
 
         {/* 6. Admin Delete Option */}
         {isAdmin && onDelete && (

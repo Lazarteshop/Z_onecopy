@@ -583,9 +583,6 @@ export default function ReelsFloatingWidget({
           setIsOpen(false);
         }
         if (target && (target.id === 'reels-widget-open-btn' || target.closest('#reels-widget-open-btn'))) {
-          try {
-            sessionStorage.setItem('zone_reels_audio_enabled', '1');
-          } catch {}
           setIsOpen(true);
         }
       }
@@ -668,9 +665,6 @@ export default function ReelsFloatingWidget({
     if (height > 0) {
       const newIndex = Math.round(el.scrollTop / height);
       if (newIndex !== currentIndex && newIndex >= 0 && newIndex < activeReels.length) {
-        try {
-          sessionStorage.setItem('zone_reels_audio_enabled', '1');
-        } catch {}
         setCurrentIndex(newIndex);
       }
     }
@@ -749,7 +743,7 @@ export default function ReelsFloatingWidget({
     setIsPlaying(true);
   }, [currentIndex]);
 
-  const handleClaimWatchReward = (id: string) => {
+  const handleClaimWatchReward = useCallback((id: string) => {
     const activeReel = activeReels.find(r => r.id === id);
     const isAlreadyClaimed = Boolean(
       (currentUserId && activeReel?.watchedBy?.includes(currentUserId)) ||
@@ -769,7 +763,17 @@ export default function ReelsFloatingWidget({
     if (onWatchRewardReel) {
       onWatchRewardReel(id);
     }
-  };
+  }, [activeReels, currentUserId, onWatchRewardReel, watchedIds]);
+
+  // Native playback progress handler for Direct/Uploaded MP4/WebM videos
+  const handleDirectProgressUpdate = useCallback((reelId: string, progressPct: number, isCompleted: boolean) => {
+    const activeReel = activeReels[currentIndex];
+    if (!activeReel || activeReel.id !== reelId) return;
+    setWatchProgress(progressPct);
+    if (isCompleted) {
+      handleClaimWatchReward(reelId);
+    }
+  }, [activeReels, currentIndex, handleClaimWatchReward]);
 
   // YouTube / Iframe postMessage event listener
   useEffect(() => {
@@ -825,7 +829,14 @@ export default function ReelsFloatingWidget({
     const activeReel = activeReels[currentIndex];
     if (!activeReel) return;
 
-    if (activeReel.platform === 'direct' && activeReel.embedUrl.match(/\.(mp4|webm)($|\?)/i)) {
+    // Direct native videos track actual video playback progress, not the generic timer
+    const isDirectNative = activeReel.platform === 'direct' && (
+      Boolean(activeReel.embedUrl?.match(/\.(mp4|webm|mov|ogg)($|\?)/i)) || 
+      Boolean(activeReel.url?.match(/\.(mp4|webm|mov|ogg)($|\?)/i)) ||
+      Boolean(activeReel.url?.startsWith('/uploads/')) ||
+      Boolean(activeReel.url?.startsWith('blob:'))
+    );
+    if (isDirectNative) {
       return;
     }
 
@@ -854,7 +865,7 @@ export default function ReelsFloatingWidget({
     }, 250);
 
     return () => clearInterval(timer);
-  }, [isOpen, isPlaying, currentIndex, watchProgress, activeReels, currentUserId, watchedIds]);
+  }, [isOpen, isPlaying, currentIndex, watchProgress, activeReels, currentUserId, watchedIds, handleClaimWatchReward]);
 
   const handlePublishSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -905,9 +916,6 @@ export default function ReelsFloatingWidget({
               isDraggingRef.current = false;
               return;
             }
-            try {
-              sessionStorage.setItem('zone_reels_audio_enabled', '1');
-            } catch {}
             setIsOpen(true);
           }}
           className="bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black px-5 py-3.5 rounded-full shadow-[0_12px_35px_rgba(225,29,72,0.75)] border-2 border-white flex items-center gap-2.5 transition-transform duration-150 hover:scale-105 active:scale-95 cursor-grab active:cursor-grabbing select-none"
@@ -1198,6 +1206,7 @@ export default function ReelsFloatingWidget({
                     onLike={handleLike}
                     onSave={handleToggleSave}
                     onClaimReward={handleClaimWatchReward}
+                    onProgressUpdate={handleDirectProgressUpdate}
                     onDelete={onDeleteReel}
                     onOpenUploadModal={() => setShowUploadModal(true)}
                     onOpenComments={(targetReel) => setCommentsModalReel(targetReel)}
