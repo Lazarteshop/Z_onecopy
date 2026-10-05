@@ -19,6 +19,73 @@ import { isContentVisibleToUser, getTrendingHashtags, extractHashtags } from './
 import { ZonePost, SmartFeedSection, SmartFeedResponse, ReactionType } from '../src/types';
 
 // ============================================================================
+// PHASE 5B-2: HOT LOOKUP INDEX HOOKS (SCOPED TO ACTIVE INDEXED DB)
+// ============================================================================
+let feedIndexedDb: any = null;
+let feedUserByIdIndex: Map<string, any> | null = null;
+let feedPostByIdIndex: Map<string, any> | null = null;
+let feedReelByIdIndex: Map<string, any> | null = null;
+let feedCommunityByIdIndex: Map<string, any> | null = null;
+
+export function setSmartFeedIndexHooks(hooks: {
+  indexedDb?: any;
+  userByIdIndex?: Map<string, any>;
+  postByIdIndex?: Map<string, any>;
+  reelByIdIndex?: Map<string, any>;
+  communityByIdIndex?: Map<string, any>;
+}): void {
+  if ('indexedDb' in hooks) feedIndexedDb = hooks.indexedDb;
+  if (hooks.userByIdIndex) feedUserByIdIndex = hooks.userByIdIndex;
+  if (hooks.postByIdIndex) feedPostByIdIndex = hooks.postByIdIndex;
+  if (hooks.reelByIdIndex) feedReelByIdIndex = hooks.reelByIdIndex;
+  if (hooks.communityByIdIndex) feedCommunityByIdIndex = hooks.communityByIdIndex;
+}
+
+function resolveFeedUserById(db: any, userId?: string): any {
+  if (!userId || !db) return undefined;
+  if (feedIndexedDb && db === feedIndexedDb && feedUserByIdIndex) {
+    return feedUserByIdIndex.get(userId);
+  }
+  return (db.users || []).find((u: any) => u && u.id === userId);
+}
+
+function resolveFeedCommunityById(db: any, communityId?: string): any {
+  if (!communityId || !db) return undefined;
+  if (feedIndexedDb && db === feedIndexedDb && feedCommunityByIdIndex) {
+    return feedCommunityByIdIndex.get(communityId);
+  }
+  return (db.communities || []).find((c: any) => c && c.id === communityId);
+}
+
+function hasFeedPostById(db: any, postId?: string): boolean {
+  if (!postId || !db) return false;
+  if (feedIndexedDb && db === feedIndexedDb && feedPostByIdIndex) {
+    const indexed = feedPostByIdIndex.get(postId);
+    if (!indexed) return false;
+    if (Array.isArray(db.posts) && !db.posts.includes(indexed)) {
+      feedPostByIdIndex.delete(postId);
+      return false;
+    }
+    return true;
+  }
+  return (db.posts || []).some((p: any) => p && p.id === postId);
+}
+
+function hasFeedReelById(db: any, reelId?: string): boolean {
+  if (!reelId || !db) return false;
+  if (feedIndexedDb && db === feedIndexedDb && feedReelByIdIndex) {
+    const indexed = feedReelByIdIndex.get(reelId);
+    if (!indexed) return false;
+    if (Array.isArray(db.reels) && !db.reels.includes(indexed)) {
+      feedReelByIdIndex.delete(reelId);
+      return false;
+    }
+    return true;
+  }
+  return (db.reels || []).some((r: any) => r && r.id === reelId);
+}
+
+// ============================================================================
 // CONFIGURABLE SCORING WEIGHTS & BOUNDS
 // ============================================================================
 
@@ -184,7 +251,7 @@ function resolveUserRelations(db: any, requesterId?: string) {
     if (db.follows && Array.isArray(db.follows[requesterId])) {
       for (const fid of db.follows[requesterId]) followingIds.add(fid);
     }
-    const user = (db.users || []).find((u: any) => u && u.id === requesterId);
+    const user = resolveFeedUserById(db, requesterId);
     if (user && Array.isArray(user.zonedUsers)) {
       for (const fid of user.zonedUsers) followingIds.add(fid);
     }
@@ -442,10 +509,10 @@ function filterCandidatePrivacy(
 
   // 1. Deleted content check
   if (candidate.type === 'post') {
-    const exists = (db.posts || []).some((p: any) => p && p.id === item.id);
+    const exists = hasFeedPostById(db, item.id);
     if (!exists) return false;
   } else if (candidate.type === 'reel') {
-    const exists = (db.reels || []).some((r: any) => r && r.id === item.id);
+    const exists = hasFeedReelById(db, item.id);
     if (!exists) return false;
     if (item.status === 'pending' || item.status === 'disapproved' || item.isApproved === false) return false;
   }
@@ -474,7 +541,7 @@ function filterCandidatePrivacy(
 
   // 4. Extra community privacy safeguard
   if (item.communityId) {
-    const community = (db.communities || []).find((c: any) => c.id === item.communityId);
+    const community = resolveFeedCommunityById(db, item.communityId);
     if (community && (community.privacy === 'private' || community.isPrivate === true)) {
       if (!requesterId) return false;
       const isMemberInIndex = isUserInCommunity(item.communityId, requesterId);
@@ -541,7 +608,7 @@ function scoreCandidate(
   // 2. COMMUNITY SIGNALS
   let communityScore = 0;
   if (candidate.communityId) {
-    const comm = (db.communities || []).find((c: any) => c.id === candidate.communityId);
+    const comm = resolveFeedCommunityById(db, candidate.communityId);
     const commName = comm ? comm.name : 'Komunidad';
     if (requesterId && (rels.userCommunityIds.has(candidate.communityId) || isUserInCommunity(candidate.communityId, requesterId))) {
       communityScore += W.MEMBER_COMMUNITY;
@@ -614,7 +681,7 @@ function scoreCandidate(
   if (item.productRef) {
     qualityScore += W.COMMERCE_ATTACHED;
   }
-  const authorUser = (db.users || []).find((u: any) => u.id === candidate.authorId);
+  const authorUser = resolveFeedUserById(db, candidate.authorId);
   if (authorUser && (authorUser.isAdmin || authorUser.isVerified)) {
     qualityScore += W.VERIFIED_OR_ADMIN;
   }

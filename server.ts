@@ -70,7 +70,7 @@ import {
   CommunityVisibility,
   rebuildCommunityIndexes,
   addCommunityToIndex,
-  removeCommunityFromIndex,
+  removeCommunityFromIndex as removeCommunityMembershipFromIndex,
   addUserToCommunityIndex,
   removeUserFromCommunityIndex,
   getUserCommunityIds,
@@ -107,11 +107,28 @@ import {
 import {
   generateSmartFeed,
   generateSmartFeedFallback,
-  invalidateSmartFeedCache
+  invalidateSmartFeedCache,
+  setSmartFeedIndexHooks
 } from './server/phase3SmartFeed';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+
+const entryArg = (process.argv[1] || '').replace(/\\/g, '/');
+const isDirectServerEntry =
+  !entryArg ||
+  entryArg.endsWith('/server.ts') ||
+  entryArg === 'server.ts' ||
+  entryArg.endsWith('/server.cjs') ||
+  entryArg === 'server.cjs' ||
+  entryArg.endsWith('/server.js') ||
+  entryArg === 'server.js';
+
+const isTestEnv =
+  Boolean(process.env.VITEST) ||
+  process.env.NODE_ENV === 'test' ||
+  process.env.SKIP_SERVER_AUTOSTART === 'true' ||
+  !isDirectServerEntry;
 
 // VAPID Web Push Setup (Production secrets sourced strictly from environment variables; zero hardcoded fallback secrets)
 const isProduction = process.env.NODE_ENV === 'production';
@@ -436,7 +453,7 @@ interface IdempotencyRecord {
 const idempotencyCache = new Map<string, IdempotencyRecord>();
 
 // Periodic cleanup of idempotency cache (TTL: 10 minutes for completed, 2 minutes for stuck in_progress)
-setInterval(() => {
+const idempotencyTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of idempotencyCache.entries()) {
     const maxAge = entry.state === 'in_progress' ? 2 * 60 * 1000 : 10 * 60 * 1000;
@@ -445,6 +462,7 @@ setInterval(() => {
     }
   }
 }, 60 * 1000);
+if (typeof idempotencyTimer.unref === 'function') idempotencyTimer.unref();
 
 function checkIdempotency(req: express.Request, res: express.Response, next: express.NextFunction) {
   const rawKey = (req.headers['x-idempotency-key'] as string) || req.body?.idempotencyKey || req.body?.requestId;
@@ -1385,6 +1403,14 @@ app.get('/api/tts', async (req, res) => {
 let isAuthoritativeDatabaseReady = false;
 let recoveryFailureReason: string | null = null;
 let isCloudRebuildInProgress = false;
+
+export function setAuthoritativeDatabaseReady(ready: boolean): void {
+  isAuthoritativeDatabaseReady = ready;
+}
+
+export function getAuthoritativeDatabaseReady(): boolean {
+  return isAuthoritativeDatabaseReady;
+}
 
 // Guard data mutations if authoritative recovery has not completed on an ephemeral container
 app.use((req, res, next) => {
@@ -2813,8 +2839,8 @@ const INITIAL_SHOP_BASKETS = [
 ];
 
 // Helper to auto-expire unpaid banners/baskets
-function checkAndExpireBanners(db: DBStructure) {
-  if (!db || !Array.isArray(db.vaBanners)) return;
+export function checkAndExpireBanners(db: DBStructure): boolean {
+  if (!db || !Array.isArray(db.vaBanners)) return false;
   const now = Date.now();
   let changed = false;
 
@@ -3014,15 +3040,20 @@ const INITIAL_SPONSORED_MISSIONS: SponsoredMission[] = [
 ];
 
 // Helper to sync a single user's active shopping cart into unpaid shopBaskets (Active Leads for VAs)
-function syncUserCartToBasket(db: DBStructure, userId: string) {
+export function syncUserCartToBasket(db: DBStructure, userId: string): boolean {
+  if (!db) return false;
+  let changed = false;
+
   if (!db.shopBaskets) {
     db.shopBaskets = [...INITIAL_SHOP_BASKETS];
+    changed = true;
   }
   if (!db.shopCarts) {
     db.shopCarts = {};
+    changed = true;
   }
 
-  const user = (db.users || []).find(u => u.id === userId);
+  const user = getUserById(userId, db);
   const cart = db.shopCarts[userId] || [];
 
   const existingBasketIndex = db.shopBaskets.findIndex(b => b.userId === userId && b.status === 'unpaid');
@@ -3038,10 +3069,19 @@ function syncUserCartToBasket(db: DBStructure, userId: string) {
     }));
 
     if (existingBasketIndex !== -1) {
-      db.shopBaskets[existingBasketIndex].items = basketItems;
-      db.shopBaskets[existingBasketIndex].totalAmount = totalAmount;
-      if (user?.name) db.shopBaskets[existingBasketIndex].userName = user.name;
-      if (user?.avatar) db.shopBaskets[existingBasketIndex].userAvatar = user.avatar;
+      const existing = db.shopBaskets[existingBasketIndex];
+      const itemsChanged = JSON.stringify(existing.items || []) !== JSON.stringify(basketItems);
+      const totalChanged = existing.totalAmount !== totalAmount;
+      const nameChanged = Boolean(user?.name && existing.userName !== user.name);
+      const avatarChanged = Boolean(user?.avatar && existing.userAvatar !== user.avatar);
+
+      if (itemsChanged || totalChanged || nameChanged || avatarChanged) {
+        existing.items = basketItems;
+        existing.totalAmount = totalAmount;
+        if (user?.name) existing.userName = user.name;
+        if (user?.avatar) existing.userAvatar = user.avatar;
+        changed = true;
+      }
     } else {
       db.shopBaskets.unshift({
         id: 'basket-' + userId.replace(/[^a-zA-Z0-9]/g, '') + '-' + Date.now(),
@@ -3053,6 +3093,7 @@ function syncUserCartToBasket(db: DBStructure, userId: string) {
         status: 'unpaid',
         createdAt: new Date().toISOString()
       });
+      changed = true;
     }
   } else {
     // If cart is now empty, remove unpaid basket only if it doesn't have an active banner attached
@@ -3061,21 +3102,32 @@ function syncUserCartToBasket(db: DBStructure, userId: string) {
       const hasBanner = (db.vaBanners || []).some(ban => ban.targetBasketId === basket.id && ban.status === 'active');
       if (!hasBanner) {
         db.shopBaskets.splice(existingBasketIndex, 1);
+        changed = true;
       }
     }
   }
+
+  return changed;
 }
 
 // Helper to sync all active carts into unpaid shopBaskets
-function checkAndSyncAllCartsToBaskets(db: DBStructure) {
+export function checkAndSyncAllCartsToBaskets(db: DBStructure): boolean {
+  if (!db) return false;
+  let changed = false;
+
   if (!db.shopBaskets || db.shopBaskets.length === 0) {
     db.shopBaskets = [...INITIAL_SHOP_BASKETS];
+    changed = true;
   }
   if (db.shopCarts) {
     Object.keys(db.shopCarts).forEach(userId => {
-      syncUserCartToBasket(db, userId);
+      if (syncUserCartToBasket(db, userId)) {
+        changed = true;
+      }
     });
   }
+
+  return changed;
 }
 
 // --- HELPER TO INITIALIZE AND GET DATABASE ---
@@ -3141,7 +3193,7 @@ function hasValidPersistentDatabase(): boolean {
   }
 }
 
-function loadDB(): DBStructure {
+export function loadDB(): DBStructure {
   if (cachedDB && Array.isArray(cachedDB.users)) {
     return cachedDB;
   }
@@ -3353,6 +3405,7 @@ function loadDB(): DBStructure {
     }
 
     cachedDB = loaded;
+    rebuildHotLookupIndexes(loaded);
     return loaded;
   }
 
@@ -3560,6 +3613,7 @@ function loadDB(): DBStructure {
   }
 
   cachedDB = defaultDB;
+  rebuildHotLookupIndexes(defaultDB);
   return defaultDB;
 }
 
@@ -3774,11 +3828,405 @@ export const FIRESTORE_COLLECTION_TO_DB_PROPERTY: Record<string, keyof DBStructu
   depositRequests: 'depositRequests',
   reelSubscriptions: 'reelSubscriptions',
   friendRequests: 'friendRequests',
-  subscriptionPayments: 'subscriptionPayments'
+  subscriptionPayments: 'subscriptionPayments',
+  system_config: 'socialShareSettings',
+  socialShareSettings: 'socialShareSettings'
 };
+
+export const DB_PROPERTY_TO_FIRESTORE_COLLECTION: Record<string, string> = {
+  users: 'users',
+  campaigns: 'campaigns',
+  posts: 'posts',
+  directMessages: 'direct_messages',
+  merchantAds: 'merchant_ads',
+  reels: 'reels',
+  reelSubscriptions: 'reel_subscriptions',
+  stories: 'stories',
+  albums: 'albums',
+  groupChats: 'group_chats',
+  groupMessages: 'group_messages',
+  shopProducts: 'shop_products',
+  shopBaskets: 'shop_baskets',
+  shopOrders: 'shop_orders',
+  vaBanners: 'va_banners',
+  registeredDevices: 'registered_devices',
+  userVerifications: 'user_verifications',
+  kiddieContent: 'kiddie_content',
+  creatorChallenges: 'challenges',
+  challengeEntries: 'challenge_entries',
+  sponsoredMissions: 'sponsored_missions',
+  depositRequests: 'deposit_requests',
+  subscriptionPayments: 'subscription_payments',
+  friendships: 'friendships',
+  friendRequests: 'friend_requests',
+  communities: 'communities',
+  discoveryDismissals: 'discoveryDismissals',
+  socialShareSettings: 'system_config'
+};
+
+export function normalizeFirestoreCollection(col: string): string {
+  if (!col) return '';
+  const trimmed = col.trim();
+  if (FIRESTORE_COLLECTION_TO_DB_PROPERTY[trimmed]) {
+    if (DB_PROPERTY_TO_FIRESTORE_COLLECTION[trimmed]) {
+      return DB_PROPERTY_TO_FIRESTORE_COLLECTION[trimmed];
+    }
+    return trimmed;
+  }
+  if (DB_PROPERTY_TO_FIRESTORE_COLLECTION[trimmed]) {
+    return DB_PROPERTY_TO_FIRESTORE_COLLECTION[trimmed];
+  }
+  return trimmed;
+}
 
 export function getDbPropertyForCollection(collection: string): string {
   return (FIRESTORE_COLLECTION_TO_DB_PROPERTY as Record<string, string>)[collection] || collection;
+}
+
+// Targeted Dirty Entity Tracking for Firestore Synchronization
+export const firestoreDirtySet = new Set<string>();
+export const firestoreDeletedSet = new Set<string>();
+
+export function markFirestoreDirty(collection: string, docId: string): void {
+  if (!collection || !docId || typeof docId !== 'string') return;
+  const cleanId = docId.trim();
+  if (!cleanId) return;
+  const normCol = normalizeFirestoreCollection(collection);
+  if (!normCol) return;
+
+  const key = `${normCol}:${cleanId}`;
+  firestoreDeletedSet.delete(key);
+  firestoreDirtySet.add(key);
+}
+
+export function markFirestoreDeleted(collection: string, docId: string): void {
+  if (!collection || !docId || typeof docId !== 'string') return;
+  const cleanId = docId.trim();
+  if (!cleanId) return;
+  const normCol = normalizeFirestoreCollection(collection);
+  if (!normCol) return;
+
+  const key = `${normCol}:${cleanId}`;
+  firestoreDirtySet.delete(key);
+  firestoreDeletedSet.add(key);
+}
+
+export function clearFirestoreDirty(collection: string, docId: string): void {
+  if (!collection || !docId) return;
+  const normCol = normalizeFirestoreCollection(collection);
+  const key = `${normCol}:${docId.trim()}`;
+  firestoreDirtySet.delete(key);
+  firestoreDeletedSet.delete(key);
+}
+
+// ============================================
+// PHASE 5B-2: HOT LOOKUP IN-MEMORY INDEXES
+// ============================================
+export const userByIdIndex = new Map<string, UserSession>();
+export const postByIdIndex = new Map<string, any>();
+export const communityByIdIndex = new Map<string, CommunityRecord>();
+export const reelByIdIndex = new Map<string, ReelVideo>();
+
+export const userByEmailIndex = new Map<string, UserSession>();
+export const userByReferralIndex = new Map<string, UserSession>();
+
+let dbBackedEntities = new WeakSet<object>();
+let indexedDbRef: DBStructure | null = null;
+
+/**
+ * Rebuilds all hot lookup in-memory indexes from authoritative in-memory database records.
+ * Non-destructive and stores direct references to existing objects (zero serialization, zero cloning).
+ */
+export function rebuildHotLookupIndexes(db?: DBStructure): void {
+  const targetDb = db || cachedDB;
+  if (!targetDb) return;
+
+  indexedDbRef = targetDb;
+  dbBackedEntities = new WeakSet<object>();
+  userByIdIndex.clear();
+  userByEmailIndex.clear();
+  userByReferralIndex.clear();
+  postByIdIndex.clear();
+  communityByIdIndex.clear();
+  reelByIdIndex.clear();
+
+  if (Array.isArray(targetDb.users)) {
+    for (const user of targetDb.users) {
+      if (user && user.id) {
+        dbBackedEntities.add(user);
+        userByIdIndex.set(user.id, user);
+        if (user.email && typeof user.email === 'string') {
+          const lower = user.email.toLowerCase().trim();
+          if (lower) userByEmailIndex.set(lower, user);
+        }
+        if (user.referralCode && typeof user.referralCode === 'string') {
+          const ref = user.referralCode.trim();
+          if (ref) userByReferralIndex.set(ref, user);
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(targetDb.posts)) {
+    for (const post of targetDb.posts) {
+      if (post && post.id) {
+        dbBackedEntities.add(post);
+        postByIdIndex.set(post.id, post);
+      }
+    }
+  }
+
+  if (Array.isArray(targetDb.communities)) {
+    for (const comm of targetDb.communities) {
+      if (comm && comm.id) {
+        dbBackedEntities.add(comm);
+        communityByIdIndex.set(comm.id, comm);
+      }
+    }
+  }
+
+  if (Array.isArray(targetDb.reels)) {
+    for (const reel of targetDb.reels) {
+      if (reel && reel.id) {
+        dbBackedEntities.add(reel);
+        reelByIdIndex.set(reel.id, reel);
+      }
+    }
+  }
+
+  // Synchronize index hooks to Smart Feed recommendation engine (scoped to targetDb)
+  setSmartFeedIndexHooks({
+    indexedDb: targetDb,
+    userByIdIndex,
+    postByIdIndex,
+    reelByIdIndex,
+    communityByIdIndex
+  });
+}
+
+// Accessor helpers (O(1) average lookup with stale-reference protection and safe fallback)
+export function getUserById(userId?: string, db?: DBStructure): UserSession | undefined {
+  if (!userId || typeof userId !== 'string') return undefined;
+  const cleanId = userId.startsWith('Bearer ') ? userId.slice(7).trim() : userId.trim();
+  if (!cleanId) return undefined;
+  const targetDb = db || cachedDB || indexedDbRef;
+  if (!db || db === cachedDB || db === indexedDbRef) {
+    const indexed = userByIdIndex.get(cleanId);
+    if (indexed) {
+      if (!targetDb || !Array.isArray(targetDb.users) || !dbBackedEntities.has(indexed) || targetDb.users.includes(indexed)) {
+        return indexed;
+      }
+      removeUserFromIndex(indexed, indexed.email, indexed.referralCode);
+      return undefined;
+    }
+  }
+  return targetDb?.users?.find(u => u && u.id === cleanId);
+}
+
+export function getUserByEmail(email?: string, db?: DBStructure): UserSession | undefined {
+  if (!email || typeof email !== 'string') return undefined;
+  const lower = email.toLowerCase().trim();
+  if (!lower) return undefined;
+  const targetDb = db || cachedDB || indexedDbRef;
+  if (!db || db === cachedDB || db === indexedDbRef) {
+    const indexed = userByEmailIndex.get(lower);
+    if (indexed) {
+      if (
+        indexed.email?.toLowerCase().trim() === lower &&
+        (!targetDb || !Array.isArray(targetDb.users) || !dbBackedEntities.has(indexed) || targetDb.users.includes(indexed))
+      ) {
+        return indexed;
+      }
+      userByEmailIndex.delete(lower);
+    }
+  }
+  return targetDb?.users?.find(u => u && u.email && u.email.toLowerCase().trim() === lower);
+}
+
+export function getUserByReferralCode(code?: string, db?: DBStructure): UserSession | undefined {
+  if (!code || typeof code !== 'string') return undefined;
+  const clean = code.trim();
+  if (!clean) return undefined;
+  const targetDb = db || cachedDB || indexedDbRef;
+  if (!db || db === cachedDB || db === indexedDbRef) {
+    const indexed = userByReferralIndex.get(clean);
+    if (indexed) {
+      if (
+        indexed.referralCode?.trim() === clean &&
+        (!targetDb || !Array.isArray(targetDb.users) || !dbBackedEntities.has(indexed) || targetDb.users.includes(indexed))
+      ) {
+        return indexed;
+      }
+      userByReferralIndex.delete(clean);
+    }
+  }
+  return targetDb?.users?.find(u => u && u.referralCode && u.referralCode.trim() === clean);
+}
+
+export function getPostById(postId?: string, db?: DBStructure): any | undefined {
+  if (!postId || typeof postId !== 'string') return undefined;
+  const cleanId = postId.trim();
+  if (!cleanId) return undefined;
+  const targetDb = db || cachedDB || indexedDbRef;
+  if (!db || db === cachedDB || db === indexedDbRef) {
+    const indexed = postByIdIndex.get(cleanId);
+    if (indexed) {
+      if (!targetDb || !Array.isArray(targetDb.posts) || !dbBackedEntities.has(indexed) || targetDb.posts.includes(indexed)) {
+        return indexed;
+      }
+      postByIdIndex.delete(cleanId);
+      return undefined;
+    }
+  }
+  return targetDb?.posts?.find(p => p && p.id === cleanId);
+}
+
+export function getReelById(reelId?: string, db?: DBStructure): ReelVideo | undefined {
+  if (!reelId || typeof reelId !== 'string') return undefined;
+  const cleanId = reelId.trim();
+  if (!cleanId) return undefined;
+  const targetDb = db || cachedDB || indexedDbRef;
+  if (!db || db === cachedDB || db === indexedDbRef) {
+    const indexed = reelByIdIndex.get(cleanId);
+    if (indexed) {
+      if (!targetDb || !Array.isArray(targetDb.reels) || !dbBackedEntities.has(indexed) || targetDb.reels.includes(indexed)) {
+        return indexed;
+      }
+      reelByIdIndex.delete(cleanId);
+      return undefined;
+    }
+  }
+  return targetDb?.reels?.find(r => r && r.id === cleanId);
+}
+
+export function getCommunityById(communityId?: string, db?: DBStructure): CommunityRecord | undefined {
+  if (!communityId || typeof communityId !== 'string') return undefined;
+  const cleanId = communityId.trim();
+  if (!cleanId) return undefined;
+  const targetDb = db || cachedDB || indexedDbRef;
+  if (!db || db === cachedDB || db === indexedDbRef) {
+    const indexed = communityByIdIndex.get(cleanId);
+    if (indexed) {
+      if (!targetDb || !Array.isArray(targetDb.communities) || !dbBackedEntities.has(indexed) || targetDb.communities.includes(indexed)) {
+        return indexed;
+      }
+      communityByIdIndex.delete(cleanId);
+      return undefined;
+    }
+  }
+  return targetDb?.communities?.find(c => c && c.id === cleanId);
+}
+
+// Incremental index maintenance helpers
+export function indexUser(user: UserSession): void {
+  if (!user || !user.id) return;
+  if (cachedDB?.users?.includes(user) || indexedDbRef?.users?.includes(user)) {
+    dbBackedEntities.add(user);
+  }
+  userByIdIndex.set(user.id, user);
+
+  const newEmailKey = (user.email && typeof user.email === 'string') ? user.email.toLowerCase().trim() : '';
+  for (const [k, u] of userByEmailIndex.entries()) {
+    if (u && (u === user || u.id === user.id) && k !== newEmailKey) {
+      userByEmailIndex.delete(k);
+    }
+  }
+  if (newEmailKey) {
+    userByEmailIndex.set(newEmailKey, user);
+  }
+
+  const newRefKey = (user.referralCode && typeof user.referralCode === 'string') ? user.referralCode.trim() : '';
+  for (const [k, u] of userByReferralIndex.entries()) {
+    if (u && (u === user || u.id === user.id) && k !== newRefKey) {
+      userByReferralIndex.delete(k);
+    }
+  }
+  if (newRefKey) {
+    userByReferralIndex.set(newRefKey, user);
+  }
+}
+
+export function removeUserFromIndex(userOrId: UserSession | string, emailToRemove?: string, referralToRemove?: string): void {
+  const userId = typeof userOrId === 'string' ? userOrId.trim() : userOrId?.id?.trim();
+  if (!userId) return;
+  const existing = userByIdIndex.get(userId) || (typeof userOrId === 'object' ? userOrId : undefined);
+  userByIdIndex.delete(userId);
+
+  if (emailToRemove && typeof emailToRemove === 'string') {
+    const cleanEmail = emailToRemove.toLowerCase().trim();
+    if (cleanEmail && userByEmailIndex.get(cleanEmail)?.id === userId) {
+      userByEmailIndex.delete(cleanEmail);
+    }
+  }
+  if (existing?.email && typeof existing.email === 'string') {
+    const existingEmail = existing.email.toLowerCase().trim();
+    if (existingEmail && userByEmailIndex.get(existingEmail)?.id === userId) {
+      userByEmailIndex.delete(existingEmail);
+    }
+  }
+  for (const [k, u] of userByEmailIndex.entries()) {
+    if (u && (u === existing || u.id === userId)) {
+      userByEmailIndex.delete(k);
+    }
+  }
+
+  if (referralToRemove && typeof referralToRemove === 'string') {
+    const cleanRef = referralToRemove.trim();
+    if (cleanRef && userByReferralIndex.get(cleanRef)?.id === userId) {
+      userByReferralIndex.delete(cleanRef);
+    }
+  }
+  if (existing?.referralCode && typeof existing.referralCode === 'string') {
+    const existingRef = existing.referralCode.trim();
+    if (existingRef && userByReferralIndex.get(existingRef)?.id === userId) {
+      userByReferralIndex.delete(existingRef);
+    }
+  }
+  for (const [k, u] of userByReferralIndex.entries()) {
+    if (u && (u === existing || u.id === userId)) {
+      userByReferralIndex.delete(k);
+    }
+  }
+}
+
+export function indexPost(post: any): void {
+  if (!post || !post.id) return;
+  if (cachedDB?.posts?.includes(post) || indexedDbRef?.posts?.includes(post)) {
+    dbBackedEntities.add(post);
+  }
+  postByIdIndex.set(post.id, post);
+}
+
+export function removePostFromIndex(postId: string): void {
+  if (!postId) return;
+  postByIdIndex.delete(postId.trim());
+}
+
+export function indexReel(reel: ReelVideo): void {
+  if (!reel || !reel.id) return;
+  if (cachedDB?.reels?.includes(reel) || indexedDbRef?.reels?.includes(reel)) {
+    dbBackedEntities.add(reel);
+  }
+  reelByIdIndex.set(reel.id, reel);
+}
+
+export function removeReelFromIndex(reelId: string): void {
+  if (!reelId) return;
+  reelByIdIndex.delete(reelId.trim());
+}
+
+export function indexCommunity(community: CommunityRecord): void {
+  if (!community || !community.id) return;
+  if (cachedDB?.communities?.includes(community) || indexedDbRef?.communities?.includes(community)) {
+    dbBackedEntities.add(community);
+  }
+  communityByIdIndex.set(community.id, community);
+}
+
+export function removeCommunityFromIndex(communityId: string): void {
+  if (!communityId) return;
+  communityByIdIndex.delete(communityId.trim());
+  removeCommunityMembershipFromIndex(communityId);
 }
 
 interface FirestoreSyncQueueItem {
@@ -3886,6 +4334,7 @@ function loadPersistentSyncQueue(): void {
 }
 
 function savePersistentSyncQueue(): void {
+  if (isTestEnv) return;
   if (queueSaveTimeout) clearTimeout(queueSaveTimeout);
   queueSaveTimeout = setTimeout(() => {
     try {
@@ -3900,6 +4349,7 @@ function savePersistentSyncQueue(): void {
 }
 
 function saveDeadLetterQueue(): void {
+  if (isTestEnv) return;
   if (deadLetterSaveTimeout) clearTimeout(deadLetterSaveTimeout);
   deadLetterSaveTimeout = setTimeout(() => {
     try {
@@ -4005,25 +4455,31 @@ async function safeCloudSync(
   docId: string,
   data?: any
 ): Promise<void> {
+  const normCol = normalizeFirestoreCollection(collection);
+  clearFirestoreDirty(normCol, docId);
+  if (isTestEnv) {
+    dequeueFirestoreSync(normCol, docId);
+    return;
+  }
   const timestamp = Date.now();
   const sanitizedData = data !== undefined ? sanitizeFirestorePayload(data) : undefined;
   if (!cloudDb.isActive) {
-    enqueueFirestoreSync(op, collection, docId, sanitizedData, 'Cloud DB adapter is inactive', timestamp);
+    enqueueFirestoreSync(op, normCol, docId, sanitizedData, 'Cloud DB adapter is inactive', timestamp);
     return;
   }
   try {
     if (op === 'set') {
-      await cloudDb.setDoc(collection, docId, sanitizedData || {});
+      await cloudDb.setDoc(normCol, docId, sanitizedData || {});
     } else if (op === 'update') {
-      await cloudDb.updateDoc(collection, docId, sanitizedData || {});
+      await cloudDb.updateDoc(normCol, docId, sanitizedData || {});
     } else if (op === 'delete') {
-      await cloudDb.deleteDoc(collection, docId);
+      await cloudDb.deleteDoc(normCol, docId);
     }
-    dequeueFirestoreSync(collection, docId);
+    dequeueFirestoreSync(normCol, docId);
   } catch (err: any) {
     const errorMsg = String(err?.message || err);
-    console.warn(`⚠️ [CloudSync Non-blocking Error] ${collection}/${docId}: ${errorMsg}. Stored in persistent queue.`);
-    enqueueFirestoreSync(op, collection, docId, sanitizedData, errorMsg, timestamp);
+    console.warn(`⚠️ [CloudSync Non-blocking Error] ${normCol}/${docId}: ${errorMsg}. Stored in persistent queue.`);
+    enqueueFirestoreSync(op, normCol, docId, sanitizedData, errorMsg, timestamp);
   }
 }
 
@@ -4076,12 +4532,21 @@ async function processPersistentSyncQueue(): Promise<{ processed: number; failed
           const liveDb = loadDB();
           const propName = getDbPropertyForCollection(currentQueueItem.collection);
           const collectionData = (liveDb as any)[propName];
-          if (Array.isArray(collectionData)) {
-            const liveDoc = collectionData.find((d: any) => d && d.id === currentQueueItem.docId);
-            if (liveDoc) {
-              const { id, ...docWithoutId } = liveDoc;
-              payload = docWithoutId;
-            }
+          let liveDoc: any = undefined;
+          if (propName === 'users') {
+            liveDoc = getUserById(currentQueueItem.docId, liveDb);
+          } else if (propName === 'posts') {
+            liveDoc = getPostById(currentQueueItem.docId, liveDb);
+          } else if (propName === 'reels') {
+            liveDoc = getReelById(currentQueueItem.docId, liveDb);
+          } else if (propName === 'communities') {
+            liveDoc = getCommunityById(currentQueueItem.docId, liveDb);
+          } else if (Array.isArray(collectionData)) {
+            liveDoc = collectionData.find((d: any) => d && d.id === currentQueueItem.docId);
+          }
+          if (liveDoc) {
+            const { id, ...docWithoutId } = liveDoc;
+            payload = docWithoutId;
           }
         }
 
@@ -4158,22 +4623,218 @@ async function processPersistentSyncQueue(): Promise<{ processed: number; failed
 
 let saveDBTimeout: NodeJS.Timeout | null = null;
 let firestoreSyncTimeout: NodeJS.Timeout | null = null;
+let targetedSyncTimeout: NodeJS.Timeout | null = null;
+let isProcessingTargetedSync = false;
 let lastCloudSyncTimestamp: string | null = null;
 
-export function writeDatabaseFilesAtomic(data: DBStructure): void {
-  const jsonStr = JSON.stringify(data, null, 2);
+export async function processTargetedFirestoreSync(): Promise<{ synced: number; deleted: number; remaining: number }> {
+  if (!cloudDb.isActive) {
+    return { synced: 0, deleted: 0, remaining: firestoreDirtySet.size + firestoreDeletedSet.size };
+  }
 
-  // 1. Durable atomic primary write (write to tmp, fsync, rename)
-  const fd = fs.openSync(DB_TMP_PATH, 'w');
+  // Centralized safety guard: If database recovery is pending/failed on ephemeral container, refuse to upload forward
+  if (!isAuthoritativeDatabaseReady && !hasValidPersistentDatabase()) {
+    console.warn('🛡️ [processTargetedFirestoreSync Blocked]: Cloud sync locked in Recovery Mode (isAuthoritativeDatabaseReady === false). Refusing to upload to prevent cloud data overwrite.');
+    return { synced: 0, deleted: 0, remaining: firestoreDirtySet.size + firestoreDeletedSet.size };
+  }
+
+  if (firestoreDirtySet.size === 0 && firestoreDeletedSet.size === 0) {
+    return { synced: 0, deleted: 0, remaining: 0 };
+  }
+
+  if (isProcessingTargetedSync) {
+    return { synced: 0, deleted: 0, remaining: firestoreDirtySet.size + firestoreDeletedSet.size };
+  }
+
+  isProcessingTargetedSync = true;
+  let synced = 0;
+  let deleted = 0;
+
   try {
-    fs.writeSync(fd, jsonStr, 0, 'utf-8');
+    const dirtySnapshot = Array.from(firestoreDirtySet);
+    const deletedSnapshot = Array.from(firestoreDeletedSet);
+
+    // Clear snapshot entries from global sets now
+    for (const key of dirtySnapshot) firestoreDirtySet.delete(key);
+    for (const key of deletedSnapshot) firestoreDeletedSet.delete(key);
+
+    const liveDb = cachedDB || loadDB();
+
+    // 1. Process explicit deletions
+    for (const key of deletedSnapshot) {
+      const colonIdx = key.indexOf(':');
+      if (colonIdx === -1) continue;
+      const col = key.substring(0, colonIdx);
+      const docId = key.substring(colonIdx + 1);
+
+      try {
+        await safeCloudSync('delete', col, docId);
+        const propName = getDbPropertyForCollection(col);
+        if (lastSyncedCache[propName as keyof typeof lastSyncedCache]) {
+          (lastSyncedCache[propName as keyof typeof lastSyncedCache] as Map<string, string>).delete(docId);
+        }
+        deleted++;
+      } catch (delErr) {
+        console.error(`Error in targeted delete for ${key}:`, delErr);
+      }
+    }
+
+    // 2. Process dirty items
+    for (const key of dirtySnapshot) {
+      if (deletedSnapshot.includes(key)) continue;
+
+      const colonIdx = key.indexOf(':');
+      if (colonIdx === -1) continue;
+      const col = key.substring(0, colonIdx);
+      const docId = key.substring(colonIdx + 1);
+
+      try {
+        const propName = getDbPropertyForCollection(col);
+        const collectionData = (liveDb as any)[propName];
+
+        let targetDoc: any = null;
+        if (propName === 'socialShareSettings') {
+          targetDoc = liveDb.socialShareSettings;
+        } else if (propName === 'users') {
+          targetDoc = getUserById(docId, liveDb);
+        } else if (propName === 'posts') {
+          targetDoc = getPostById(docId, liveDb);
+        } else if (propName === 'reels') {
+          targetDoc = getReelById(docId, liveDb);
+        } else if (propName === 'communities') {
+          targetDoc = getCommunityById(docId, liveDb);
+        } else if (Array.isArray(collectionData)) {
+          targetDoc = collectionData.find((item: any) => item && item.id === docId);
+        }
+
+        if (!targetDoc) {
+          // Document was removed from memory/disk -> issue targeted delete
+          await safeCloudSync('delete', col, docId);
+          if (lastSyncedCache[propName as keyof typeof lastSyncedCache]) {
+            (lastSyncedCache[propName as keyof typeof lastSyncedCache] as Map<string, string>).delete(docId);
+          }
+          deleted++;
+        } else {
+          const { id, ...docWithoutId } = targetDoc;
+          if (col === 'users' && docWithoutId.avatar && typeof docWithoutId.avatar === 'string' && docWithoutId.avatar.startsWith('data:') && docWithoutId.avatar.length > 500000) {
+            docWithoutId.avatar = '👤';
+          }
+          await safeCloudSync('set', col, docId, docWithoutId);
+          if (lastSyncedCache[propName as keyof typeof lastSyncedCache]) {
+            (lastSyncedCache[propName as keyof typeof lastSyncedCache] as Map<string, string>).set(docId, JSON.stringify(targetDoc));
+          }
+          synced++;
+        }
+      } catch (syncErr) {
+        console.error(`Error in targeted sync for ${key}:`, syncErr);
+      }
+    }
+
+    if (synced > 0 || deleted > 0) {
+      lastCloudSyncTimestamp = new Date().toISOString();
+      console.log(`🎯 [Targeted Firestore Sync] Synced ${synced} doc(s), deleted ${deleted} doc(s). Remaining dirty: ${firestoreDirtySet.size}`);
+    }
+
+    if (persistentSyncQueue.size > 0 && !isProcessingSyncQueue) {
+      processPersistentSyncQueue().catch(() => {});
+    }
+  } finally {
+    isProcessingTargetedSync = false;
+  }
+
+  return { synced, deleted, remaining: firestoreDirtySet.size + firestoreDeletedSet.size };
+}
+
+export const BACKUP_MIN_INTERVAL_MS = 5000;
+let lastBackupWriteTimestamp = 0;
+let dbMutationGeneration = 0;
+let lastPersistedGeneration = 0;
+let skippedRedundantDebounceCount = 0;
+let totalAtomicPersistenceCount = 0;
+let totalBackupPersistenceCount = 0;
+
+export function getPersistenceDiagnostics() {
+  return {
+    dbMutationGeneration,
+    lastPersistedGeneration,
+    skippedRedundantDebounceCount,
+    totalAtomicPersistenceCount,
+    totalBackupPersistenceCount,
+    lastBackupWriteTimestamp,
+    backupMinIntervalMs: BACKUP_MIN_INTERVAL_MS
+  };
+}
+
+export function setLastBackupWriteTimestampForTest(ts: number): void {
+  lastBackupWriteTimestamp = ts;
+}
+
+export interface AtomicWriteOptions {
+  dbFilePath?: string;
+  dbTmpPath?: string;
+  dbBackupPath?: string;
+  dbBackupTmpPath?: string;
+  forceBackup?: boolean;
+  allowInTest?: boolean;
+}
+
+export interface AtomicWriteResult {
+  primaryWritten: boolean;
+  backupWritten: boolean;
+  serializedBytes: number;
+}
+
+function isBackupFileValid(backupPath: string): boolean {
+  try {
+    if (!fs.existsSync(backupPath)) return false;
+    const st = fs.statSync(backupPath);
+    if (!st.isFile() || st.size < 10) return false;
+    const fd = fs.openSync(backupPath, 'r');
+    try {
+      const headBuf = Buffer.alloc(1);
+      const tailBuf = Buffer.alloc(1);
+      fs.readSync(fd, headBuf, 0, 1, 0);
+      fs.readSync(fd, tailBuf, 0, 1, Math.max(0, st.size - 1));
+      const firstChar = headBuf.toString('utf-8').trim();
+      const lastChar = tailBuf.toString('utf-8').trim();
+      return firstChar === '{' && (lastChar === '}' || lastChar === '');
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+export function writeDatabaseFilesAtomic(
+  data: DBStructure,
+  options?: AtomicWriteOptions
+): AtomicWriteResult {
+  totalAtomicPersistenceCount++;
+  if (isTestEnv && !options?.allowInTest) {
+    return { primaryWritten: false, backupWritten: false, serializedBytes: 0 };
+  }
+
+  const targetDbPath = options?.dbFilePath || DB_FILE_PATH;
+  const targetDbTmpPath = options?.dbTmpPath || DB_TMP_PATH;
+  const targetBakPath = options?.dbBackupPath || DB_BACKUP_PATH;
+  const targetBakTmpPath = options?.dbBackupTmpPath || DB_BACKUP_TMP_PATH;
+
+  // Step A — Serialize exactly once
+  const serialized = JSON.stringify(data, null, 2);
+  const serializedBytes = Buffer.byteLength(serialized, 'utf-8');
+
+  // Step B — Durable atomic primary write (temporary file -> write -> fsync -> atomic rename)
+  const fd = fs.openSync(targetDbTmpPath, 'w');
+  try {
+    fs.writeSync(fd, serialized, 0, 'utf-8');
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);
   }
-  fs.renameSync(DB_TMP_PATH, DB_FILE_PATH);
+  fs.renameSync(targetDbTmpPath, targetDbPath);
   try {
-    const dirFd = fs.openSync(path.dirname(DB_FILE_PATH), 'r');
+    const dirFd = fs.openSync(path.dirname(targetDbPath), 'r');
     try {
       fs.fsyncSync(dirFd);
     } finally {
@@ -4181,26 +4842,51 @@ export function writeDatabaseFilesAtomic(data: DBStructure): void {
     }
   } catch {}
 
-  // 2. Durable atomic backup replacement (write to tmp, fsync, rename)
-  const bakFd = fs.openSync(DB_BACKUP_TMP_PATH, 'w');
-  try {
-    fs.writeSync(bakFd, jsonStr, 0, 'utf-8');
-    fs.fsyncSync(bakFd);
-  } finally {
-    fs.closeSync(bakFd);
-  }
-  fs.renameSync(DB_BACKUP_TMP_PATH, DB_BACKUP_PATH);
-  try {
-    const dirFd = fs.openSync(path.dirname(DB_BACKUP_PATH), 'r');
+  // Step C — Atomic backup via filesystem copy without a second V8 serialization
+  const now = Date.now();
+  const isCustomTestPath = Boolean(options?.dbBackupPath);
+  const backupValid = isBackupFileValid(targetBakPath);
+  const intervalElapsed = (now - lastBackupWriteTimestamp) >= BACKUP_MIN_INTERVAL_MS;
+
+  const shouldWriteBackup =
+    options?.forceBackup === true ||
+    !backupValid ||
+    intervalElapsed ||
+    (isCustomTestPath && options?.forceBackup !== false);
+
+  let backupWritten = false;
+  if (shouldWriteBackup) {
+    fs.copyFileSync(targetDbPath, targetBakTmpPath);
     try {
-      fs.fsyncSync(dirFd);
-    } finally {
-      fs.closeSync(dirFd);
-    }
-  } catch {}
+      const bakFd = fs.openSync(targetBakTmpPath, 'r+');
+      try {
+        fs.fsyncSync(bakFd);
+      } finally {
+        fs.closeSync(bakFd);
+      }
+    } catch {}
+    fs.renameSync(targetBakTmpPath, targetBakPath);
+    try {
+      const dirFd = fs.openSync(path.dirname(targetBakPath), 'r');
+      try {
+        fs.fsyncSync(dirFd);
+      } finally {
+        fs.closeSync(dirFd);
+      }
+    } catch {}
+    lastBackupWriteTimestamp = now;
+    totalBackupPersistenceCount++;
+    backupWritten = true;
+  }
+
+  return { primaryWritten: true, backupWritten, serializedBytes };
 }
 
-function saveDB(data: DBStructure, immediate: boolean = false) {
+export function saveDB(
+  data: DBStructure,
+  immediate: boolean = false,
+  dirtyEntity?: { collection: string; id: string } | Array<{ collection: string; id: string }>
+) {
   if (!data || !Array.isArray(data.users) || data.users.length === 0) {
     console.error('⚠️ REFUSING TO SAVE EMPTY/CORRUPTED DB OBJECT TO DISK!');
     return;
@@ -4212,39 +4898,76 @@ function saveDB(data: DBStructure, immediate: boolean = false) {
     return;
   }
 
+  // Mark optional dirty entities if passed directly to saveDB
+  if (dirtyEntity) {
+    if (Array.isArray(dirtyEntity)) {
+      for (const e of dirtyEntity) {
+        if (e && e.collection && e.id) markFirestoreDirty(e.collection, e.id);
+      }
+    } else if (dirtyEntity.collection && dirtyEntity.id) {
+      markFirestoreDirty(dirtyEntity.collection, dirtyEntity.id);
+    }
+  }
+
+  const prevDB = cachedDB;
   cachedDB = data;
-  
-  const doSave = () => {
+  if (
+    prevDB !== data ||
+    userByIdIndex.size !== (data.users || []).length ||
+    postByIdIndex.size !== (data.posts || []).length ||
+    reelByIdIndex.size !== (data.reels || []).length ||
+    communityByIdIndex.size !== (data.communities || []).length
+  ) {
+    rebuildHotLookupIndexes(data);
+  }
+
+  dbMutationGeneration++;
+  const generation = dbMutationGeneration;
+
+  const doSave = (targetGeneration: number) => {
+    if (targetGeneration <= lastPersistedGeneration) {
+      skippedRedundantDebounceCount++;
+      return;
+    }
     try {
       writeDatabaseFilesAtomic(data);
+      if (targetGeneration > lastPersistedGeneration) {
+        lastPersistedGeneration = targetGeneration;
+      }
     } catch (err) {
       console.error('Error in atomic saveDB:', err);
     }
   };
 
   if (immediate) {
-    if (saveDBTimeout) clearTimeout(saveDBTimeout);
-    doSave();
-    if (firestoreSyncTimeout) clearTimeout(firestoreSyncTimeout);
-    uploadToFirestore(data).catch(err => {
-      console.error('Error uploading db changes to Cloud Firestore:', err);
+    if (saveDBTimeout) {
+      clearTimeout(saveDBTimeout);
+      saveDBTimeout = null;
+    }
+    doSave(generation);
+    if (targetedSyncTimeout) clearTimeout(targetedSyncTimeout);
+    processTargetedFirestoreSync().catch(err => {
+      console.error('Error in targeted cloud sync (immediate):', err);
     });
   } else {
     if (saveDBTimeout) clearTimeout(saveDBTimeout);
-    saveDBTimeout = setTimeout(doSave, 150);
+    saveDBTimeout = setTimeout(() => {
+      saveDBTimeout = null;
+      doSave(generation);
+    }, 150);
 
-    // Fast debounced Cloud Firestore synchronization (500ms) so data is never lost during republishes or restarts
-    if (firestoreSyncTimeout) clearTimeout(firestoreSyncTimeout);
-    firestoreSyncTimeout = setTimeout(() => {
-      uploadToFirestore(data).catch(err => {
-        console.error('Error uploading db changes to Cloud Firestore:', err);
+    // Fast debounced Cloud Firestore targeted sync (300ms)
+    if (targetedSyncTimeout) clearTimeout(targetedSyncTimeout);
+    targetedSyncTimeout = setTimeout(() => {
+      processTargetedFirestoreSync().catch(err => {
+        console.error('Error in targeted cloud sync (debounced):', err);
       });
-    }, 500);
+    }, 300);
   }
 }
 
-async function uploadToFirestore(data: DBStructure) {
-  if (!cloudDb.isActive) {
+export async function uploadToFirestore(data: DBStructure) {
+  if (isTestEnv || !cloudDb.isActive) {
     return;
   }
   
@@ -5203,6 +5926,7 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
       cachedDB = mergedDB;
       writeDatabaseFilesAtomic(mergedDB);
       initLastSyncedCache(mergedDB);
+      rebuildHotLookupIndexes(mergedDB);
       lastCloudSyncTimestamp = new Date().toISOString();
       isAuthoritativeDatabaseReady = true;
       recoveryFailureReason = null;
@@ -5218,6 +5942,7 @@ async function syncFromFirestore(): Promise<{ success: boolean; reason?: string;
       console.log('🌱 Cloud Firestore confirmed empty with 0 errors. Seeding baseline records to Cloud...');
       const seedDB = localDB;
       initLastSyncedCache(seedDB);
+      rebuildHotLookupIndexes(seedDB);
       await uploadToFirestore(seedDB);
       lastCloudSyncTimestamp = new Date().toISOString();
       isAuthoritativeDatabaseReady = true;
@@ -5315,7 +6040,7 @@ async function sendPushNotificationToUser(userId: string, payload: { title: stri
   if (!userId) return;
   try {
     const db = loadDB();
-    const user = db.users.find(u => u.id === userId);
+    const user = getUserById(userId, db);
     if (!user || !user.pushSubscriptions || user.pushSubscriptions.length === 0) return;
 
     const notificationPayload = JSON.stringify({
@@ -5385,7 +6110,7 @@ app.post('/api/push/subscribe', (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi nahanap ang user.' });
   }
@@ -5427,7 +6152,7 @@ app.post('/api/push/unsubscribe', (req, res) => {
 
   if (userId) {
     const db = loadDB();
-    const user = db.users.find(u => u.id === userId);
+    const user = getUserById(userId, db);
     if (user && user.pushSubscriptions) {
       user.pushSubscriptions = user.pushSubscriptions.filter(s => s.endpoint !== endpoint);
       saveDB(db);
@@ -5445,7 +6170,7 @@ app.post('/api/push/test', async (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user || !user.pushSubscriptions || user.pushSubscriptions.length === 0) {
     return res.status(400).json({ error: 'Wala pang aktibong notification subscription ang device na ito. I-enable muna ang notifications.' });
   }
@@ -5470,7 +6195,7 @@ app.post('/api/push/test', async (req, res) => {
 const demoUsers: UserSession[] = [];
 
 // Helper to look up a user by validated user ID in demoUsers (RAM) first, then db.users (Production DB)
-function findUserInSystem(userId: string, db: DBStructure): UserSession | undefined {
+export function findUserInSystem(userId: string, db?: DBStructure): UserSession | undefined {
   if (!userId || typeof userId !== 'string') return undefined;
   const cleanId = userId.startsWith('Bearer ') ? userId.slice(7).trim() : userId.trim();
   if (!cleanId) return undefined;
@@ -5478,7 +6203,10 @@ function findUserInSystem(userId: string, db: DBStructure): UserSession | undefi
   const demoUser = demoUsers.find(u => u.id === cleanId);
   if (demoUser) return demoUser;
 
-  return db.users.find(u => u.id === cleanId);
+  const targetDb = db || cachedDB || indexedDbRef || undefined;
+  if (!targetDb || !Array.isArray(targetDb.users)) return undefined;
+
+  return getUserById(cleanId, targetDb);
 }
 
 // ENDPOINT TO AUTOMATICALLY PURGE DEMO USER DATA FROM RAM MEMORY WHEN USER LEAVES DEMO MODE/PAGE
@@ -5517,7 +6245,7 @@ app.post('/api/auth/register', (req, res) => {
   const db = loadDB();
   const lowerEmail = email.toLowerCase().trim();
 
-  const userExistsReal = db.users.find(u => u.email.toLowerCase() === lowerEmail);
+  const userExistsReal = getUserByEmail(lowerEmail, db);
   const userExistsDemo = demoUsers.find(u => u.email.toLowerCase() === lowerEmail);
   if (userExistsReal || userExistsDemo) {
     return res.status(400).json({ error: 'Ang email na ito ay may rehistradong account na.' });
@@ -5535,7 +6263,7 @@ app.post('/api/auth/register', (req, res) => {
     if (!db.registeredDevices) db.registeredDevices = [];
     const existingDevice = db.registeredDevices.find(d => d.id === deviceId && d.status === 'active');
     if (existingDevice && existingDevice.boundUserId) {
-      const boundUser = db.users.find(u => u.id === existingDevice.boundUserId);
+      const boundUser = getUserById(existingDevice.boundUserId, db);
       if (boundUser && !boundUser.isBanned) {
         return res.status(400).json({
           error: `⚠️ ONE ACCOUNT PER DEVICE POLICY: Ang device na ito ay mayroon nang nakarehistrong account (${boundUser.email}). Bawal ang maramihang account bawat device alinsunod sa Community Safety Rules. Kung kailangan magpalit ng device, gamitin ang Device Transfer recovery.`,
@@ -5607,7 +6335,7 @@ app.post('/api/auth/register', (req, res) => {
     // SAVE TO PERSISTENT DATABASE AND FIRESTORE!
     if (referralCode) {
       const codeClean = referralCode.trim().toUpperCase();
-      const referrer = db.users.find(u => u.referralCode === codeClean);
+      const referrer = getUserByReferralCode(codeClean, db);
       // STRICT SELF-REFERRAL PREVENTION: Cannot refer self via referralCode or same email
       if (referrer && referrer.id !== userId && referrer.email.toLowerCase() !== lowerEmail) {
         newUser.invitedBy = codeClean;
@@ -5663,6 +6391,11 @@ app.post('/api/auth/register', (req, res) => {
     }
 
     db.users.push(newUser);
+    indexUser(newUser);
+    markFirestoreDirty('users', newUser.id);
+    if (deviceId) {
+      markFirestoreDirty('registered_devices', deviceId);
+    }
     saveDB(db);
   }
 
@@ -5684,7 +6417,7 @@ app.post('/api/auth/login', (req, res) => {
 
   let user = demoUsers.find(u => u.email.toLowerCase() === lowerEmail);
   if (!user) {
-    user = db.users.find(u => u.email.toLowerCase() === lowerEmail);
+    user = getUserByEmail(lowerEmail, db);
   }
 
   if (!user || !verifyPassword(password, user.password)) {
@@ -6135,7 +6868,7 @@ app.post('/api/auth/auto-restore', (req, res) => {
   const db = loadDB();
   const lowerEmail = email.toLowerCase().trim();
 
-  let user = demoUsers.find(u => u.email.toLowerCase() === lowerEmail) || db.users.find(u => u.email.toLowerCase() === lowerEmail);
+  let user = demoUsers.find(u => u.email.toLowerCase() === lowerEmail) || getUserByEmail(lowerEmail, db);
 
   if (!user) {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -6177,6 +6910,7 @@ app.post('/api/auth/auto-restore', (req, res) => {
       demoUsers.push(user);
     } else {
       db.users.push(user);
+      indexUser(user);
       saveDB(db);
     }
   } else {
@@ -6207,7 +6941,7 @@ app.post('/api/auth/google', (req, res) => {
   const db = loadDB();
   const lowerEmail = email.toLowerCase().trim();
 
-  let user = demoUsers.find(u => u.email.toLowerCase() === lowerEmail) || db.users.find(u => u.email.toLowerCase() === lowerEmail);
+  let user = demoUsers.find(u => u.email.toLowerCase() === lowerEmail) || getUserByEmail(lowerEmail, db);
 
   // If user doesn't exist, create it on-the-fly (Sign Up)
   if (!user) {
@@ -6262,7 +6996,7 @@ app.post('/api/auth/google', (req, res) => {
     } else {
       if (referralCode) {
         const codeClean = referralCode.trim().toUpperCase();
-        const referrer = db.users.find(u => u.referralCode === codeClean);
+        const referrer = getUserByReferralCode(codeClean, db);
         if (referrer) {
           user.invitedBy = codeClean;
           referrer.referredFriends.push({
@@ -6284,6 +7018,7 @@ app.post('/api/auth/google', (req, res) => {
         }
       }
       db.users.push(user);
+      indexUser(user);
       saveDB(db);
     }
   }
@@ -6338,7 +7073,7 @@ app.get('/api/user/profile', (req, res) => {
   // By matching referredFriends with their actual current earnings and withdrawals on our DB!
   let isFriendListModified = false;
   const synchronizedReferredFriends = user.referredFriends.map(friend => {
-    const actualFriendUser = db.users.find(u => u.id === friend.id || u.name === friend.name);
+    const actualFriendUser = getUserById(friend.id, db) || db.users.find(u => u.name === friend.name);
     const realSuccessWithdrawals = actualFriendUser && Array.isArray(actualFriendUser.withdrawals)
       ? actualFriendUser.withdrawals.filter((w: any) => w.status === 'success')
       : [];
@@ -6367,7 +7102,7 @@ app.post('/api/user/update-profile', (req, res) => {
 
   const { avatar, name } = req.body;
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang gumagamit.' });
   }
@@ -6398,6 +7133,7 @@ app.post('/api/user/update-profile', (req, res) => {
     });
   }
 
+  markFirestoreDirty('users', user.id);
   saveDB(db);
   const { password: _, ...userSafe } = user as any;
   res.json({ success: true, user: userSafe, message: 'Matagumpay na na-update ang iyong profile!' });
@@ -6411,13 +7147,13 @@ app.post('/api/admin/users/:userId/ban', async (req, res) => {
   }
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === adminId);
+  const admin = getUserById(adminId, db);
   if (!admin || !admin.isAdmin) {
     return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
   }
 
   const { userId } = req.params;
-  const targetUser = db.users.find(u => u.id === userId);
+  const targetUser = getUserById(userId, db);
   if (!targetUser) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -6446,7 +7182,7 @@ app.delete('/api/admin/users/:userId', async (req, res) => {
   }
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === adminId);
+  const admin = getUserById(adminId, db);
   if (!admin || !admin.isAdmin) {
     return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
   }
@@ -6463,6 +7199,7 @@ app.delete('/api/admin/users/:userId', async (req, res) => {
   }
 
   db.users.splice(userIndex, 1);
+  removeUserFromIndex(targetUser, targetUser.email, targetUser.referralCode);
   saveDB(db);
 
   safeCloudSync('delete', 'users', userId);
@@ -6533,6 +7270,7 @@ app.get('/api/reels', (req, res) => {
   const db = loadDB();
   if (!db.reels || db.reels.length === 0) {
     db.reels = [...INITIAL_REELS];
+    rebuildHotLookupIndexes(db);
     saveDB(db);
   }
 
@@ -6571,7 +7309,10 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
   }
 
   const db = loadDB();
-  db.reels = db.reels || [...INITIAL_REELS];
+  if (!db.reels) {
+    db.reels = [...INITIAL_REELS];
+    db.reels.forEach(r => indexReel(r));
+  }
 
   const user = (req as any).user;
   if (!user) {
@@ -6588,7 +7329,7 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
   let verifiedCommunityId: string | undefined = undefined;
   let verifiedCommunityName: string | undefined = undefined;
   if (communityId) {
-    const comm = (db.communities || []).find((c: any) => c.id === communityId);
+    const comm = getCommunityById(communityId, db);
     if (!comm) {
       return res.status(404).json({ error: 'Hindi mahanap ang tinukoy na community.' });
     }
@@ -6661,6 +7402,7 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
     };
 
     db.reels.unshift(newReel);
+    indexReel(newReel);
     saveDB(db);
 
     return res.json({ 
@@ -6696,6 +7438,8 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
   };
 
   db.reels.unshift(newReel);
+  indexReel(newReel);
+  invalidateSmartFeedCache();
   saveDB(db, true);
 
   if (adminReelTags.length > 0) {
@@ -6887,14 +7631,14 @@ app.post('/api/admin/reels/:id/approve', (req, res) => {
 
   const db = loadDB();
   const { id } = req.params;
-  const reel = (db.reels || []).find(r => r.id === id);
+  const reel = getReelById(id, db);
   if (!reel) return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
 
   reel.status = 'approved';
 
   // Deduct 0.50 tokens from the user who submitted this reel
   if (reel.addedByUserId) {
-    const user = db.users.find(u => u.id === reel.addedByUserId);
+    const user = getUserById(reel.addedByUserId, db);
     if (user) {
       user.reelsTokens = Math.max(0, Number(((user.reelsTokens || 0) - 0.5).toFixed(2)));
       user.activityLogs = user.activityLogs || [];
@@ -6926,7 +7670,7 @@ app.post('/api/admin/reels/:id/disapprove', (req, res) => {
   const db = loadDB();
   const { id } = req.params;
   const { reason } = req.body;
-  const reel = (db.reels || []).find(r => r.id === id);
+  const reel = getReelById(id, db);
   if (!reel) return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
 
   reel.status = 'disapproved';
@@ -6934,7 +7678,7 @@ app.post('/api/admin/reels/:id/disapprove', (req, res) => {
 
   // NO TOKENS ARE DEDUCTED FROM USER WHEN REEL IS DISAPPROVED!
   if (reel.addedByUserId) {
-    const user = db.users.find(u => u.id === reel.addedByUserId);
+    const user = getUserById(reel.addedByUserId, db);
     if (user) {
       user.activityLogs = user.activityLogs || [];
       user.activityLogs.unshift({
@@ -6971,11 +7715,14 @@ app.post('/api/admin/reels/subscriptions/:id/approve', (req, res) => {
   const subUserNameLower = sub.userName ? sub.userName.toLowerCase().trim() : '';
   const subUserEmailLower = sub.userEmail ? sub.userEmail.toLowerCase().trim() : '';
 
-  let targetUser = db.users.find(u => 
-    (subUserIdLower && subUserIdLower !== 'guest' && u.id.toLowerCase().trim() === subUserIdLower) ||
-    (subUserEmailLower && u.email && u.email.toLowerCase().trim() === subUserEmailLower) ||
-    (subUserNameLower && subUserNameLower !== 'user' && subUserNameLower !== 'guest user' && u.name.toLowerCase().trim() === subUserNameLower)
-  );
+  let targetUser =
+    (subUserIdLower && subUserIdLower !== 'guest' ? getUserById(sub.userId, db) : undefined) ||
+    (subUserEmailLower ? getUserByEmail(subUserEmailLower, db) : undefined) ||
+    db.users.find(u => 
+      (subUserIdLower && subUserIdLower !== 'guest' && u.id.toLowerCase().trim() === subUserIdLower) ||
+      (subUserEmailLower && u.email && u.email.toLowerCase().trim() === subUserEmailLower) ||
+      (subUserNameLower && subUserNameLower !== 'user' && subUserNameLower !== 'guest user' && u.name.toLowerCase().trim() === subUserNameLower)
+    );
 
   // Fallback: if only 1 regular user matches name
   if (!targetUser && subUserNameLower && subUserNameLower !== 'user' && subUserNameLower !== 'guest user') {
@@ -7029,7 +7776,7 @@ app.post('/api/admin/users/:userId/tokens', (req, res) => {
   const db = loadDB();
   const { userId } = req.params;
   const { tokens } = req.body;
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) return res.status(404).json({ error: 'Hindi mahanap ang user.' });
 
   user.reelsTokens = Math.max(0, Number((Number(tokens) || 0).toFixed(2)));
@@ -7047,8 +7794,11 @@ app.delete('/api/reels/:id', enforceCommunitySafety, (req, res) => {
   }
 
   const db = loadDB();
-  db.reels = db.reels || [...INITIAL_REELS];
-  const reel = db.reels.find(r => r.id === id);
+  if (!db.reels) {
+    db.reels = [...INITIAL_REELS];
+    db.reels.forEach(r => indexReel(r));
+  }
+  const reel = getReelById(id, db);
   if (!reel) {
     return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
   }
@@ -7064,10 +7814,12 @@ app.delete('/api/reels/:id', enforceCommunitySafety, (req, res) => {
   }
 
   db.reels = db.reels.filter(r => r.id !== id);
+  removeReelFromIndex(id);
   if (db.savedReels) {
     db.savedReels = db.savedReels.filter(s => s.reelId !== id);
   }
   onContentDeleted(`reel:${id}`);
+  invalidateSmartFeedCache();
   saveDB(db, true);
 
   safeCloudSync('delete', 'reels', id);
@@ -7081,9 +7833,10 @@ app.post('/api/reels/:id/like', enforceCommunitySafety, (req, res) => {
 
   if (!db.reels) {
     db.reels = [...INITIAL_REELS];
+    db.reels.forEach(r => indexReel(r));
   }
 
-  const reel = db.reels.find(r => r.id === id);
+  const reel = getReelById(id, db);
   if (!reel) {
     return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
   }
@@ -7123,6 +7876,8 @@ app.post('/api/reels/:id/like', enforceCommunitySafety, (req, res) => {
     details: `Nakatanggap ng ₱0.05 reward sa pag-like ng Reel video ("${reel.title || 'Reel Video'}").`
   });
 
+  markFirestoreDirty('reels', reel.id);
+  markFirestoreDirty('users', user.id);
   saveDB(db);
   res.json({ 
     success: true, 
@@ -7139,9 +7894,10 @@ app.post('/api/reels/:id/watch-reward', (req, res) => {
 
   if (!db.reels) {
     db.reels = [...INITIAL_REELS];
+    db.reels.forEach(r => indexReel(r));
   }
 
-  const reel = db.reels.find(r => r.id === id);
+  const reel = getReelById(id, db);
   if (!reel) {
     return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
   }
@@ -7180,6 +7936,8 @@ app.post('/api/reels/:id/watch-reward', (req, res) => {
     details: `Nakatanggap ng ₱0.10 Red Pocket reward dahil sa 100% pagtatapos ng pagpanood sa Reel video ("${reel.title || 'Reel Video'}").`
   });
 
+  markFirestoreDirty('reels', reel.id);
+  markFirestoreDirty('users', user.id);
   saveDB(db, true);
   res.json({ 
     success: true, 
@@ -7194,7 +7952,7 @@ app.post('/api/reels/:id/watch-reward', (req, res) => {
 app.get('/api/reels/:id', (req, res) => {
   const { id } = req.params;
   const db = loadDB();
-  const reel = (db.reels || []).find((r: any) => r.id === id);
+  const reel = getReelById(id, db);
   if (!reel) {
     return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
   }
@@ -7205,7 +7963,7 @@ app.get('/api/reels/:id', (req, res) => {
 app.get('/api/reels/:id/comments', (req, res) => {
   const { id } = req.params;
   const db = loadDB();
-  const reel = (db.reels || []).find((r: any) => r.id === id);
+  const reel = getReelById(id, db);
   if (!reel) {
     return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
   }
@@ -7227,7 +7985,7 @@ app.post('/api/reels/:id/comments', enforceCommunitySafety, (req, res) => {
   const userId = user.id;
 
   const db = loadDB();
-  const reel = (db.reels || []).find((r: any) => r.id === id);
+  const reel = getReelById(id, db);
   if (!reel) {
     return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
   }
@@ -7248,6 +8006,7 @@ app.post('/api/reels/:id/comments', enforceCommunitySafety, (req, res) => {
   reel.comments = reel.comments || [];
   reel.comments.unshift(newComment);
   reel.commentsCount = reel.comments.length;
+  markFirestoreDirty('reels', reel.id);
   saveDB(db);
 
   res.json({ success: true, comment: newComment, comments: reel.comments });
@@ -7257,9 +8016,10 @@ app.post('/api/reels/:id/comments', enforceCommunitySafety, (req, res) => {
 app.post('/api/reels/:id/share', (req, res) => {
   const { id } = req.params;
   const db = loadDB();
-  const reel = (db.reels || []).find((r: any) => r.id === id);
+  const reel = getReelById(id, db);
   if (reel) {
     reel.sharesCount = (reel.sharesCount || 0) + 1;
+    markFirestoreDirty('reels', reel.id);
     saveDB(db);
   }
   res.json({ success: true, sharesCount: reel?.sharesCount || 1 });
@@ -7277,7 +8037,7 @@ app.post('/api/reels/:id/save', enforceCommunitySafety, (req, res) => {
   const userId = user.id;
 
   const db = loadDB();
-  const reel = (db.reels || []).find((r: any) => r.id === id);
+  const reel = getReelById(id, db);
   if (!reel) {
     return res.status(404).json({ error: 'Hindi mahanap ang Reel video.' });
   }
@@ -7395,7 +8155,7 @@ app.get('/api/reels/saved-ids', handleGetSavedReelIds);
 app.get('/api/zone/communities/:communityId/reels', (req, res) => {
   const { communityId } = req.params;
   const db = loadDB();
-  const comm = (db.communities || []).find((c: any) => c.id === communityId);
+  const comm = getCommunityById(communityId, db);
   if (!comm) {
     return res.status(404).json({ error: 'Hindi mahanap ang community.' });
   }
@@ -7448,7 +8208,7 @@ app.get('/api/campaigns', (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'User not found.' });
   }
@@ -7527,7 +8287,7 @@ app.get('/api/admin/campaigns', (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user || !user.isAdmin) {
     return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
   }
@@ -7546,7 +8306,7 @@ app.post('/api/admin/campaigns', (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user || !user.isAdmin) {
     return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
   }
@@ -7574,7 +8334,7 @@ app.delete('/api/admin/campaigns/:id', async (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user || !user.isAdmin) {
     return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
   }
@@ -7606,7 +8366,7 @@ app.get('/api/merchant/ads', (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -7623,7 +8383,7 @@ app.post('/api/merchant/ads', (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -7700,7 +8460,7 @@ app.get('/api/admin/merchant/ads', (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user || !user.isAdmin) {
     return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
   }
@@ -7897,7 +8657,7 @@ app.post('/api/admin/merchant/ads/:id/action', async (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user || !user.isAdmin) {
     return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
   }
@@ -8000,6 +8760,7 @@ app.post('/api/admin/merchant/ads/:id/action', async (req, res) => {
 
   db.posts = db.posts || [];
   db.posts.unshift(sponsorPost);
+  indexPost(sponsorPost);
 
   saveDB(db);
 
@@ -8019,7 +8780,7 @@ app.post('/api/user/task-complete', checkIdempotency, (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang gumagamit.' });
   }
@@ -8071,7 +8832,7 @@ app.post('/api/user/task-complete', checkIdempotency, (req, res) => {
 
   // If this user has a referrer, we also sync their current earnings inside referrer's friend entry!
   if (user.invitedBy) {
-    const referrer = db.users.find(u => u.referralCode === user.invitedBy);
+    const referrer = getUserByReferralCode(user.invitedBy, db);
     if (referrer) {
       const friendEntryIdx = referrer.referredFriends.findIndex(f => f.id === user.id);
       if (friendEntryIdx !== -1) {
@@ -8093,6 +8854,10 @@ app.post('/api/user/task-complete', checkIdempotency, (req, res) => {
     }
   }
 
+  markFirestoreDirty('users', user.id);
+  if (campaignId) {
+    markFirestoreDirty('campaigns', campaignId);
+  }
   saveDB(db, true);
   const { password: _, ...userSafe } = user as any;
   res.json({ user: userSafe });
@@ -8108,7 +8873,7 @@ app.post('/api/user/claim-referral-bonus', (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -8128,7 +8893,7 @@ app.post('/api/user/claim-referral-bonus', (req, res) => {
   }
 
   // Check if they actual reach 100 (sync actual user info)
-  const actualFriend = db.users.find(u => u.id === friendId);
+  const actualFriend = getUserById(friendId, db);
   const realFriendEarnings = actualFriend ? actualFriend.stats.lifetimeEarnings : friend.currentEarnings;
 
   if (realFriendEarnings < 100) {
@@ -8156,6 +8921,7 @@ app.post('/api/user/claim-referral-bonus', (req, res) => {
     details: `Salamat sa pag-akay kay ${friend.name}! Matagumpay nating naitala ang iyong ₱5.00 bonus.`
   });
 
+  markFirestoreDirty('users', user.id);
   saveDB(db, true);
   const { password: _, ...userSafe } = user as any;
   res.json({ user: userSafe });
@@ -8209,7 +8975,7 @@ app.post('/api/user/withdraw', checkIdempotency, (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi maiproseso: User not found.' });
   }
@@ -8251,6 +9017,7 @@ app.post('/api/user/withdraw', checkIdempotency, (req, res) => {
     details: `Humiling ka ng ₱${requestedAmount.toFixed(2)} cashout papunta sa GCash Number: ${gcashNumber}. Naghihintay ito ng pagsusuri ng Admin.`
   });
 
+  markFirestoreDirty('users', user.id);
   saveDB(db, true);
   const { password: _, ...userSafe } = user as any;
   res.json({ user: userSafe });
@@ -8262,7 +9029,7 @@ app.post('/api/user/daily-checkin', checkIdempotency, (req, res) => {
   if (!userId) return res.status(401).json({ error: 'Access Denied.' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) return res.status(404).json({ error: 'User not found.' });
 
   // Allowed for both active and expired users to participate in daily earning features (1.00 check-in reward is in the allowed 0.05-1.99 range)
@@ -8286,6 +9053,7 @@ app.post('/api/user/daily-checkin', checkIdempotency, (req, res) => {
     details: `Pumasok ka ngayong araw at ginawaran ka ng libreng ₱${checkinReward.toFixed(2)}.`
   });
 
+  markFirestoreDirty('users', user.id);
   saveDB(db, true);
   const { password: _, ...userSafe } = user as any;
   res.json({ user: userSafe });
@@ -8297,7 +9065,7 @@ app.get('/api/user/spin-status', (req, res) => {
   if (!userId) return res.status(401).json({ error: 'Access Denied.' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) return res.status(404).json({ error: 'User not found.' });
 
   const now = Date.now();
@@ -8337,7 +9105,7 @@ app.post('/api/user/spin-wheel', checkIdempotency, (req, res) => {
   if (!userId) return res.status(401).json({ error: 'Access Denied.' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) return res.status(404).json({ error: 'User not found.' });
 
   const now = Date.now();
@@ -8394,6 +9162,7 @@ app.post('/api/user/spin-wheel', checkIdempotency, (req, res) => {
       details: 'Binabati kita! Nanalo ka ng libreng 3-Hour access sa Z-oneApp. Gamitin agad ito para mag-view ng campaigns!'
     });
 
+    markFirestoreDirty('users', user.id);
     saveDB(db);
     const { password: _, ...userSafe } = user as any;
     return res.json({
@@ -8404,6 +9173,7 @@ app.post('/api/user/spin-wheel', checkIdempotency, (req, res) => {
     });
   } else {
     // If lost, return message
+    markFirestoreDirty('users', user.id);
     saveDB(db);
     const { password: _, ...userSafe } = user as any;
     return res.json({
@@ -8427,8 +9197,8 @@ app.get('/api/admin/dashboard', (req, res) => {
   }
 
   const db = loadDB();
-  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Wala kang pahintulot na tingnan ang page na ito.' });
   }
 
@@ -8489,8 +9259,8 @@ app.post('/api/admin/withdrawals/:withdrawId/action', (req, res) => {
   }
 
   const db = loadDB();
-  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Pahintulot ay nakareserba lamang sa Admin.' });
   }
 
@@ -8561,6 +9331,7 @@ app.post('/api/admin/withdrawals/:withdrawId/action', (req, res) => {
     return res.status(400).json({ error: 'Maling desisyon. Approve o Decline lang ang pwedeng gawin.' });
   }
 
+  markFirestoreDirty('users', targetUser.id);
   saveDB(db, true);
   res.json({ success: true, message: `Desisyon ay naitala nang matagumpay.` });
 });
@@ -8570,7 +9341,7 @@ app.post('/api/admin/simulate-mock-friend', (req, res) => {
   const { referrerId } = req.body;
   const db = loadDB();
 
-  const referrer = db.users.find(u => u.id === referrerId);
+  const referrer = getUserById(referrerId, db);
   if (!referrer) return res.status(404).json({ error: 'Referrer not found' });
 
   const randomSub = Math.floor(100 + Math.random() * 900);
@@ -8611,6 +9382,7 @@ app.post('/api/admin/simulate-mock-friend', (req, res) => {
   };
 
   db.users.push(mockFriend);
+  indexUser(mockFriend);
 
   // Link in referrer's profile list
   referrer.referredFriends.push({
@@ -8641,7 +9413,7 @@ app.post('/api/admin/simulate-friend-earnings', (req, res) => {
   const db = loadDB();
 
   // Find friend user
-  const friend = db.users.find(u => u.id === friendId);
+  const friend = getUserById(friendId, db);
   if (!friend) return res.status(404).json({ error: 'Kaibigan ay hindi nahanap.' });
 
   // Add earnings to push them over the edges
@@ -8650,7 +9422,7 @@ app.post('/api/admin/simulate-friend-earnings', (req, res) => {
 
   // Sync back to their referrer referredFriends entry
   if (friend.invitedBy) {
-    const referrer = db.users.find(u => u.referralCode === friend.invitedBy);
+    const referrer = getUserByReferralCode(friend.invitedBy, db);
     if (referrer) {
       const entry = referrer.referredFriends.find(f => f.id === friendId);
       if (entry) {
@@ -8701,7 +9473,7 @@ app.post('/api/subscription/request', (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang gumagamit.' });
   }
@@ -8751,12 +9523,12 @@ app.post('/api/admin/subscription/:userId/approve', (req, res) => {
   }
 
   const db = loadDB();
-  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Wala kang pahintulot na gawin ito.' });
   }
 
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -8807,12 +9579,12 @@ app.post('/api/admin/subscription/:userId/decline', (req, res) => {
   }
 
   const db = loadDB();
-  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Wala kang pahintulot na gawin ito.' });
   }
 
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -8892,7 +9664,7 @@ app.post('/api/subscription/submit-payment', (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user account.' });
   }
@@ -9030,8 +9802,8 @@ app.get('/api/admin/subscription-payments', (req, res) => {
   }
 
   const db = loadDB();
-  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Wala kang pahintulot na gawin ito.' });
   }
 
@@ -9049,8 +9821,8 @@ app.post('/api/admin/subscription-payments/:paymentId/approve', (req, res) => {
   }
 
   const db = loadDB();
-  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Wala kang pahintulot na gawin ito.' });
   }
 
@@ -9065,7 +9837,7 @@ app.post('/api/admin/subscription-payments/:paymentId/approve', (req, res) => {
     return res.status(400).json({ error: 'Ang payment submission na ito ay na-approve na dati.' });
   }
 
-  const user = db.users.find(u => u.id === payment.userId);
+  const user = getUserById(payment.userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user account para sa payment na ito.' });
   }
@@ -9141,8 +9913,8 @@ app.post('/api/admin/subscription-payments/:paymentId/reject', (req, res) => {
   }
 
   const db = loadDB();
-  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Wala kang pahintulot na gawin ito.' });
   }
 
@@ -9156,7 +9928,7 @@ app.post('/api/admin/subscription-payments/:paymentId/reject', (req, res) => {
     return res.status(400).json({ error: 'Maaari lamang i-reject ang pending payment submission.' });
   }
 
-  const user = db.users.find(u => u.id === payment.userId);
+  const user = getUserById(payment.userId, db);
   const rejectionReason = (reason || bodyReason) ? String(reason || bodyReason).trim() : 'Hindi tugma ang GCash Reference Number o walang pumasok na pondo.';
 
   payment.status = 'rejected';
@@ -9209,8 +9981,8 @@ app.post('/api/admin/subscription-payments/:paymentId/reject', (req, res) => {
 app.get('/api/admin/db/status', (req, res) => {
   const adminId = req.headers.authorization;
   const db = loadDB();
-  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
   }
 
@@ -9299,8 +10071,8 @@ app.post('/api/admin/db/deadletter/retry', async (req, res) => {
 app.post('/api/admin/db/deadletter/clear', (req, res) => {
   const adminId = req.headers.authorization;
   const db = loadDB();
-  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
   }
 
@@ -9319,8 +10091,8 @@ app.post('/api/admin/db/deadletter/clear', (req, res) => {
 app.post('/api/admin/db/force-cloud-push', async (req, res) => {
   const adminId = req.headers.authorization;
   const db = loadDB();
-  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
   }
 
@@ -9337,8 +10109,8 @@ app.post('/api/admin/db/force-cloud-push', async (req, res) => {
 app.post('/api/admin/db/force-cloud-pull', async (req, res) => {
   const adminId = req.headers.authorization;
   const db = loadDB();
-  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
   }
 
@@ -9379,8 +10151,8 @@ app.post('/api/admin/db/force-cloud-pull', async (req, res) => {
 app.post('/api/admin/db/rebuild-from-firestore', async (req, res) => {
   const adminId = req.headers.authorization;
   const db = loadDB();
-  const adminUser = (db.users || []).find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
   }
 
@@ -9577,6 +10349,7 @@ app.post('/api/admin/db/rebuild-from-firestore', async (req, res) => {
     // Update memory cache
     cachedDB = reconstructedDB;
     initLastSyncedCache(reconstructedDB);
+    rebuildHotLookupIndexes(reconstructedDB);
     lastCloudSyncTimestamp = new Date().toISOString();
     isAuthoritativeDatabaseReady = true;
     recoveryFailureReason = null;
@@ -9636,8 +10409,8 @@ app.post('/api/admin/db/import', (req, res) => {
   const adminId = req.headers.authorization;
   const { backupData } = req.body;
   const currentDB = loadDB();
-  const adminUser = (currentDB.users || []).find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, currentDB);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Naka-loob lamang ito sa Admin.' });
   }
 
@@ -9684,7 +10457,7 @@ function filterSwearWords(text: string): string {
 
 // Check if user is banned helper
 function isUserBanned(db: DBStructure, userId: string): boolean {
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   return !!(user && user.isBanned);
 }
 
@@ -10044,7 +10817,7 @@ app.post('/api/admin/update-qr', async (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user || !user.isAdmin) {
     return res.status(403).json({ error: 'Bawal ma-access ito ng hindi admin.' });
   }
@@ -10938,10 +11711,15 @@ async function syncRssToDatabase() {
     // Clean out legacy replayteleserye.su posts & sanitize any existing posts with website embeds
     const initialCount = db.posts.length;
     db.posts = db.posts.filter(p => {
-      if (p.id === 'post-teleserye-aHR0cHM6Ly9yZXBsYXl0ZWxlc2VyeWUu') return false;
-      if (p.rssLink && p.rssLink.includes('replayteleserye.su')) return false;
-      if (p.mediaUrl && p.mediaUrl.includes('replayteleserye.su')) return false;
-      if (p.text && p.text.includes('replayteleserye.su')) return false;
+      const shouldRemove =
+        p.id === 'post-teleserye-aHR0cHM6Ly9yZXBsYXl0ZWxlc2VyeWUu' ||
+        Boolean(p.rssLink && p.rssLink.includes('replayteleserye.su')) ||
+        Boolean(p.mediaUrl && p.mediaUrl.includes('replayteleserye.su')) ||
+        Boolean(p.text && p.text.includes('replayteleserye.su'));
+      if (shouldRemove) {
+        removePostFromIndex(p.id);
+        return false;
+      }
       return true;
     });
     if (db.posts.length !== initialCount) {
@@ -10976,15 +11754,16 @@ async function syncRssToDatabase() {
     const rssArticles = await fetchBalitaRSS();
     if (rssArticles.length > 0) {
       for (const article of rssArticles) {
-        const existsIndex = db.posts.findIndex(p => p.id === article.id);
-        if (existsIndex === -1) {
+        const existingArticle = getPostById(article.id, db);
+        if (!existingArticle) {
           db.posts.push(article);
+          indexPost(article);
           hasUpdates = true;
         } else {
           // If the post exists and has a new exact mediaUrl from Manila Bulletin
-          if (article.mediaUrl && db.posts[existsIndex].mediaUrl !== article.mediaUrl) {
-            db.posts[existsIndex].mediaUrl = article.mediaUrl;
-            db.posts[existsIndex].mediaType = 'image';
+          if (article.mediaUrl && existingArticle.mediaUrl !== article.mediaUrl) {
+            existingArticle.mediaUrl = article.mediaUrl;
+            existingArticle.mediaType = 'image';
             hasUpdates = true;
           }
         }
@@ -10995,39 +11774,40 @@ async function syncRssToDatabase() {
     const teleseryeArticles = await fetchTeleseryePosts();
     if (teleseryeArticles.length > 0) {
       for (const ep of teleseryeArticles) {
-        const existsIndex = db.posts.findIndex(p => p.id === ep.id);
-        if (existsIndex === -1) {
+        const existingEp = getPostById(ep.id, db);
+        if (!existingEp) {
           db.posts.push(ep);
+          indexPost(ep);
           hasUpdates = true;
         } else {
           // Update embedUrl, embedUrls, or mediaUrl if newly resolved
           let itemUpdated = false;
-          if (ep.embedUrl && db.posts[existsIndex].embedUrl !== ep.embedUrl) {
-            db.posts[existsIndex].embedUrl = ep.embedUrl;
+          if (ep.embedUrl && existingEp.embedUrl !== ep.embedUrl) {
+            existingEp.embedUrl = ep.embedUrl;
             itemUpdated = true;
           }
-          if (ep.embedUrls && JSON.stringify(db.posts[existsIndex].embedUrls) !== JSON.stringify(ep.embedUrls)) {
-            db.posts[existsIndex].embedUrls = ep.embedUrls;
+          if (ep.embedUrls && JSON.stringify(existingEp.embedUrls) !== JSON.stringify(ep.embedUrls)) {
+            existingEp.embedUrls = ep.embedUrls;
             itemUpdated = true;
           }
-          if (ep.mediaUrl && db.posts[existsIndex].mediaUrl !== ep.mediaUrl) {
-            db.posts[existsIndex].mediaUrl = ep.mediaUrl;
+          if (ep.mediaUrl && existingEp.mediaUrl !== ep.mediaUrl) {
+            existingEp.mediaUrl = ep.mediaUrl;
             itemUpdated = true;
           }
-          if (ep.videoSourceAvailable !== undefined && db.posts[existsIndex].videoSourceAvailable !== ep.videoSourceAvailable) {
-            db.posts[existsIndex].videoSourceAvailable = ep.videoSourceAvailable;
+          if (ep.videoSourceAvailable !== undefined && existingEp.videoSourceAvailable !== ep.videoSourceAvailable) {
+            existingEp.videoSourceAvailable = ep.videoSourceAvailable;
             itemUpdated = true;
           }
-          if (ep.videoStreamType && db.posts[existsIndex].videoStreamType !== ep.videoStreamType) {
-            db.posts[existsIndex].videoStreamType = ep.videoStreamType;
+          if (ep.videoStreamType && existingEp.videoStreamType !== ep.videoStreamType) {
+            existingEp.videoStreamType = ep.videoStreamType;
             itemUpdated = true;
           }
-          if (ep.episodeTitle && db.posts[existsIndex].episodeTitle !== ep.episodeTitle) {
-            db.posts[existsIndex].episodeTitle = ep.episodeTitle;
+          if (ep.episodeTitle && existingEp.episodeTitle !== ep.episodeTitle) {
+            existingEp.episodeTitle = ep.episodeTitle;
             itemUpdated = true;
           }
           if (itemUpdated) {
-            db.posts[existsIndex].mediaType = 'video';
+            existingEp.mediaType = 'video';
             hasUpdates = true;
           }
         }
@@ -11070,7 +11850,7 @@ app.get('/api/zone/posts', (req, res) => {
   const db = loadDB();
   const rawPosts = db.posts || [];
   const requesterId = req.headers.authorization;
-  const requester = requesterId ? db.users.find(u => u.id === requesterId) : null;
+  const requester = requesterId ? getUserById(requesterId, db) : null;
 
   // Filter out hidden, blocked, or muted content
   const hiddenPostIds = (requesterId && db.userHiddenPosts?.[requesterId]) || [];
@@ -11299,7 +12079,7 @@ app.get('/api/zone/posts/:id', (req, res) => {
   const requesterId = req.headers.authorization;
   const { id } = req.params;
   const db = loadDB();
-  const post = (db.posts || []).find((p: any) => p.id === id);
+  const post = getPostById(id, db);
   if (!post) {
     return res.status(404).json({ error: 'Hindi mahanap ang post.' });
   }
@@ -11793,13 +12573,15 @@ app.get('/api/zone/sync', (req, res) => {
   if (!onlineIds.includes('user-juan')) onlineIds.push('user-juan');
 
   // Format group chats with detailed member info & last message
-  const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
   const formattedGroups = myGroups.map(g => {
     const groupMsgs = (db.groupMessages || []).filter(m => m.groupId === g.id);
     const lastMsg = groupMsgs.length > 0 ? groupMsgs[groupMsgs.length - 1] : null;
     return {
       ...g,
-      memberDetails: (g.members || []).map(mid => userMap.get(mid) || { id: mid, name: 'Ka-Zone User', avatar: '👤' }),
+      memberDetails: (g.members || []).map(mid => {
+        const u = getUserById(mid, db);
+        return u ? { id: u.id, name: u.name, avatar: u.avatar || '👤' } : { id: mid, name: 'Ka-Zone User', avatar: '👤' };
+      }),
       lastMessage: lastMsg ? lastMsg.text : '',
       lastMessageSender: lastMsg ? lastMsg.senderName : '',
       lastMessageTime: lastMsg ? lastMsg.createdAt : g.createdAt
@@ -11815,7 +12597,7 @@ app.get('/api/zone/sync', (req, res) => {
     return (now - created) < 24 * 60 * 60 * 1000;
   });
   const enrichedStories = activeStories.map(story => {
-    const author = userMap.get(story.userId);
+    const author = getUserById(story.userId, db);
     return {
       ...story,
       userName: author ? author.name : story.userName,
@@ -11891,7 +12673,7 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
     return res.status(403).json({ error: 'Ang iyong account ay banned sa system. Hindi ka pwedeng mag-post.' });
   }
 
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -11900,7 +12682,7 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
   let verifiedCommunityId: string | undefined = undefined;
   let verifiedCommunityName: string | undefined = undefined;
   if (communityId) {
-    const comm = (db.communities || []).find((c: any) => c.id === communityId);
+    const comm = getCommunityById(communityId, db);
     if (!comm) {
       return res.status(404).json({ error: 'Hindi mahanap ang tinukoy na community.' });
     }
@@ -11998,6 +12780,7 @@ app.post('/api/zone/posts', enforceCommunitySafety, async (req, res) => {
     db.posts = [];
   }
   db.posts.push(newPost);
+  indexPost(newPost);
   onContentCreated(`post:${newPost.id}`, tagDisplays, verifiedCommunityId, user.id, newPost.createdAt);
   invalidateSmartFeedCache(user.id);
   saveDB(db, true);
@@ -12044,12 +12827,12 @@ app.post('/api/zone/posts/:postId/react', enforceCommunitySafety, (req, res) => 
   }
 
   if (!db.posts) db.posts = [];
-  const post = db.posts.find(p => p.id === postId);
+  const post = getPostById(postId, db);
   if (!post) {
     return res.status(404).json({ error: 'Hindi mahanap ang post.' });
   }
 
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   const result = processPostReaction(post, userId, reaction, {
     name: user?.name,
     avatar: user?.avatar
@@ -12116,7 +12899,7 @@ app.post('/api/zone/posts/:postId/react', enforceCommunitySafety, (req, res) => 
 app.get('/api/zone/posts/:postId/reactions', (req, res) => {
   const { postId } = req.params;
   const db = loadDB();
-  const post = (db.posts || []).find(p => p.id === postId);
+  const post = getPostById(postId, db);
   if (!post) {
     return res.status(404).json({ error: 'Hindi mahanap ang post.' });
   }
@@ -12145,12 +12928,12 @@ app.post('/api/zone/posts/:postId/like', enforceCommunitySafety, (req, res) => {
   }
 
   if (!db.posts) db.posts = [];
-  const post = db.posts.find(p => p.id === postId);
+  const post = getPostById(postId, db);
   if (!post) {
     return res.status(404).json({ error: 'Hindi mahanap ang post.' });
   }
 
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   const result = processPostReaction(post, userId, 'like', {
     name: user?.name,
     avatar: user?.avatar
@@ -12214,7 +12997,7 @@ app.post('/api/zone/posts/:postId/comment', enforceCommunitySafety, (req, res) =
     return res.status(403).json({ error: 'Banned ka sa Z-one.' });
   }
 
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -12232,7 +13015,7 @@ app.post('/api/zone/posts/:postId/comment', enforceCommunitySafety, (req, res) =
   const cleanedComment = filterSwearWords(text);
 
   if (!db.posts) db.posts = [];
-  const post = db.posts.find(p => p.id === postId);
+  const post = getPostById(postId, db);
   if (!post) {
     return res.status(404).json({ error: 'Hindi mahanap ang post.' });
   }
@@ -12293,13 +13076,13 @@ app.post('/api/zone/posts/:postId/share', enforceCommunitySafety, (req, res) => 
     return res.status(403).json({ error: 'Banned ka sa Z-one.' });
   }
 
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
 
   if (!db.posts) db.posts = [];
-  const originalPost = db.posts.find(p => p.id === postId);
+  const originalPost = getPostById(postId, db);
   if (!originalPost) {
     return res.status(404).json({ error: 'Hindi mahanap ang post na ishe-share.' });
   }
@@ -12336,6 +13119,7 @@ app.post('/api/zone/posts/:postId/share', enforceCommunitySafety, (req, res) => 
   };
 
   db.posts.push(newPost);
+  indexPost(newPost);
   saveDB(db, true);
 
   const { id: _, ...pWithoutId } = newPost;
@@ -12360,7 +13144,7 @@ app.put('/api/zone/posts/:postId', enforceCommunitySafety, (req, res) => {
   }
 
   if (!db.posts) db.posts = [];
-  const post = db.posts.find(p => p.id === postId);
+  const post = getPostById(postId, db);
   if (!post) {
     return res.status(404).json({ error: 'Hindi mahanap ang post.' });
   }
@@ -12431,7 +13215,7 @@ app.delete('/api/zone/posts/:postId', enforceCommunitySafety, (req, res) => {
 
   if (post.userId !== userId) {
     // Check if the user is admin as well
-    const user = db.users.find(u => u.id === userId);
+    const user = getUserById(userId, db);
     if (!user || !user.isAdmin) {
       return res.status(403).json({ error: 'Wala kang pahintulot na i-delete ang post na ito.' });
     }
@@ -12440,6 +13224,7 @@ app.delete('/api/zone/posts/:postId', enforceCommunitySafety, (req, res) => {
   onContentDeleted(`post:${postId}`);
   invalidateSmartFeedCache(userId);
   db.posts.splice(postIndex, 1);
+  removePostFromIndex(postId);
   saveDB(db, true);
 
   safeCloudSync('delete', 'posts', postId);
@@ -12463,7 +13248,7 @@ app.put('/api/zone/posts/:postId/comments/:commentId', enforceCommunitySafety, (
   }
 
   if (!db.posts) db.posts = [];
-  const post = db.posts.find(p => p.id === postId);
+  const post = getPostById(postId, db);
   if (!post) {
     return res.status(404).json({ error: 'Hindi mahanap ang post.' });
   }
@@ -12513,7 +13298,7 @@ app.delete('/api/zone/posts/:postId/comments/:commentId', enforceCommunitySafety
   const db = loadDB();
 
   if (!db.posts) db.posts = [];
-  const post = db.posts.find(p => p.id === postId);
+  const post = getPostById(postId, db);
   if (!post) {
     return res.status(404).json({ error: 'Hindi mahanap ang post.' });
   }
@@ -12535,7 +13320,7 @@ app.delete('/api/zone/posts/:postId/comments/:commentId', enforceCommunitySafety
   }
 
   if (comment.userId !== userId) {
-    const user = db.users.find(u => u.id === userId);
+    const user = getUserById(userId, db);
     if (!user || !user.isAdmin) {
       return res.status(403).json({ error: 'Wala kang pahintulot na i-delete ang comment na ito.' });
     }
@@ -12563,8 +13348,8 @@ app.post('/api/zone/users/:targetUserId/toggle-zone', enforceCommunitySafety, (r
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
-  const targetUser = db.users.find(u => u.id === targetUserId);
+  const user = getUserById(userId, db);
+  const targetUser = getUserById(targetUserId, db);
 
   if (!user || !targetUser) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
@@ -12629,8 +13414,8 @@ app.post('/api/zone/users/:targetUserId/follow', enforceCommunitySafety, (req, r
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
-  const targetUser = db.users.find(u => u.id === targetUserId);
+  const user = getUserById(userId, db);
+  const targetUser = getUserById(targetUserId, db);
 
   if (!user || !targetUser) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
@@ -12771,7 +13556,7 @@ app.post('/api/zone/report', enforceCommunitySafety, (req, res) => {
   }
 
   const db = loadDB();
-  const reporter = db.users.find(u => u.id === userId);
+  const reporter = getUserById(userId, db);
   if (!reporter) {
     return res.status(404).json({ error: 'Hindi mahanap ang reporter user.' });
   }
@@ -12784,14 +13569,14 @@ app.post('/api/zone/report', enforceCommunitySafety, (req, res) => {
   let targetContentSnippet = undefined;
 
   if (targetType === 'post') {
-    const post = (db.posts || []).find(p => p.id === targetId);
+    const post = getPostById(targetId, db);
     if (post) {
       targetAuthorId = post.userId;
       targetAuthorName = post.userName;
       targetContentSnippet = (post.text || '').slice(0, 100);
     }
   } else if (targetType === 'user') {
-    const targetUser = db.users.find(u => u.id === targetId);
+    const targetUser = getUserById(targetId, db);
     if (targetUser) {
       targetAuthorId = targetUser.id;
       targetAuthorName = targetUser.name;
@@ -12850,7 +13635,7 @@ app.post('/api/zone/users/:targetUserId/block', enforceCommunitySafety, (req, re
     isBlocked = true;
 
     // Automatically remove from following if blocked
-    const user = db.users.find(u => u.id === userId);
+    const user = getUserById(userId, db);
     if (user && user.zonedUsers) {
       const zIndex = user.zonedUsers.indexOf(targetUserId);
       if (zIndex > -1) user.zonedUsers.splice(zIndex, 1);
@@ -12915,7 +13700,7 @@ app.post('/api/zone/posts/:postId/comments/:commentId/reply', enforceCommunitySa
     return res.status(403).json({ error: 'Banned ka sa Z-one.' });
   }
 
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -12932,7 +13717,7 @@ app.post('/api/zone/posts/:postId/comments/:commentId/reply', enforceCommunitySa
 
   const cleanedText = filterSwearWords(text);
 
-  const post = (db.posts || []).find(p => p.id === postId);
+  const post = getPostById(postId, db);
   if (!post) {
     return res.status(404).json({ error: 'Hindi mahanap ang post.' });
   }
@@ -12998,7 +13783,7 @@ app.post('/api/zone/posts/:postId/comments/:commentId/like', enforceCommunitySaf
   const { postId, commentId } = req.params;
   const db = loadDB();
 
-  const post = (db.posts || []).find(p => p.id === postId);
+  const post = getPostById(postId, db);
   if (!post) return res.status(404).json({ error: 'Hindi mahanap ang post.' });
 
   const comment = (post.comments || []).find((c: any) => c.id === commentId);
@@ -13015,7 +13800,7 @@ app.post('/api/zone/posts/:postId/comments/:commentId/like', enforceCommunitySaf
     isLiked = true;
 
     if (comment.userId && comment.userId !== userId) {
-      const liker = db.users.find(u => u.id === userId);
+      const liker = getUserById(userId, db);
       createSocialNotification(db, {
         recipientUserId: comment.userId,
         senderUserId: userId,
@@ -13093,8 +13878,8 @@ app.get('/api/admin/moderation/reports', (req, res) => {
   if (!adminId) return res.status(401).json({ error: 'Admin access required.' });
 
   const db = loadDB();
-  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) return res.status(403).json({ error: 'Wala kang pahintulot na tingnan ito.' });
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) return res.status(403).json({ error: 'Wala kang pahintulot na tingnan ito.' });
 
   const reports = (db.socialReports || []).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   res.json({ success: true, reports });
@@ -13108,8 +13893,8 @@ app.post('/api/admin/moderation/reports/:reportId/action', (req, res) => {
   const { action, notes } = req.body; // 'dismiss' | 'delete_content' | 'ban_user'
   const db = loadDB();
 
-  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) return res.status(403).json({ error: 'Wala kang pahintulot.' });
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) return res.status(403).json({ error: 'Wala kang pahintulot.' });
 
   const report = (db.socialReports || []).find(r => r.id === reportId);
   if (!report) return res.status(404).json({ error: 'Hindi mahanap ang report.' });
@@ -13123,13 +13908,14 @@ app.post('/api/admin/moderation/reports/:reportId/action', (req, res) => {
       const pIdx = (db.posts || []).findIndex(p => p.id === report.targetId);
       if (pIdx > -1) {
         db.posts?.splice(pIdx, 1);
+        removePostFromIndex(report.targetId);
         safeCloudSync('delete', 'posts', report.targetId);
       }
     }
   } else if (action === 'ban_user') {
     const targetUid = report.targetAuthorId || (report.targetType === 'user' ? report.targetId : null);
     if (targetUid) {
-      const u = db.users.find(usr => usr.id === targetUid);
+      const u = getUserById(targetUid, db);
       if (u) u.isBanned = true;
     }
   }
@@ -13146,8 +13932,8 @@ app.get('/api/admin/moderation/users', (req, res) => {
   }
 
   const db = loadDB();
-  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Wala kang pahintulot na tingnan ito.' });
   }
 
@@ -13174,8 +13960,8 @@ app.post('/api/admin/moderation/users/:userId/toggle-ban', (req, res) => {
 
   const { userId } = req.params;
   const db = loadDB();
-  const adminUser = db.users.find(u => u.id === adminId && u.isAdmin);
-  if (!adminUser) {
+  const adminUser = getUserById(adminId, db);
+  if (!adminUser || !adminUser.isAdmin) {
     return res.status(403).json({ error: 'Wala kang pahintulot na gawin ito.' });
   }
 
@@ -13183,7 +13969,7 @@ app.post('/api/admin/moderation/users/:userId/toggle-ban', (req, res) => {
     return res.status(400).json({ error: 'Hindi mo pwedeng i-ban ang iyong sarili.' });
   }
 
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -13249,7 +14035,7 @@ setInterval(() => {
       creatorAnalyticsCache.delete(key);
     }
   }
-}, 10 * 60 * 1000);
+}, 10 * 60 * 1000).unref?.();
 
 // 1. POST /api/zone/analytics/view - Anti-Cheat & Quota-Safe View Counter
 app.post('/api/zone/analytics/view', (req, res) => {
@@ -13260,7 +14046,7 @@ app.post('/api/zone/analytics/view', (req, res) => {
 
   const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
   const db = loadDB();
-  const viewer = token ? db.users.find(u => u.id === token || (u.email && u.email.toLowerCase() === token.toLowerCase())) : null;
+  const viewer = token ? (getUserById(token, db) || getUserByEmail(token, db)) : null;
   const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
   const viewerIdentifier = viewer ? viewer.id : String(rawIp).split(',')[0].trim();
 
@@ -13268,10 +14054,10 @@ app.post('/api/zone/analytics/view', (req, res) => {
   let targetItem: any = null;
 
   if (contentType === 'post') {
-    targetItem = (db.posts || []).find(p => p.id === contentId);
+    targetItem = getPostById(contentId, db);
     if (targetItem) authorId = targetItem.userId;
   } else if (contentType === 'reel') {
-    targetItem = (db.reels || []).find(r => r.id === contentId);
+    targetItem = getReelById(contentId, db);
     if (targetItem) authorId = targetItem.addedByUserId || targetItem.addedBy;
   } else if (contentType === 'challenge') {
     targetItem = (db.creatorChallenges || []).find(c => c.id === contentId);
@@ -13342,7 +14128,7 @@ app.post('/api/zone/analytics/product-click', (req, res) => {
 
   const token = (req.headers.authorization || '').replace('Bearer ', '').trim();
   const db = loadDB();
-  const viewer = token ? db.users.find(u => u.id === token || (u.email && u.email.toLowerCase() === token.toLowerCase())) : null;
+  const viewer = token ? (getUserById(token, db) || getUserByEmail(token, db)) : null;
   const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
   const viewerIdentifier = viewer ? viewer.id : String(rawIp).split(',')[0].trim();
 
@@ -13385,7 +14171,7 @@ app.get('/api/zone/creator/analytics', (req, res) => {
   }
 
   const db = loadDB();
-  const authUser = db.users.find(u => u.id === token || (u.email && u.email.toLowerCase() === token.toLowerCase()));
+  const authUser = getUserById(token, db) || getUserByEmail(token, db);
   if (!authUser) {
     return res.status(401).json({ error: 'Hindi mahanap ang user session.' });
   }
@@ -13396,7 +14182,7 @@ app.get('/api/zone/creator/analytics', (req, res) => {
     return res.status(403).json({ error: 'Wala kang pahintulot na tingnan ang analytics ng ibang creator.' });
   }
 
-  const targetCreator = db.users.find(u => u.id === requestedUserId);
+  const targetCreator = getUserById(requestedUserId, db);
   if (!targetCreator) {
     return res.status(404).json({ error: 'Hindi mahanap ang tinutukoy na creator.' });
   }
@@ -13920,7 +14706,7 @@ app.post('/api/user/simulate-expire', (req, res) => {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -14062,7 +14848,7 @@ async function handleAdminAutoReply(userSenderId: string, userText: string) {
   await new Promise(resolve => setTimeout(resolve, 600));
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userSenderId);
+  const user = getUserById(userSenderId, db);
   if (!user) return;
 
   const messages = db.directMessages || [];
@@ -14150,8 +14936,8 @@ app.post('/api/zone/messages', enforceCommunitySafety, async (req, res) => {
     }
   }
 
-  const sender = db.users.find(u => u.id === senderId);
-  const receiver = db.users.find(u => u.id === receiverId);
+  const sender = getUserById(senderId, db);
+  const receiver = getUserById(receiverId, db);
 
   if (!sender || !receiver) {
     return res.status(404).json({ error: 'Hindi mahanap ang sender o receiver.' });
@@ -14320,6 +15106,7 @@ app.get('/api/zone/groups', (req, res) => {
   ) {
     if (!db.communities || !Array.isArray(db.communities) || db.communities.length === 0) {
       db.communities = createDefaultSeedCommunities(db.users);
+      (db.communities || []).forEach(c => indexCommunity(c));
       saveDB(db, true);
     }
     const friendIds = getFriendIds(userId);
@@ -14365,7 +15152,6 @@ app.get('/api/zone/groups', (req, res) => {
     saveDB(db);
   }
 
-  const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
   const myGroups = db.groupChats.filter(g => (g.members || []).includes(userId) || g.id === 'gc-community-main');
 
   const formattedGroups = myGroups.map(g => {
@@ -14373,7 +15159,10 @@ app.get('/api/zone/groups', (req, res) => {
     const lastMsg = groupMsgs.length > 0 ? groupMsgs[groupMsgs.length - 1] : null;
     return {
       ...g,
-      memberDetails: (g.members || []).map(mid => userMap.get(mid) || { id: mid, name: 'Ka-Zone User', avatar: '👤' }),
+      memberDetails: (g.members || []).map(mid => {
+        const u = getUserById(mid, db);
+        return u ? { id: u.id, name: u.name, avatar: u.avatar || '👤' } : { id: mid, name: 'Ka-Zone User', avatar: '👤' };
+      }),
       lastMessage: lastMsg ? lastMsg.text : '',
       lastMessageSender: lastMsg ? lastMsg.senderName : '',
       lastMessageTime: lastMsg ? lastMsg.createdAt : g.createdAt
@@ -14403,7 +15192,7 @@ app.post('/api/zone/groups', enforceCommunitySafety, (req, res) => {
     return res.status(403).json({ error: 'Banned ka sa system.' });
   }
 
-  const creator = db.users.find(u => u.id === userId);
+  const creator = getUserById(userId, db);
   if (!creator) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -14448,10 +15237,12 @@ app.post('/api/zone/groups', enforceCommunitySafety, (req, res) => {
   safeCloudSync('set', 'group_chats', newGroup.id, gWithoutId);
   safeCloudSync('set', 'group_messages', initialMsg.id, gmWithoutId);
 
-  const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
   const formattedGroup = {
     ...newGroup,
-    memberDetails: (newGroup.members || []).map(mid => userMap.get(mid) || { id: mid, name: 'Ka-Zone User', avatar: '👤' }),
+    memberDetails: (newGroup.members || []).map(mid => {
+      const u = getUserById(mid, db);
+      return u ? { id: u.id, name: u.name, avatar: u.avatar || '👤' } : { id: mid, name: 'Ka-Zone User', avatar: '👤' };
+    }),
     lastMessage: initialMsg.text,
     lastMessageSender: initialMsg.senderName,
     lastMessageTime: initialMsg.createdAt
@@ -14521,7 +15312,7 @@ app.post('/api/zone/groups/:groupId/messages', enforceCommunitySafety, async (re
     return res.status(403).json({ error: 'Ang iyong account ay banned sa system.' });
   }
 
-  const sender = db.users.find(u => u.id === userId);
+  const sender = getUserById(userId, db);
   if (!sender) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -14703,7 +15494,7 @@ app.post('/api/zone/groups/:groupId/members', enforceCommunitySafety, (req, res)
   group.updatedAt = new Date().toISOString();
 
   // Add system notice
-  const actor = db.users.find(u => u.id === userId);
+  const actor = getUserById(userId, db);
   const names = addedUsers.map(u => u.name).join(', ');
   if (!db.groupMessages) db.groupMessages = [];
   const addSysMsg: GroupMessage = {
@@ -14724,10 +15515,12 @@ app.post('/api/zone/groups/:groupId/members', enforceCommunitySafety, (req, res)
   safeCloudSync('set', 'group_chats', group.id, gWithoutId);
   safeCloudSync('set', 'group_messages', addSysMsg.id, gmWithoutId);
 
-  const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
   const updatedGroup = {
     ...group,
-    memberDetails: (group.members || []).map(mid => userMap.get(mid) || { id: mid, name: 'Ka-Zone User', avatar: '👤' })
+    memberDetails: (group.members || []).map(mid => {
+      const u = getUserById(mid, db);
+      return u ? { id: u.id, name: u.name, avatar: u.avatar || '👤' } : { id: mid, name: 'Ka-Zone User', avatar: '👤' };
+    })
   };
 
   res.json({ success: true, group: updatedGroup });
@@ -14755,7 +15548,7 @@ app.post('/api/zone/groups/:groupId/leave', enforceCommunitySafety, (req, res) =
   group.members = group.members.filter(id => id !== userId);
   group.updatedAt = new Date().toISOString();
 
-  const leaver = db.users.find(u => u.id === userId);
+  const leaver = getUserById(userId, db);
   if (!db.groupMessages) db.groupMessages = [];
   const leaveSysMsg: GroupMessage = {
     id: 'gmsg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
@@ -14808,10 +15601,12 @@ app.put('/api/zone/groups/:groupId', enforceCommunitySafety, (req, res) => {
   const { id: _, ...gWithoutId } = group;
   safeCloudSync('set', 'group_chats', group.id, gWithoutId);
 
-  const userMap = new Map(db.users.map(u => [u.id, { id: u.id, name: u.name, avatar: u.avatar || '👤' }]));
   const updatedGroup = {
     ...group,
-    memberDetails: (group.members || []).map(mid => userMap.get(mid) || { id: mid, name: 'Ka-Zone User', avatar: '👤' })
+    memberDetails: (group.members || []).map(mid => {
+      const u = getUserById(mid, db);
+      return u ? { id: u.id, name: u.name, avatar: u.avatar || '👤' } : { id: mid, name: 'Ka-Zone User', avatar: '👤' };
+    })
   };
 
   res.json({ success: true, group: updatedGroup });
@@ -14836,9 +15631,8 @@ app.get('/api/zone/stories', (req, res) => {
   });
 
   // Enrich with latest user info (avatar/name might have changed)
-  const userMap = new Map(db.users.map(u => [u.id, u]));
   const enrichedStories = activeStories.map(story => {
-    const author = userMap.get(story.userId);
+    const author = getUserById(story.userId, db);
     return {
       ...story,
       userName: author ? author.name : story.userName,
@@ -14864,7 +15658,7 @@ app.post('/api/zone/stories', enforceCommunitySafety, async (req, res) => {
     return res.status(403).json({ error: 'Ang iyong account ay banned sa system.' });
   }
 
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user profile.' });
   }
@@ -14938,7 +15732,7 @@ app.delete('/api/zone/stories/:storyId', enforceCommunitySafety, (req, res) => {
   }
 
   const story = db.stories[index];
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   const isAdmin = user?.isAdmin || userId === 'admin-rosco';
 
   if (story.userId !== userId && !isAdmin) {
@@ -14969,7 +15763,7 @@ app.post('/api/zone/stories/:storyId/view', (req, res) => {
     return res.status(404).json({ error: 'Hindi mahanap ang Story.' });
   }
 
-  const viewer = db.users.find(u => u.id === userId);
+  const viewer = getUserById(userId, db);
   if (!viewer) {
     return res.status(404).json({ error: 'Hindi mahanap ang viewer.' });
   }
@@ -15011,7 +15805,7 @@ app.post('/api/zone/stories/:storyId/react', enforceCommunitySafety, (req, res) 
     return res.status(404).json({ error: 'Hindi mahanap ang Story.' });
   }
 
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -15050,7 +15844,7 @@ app.post('/api/zone/stories/:storyId/react', enforceCommunitySafety, (req, res) 
   // Also send a direct message reply to the story author (like FB/IG story replies)
   if (story.userId !== userId && (emoji || replyMessage)) {
     if (!db.directMessages) db.directMessages = [];
-    const author = db.users.find(u => u.id === story.userId);
+    const author = getUserById(story.userId, db);
     if (author) {
       const reactionText = replyMessage 
         ? `${emoji ? emoji + ' ' : ''}${replyMessage} (Tugon sa iyong My Day)`
@@ -15141,8 +15935,8 @@ app.post('/api/zone/calls', enforceCommunitySafety, (req, res) => {
     return res.status(400).json({ error: 'Kinakailangan ang receiverId.' });
   }
 
-  const caller = db.users.find(u => u.id === callerId);
-  const receiver = db.users.find(u => u.id === receiverId);
+  const caller = getUserById(callerId, db);
+  const receiver = getUserById(receiverId, db);
 
   if (!caller || !receiver) {
     return res.status(404).json({ error: 'Hindi mahanap ang users.' });
@@ -15202,7 +15996,7 @@ app.get('/api/zone/profile/:targetUserId', (req, res) => {
   const { targetUserId } = req.params;
   const db = loadDB();
 
-  const targetUser = db.users.find(u => u.id === targetUserId);
+  const targetUser = getUserById(targetUserId, db);
   if (!targetUser) {
     return res.status(404).json({ error: 'Hindi mahanap ang profile ng user.' });
   }
@@ -15230,7 +16024,7 @@ app.get('/api/zone/profile/:targetUserId', (req, res) => {
   // Social Network metrics & tabs
   const followerCount = db.users.filter(u => (u.zonedUsers || []).includes(targetUserId)).length;
   const followingCount = (targetUser.zonedUsers || []).length;
-  const isFollowing = requesterId ? Boolean(db.users.find(u => u.id === requesterId)?.zonedUsers?.includes(targetUserId)) : false;
+  const isFollowing = requesterId ? Boolean(getUserById(requesterId, db)?.zonedUsers?.includes(targetUserId)) : false;
   const handle = '@' + (targetUser.name || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_');
 
   const userReels = (db.reels || []).filter(r => r.addedByUserId === targetUserId || (r.addedBy && r.addedBy.toLowerCase() === targetUser.name.toLowerCase()));
@@ -15263,7 +16057,7 @@ app.get('/api/zone/profile/:targetUserId', (req, res) => {
   const mutualFriendIds = (requesterId && !isOwner) ? getMutualFriendIds(requesterId, targetUserId) : [];
   const mutualFriendCount = mutualFriendIds.length;
   const mutualFriends = mutualFriendIds.slice(0, 5).map(mId => {
-    const u = db.users.find(x => x.id === mId);
+    const u = getUserById(mId, db);
     if (!u) return null;
     return {
       id: u.id,
@@ -15328,8 +16122,8 @@ function handleSendFriendRequest(req: express.Request, res: express.Response) {
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
-  const targetUser = db.users.find(u => u.id === targetUserId);
+  const user = getUserById(userId, db);
+  const targetUser = getUserById(targetUserId, db);
   if (!user || !targetUser) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -15488,8 +16282,8 @@ function handleRespondFriendRequest(req: express.Request, res: express.Response,
     return res.status(400).json({ error: `Nasagot na ang request na ito (${reqItem.status}).` });
   }
 
-  const user = db.users.find(u => u.id === userId);
-  const sender = db.users.find(u => u.id === reqItem.fromUserId);
+  const user = getUserById(userId, db);
+  const sender = getUserById(reqItem.fromUserId, db);
 
   if (action === 'accept') {
     reqItem.status = 'accepted';
@@ -15636,7 +16430,7 @@ function handleGetFriendRequests(req: express.Request, res: express.Response) {
   const incoming = allReqs
     .filter(fr => fr.toUserId === userId && fr.status === 'pending')
     .map(fr => {
-      const sender = db.users.find(u => u.id === fr.fromUserId);
+      const sender = getUserById(fr.fromUserId, db);
       const mutualCount = sender ? getMutualFriendIds(userId, sender.id).length : 0;
       return {
         id: fr.id,
@@ -15658,7 +16452,7 @@ function handleGetFriendRequests(req: express.Request, res: express.Response) {
   const outgoing = allReqs
     .filter(fr => fr.fromUserId === userId && fr.status === 'pending')
     .map(fr => {
-      const recipient = db.users.find(u => u.id === fr.toUserId);
+      const recipient = getUserById(fr.toUserId, db);
       const mutualCount = recipient ? getMutualFriendIds(userId, recipient.id).length : 0;
       return {
         id: fr.id,
@@ -15697,7 +16491,7 @@ function handleGetMutualFriends(req: express.Request, res: express.Response) {
 
   const mutualIds = getMutualFriendIds(requesterId, targetUserId);
   const mutualFriends = mutualIds.map(mId => {
-    const u = db.users.find(x => x.id === mId);
+    const u = getUserById(mId, db);
     if (!u) return null;
     return {
       id: u.id,
@@ -15793,7 +16587,7 @@ app.get('/api/zone/friends/:targetUserId', (req, res) => {
 
   const friendIds = getFriendIds(targetUserId);
   const friends = friendIds.map(fId => {
-    const u = db.users.find(x => x.id === fId);
+    const u = getUserById(fId, db);
     if (!u) return null;
     const mutualCount = requesterId ? getMutualFriendIds(requesterId, fId).length : 0;
     return {
@@ -15831,8 +16625,8 @@ app.post('/api/zone/follow/:targetUserId', enforceCommunitySafety, (req, res) =>
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
-  const targetUser = db.users.find(u => u.id === targetUserId);
+  const user = getUserById(userId, db);
+  const targetUser = getUserById(targetUserId, db);
 
   if (!user || !targetUser) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
@@ -15902,8 +16696,8 @@ app.post('/api/zone/unfollow/:targetUserId', enforceCommunitySafety, (req, res) 
   }
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
-  const targetUser = db.users.find(u => u.id === targetUserId);
+  const user = getUserById(userId, db);
+  const targetUser = getUserById(targetUserId, db);
 
   if (!user || !targetUser) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
@@ -15934,7 +16728,7 @@ app.get('/api/zone/followers/:targetUserId', (req, res) => {
   const { targetUserId } = req.params;
   const db = loadDB();
 
-  const targetUser = db.users.find(u => u.id === targetUserId);
+  const targetUser = getUserById(targetUserId, db);
   if (!targetUser) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -15952,7 +16746,7 @@ app.get('/api/zone/followers/:targetUserId', (req, res) => {
 
   const followers = followerIds
     .map(fId => {
-      const u = db.users.find(x => x.id === fId);
+      const u = getUserById(fId, db);
       if (!u || u.isBanned) return null;
       const mutualCount = requesterId ? getMutualFriendIds(requesterId, fId).length : 0;
       const isRequesterFollowing = requesterId ? isFollowing(requesterId, fId) : false;
@@ -15988,7 +16782,7 @@ app.get('/api/zone/following/:targetUserId', (req, res) => {
   const { targetUserId } = req.params;
   const db = loadDB();
 
-  const targetUser = db.users.find(u => u.id === targetUserId);
+  const targetUser = getUserById(targetUserId, db);
   if (!targetUser) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -16006,7 +16800,7 @@ app.get('/api/zone/following/:targetUserId', (req, res) => {
 
   const following = followingIds
     .map(fId => {
-      const u = db.users.find(x => x.id === fId);
+      const u = getUserById(fId, db);
       if (!u || u.isBanned) return null;
       const mutualCount = requesterId ? getMutualFriendIds(requesterId, fId).length : 0;
       const isRequesterFollowing = requesterId ? isFollowing(requesterId, fId) : false;
@@ -16042,7 +16836,7 @@ app.get('/api/zone/relationship/:targetUserId', (req, res) => {
   const { targetUserId } = req.params;
   const db = loadDB();
 
-  const targetUser = db.users.find(u => u.id === targetUserId);
+  const targetUser = getUserById(targetUserId, db);
   if (!targetUser) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -16158,7 +16952,7 @@ app.put('/api/zone/profile', enforceCommunitySafety, async (req, res) => {
 
   const { bio, coverPhoto, avatar } = req.body;
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -16243,7 +17037,7 @@ app.post('/api/zone/albums', enforceCommunitySafety, async (req, res) => {
 
   const { title, description, privacy, coverPhoto } = req.body;
   const db = loadDB();
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
   if (!user) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -16502,6 +17296,7 @@ app.get('/api/zone/communities', (req, res) => {
   const db = loadDB();
   if (!db.communities || !Array.isArray(db.communities) || db.communities.length === 0) {
     db.communities = createDefaultSeedCommunities(db.users);
+    (db.communities || []).forEach(c => indexCommunity(c));
     saveDB(db, true);
   }
 
@@ -16531,6 +17326,7 @@ app.get('/api/zone/communities/my', (req, res) => {
   const db = loadDB();
   if (!db.communities || !Array.isArray(db.communities) || db.communities.length === 0) {
     db.communities = createDefaultSeedCommunities(db.users);
+    (db.communities || []).forEach(c => indexCommunity(c));
     saveDB(db, true);
   }
 
@@ -16566,6 +17362,7 @@ app.get('/api/zone/communities/recommendations', (req, res) => {
   const db = loadDB();
   if (!db.communities || !Array.isArray(db.communities) || db.communities.length === 0) {
     db.communities = createDefaultSeedCommunities(db.users);
+    (db.communities || []).forEach(c => indexCommunity(c));
     saveDB(db, true);
   }
 
@@ -16596,6 +17393,7 @@ app.get('/api/zone/communities/mutual/:targetUserId', (req, res) => {
   const db = loadDB();
   if (!db.communities || !Array.isArray(db.communities) || db.communities.length === 0) {
     db.communities = createDefaultSeedCommunities(db.users);
+    (db.communities || []).forEach(c => indexCommunity(c));
     saveDB(db, true);
   }
 
@@ -16628,10 +17426,11 @@ app.get('/api/zone/communities/:communityId', (req, res) => {
   const db = loadDB();
   if (!db.communities || !Array.isArray(db.communities) || db.communities.length === 0) {
     db.communities = createDefaultSeedCommunities(db.users);
+    (db.communities || []).forEach(c => indexCommunity(c));
     saveDB(db, true);
   }
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -16665,7 +17464,7 @@ app.get('/api/zone/communities/:communityId/members', (req, res) => {
   const db = loadDB();
   if (!db.communities) db.communities = [];
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -16704,7 +17503,7 @@ app.get('/api/zone/communities/:communityId/requests', (req, res) => {
   const db = loadDB();
   if (!db.communities) db.communities = [];
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -16713,10 +17512,9 @@ app.get('/api/zone/communities/:communityId/requests', (req, res) => {
     return res.status(403).json({ error: 'Wala kang pahintulot na tingnan ang mga membership request ng komunidad na ito.' });
   }
 
-  const userMap = new Map(db.users.map(u => [u.id, u]));
   const friendIds = getFriendIds(userId);
   const requests = (community.pendingMembers || []).map(mid => {
-    const u = userMap.get(mid);
+    const u = getUserById(mid, db);
     const theirFriends = getFriendIds(mid);
     const mutualCount = theirFriends.filter(fid => friendIds.includes(fid)).length;
     return {
@@ -16763,7 +17561,7 @@ app.post('/api/zone/communities', enforceCommunitySafety, async (req, res) => {
   // Create linked group chat for messaging
   const linkedGcId = `gc-comm-${communityId}`;
   if (!db.groupChats) db.groupChats = [];
-  const user = db.users.find(u => u.id === userId);
+  const user = getUserById(userId, db);
 
   const newGc: GroupChat = {
     id: linkedGcId,
@@ -16808,6 +17606,7 @@ app.post('/api/zone/communities', enforceCommunitySafety, async (req, res) => {
   };
 
   db.communities.push(newCommunity);
+  indexCommunity(newCommunity);
   saveDB(db, true);
 
   // Update indexes
@@ -16840,7 +17639,7 @@ app.post('/api/zone/communities/:communityId/join', enforceCommunitySafety, (req
   const db = loadDB();
   if (!db.communities) db.communities = [];
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -16895,7 +17694,7 @@ app.post('/api/zone/communities/:communityId/request', enforceCommunitySafety, (
   const db = loadDB();
   if (!db.communities) db.communities = [];
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -16925,7 +17724,7 @@ app.post('/api/zone/communities/:communityId/request', enforceCommunitySafety, (
   community.updatedAt = new Date().toISOString();
 
   // Create notification for owner
-  const applicant = db.users.find(u => u.id === userId);
+  const applicant = getUserById(userId, db);
   createSocialNotification(db, {
     recipientUserId: community.ownerId,
     senderUserId: userId,
@@ -16960,7 +17759,7 @@ app.post('/api/zone/communities/:communityId/requests/cancel', enforceCommunityS
   const db = loadDB();
   if (!db.communities) db.communities = [];
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -16989,7 +17788,7 @@ app.post('/api/zone/communities/:communityId/requests/:targetUserId/accept', enf
   const db = loadDB();
   if (!db.communities) db.communities = [];
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -17026,7 +17825,7 @@ app.post('/api/zone/communities/:communityId/requests/:targetUserId/accept', enf
   safeCloudSync('set', 'communities', community.id, commWithoutId);
 
   // Notify target user
-  const approver = db.users.find(u => u.id === userId);
+  const approver = getUserById(userId, db);
   createSocialNotification(db, {
     recipientUserId: targetUserId,
     senderUserId: userId,
@@ -17056,7 +17855,7 @@ app.post('/api/zone/communities/:communityId/requests/:targetUserId/decline', en
   const db = loadDB();
   if (!db.communities) db.communities = [];
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -17089,7 +17888,7 @@ app.post('/api/zone/communities/:communityId/leave', enforceCommunitySafety, (re
   const db = loadDB();
   if (!db.communities) db.communities = [];
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -17153,7 +17952,7 @@ app.post('/api/zone/communities/:communityId/invite', enforceCommunitySafety, (r
   const db = loadDB();
   if (!db.communities) db.communities = [];
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -17162,7 +17961,7 @@ app.post('/api/zone/communities/:communityId/invite', enforceCommunitySafety, (r
     return res.status(403).json({ error: 'Wala kang pahintulot na mag-imbita sa komunidad na ito.' });
   }
 
-  const targetUser = db.users.find(u => u.id === targetUserId);
+  const targetUser = getUserById(targetUserId, db);
   if (!targetUser) {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
@@ -17187,7 +17986,7 @@ app.post('/api/zone/communities/:communityId/invite', enforceCommunitySafety, (r
     const { id: _, ...commWithoutId } = community;
     safeCloudSync('set', 'communities', community.id, commWithoutId);
 
-    const sender = db.users.find(u => u.id === userId);
+    const sender = getUserById(userId, db);
     createSocialNotification(db, {
       recipientUserId: targetUserId,
       senderUserId: userId,
@@ -17218,7 +18017,7 @@ app.post('/api/zone/communities/:communityId/members/:targetUserId/remove', enfo
   const db = loadDB();
   if (!db.communities) db.communities = [];
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -17269,7 +18068,7 @@ app.post('/api/zone/communities/:communityId/members/:targetUserId/promote', enf
   const db = loadDB();
   if (!db.communities) db.communities = [];
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -17298,7 +18097,7 @@ app.post('/api/zone/communities/:communityId/members/:targetUserId/promote', enf
   safeCloudSync('set', 'communities', community.id, commWithoutId);
 
   // Notify target user
-  const promoter = db.users.find(u => u.id === userId);
+  const promoter = getUserById(userId, db);
   createSocialNotification(db, {
     recipientUserId: targetUserId,
     senderUserId: userId,
@@ -17333,7 +18132,7 @@ app.post('/api/zone/communities/:communityId/members/:targetUserId/demote', enfo
   const db = loadDB();
   if (!db.communities) db.communities = [];
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -17376,7 +18175,7 @@ app.put('/api/zone/communities/:communityId', enforceCommunitySafety, (req, res)
   const db = loadDB();
   if (!db.communities) db.communities = [];
 
-  const community = db.communities.find(c => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang komunidad.' });
   }
@@ -17518,7 +18317,7 @@ app.get('/api/zone/communities/:communityId/posts', (req, res) => {
   const requesterId = req.headers.authorization;
   const db = loadDB();
 
-  const community = (db.communities || []).find((c: any) => c.id === communityId);
+  const community = getCommunityById(communityId, db);
   if (!community) {
     return res.status(404).json({ error: 'Hindi mahanap ang community.' });
   }
@@ -17861,7 +18660,7 @@ app.get('/api/va/status', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   // Initialize VA stats if not present
@@ -17878,9 +18677,11 @@ app.get('/api/va/status', (req, res) => {
   }
 
   // Auto-expire banners and check subscription expiry
-  checkAndExpireBanners(db);
-  checkAndSyncAllCartsToBaskets(db);
-  saveDB(db);
+  const bannersChanged = checkAndExpireBanners(db);
+  const basketsChanged = checkAndSyncAllCartsToBaskets(db);
+  if (bannersChanged || basketsChanged) {
+    saveDB(db);
+  }
 
   if (user.vaStats.vaSubscription?.status === 'active' && user.vaStats.vaSubscription.expiresAt) {
     if (new Date(user.vaStats.vaSubscription.expiresAt).getTime() <= Date.now()) {
@@ -17931,7 +18732,7 @@ app.post('/api/va/hire', (req, res) => {
   }
 
   const db = loadDB();
-  const referrer = db.users.find(u => u.referralCode && u.referralCode.toUpperCase() === String(referralCode).toUpperCase());
+  const referrer = getUserByReferralCode(String(referralCode).toUpperCase(), db);
 
   if (!referrer) {
     return res.status(404).json({ error: 'Hindi natagpuan ang referral / VA link ng employer.' });
@@ -18051,7 +18852,7 @@ app.post('/api/va/claim-500-reward', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const hiredCount = user.vaStats?.hiredCount || (user.vaStats?.hiredVAs ? user.vaStats.hiredVAs.length : 0);
@@ -18134,7 +18935,7 @@ app.post('/api/va/subscribe', checkIdempotency, (req, res) => {
 
   const { paymentMethod, gcashSenderNumber, gcashRefNo } = req.body;
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (!user.vaStats) {
@@ -18246,9 +19047,11 @@ app.get('/api/shop/unpaid-baskets', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  checkAndExpireBanners(db);
-  checkAndSyncAllCartsToBaskets(db);
-  saveDB(db);
+  const bannersChanged = checkAndExpireBanners(db);
+  const basketsChanged = checkAndSyncAllCartsToBaskets(db);
+  if (bannersChanged || basketsChanged) {
+    saveDB(db);
+  }
 
   const unpaidBaskets = (db.shopBaskets || [])
     .filter(b => b.status === 'unpaid')
@@ -18275,7 +19078,7 @@ app.post('/api/va/place-banner', (req, res) => {
 
   const { targetBasketId, bannerType, title, message, promoCode, discountPercent, imageUrl } = req.body;
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (!targetBasketId || !title || !message) {
@@ -18344,7 +19147,7 @@ app.post('/api/va/place-banner', (req, res) => {
 
   // Send Push Notification / Activity Log to the Customer so they immediately see the discount offer!
   if (basket.userId) {
-    const customerUser = db.users.find(u => u.id === basket.userId);
+    const customerUser = getUserById(basket.userId, db);
     if (customerUser) {
       if (!customerUser.activityLogs) customerUser.activityLogs = [];
       customerUser.activityLogs.unshift({
@@ -18396,7 +19199,7 @@ app.post('/api/va/convert-vm', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const currentVM = user.vaStats?.virtualMoneyBalance || 0;
@@ -18449,7 +19252,7 @@ app.post('/api/shop/simulate-action', (req, res) => {
   const { basketId, action } = req.body;
   const db = loadDB();
 
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user || !user.isAdmin) {
     return res.status(403).json({ error: 'Forbidden: Admin lamang ang maaaring mag-proseso ng Bayaran at I-deliver o Expire Lead.' });
   }
@@ -18475,7 +19278,7 @@ app.post('/api/shop/simulate-action', (req, res) => {
         banner.earnedCommission = earnedComm;
 
         // Credit to VA user
-        const vaUser = db.users.find(u => u.id === banner.vaUserId);
+        const vaUser = getUserById(banner.vaUserId, db);
         if (vaUser) {
           if (!vaUser.vaStats) {
             vaUser.vaStats = {
@@ -18544,7 +19347,7 @@ app.post('/api/shop/simulate-action', (req, res) => {
 app.get('/api/shop/products', (req, res) => {
   const db = loadDB();
   const token = req.headers.authorization?.replace('Bearer ', '');
-  const currentUser = token ? db.users.find(u => u.id === token) : null;
+  const currentUser = token ? getUserById(token, db) : null;
   const isAdmin = currentUser?.isAdmin || false;
 
   let products = db.shopProducts || INITIAL_SHOP_PRODUCTS;
@@ -18562,7 +19365,7 @@ app.get('/api/shop/products', (req, res) => {
 app.get('/api/shop/products/:id', (req, res) => {
   const db = loadDB();
   const token = req.headers.authorization?.replace('Bearer ', '');
-  const currentUser = token ? db.users.find(u => u.id === token) : null;
+  const currentUser = token ? getUserById(token, db) : null;
   const isAdmin = currentUser?.isAdmin || false;
 
   const productId = req.params.id;
@@ -18582,7 +19385,7 @@ app.get('/api/shop/products/:id', (req, res) => {
   const rawSharedBy = typeof req.query.sharedBy === 'string' ? req.query.sharedBy.trim() : '';
 
   if (rawSharedBy) {
-    const referrerUser = db.users.find(u => u.id === rawSharedBy || u.referralCode === rawSharedBy);
+    const referrerUser = getUserById(rawSharedBy, db) || getUserByReferralCode(rawSharedBy, db);
     if (referrerUser && (!currentUser || (currentUser.id !== referrerUser.id && currentUser.referralCode !== rawSharedBy))) {
       attribution = {
         valid: true,
@@ -18845,7 +19648,8 @@ app.post('/api/admin/shop/affiliate/preview', async (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
   const { affiliateUrl } = req.body;
@@ -18933,7 +19737,8 @@ app.post('/api/admin/shop/products', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
   const {
@@ -19049,7 +19854,8 @@ app.put('/api/admin/shop/products/:id', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
   const productId = req.params.id;
@@ -19166,7 +19972,8 @@ app.delete('/api/admin/shop/products/:id', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
   const productId = req.params.id;
@@ -19191,7 +19998,8 @@ app.patch('/api/admin/shop/products/:id/toggle-status', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
   const productId = req.params.id;
@@ -19216,7 +20024,7 @@ app.get('/api/shop/cart', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   checkAndExpireBanners(db);
@@ -19251,7 +20059,7 @@ app.get('/api/shop/active-banner', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   checkAndExpireBanners(db);
@@ -19335,7 +20143,7 @@ app.post('/api/shop/cart/add', (req, res) => {
   if (!productId) return res.status(400).json({ error: 'Product ID is required' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const product = (db.shopProducts || INITIAL_SHOP_PRODUCTS).find(p => p.id === productId);
@@ -19385,7 +20193,7 @@ app.post('/api/shop/cart/update', (req, res) => {
   const { itemId, productId, quantity, selected } = req.body;
   const targetId = itemId || productId;
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (!db.shopCarts) db.shopCarts = {};
@@ -19428,7 +20236,7 @@ app.put('/api/shop/cart/update-quantity', (req, res) => {
   const { productId, itemId, quantity } = req.body;
   const targetId = productId || itemId;
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (!db.shopCarts) db.shopCarts = {};
@@ -19459,7 +20267,7 @@ app.patch('/api/shop/cart/toggle-select', (req, res) => {
   const { productId, itemId, selected } = req.body;
   const targetId = productId || itemId;
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (!db.shopCarts) db.shopCarts = {};
@@ -19484,7 +20292,7 @@ app.post('/api/shop/cart/select-all', (req, res) => {
 
   const { selected } = req.body;
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (!db.shopCarts) db.shopCarts = {};
@@ -19511,7 +20319,7 @@ app.post('/api/shop/cart/remove', (req, res) => {
   const { itemId, productId } = req.body;
   const targetId = itemId || productId;
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (db.shopCarts && db.shopCarts[user.id]) {
@@ -19533,7 +20341,7 @@ app.delete('/api/shop/cart/item/:productId', (req, res) => {
 
   const { productId } = req.params;
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (db.shopCarts && db.shopCarts[user.id]) {
@@ -19554,7 +20362,7 @@ app.all('/api/shop/cart/clear', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (!db.shopCarts) db.shopCarts = {};
@@ -19574,7 +20382,7 @@ app.post('/api/shop/checkout', checkIdempotency, (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const {
@@ -19753,6 +20561,8 @@ app.post('/api/shop/checkout', checkIdempotency, (req, res) => {
     body: `Nai-proseso na ang iyong order na nagkakahalagang ₱${totalAmount.toFixed(2)}. Maaari mo nang i-track ang delivery status sa My Orders page!`
   }).catch(() => {});
 
+  markFirestoreDirty('shop_orders', newOrder.id);
+  markFirestoreDirty('users', user.id);
   saveDB(db);
 
   return res.json({
@@ -19768,7 +20578,7 @@ app.get(['/api/shop/orders', '/api/shop/my-orders'], (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (!db.shopOrders) db.shopOrders = INITIAL_SHOP_ORDERS;
@@ -19791,7 +20601,7 @@ app.get(['/api/shop/orders/:id', '/api/shop/order/:id'], (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (!db.shopOrders) db.shopOrders = INITIAL_SHOP_ORDERS;
@@ -19824,7 +20634,7 @@ app.post(['/api/shop/orders/:id/cancel', '/api/shop/order/:id/cancel'], (req, re
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (!db.shopOrders) db.shopOrders = INITIAL_SHOP_ORDERS;
@@ -19897,7 +20707,8 @@ app.get('/api/admin/shop/orders', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
   const orders = db.shopOrders || INITIAL_SHOP_ORDERS;
@@ -19931,7 +20742,8 @@ app.post(['/api/admin/shop/order/update-status', '/api/admin/shop/orders/update-
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
   const {
@@ -19988,7 +20800,7 @@ app.post(['/api/admin/shop/order/update-status', '/api/admin/shop/orders/update-
 
       // Award VA Commission if linked
       if (order.vaId && order.vaCommissionAmount > 0) {
-        const vaUser = db.users.find(u => u.id === order.vaId);
+        const vaUser = getUserById(order.vaId, db);
         if (vaUser) {
           if (!vaUser.vaStats) {
             vaUser.vaStats = {
@@ -20037,7 +20849,7 @@ app.post(['/api/admin/shop/order/update-status', '/api/admin/shop/orders/update-
       }
 
       // Refund if wallet
-      const targetBuyer = db.users.find(u => u.id === order.userId);
+      const targetBuyer = getUserById(order.userId, db);
       if (order.paymentMethod === 'wallet' && targetBuyer) {
         targetBuyer.stats.balance += order.totalAmount;
         if (!targetBuyer.activityLogs) targetBuyer.activityLogs = [];
@@ -20085,7 +20897,8 @@ app.get('/api/admin/va-management', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
 
   checkAndExpireBanners(db);
@@ -20117,13 +20930,14 @@ app.post('/api/admin/approve-va-subscription', (req, res) => {
 
   const { subscriptionId, decision } = req.body;
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
 
   const sub = (db.vaSubscriptions || []).find(s => s.id === subscriptionId);
   if (!sub) return res.status(404).json({ error: 'Subscription request not found' });
 
-  const targetUser = db.users.find(u => u.id === sub.userId);
+  const targetUser = getUserById(sub.userId, db);
 
   if (decision === 'approve') {
     const now = new Date();
@@ -20246,7 +21060,7 @@ app.get('/api/challenges/:id', (req, res) => {
 
   // Dynamic voting limit calculation
   const token = req.headers.authorization?.replace('Bearer ', '');
-  const user = token ? db.users.find(u => u.id === token) : null;
+  const user = token ? getUserById(token, db) : null;
   const validEntryCount = approvedEntries.length;
   const maxAllowedVotes = calculateMaxVotesPerUser(validEntryCount);
 
@@ -20313,7 +21127,7 @@ app.post('/api/challenges/:id/like', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(401).json({ error: 'User not found' });
 
   const { id } = req.params;
@@ -20348,7 +21162,7 @@ app.post('/api/challenges', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(401).json({ error: 'User not found' });
 
   const {
@@ -20457,7 +21271,7 @@ app.post('/api/challenges/:id/join', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(401).json({ error: 'User not found' });
 
   const { id } = req.params;
@@ -20509,7 +21323,7 @@ app.get('/api/challenges/:id/my-entry', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(401).json({ error: 'User not found' });
 
   const { id } = req.params;
@@ -20530,7 +21344,7 @@ app.post('/api/challenges/:id/entries', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(401).json({ error: 'User not found' });
 
   const { id } = req.params;
@@ -20637,7 +21451,7 @@ app.put('/api/challenges/:id/entries/:entryId', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(401).json({ error: 'User not found' });
 
   const { id, entryId } = req.params;
@@ -20699,7 +21513,7 @@ app.post('/api/challenges/:id/entries/:entryId/vote', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(401).json({ error: 'User not found' });
 
   const { id, entryId } = req.params;
@@ -20962,7 +21776,7 @@ app.post('/api/sponsored-missions', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(401).json({ error: 'User not found' });
 
   const {
@@ -21076,7 +21890,8 @@ app.get('/api/admin/challenges', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
 
   const challenges = db.creatorChallenges || INITIAL_CREATOR_CHALLENGES;
@@ -21100,7 +21915,8 @@ app.patch('/api/admin/challenges/:id', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
 
   const { id } = req.params;
@@ -21146,7 +21962,7 @@ function disburseChallengePrizesAndEarnings(
     if (sorted.length === 1) {
       // 100% to lone winner
       const w1 = sorted[0];
-      const user1 = db.users.find(u => u.id === w1.participantId);
+      const user1 = getUserById(w1.participantId, db);
       if (user1) {
         // IDEMPOTENCY CHECK: Ensure prize has not already been credited to user's wallet/ledger
         const logId = `act-chal-win-${challenge.id}-${w1.id}`;
@@ -21177,7 +21993,7 @@ function disburseChallengePrizesAndEarnings(
       for (let i = 0; i < shares.length && i < sorted.length; i++) {
         const entry = sorted[i];
         const prizeAmount = Math.floor(totalPrize * shares[i]);
-        const user = db.users.find(u => u.id === entry.participantId);
+        const user = getUserById(entry.participantId, db);
         if (user && prizeAmount > 0) {
           // IDEMPOTENCY CHECK: verify transaction uniqueness
           const logId = `act-chal-win-${challenge.id}-${entry.id}`;
@@ -21208,7 +22024,7 @@ function disburseChallengePrizesAndEarnings(
 
   // Credit host earnings strictly from legitimate sponsor budget server-side
   if (hostReward > 0) {
-    const hostUser = db.users.find(u => u.id === challenge.hostId);
+    const hostUser = getUserById(challenge.hostId, db);
     if (hostUser) {
       const hostLogId = `act-chal-host-${challenge.id}`;
       const alreadyHostCredited = (hostUser.activityLogs || []).some(log => 
@@ -21237,7 +22053,7 @@ function disburseChallengePrizesAndEarnings(
   // Deduct settled prize/budget authoritatively from host or sponsor upon final disbursement
   if (!challenge.sponsorBudget || challenge.sponsorBudget <= 0) {
     // Self-funded challenge: Deduct prize pool from host wallet balance
-    const hostUser = db.users.find(u => u.id === challenge.hostId);
+    const hostUser = getUserById(challenge.hostId, db);
     if (hostUser && totalPrize > 0) {
       const hostDeductId = `act-chal-host-deduct-${challenge.id}`;
       const alreadyDeducted = (hostUser.activityLogs || []).some(log => log.id === hostDeductId);
@@ -21257,7 +22073,7 @@ function disburseChallengePrizesAndEarnings(
     }
   } else if (challenge.sponsorId && (challenge.sponsorBudget || 0) > 0) {
     // Sponsored challenge: Deduct sponsor budget from sponsor wallet balance
-    const sponsorUser = db.users.find(u => u.id === challenge.sponsorId);
+    const sponsorUser = getUserById(challenge.sponsorId, db);
     const budgetToDeduct = challenge.sponsorBudget || 0;
     if (sponsorUser && budgetToDeduct > 0) {
       const sponsorDeductId = `act-chal-sponsor-deduct-${challenge.id}`;
@@ -21309,7 +22125,8 @@ app.post('/api/admin/challenges/:id/distribute-prizes', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
 
   const { id } = req.params;
@@ -21339,7 +22156,8 @@ app.delete('/api/admin/challenges/:id', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
 
   const { id } = req.params;
@@ -21368,7 +22186,8 @@ app.post('/api/admin/challenges/cleanup-run', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Forbidden: Admin access required' });
 
   const results = runChallengeCleanupWorker();
@@ -21544,7 +22363,7 @@ app.get('/api/user/wallet-summary', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(401).json({ error: 'User not found' });
 
   const wallet = getUserWalletBreakdown(user, db);
@@ -21557,7 +22376,7 @@ app.get('/api/user/deposit-requests', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(401).json({ error: 'User not found' });
 
   const requests = (db.depositRequests || [])
@@ -21573,7 +22392,7 @@ app.post('/api/user/deposit-requests', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const user = db.users.find(u => u.id === token);
+  const user = getUserById(token, db);
   if (!user) return res.status(401).json({ error: 'User not found' });
 
   const { amount, referenceNo, proofImageUrl, targetPurpose, targetEntityId } = req.body;
@@ -21645,7 +22464,8 @@ app.get('/api/admin/deposit-requests', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
   const requests = (db.depositRequests || []).slice().sort((a, b) => 
@@ -21661,7 +22481,8 @@ app.post('/api/admin/deposit-requests/:id/approve', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
   const { id } = req.params;
@@ -21673,7 +22494,7 @@ app.post('/api/admin/deposit-requests/:id/approve', (req, res) => {
     return res.status(400).json({ error: `Ang deposit request na ito ay naproseso na (${depositReq.status}). Hindi maaaring ulitin.` });
   }
 
-  const targetUser = db.users.find(u => u.id === depositReq.userId);
+  const targetUser = getUserById(depositReq.userId, db);
   if (!targetUser) {
     return res.status(404).json({ error: 'Ang user para sa deposit na ito ay hindi matagpuan.' });
   }
@@ -21723,7 +22544,8 @@ app.post('/api/admin/deposit-requests/:id/reject', (req, res) => {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   const db = loadDB();
-  const admin = db.users.find(u => u.id === token && u.isAdmin);
+  const adminCandidate = getUserById(token, db);
+  const admin = adminCandidate?.isAdmin ? adminCandidate : undefined;
   if (!admin) return res.status(403).json({ error: 'Admin access required' });
 
   const { id } = req.params;
@@ -21741,7 +22563,7 @@ app.post('/api/admin/deposit-requests/:id/reject', (req, res) => {
   depositReq.reviewedBy = admin.name || admin.email || 'Admin';
   depositReq.rejectionReason = reason;
 
-  const targetUser = db.users.find(u => u.id === depositReq.userId);
+  const targetUser = getUserById(depositReq.userId, db);
   if (targetUser) {
     if (!targetUser.activityLogs) targetUser.activityLogs = [];
     targetUser.activityLogs.unshift({
@@ -22011,4 +22833,8 @@ async function startServer() {
   });
 }
 
-startServer();
+export { app, startServer, generateToken };
+
+if (!isTestEnv) {
+  startServer();
+}
