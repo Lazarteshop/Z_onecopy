@@ -12678,12 +12678,16 @@ app.get('/api/zone/posts', (req, res) => {
     return true;
   });
 
-  const feedType = (req.query.feed as string || req.query.filter as string || 'forYou').toLowerCase();
+  const feedType = (req.query.feed as string || req.query.filter as string || 'latest').toLowerCase();
   let sortedPosts: any[] = [];
 
   if (feedType === 'following' && requester) {
     const followingIds = requester.zonedUsers || [];
     sortedPosts = eligiblePosts.filter(p => p.userId === requester.id || followingIds.includes(p.userId));
+    sortedPosts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } else if (feedType === 'friends' && requester) {
+    const friendIds = (requester as any).friends || [];
+    sortedPosts = eligiblePosts.filter(p => p.userId === requester.id || friendIds.includes(p.userId));
     sortedPosts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   } else if (feedType === 'popular') {
     // Sort purely by engagement
@@ -12706,8 +12710,8 @@ app.get('/api/zone/posts', (req, res) => {
     const savedIds = (db.savedPosts || []).filter(s => s.userId === requesterId).map(s => s.postId);
     sortedPosts = eligiblePosts.filter(p => savedIds.includes(p.id));
     sortedPosts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } else {
-    // Default 'forYou': Deterministic scoring based on recency decay, engagement, relationship & media
+  } else if (feedType === 'foryou' || feedType === 'for-you') {
+    // Personalized 'forYou': Deterministic scoring based on recency decay, engagement, relationship & media
     const nowMs = Date.now();
     const scoredPosts = eligiblePosts.map(p => {
       const postTime = new Date(p.createdAt).getTime();
@@ -12731,6 +12735,14 @@ app.get('/api/zone/posts', (req, res) => {
       return b.createdAtTime - a.createdAtTime;
     });
     sortedPosts = interleaveSponsoredFeedPosts(scoredPosts.map(sp => sp.post), db);
+  } else {
+    // Default 'latest' / 'all': Chronological newest -> oldest based on createdAt, with active/non-expired sponsored promotions interleaved
+    const chronologicalPosts = [...eligiblePosts].sort((a, b) => {
+      const timeDiff = (new Date(b.createdAt || 0).getTime() || 0) - (new Date(a.createdAt || 0).getTime() || 0);
+      if (timeDiff !== 0) return timeDiff;
+      return String(b.id || '').localeCompare(String(a.id || ''));
+    });
+    sortedPosts = interleaveSponsoredFeedPosts(chronologicalPosts, db);
   }
 
   // Enrich with user's personal saved state
@@ -12738,14 +12750,29 @@ app.get('/api/zone/posts', (req, res) => {
     requesterId ? (db.savedPosts || []).filter(s => s.userId === requesterId).map(s => s.postId) : []
   );
 
-  const page = parseInt(req.query.page as string) || 1;
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
   const limitParam = req.query.limit ? parseInt(req.query.limit as string) : (req.query.all === 'true' ? sortedPosts.length : 120);
   const limit = Math.min(Math.max(limitParam, 1), 500);
-  const startIndex = (page - 1) * limit;
+
+  let startIndex = (page - 1) * limit;
+  const rawCursor = typeof req.query.cursor === 'string' ? req.query.cursor.trim() : '';
+  if (rawCursor) {
+    const cursorIdx = sortedPosts.findIndex((p: any) => p && (`${p.createdAt}|${p.id}` === rawCursor || p.id === rawCursor));
+    if (cursorIdx !== -1) {
+      startIndex = cursorIdx + 1;
+    } else if (/^\d+$/.test(rawCursor)) {
+      startIndex = Math.max(parseInt(rawCursor, 10), 0);
+    } else {
+      return res.status(400).json({ error: 'Invalid pagination cursor.' });
+    }
+  }
+
   const paginatedPosts = (req.query.all === 'true') 
     ? sortedPosts 
-    : sortedPosts.slice(0, startIndex + limit);
+    : sortedPosts.slice(startIndex, startIndex + limit);
   const hasMore = (startIndex + limit) < sortedPosts.length;
+  const lastPost = paginatedPosts.length > 0 ? paginatedPosts[paginatedPosts.length - 1] : null;
+  const nextCursor = hasMore && lastPost ? `${lastPost.createdAt}|${lastPost.id}` : null;
 
   const enrichedPosts = paginatedPosts.map(p => {
     initPostReactions(p);
@@ -12771,6 +12798,7 @@ app.get('/api/zone/posts', (req, res) => {
     posts: enrichedPosts,
     total: sortedPosts.length,
     hasMore,
+    nextCursor,
     page,
     feed: feedType
   });

@@ -338,7 +338,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     ];
   });
   const [loadingPosts, setLoadingPosts] = useState(false);
-  const [postFilter, setPostFilter] = useState<'forYou' | 'friends' | 'following' | 'popular' | 'trending' | 'communities' | 'all' | 'saved' | 'news' | 'community' | 'teleserye' | 'bilibili'>('forYou');
+  const [postFilter, setPostFilter] = useState<'latest' | 'forYou' | 'friends' | 'following' | 'popular' | 'trending' | 'communities' | 'all' | 'saved' | 'news' | 'community' | 'teleserye' | 'bilibili'>('latest');
   const [smartFeedFallbackActive, setSmartFeedFallbackActive] = useState<boolean>(false);
   const [savedPostIds, setSavedPostIds] = useState<Set<string>>(new Set());
   const [replyInputOpenMap, setReplyInputOpenMap] = useState<Record<string, boolean>>({});
@@ -2064,7 +2064,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
       };
 
       const requestedFilter = sectionOverride || postFilter;
-      let endpoint = '/api/zone/posts';
+      let endpoint = '/api/zone/posts?feed=latest';
       let cacheKey = 'zone_posts_cache';
 
       if (['forYou', 'friends', 'communities', 'trending', 'following'].includes(requestedFilter)) {
@@ -2099,7 +2099,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
           }
 
           // Fallback to standard chronological feed
-          const fallbackRes = await fetch('/api/zone/posts', {
+          const fallbackRes = await fetch('/api/zone/posts?feed=latest', {
             headers: {
               'Authorization': token
             }
@@ -2564,6 +2564,16 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
   // Memoized filtered posts list based on selected filter
   const filteredPosts = React.useMemo(() => {
+    if (postFilter === 'latest' || postFilter === 'all') {
+      const chronological = [...visiblePosts].sort((a, b) => {
+        if ((a as any).isPending && !(b as any).isPending) return -1;
+        if (!(a as any).isPending && (b as any).isPending) return 1;
+        const timeDiff = (new Date(b.createdAt || 0).getTime() || 0) - (new Date(a.createdAt || 0).getTime() || 0);
+        if (timeDiff !== 0) return timeDiff;
+        return String(b.id || '').localeCompare(String(a.id || ''));
+      });
+      return blendSponsoredPromotionsNaturally(chronological);
+    }
     if (postFilter === 'forYou') {
       return blendSponsoredPromotionsNaturally(visiblePosts);
     }
@@ -4356,16 +4366,16 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   <button
                     type="button"
                     onClick={() => {
-                      setPostFilter('forYou');
-                      fetchPosts(true, 'for-you');
+                      setPostFilter('latest');
+                      fetchPosts(true, 'latest');
                     }}
                     className={`py-1.5 px-3.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition cursor-pointer select-none whitespace-nowrap ${
-                      postFilter === 'forYou'
+                      postFilter === 'latest' || postFilter === 'all'
                         ? 'bg-blue-600 text-white shadow-2xs'
                         : 'text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    <span>{language === 'tl' ? 'Para sa Iyo' : 'For You'}</span>
+                    <span>Latest</span>
                   </button>
 
                   <button
@@ -4399,13 +4409,13 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   </button>
 
                   {/* Show active chip if user selected a secondary feed from More/Menu */}
-                  {!['forYou', 'friends', 'following'].includes(postFilter) && (
+                  {!['latest', 'all', 'friends', 'following'].includes(postFilter) && (
                     <div className="py-1.5 px-3 rounded-xl font-bold text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 flex items-center gap-1.5 whitespace-nowrap">
                       <span className="capitalize">
+                        {postFilter === 'forYou' && (language === 'tl' ? 'Para sa Iyo (For You)' : 'For You')}
                         {postFilter === 'saved' && (language === 'tl' ? 'Naka-save' : 'Saved')}
                         {postFilter === 'communities' && (language === 'tl' ? 'Komunidad' : 'Communities')}
                         {(postFilter === 'popular' || postFilter === 'trending') && 'Trending'}
-                        {postFilter === 'all' && (language === 'tl' ? 'Pinakabago' : 'Latest')}
                         {postFilter === 'bilibili' && 'BiliBili FLIX'}
                         {postFilter === 'teleserye' && 'Teleserye'}
                         {postFilter === 'news' && (language === 'tl' ? 'Balita' : 'News')}
@@ -4414,11 +4424,11 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                       <button
                         type="button"
                         onClick={() => {
-                          setPostFilter('forYou');
-                          fetchPosts(true, 'for-you');
+                          setPostFilter('latest');
+                          fetchPosts(true, 'latest');
                         }}
                         className="hover:text-indigo-950 cursor-pointer"
-                        title="Reset to For You"
+                        title="Reset to Latest"
                       >
                         ✕
                       </button>
@@ -4441,11 +4451,11 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                     <div className="absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-slate-200 py-1.5 z-30 text-xs font-bold text-slate-700">
                       <button
                         type="button"
-                        onClick={() => { setPostFilter('all'); fetchPosts(true, 'all'); setShowMoreFeedsMenu(false); }}
+                        onClick={() => { setPostFilter('forYou'); fetchPosts(true, 'for-you'); setShowMoreFeedsMenu(false); }}
                         className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
                       >
-                        <Clock className="w-3.5 h-3.5 text-indigo-500" />
-                        <span>{language === 'tl' ? 'Pinakabago (Latest)' : 'Latest Posts'}</span>
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                        <span>{language === 'tl' ? 'Para sa Iyo (For You)' : 'For You'}</span>
                       </button>
                       <button
                         type="button"
