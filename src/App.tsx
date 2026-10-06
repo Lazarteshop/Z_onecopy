@@ -58,7 +58,15 @@ import {
   X,
   Home,
   Gift,
-  Receipt
+  Receipt,
+  Menu,
+  Search,
+  Bookmark,
+  Film,
+  BarChart3,
+  LayoutGrid,
+  ChevronRight,
+  ShieldCheck
 } from 'lucide-react';
 import { INITIAL_CAMPAIGNS } from './data/campaigns';
 import { WebsiteCampaign, WithdrawalRequest, ActivityLog, UserStats, ReferralFriend, ReelVideo, ShopProduct } from './types';
@@ -93,6 +101,7 @@ import { UnifiedSearchDiscoveryModal } from './components/UnifiedSearchDiscovery
 import { HashtagDiscoveryModal } from './components/HashtagDiscoveryModal';
 import { UserProfileModal } from './components/UserProfileModal';
 import { ZoneLandingExperience } from './components/ZoneLandingExperience';
+import { SocialNotificationCenter } from './components/SocialNotificationCenter';
 import { getOrCreateDeviceKeyId, getDeviceSecurityHeaders } from './utils/deviceSecurity';
 import { dataSaver, generateIdempotencyKey } from './utils/dataSaver';
 import { idbStorage } from './utils/idbStorage';
@@ -289,8 +298,9 @@ export default function App() {
         if (p.get('shopProduct') || p.get('product') || p.get('shop')) return 'va_shop';
       } catch (e) {}
     }
-    return null;
+    return 'zone';
   });
+  const [showSocialMenuDrawer, setShowSocialMenuDrawer] = useState<boolean>(false);
 
   const [showVerificationModal, setShowVerificationModal] = useState<boolean>(false);
   const [showDeviceTransferModal, setShowDeviceTransferModal] = useState<boolean>(false);
@@ -306,9 +316,8 @@ export default function App() {
   const [customTimer, setCustomTimer] = useState('15');
   const [customDescription, setCustomDescription] = useState('');
   const [campaignFilter, setCampaignFilter] = useState<'all' | 'high' | 'available'>('all');
-  const [showPromoAdModal, setShowPromoAdModal] = useState<boolean>(true);
-  // Always true on initial app load / open so the popup banner shows every time
-  const [showWithdrawalPolicyModal, setShowWithdrawalPolicyModal] = useState<boolean>(true);
+  const [showPromoAdModal, setShowPromoAdModal] = useState<boolean>(false);
+  const [showWithdrawalPolicyModal, setShowWithdrawalPolicyModal] = useState<boolean>(false);
   const [showPushNotifModal, setShowPushNotifModal] = useState<boolean>(false);
   const [showDataSaverModal, setShowDataSaverModal] = useState<boolean>(false);
   const [isDataSaverActive, setIsDataSaverActive] = useState<boolean>(() => dataSaver.isDataSaverActive());
@@ -1733,7 +1742,7 @@ export default function App() {
   };
 
   const handleExploreDemo = async (
-    targetTab: 'earn' | 'cashout' | 'zone' | 'guide' | 'negosyo' | 'va_shop' | 'kiddie' | 'challenges' | null = null
+    targetTab: 'earn' | 'cashout' | 'zone' | 'guide' | 'negosyo' | 'va_shop' | 'kiddie' | 'challenges' | null = 'zone'
   ) => {
     setAuthLoading(true);
     setAuthError(null);
@@ -2397,11 +2406,215 @@ export default function App() {
           triggerNotification={triggerNotification}
         />
       ) : (
-        /* 📱 GATEWAY 2: AUTHENTICATED SYSTEM DASHBOARD */
+        /* 📱 GATEWAY 2: AUTHENTICATED FACEBOOK-STYLE SOCIAL WORKSPACE */
         <>
-          {/* 📱 SMARTPHONE APP LAUNCHER (Default Home Screen on Login) */}
+          {/* 🌐 CLEAN FACEBOOK-STYLE TOP NAVIGATION HEADER */}
+          <header
+            id="social-top-navigation-header"
+            className="bg-white border-b border-slate-200/90 sticky top-0 z-30 shadow-2xs"
+          >
+            <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
+              {/* Left: Brand + Search */}
+              <div className="flex items-center gap-2 sm:gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    try { soundEffects.playClick(); } catch (e) {}
+                    setActiveTab('zone');
+                    window.dispatchEvent(new CustomEvent('zone-set-post-filter', { detail: { filter: 'forYou' } }));
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="flex items-center gap-2 cursor-pointer group text-left"
+                >
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-black text-lg flex items-center justify-center shadow-xs group-hover:scale-105 transition">
+                    Z
+                  </div>
+                  <span className="font-black text-base sm:text-lg tracking-tight text-slate-900">
+                    Z-one<span className="text-blue-600">App</span>
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsSearchModalOpen(true)}
+                  className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200/80 text-slate-500 px-3 py-2 rounded-full text-xs font-semibold transition cursor-pointer"
+                  title={language === 'tl' ? 'Maghanap sa Z-oneApp' : 'Search Z-oneApp'}
+                >
+                  <Search className="w-4 h-4 text-slate-500 shrink-0" />
+                  <span className="hidden xl:inline pr-4">
+                    {language === 'tl' ? 'Maghanap sa Z-oneApp...' : 'Search Z-oneApp...'}
+                  </span>
+                </button>
+              </div>
+
+              {/* Center: Desktop Primary Social Navigation (Home, Friends, Reels, Communities) */}
+              <nav className="hidden md:flex items-center justify-center gap-1 lg:gap-2 h-full">
+                {/* Home */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    try { soundEffects.playClick(); } catch (e) {}
+                    setActiveTab('zone');
+                    window.dispatchEvent(new CustomEvent('zone-set-post-filter', { detail: { filter: 'forYou' } }));
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className={`h-12 px-5 lg:px-7 rounded-xl flex items-center gap-2 font-bold text-xs transition cursor-pointer relative ${
+                    activeTab === 'zone'
+                      ? 'text-blue-600 bg-blue-50/60'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Home className="w-5 h-5" />
+                  <span>Home</span>
+                  {activeTab === 'zone' && (
+                    <span className="absolute bottom-0 left-3 right-3 h-0.5 bg-blue-600 rounded-full" />
+                  )}
+                </button>
+
+                {/* Friends */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    try { soundEffects.playClick(); } catch (e) {}
+                    if (activeTab !== 'zone') {
+                      setActiveTab('zone');
+                      setTimeout(() => window.dispatchEvent(new Event('zone-open-friends')), 120);
+                    } else {
+                      window.dispatchEvent(new Event('zone-open-friends'));
+                    }
+                  }}
+                  className="h-12 px-5 lg:px-7 rounded-xl flex items-center gap-2 font-bold text-xs text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+                >
+                  <Users className="w-5 h-5" />
+                  <span>{language === 'tl' ? 'Kaibigan' : 'Friends'}</span>
+                </button>
+
+                {/* Reels */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    try { soundEffects.playClick(); } catch (e) {}
+                    window.dispatchEvent(new Event('open-reels-widget'));
+                    const openBtn = document.getElementById('reels-widget-open-btn');
+                    if (openBtn) openBtn.click();
+                  }}
+                  className="h-12 px-5 lg:px-7 rounded-xl flex items-center gap-2 font-bold text-xs text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+                >
+                  <Film className="w-5 h-5 text-rose-500" />
+                  <span>Reels</span>
+                </button>
+
+                {/* Communities */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    try { soundEffects.playClick(); } catch (e) {}
+                    if (activeTab !== 'zone') {
+                      setActiveTab('zone');
+                      setTimeout(() => window.dispatchEvent(new Event('zone-open-communities')), 120);
+                    } else {
+                      window.dispatchEvent(new Event('zone-open-communities'));
+                    }
+                  }}
+                  className="h-12 px-5 lg:px-7 rounded-xl flex items-center gap-2 font-bold text-xs text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+                >
+                  <Globe className="w-5 h-5 text-indigo-600" />
+                  <span>{language === 'tl' ? 'Komunidad' : 'Communities'}</span>
+                </button>
+              </nav>
+
+              {/* Right: Messenger, Notifications, Profile, Menu */}
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                {/* Back to Home Feed chip when viewing a secondary module */}
+                {activeTab !== 'zone' && (
+                  <button
+                    type="button"
+                    id="module-back-to-launcher-btn"
+                    onClick={() => {
+                      try { soundEffects.playClick(); } catch (e) {}
+                      setActiveTab('zone');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="px-3 py-1.5 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-xs flex items-center gap-1.5 transition cursor-pointer border border-blue-200/80"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">{language === 'tl' ? 'Bumalik sa Home' : 'Back to Home'}</span>
+                  </button>
+                )}
+
+                {/* Messages / Inbox */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    try { soundEffects.playClick(); } catch (e) {}
+                    if (activeTab !== 'zone') {
+                      setActiveTab('zone');
+                      setTimeout(() => window.dispatchEvent(new Event('zone-open-inbox')), 120);
+                    } else {
+                      window.dispatchEvent(new Event('zone-open-inbox'));
+                    }
+                  }}
+                  className="p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
+                  title={language === 'tl' ? 'Mga Mensahe' : 'Messages'}
+                >
+                  <MessageSquare className="w-4 h-4" />
+                </button>
+
+                {/* Notifications */}
+                <SocialNotificationCenter
+                  token={token || ''}
+                  currentUserId={user.id}
+                  language={language}
+                  onNavigateToPost={() => {
+                    setActiveTab('zone');
+                  }}
+                  onNavigateToProfile={(userId) => {
+                    setViewingProfileUserId(userId);
+                    setIsViewingProfileOpen(true);
+                  }}
+                  onNavigateToChallenge={() => {
+                    setActiveTab('challenges');
+                  }}
+                />
+
+                {/* Profile Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewingProfileUserId(user.id);
+                    setIsViewingProfileOpen(true);
+                  }}
+                  className="flex items-center gap-2 pl-1 pr-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-800 transition cursor-pointer"
+                  title={language === 'tl' ? 'Ang Iyong Profile' : 'Your Profile'}
+                >
+                  <span className="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center overflow-hidden shrink-0">
+                    {user.avatar && (user.avatar.startsWith('data:image') || user.avatar.startsWith('http')) ? (
+                      <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <span>{user.avatar || user.name.charAt(0)}</span>
+                    )}
+                  </span>
+                  <span className="hidden sm:inline font-bold text-xs max-w-[96px] truncate">
+                    {user.name.split(' ')[0]}
+                  </span>
+                </button>
+
+                {/* Menu / More Drawer Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowSocialMenuDrawer(true)}
+                  className="p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
+                  title="Menu & More"
+                >
+                  <Menu className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </header>
+
+          {/* 📱 SMARTPHONE APP LAUNCHER (Accessible from Menu > App Launcher) */}
           {activeTab === null ? (
-            <main className="w-full flex-1 flex flex-col items-center justify-start p-0 sm:py-6">
+            <main className="w-full flex-1 flex flex-col items-center justify-start p-0 sm:py-6 pb-20">
               <SmartphoneAppLauncher
                 activeTab={null}
                 onSelectTab={(t) => setActiveTab(t)}
@@ -2439,60 +2652,8 @@ export default function App() {
               />
             </main>
           ) : (
-            /* 📱 DEDICATED FULL-SCREEN MODULE VIEW WITH BACK TO LAUNCHER BUTTON */
-            <main className="w-full flex-1 flex flex-col">
-              {/* STICKY MODULE TOP BAR WITH BACK BUTTON */}
-              <div className="bg-[#0c1322] border-b border-slate-800 py-3 px-4 sm:px-6 sticky top-0 z-30 shadow-md flex items-center justify-between">
-                <button
-                  id="module-back-to-launcher-btn"
-                  onClick={() => {
-                    try { soundEffects.playClick(); } catch (e) {}
-                    setActiveTab(null);
-                  }}
-                  type="button"
-                  className="zone-btn zone-btn-primary zone-btn-sm text-xs sm:text-sm px-4 select-none cursor-pointer"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  <span>{language === 'tl' ? 'Bumalik sa Launcher' : 'Back to Launcher'}</span>
-                </button>
-
-                <div className="flex items-center gap-2 text-xs font-bold text-slate-300">
-                  <span className="text-slate-400 font-normal">{language === 'tl' ? 'Module:' : 'Module:'}</span>
-                  <span className="font-extrabold text-white bg-slate-800 border border-slate-700 px-3 py-1 rounded-lg">
-                    {activeTab === 'zone' && 'Z-one Social'}
-                    {activeTab === 'kiddie' && 'Z-oneKiddie 🌟'}
-                    {activeTab === 'challenges' && 'Creator Challenges 🏆'}
-                    {activeTab === 'va_shop' && 'VA & Shop'}
-                    {activeTab === 'earn' && 'Mag-ipon'}
-                    {activeTab === 'cashout' && 'GCash Cash-Out'}
-                    {activeTab === 'negosyo' && 'Negosyo'}
-                    {activeTab === 'guide' && 'Gabay'}
-                    {activeTab === 'admin' && 'Admin Control'}
-                  </span>
-                </div>
-              </div>
-
-              {/* 📢 HIGH HYPE PROMO AD TOP BAR FOR NON-SUBSCRIBED USERS */}
-              {isSubscriptionExpired() && !user?.isAdmin && (
-                <div 
-                  onClick={() => {
-                    setShowPromoAdModal(true);
-                  }}
-                  className="bg-gradient-to-r from-amber-500 via-orange-600 to-rose-600 text-white px-4 py-2.5 shadow-md cursor-pointer hover:opacity-95 transition flex items-center justify-between gap-3 text-xs font-black border-b border-amber-300/40"
-                >
-                  <div className="max-w-7xl mx-auto w-full flex flex-col sm:flex-row items-center justify-between gap-2 text-center sm:text-left">
-                    <div className="flex items-center gap-2">
-                      <Flame className="w-4 h-4 text-yellow-300 animate-bounce shrink-0" />
-                      <span>🔥 UNLOCK UNLIMITED GCASH EARNINGS: Kumita ng ₱500 - ₱1,500/day direct sa GCash!</span>
-                    </div>
-                    <div className="inline-flex items-center gap-1.5 bg-yellow-300 hover:bg-yellow-200 text-slate-950 font-black text-[11px] px-3 py-1 rounded-full shadow-sm shrink-0 transition">
-                      <Rocket className="w-3.5 h-3.5 text-slate-950" />
-                      <span>I-RENEW ANG ACCESS PLAN 🚀</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
+            /* 📱 MAIN SOCIAL & MODULE WORKSPACE */
+            <main className="w-full flex-1 flex flex-col pb-16">
               {/* 🖥️ MAIN BODY WORKSPACE */}
               <div id="main-content-layout" className={`flex-1 w-full mx-auto ${activeTab === 'zone' || activeTab === 'challenges' ? 'max-w-7xl px-2 sm:px-4 md:px-6 py-4 md:py-6' : 'max-w-7xl px-4 py-6 md:py-8'}`}>
             {isSubscriptionExpired() && activeTab !== 'earn' && activeTab !== 'zone' && activeTab !== 'negosyo' && activeTab !== 'guide' && activeTab !== 'admin' && activeTab !== 'va_shop' && activeTab !== 'challenges' ? (
@@ -2764,6 +2925,15 @@ export default function App() {
                     }}
                     onNavigateToShop={() => setActiveTab('va_shop')}
                     onNavigateToChallenge={() => setActiveTab('challenges')}
+                    onOpenReels={() => {
+                      window.dispatchEvent(new Event('open-reels-widget'));
+                      const openBtn = document.getElementById('reels-widget-open-btn');
+                      if (openBtn) openBtn.click();
+                    }}
+                    onNavigateToEarn={() => setActiveTab('earn')}
+                    onNavigateToCashout={() => setActiveTab('cashout')}
+                    onOpenMenu={() => setShowSocialMenuDrawer(true)}
+                    userBalance={stats.balance}
                   />
                 )}
               </div>
@@ -3309,31 +3479,72 @@ export default function App() {
             </div>
           )}
 
-          {/* 📱 MODERN 5-TAB BOTTOM NAVIGATION BAR (Matching Reference Image) */}
+          {/* 📱 FACEBOOK-STYLE 5-ITEM MOBILE BOTTOM NAVIGATION BAR (🏠 Home, 👥 Friends, ＋ Create, 🎬 Reels, ☰ Menu) */}
           <nav 
             id="mobile-bottom-navigation-bar" 
-            className="fixed bottom-0 left-0 right-0 max-w-md mx-auto z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 py-1.5 px-3 flex items-center justify-around shadow-[0_-4px_16px_rgba(0,0,0,0.06)] sm:rounded-t-2xl"
+            className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 py-1.5 px-2 flex items-center justify-around shadow-[0_-4px_16px_rgba(0,0,0,0.06)]"
           >
-            {/* Home */}
+            {/* 🏠 Home */}
             <button
               type="button"
               id="bottom-nav-home"
               onClick={() => {
                 try { soundEffects.playClick(); } catch (e) {}
-                setActiveTab(null);
+                setActiveTab('zone');
+                window.dispatchEvent(new CustomEvent('zone-set-post-filter', { detail: { filter: 'forYou' } }));
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
-              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer active:scale-90 ${
-                activeTab === null
+              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition cursor-pointer active:scale-90 ${
+                activeTab === 'zone' && !showSocialMenuDrawer
                   ? 'text-blue-600 font-black'
-                  : 'text-slate-400 hover:text-slate-600 font-semibold'
+                  : 'text-slate-500 hover:text-slate-800 font-semibold'
               }`}
             >
-              <Home className={`w-5 h-5 ${activeTab === null ? 'stroke-[2.5]' : ''}`} />
+              <Home className={`w-5 h-5 ${activeTab === 'zone' && !showSocialMenuDrawer ? 'stroke-[2.5]' : ''}`} />
               <span className="text-[10px] mt-0.5">Home</span>
             </button>
 
-            {/* Reels 🎬 */}
+            {/* 👥 Friends */}
+            <button
+              type="button"
+              id="bottom-nav-friends"
+              onClick={() => {
+                try { soundEffects.playClick(); } catch (e) {}
+                if (activeTab !== 'zone') {
+                  setActiveTab('zone');
+                  setTimeout(() => window.dispatchEvent(new Event('zone-open-friends')), 120);
+                } else {
+                  window.dispatchEvent(new Event('zone-open-friends'));
+                }
+              }}
+              className="flex flex-col items-center justify-center py-1 px-3 rounded-xl transition cursor-pointer text-slate-500 hover:text-slate-800 font-semibold active:scale-90"
+            >
+              <Users className="w-5 h-5" />
+              <span className="text-[10px] mt-0.5">{language === 'tl' ? 'Friends' : 'Friends'}</span>
+            </button>
+
+            {/* ＋ Create */}
+            <button
+              type="button"
+              id="bottom-nav-create"
+              onClick={() => {
+                try { soundEffects.playClick(); } catch (e) {}
+                if (activeTab !== 'zone') {
+                  setActiveTab('zone');
+                  setTimeout(() => window.dispatchEvent(new Event('zone-focus-composer')), 150);
+                } else {
+                  window.dispatchEvent(new Event('zone-focus-composer'));
+                }
+              }}
+              className="flex flex-col items-center justify-center py-1 px-3 rounded-xl transition cursor-pointer text-slate-700 font-bold active:scale-90"
+            >
+              <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-sm -mt-1.5">
+                <Plus className="w-5 h-5 stroke-[2.5]" />
+              </div>
+              <span className="text-[10px] mt-0.5 text-blue-600 font-extrabold">Create</span>
+            </button>
+
+            {/* 🎬 Reels */}
             <button
               type="button"
               id="bottom-nav-reels"
@@ -3345,83 +3556,469 @@ export default function App() {
                   openBtn.click();
                 }
               }}
-              className="flex flex-col items-center justify-center py-1 px-2 rounded-xl transition cursor-pointer text-rose-500 hover:text-rose-600 font-semibold active:scale-90"
+              className="flex flex-col items-center justify-center py-1 px-3 rounded-xl transition cursor-pointer text-slate-500 hover:text-rose-600 font-semibold active:scale-90"
             >
-              <div className="relative">
-                <Tv className="w-5 h-5" />
-                <span className="absolute -top-1 -right-1.5 w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-              </div>
-              <span className="text-[10px] mt-0.5 font-bold">Reels</span>
+              <Film className="w-5 h-5 text-rose-500" />
+              <span className="text-[10px] mt-0.5">Reels</span>
             </button>
 
-            {/* Campaigns / Earn */}
+            {/* ☰ Menu */}
             <button
               type="button"
-              id="bottom-nav-campaigns"
+              id="bottom-nav-menu"
               onClick={() => {
                 try { soundEffects.playClick(); } catch (e) {}
-                setActiveTab('earn');
-                window.scrollTo({ top: 0, behavior: 'smooth' });
+                setShowSocialMenuDrawer(true);
               }}
-              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer active:scale-90 ${
-                activeTab === 'earn'
+              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition cursor-pointer active:scale-90 ${
+                showSocialMenuDrawer
                   ? 'text-blue-600 font-black'
-                  : 'text-slate-400 hover:text-slate-600 font-semibold'
+                  : 'text-slate-500 hover:text-slate-800 font-semibold'
               }`}
             >
-              <Globe className={`w-5 h-5 ${activeTab === 'earn' ? 'stroke-[2.5]' : ''}`} />
-              <span className="text-[10px] mt-0.5">Campaigns</span>
-            </button>
-
-            {/* Rewards / Spin */}
-            <button
-              type="button"
-              id="bottom-nav-rewards"
-              onClick={() => {
-                try { soundEffects.playClick(); } catch (e) {}
-                setShowSpinModal(true);
-              }}
-              className="flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer text-slate-400 hover:text-indigo-600 font-semibold relative group active:scale-90"
-            >
-              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-yellow-400 to-amber-500 text-slate-950 flex items-center justify-center shadow-xs -mt-2 group-hover:scale-110 transition">
-                <Gift className="w-4 h-4 text-slate-950 stroke-[2.5]" />
-              </div>
-              <span className="text-[10px] mt-0.5 text-slate-700 font-bold">Rewards</span>
-            </button>
-
-            {/* Transactions / Wallet */}
-            <button
-              type="button"
-              id="bottom-nav-transactions"
-              onClick={() => {
-                try { soundEffects.playClick(); } catch (e) {}
-                setActiveTab('cashout');
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
-              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer active:scale-90 ${
-                activeTab === 'cashout'
-                  ? 'text-blue-600 font-black'
-                  : 'text-slate-400 hover:text-slate-600 font-semibold'
-              }`}
-            >
-              <Receipt className={`w-5 h-5 ${activeTab === 'cashout' ? 'stroke-[2.5]' : ''}`} />
-              <span className="text-[10px] mt-0.5">Transactions</span>
-            </button>
-
-            {/* Account / Profile */}
-            <button
-              type="button"
-              id="bottom-nav-account"
-              onClick={() => {
-                try { soundEffects.playClick(); } catch (e) {}
-                openEditProfileModal();
-              }}
-              className="flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition cursor-pointer text-slate-400 hover:text-slate-600 font-semibold active:scale-90"
-            >
-              <User className="w-5 h-5" />
-              <span className="text-[10px] mt-0.5">Account</span>
+              <Menu className="w-5 h-5" />
+              <span className="text-[10px] mt-0.5">Menu</span>
             </button>
           </nav>
+
+          {/* ☰ FACEBOOK-STYLE MENU / MORE DRAWER (Secondary Features & Tools) */}
+          <AnimatePresence>
+            {showSocialMenuDrawer && (
+              <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/50 backdrop-blur-2xs">
+                <motion.div
+                  initial={{ x: '100%' }}
+                  animate={{ x: 0 }}
+                  exit={{ x: '100%' }}
+                  transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                  className="bg-slate-100 w-full max-w-md h-full overflow-y-auto p-4 sm:p-5 space-y-4 shadow-2xl flex flex-col justify-between"
+                >
+                  <div className="space-y-4">
+                    {/* Header */}
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-lg font-black text-slate-900">Menu</h2>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setIsSearchModalOpen(true);
+                          }}
+                          className="p-2 rounded-full bg-white hover:bg-slate-200 text-slate-700 shadow-2xs cursor-pointer"
+                          title="Search"
+                        >
+                          <Search className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowSocialMenuDrawer(false)}
+                          className="p-2 rounded-full bg-white hover:bg-slate-200 text-slate-700 shadow-2xs cursor-pointer"
+                          title="Close Menu"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Profile & Wallet Summary Card */}
+                    <div className="bg-white rounded-2xl p-3.5 shadow-2xs border border-slate-200/80 space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setViewingProfileUserId(user.id);
+                            setIsViewingProfileOpen(true);
+                          }}
+                          className="flex items-center gap-3 text-left cursor-pointer flex-1 min-w-0"
+                        >
+                          <div className="w-11 h-11 rounded-full bg-blue-600 text-white font-black text-base flex items-center justify-center overflow-hidden shrink-0">
+                            {user.avatar && (user.avatar.startsWith('data:image') || user.avatar.startsWith('http')) ? (
+                              <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <span>{user.avatar || user.name.charAt(0)}</span>
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-extrabold text-slate-900 text-sm truncate">{user.name}</div>
+                            <div className="text-[11px] text-slate-500 font-semibold">
+                              {language === 'tl' ? 'Tingnan ang iyong profile' : 'See your profile'}
+                            </div>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            openEditProfileModal();
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold cursor-pointer shrink-0"
+                        >
+                          {language === 'tl' ? 'I-edit' : 'Edit'}
+                        </button>
+                      </div>
+
+                      <div className="border-t border-slate-100 pt-2.5 flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] font-extrabold uppercase text-slate-400 block">
+                            {language === 'tl' ? 'Balanse sa Wallet' : 'Wallet Balance'}
+                          </span>
+                          <span className="text-sm font-black text-emerald-600 font-mono">
+                            ₱{stats.balance.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowSocialMenuDrawer(false);
+                              setActiveTab('earn');
+                            }}
+                            className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[11px] font-extrabold cursor-pointer"
+                          >
+                            {language === 'tl' ? 'Kumita' : 'Earn'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowSocialMenuDrawer(false);
+                              setActiveTab('cashout');
+                            }}
+                            className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-extrabold cursor-pointer"
+                          >
+                            Cash Out
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* All Shortcuts Grid (2 Columns like Facebook Menu) */}
+                    <div>
+                      <h3 className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 mb-2 px-1">
+                        {language === 'tl' ? 'Mga Shortcuts at Tampok' : 'All Shortcuts'}
+                      </h3>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        {/* Friends */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setActiveTab('zone');
+                            setTimeout(() => window.dispatchEvent(new Event('zone-open-friends')), 120);
+                          }}
+                          className="bg-white hover:bg-slate-50 p-3 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col gap-1.5 text-left cursor-pointer transition"
+                        >
+                          <Users className="w-5 h-5 text-emerald-600" />
+                          <span className="font-extrabold text-xs text-slate-900">{language === 'tl' ? 'Mga Kaibigan' : 'Friends'}</span>
+                        </button>
+
+                        {/* Communities */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setActiveTab('zone');
+                            setTimeout(() => window.dispatchEvent(new Event('zone-open-communities')), 120);
+                          }}
+                          className="bg-white hover:bg-slate-50 p-3 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col gap-1.5 text-left cursor-pointer transition"
+                        >
+                          <Globe className="w-5 h-5 text-indigo-600" />
+                          <span className="font-extrabold text-xs text-slate-900">{language === 'tl' ? 'Komunidad' : 'Communities'}</span>
+                        </button>
+
+                        {/* Messages / Inbox */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setActiveTab('zone');
+                            setTimeout(() => window.dispatchEvent(new Event('zone-open-inbox')), 120);
+                          }}
+                          className="bg-white hover:bg-slate-50 p-3 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col gap-1.5 text-left cursor-pointer transition"
+                        >
+                          <MessageSquare className="w-5 h-5 text-blue-600" />
+                          <span className="font-extrabold text-xs text-slate-900">{language === 'tl' ? 'Mga Mensahe' : 'Messages'}</span>
+                        </button>
+
+                        {/* Reels */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            window.dispatchEvent(new Event('open-reels-widget'));
+                            const openBtn = document.getElementById('reels-widget-open-btn');
+                            if (openBtn) openBtn.click();
+                          }}
+                          className="bg-white hover:bg-slate-50 p-3 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col gap-1.5 text-left cursor-pointer transition"
+                        >
+                          <Film className="w-5 h-5 text-rose-500" />
+                          <span className="font-extrabold text-xs text-slate-900">Reels</span>
+                        </button>
+
+                        {/* Z-oneShop */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setActiveTab('va_shop');
+                          }}
+                          className="bg-white hover:bg-slate-50 p-3 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col gap-1.5 text-left cursor-pointer transition"
+                        >
+                          <ShoppingBag className="w-5 h-5 text-orange-500" />
+                          <span className="font-extrabold text-xs text-slate-900">Z-oneShop & VA</span>
+                        </button>
+
+                        {/* Creator Challenges */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setActiveTab('challenges');
+                          }}
+                          className="bg-white hover:bg-slate-50 p-3 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col gap-1.5 text-left cursor-pointer transition"
+                        >
+                          <Award className="w-5 h-5 text-purple-600" />
+                          <span className="font-extrabold text-xs text-slate-900">Challenges</span>
+                        </button>
+
+                        {/* Saved / Bookmarks */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setActiveTab('zone');
+                            setTimeout(() => {
+                              window.dispatchEvent(new CustomEvent('zone-set-post-filter', { detail: { filter: 'saved' } }));
+                            }, 120);
+                          }}
+                          className="bg-white hover:bg-slate-50 p-3 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col gap-1.5 text-left cursor-pointer transition"
+                        >
+                          <Bookmark className="w-5 h-5 text-amber-500" />
+                          <span className="font-extrabold text-xs text-slate-900">{language === 'tl' ? 'Naka-save' : 'Saved Posts'}</span>
+                        </button>
+
+                        {/* Creator Analytics */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setActiveTab('zone');
+                            setTimeout(() => window.dispatchEvent(new Event('zone-open-analytics')), 120);
+                          }}
+                          className="bg-white hover:bg-slate-50 p-3 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col gap-1.5 text-left cursor-pointer transition"
+                        >
+                          <BarChart3 className="w-5 h-5 text-indigo-600" />
+                          <span className="font-extrabold text-xs text-slate-900">Creator Analytics</span>
+                        </button>
+
+                        {/* Lucky Spin Wheel */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setShowSpinModal(true);
+                          }}
+                          className="bg-white hover:bg-slate-50 p-3 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col gap-1.5 text-left cursor-pointer transition"
+                        >
+                          <Gift className="w-5 h-5 text-amber-500" />
+                          <span className="font-extrabold text-xs text-slate-900">Lucky Spin</span>
+                        </button>
+
+                        {/* Negosyo / Merchant Portal */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setActiveTab('negosyo');
+                          }}
+                          className="bg-white hover:bg-slate-50 p-3 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col gap-1.5 text-left cursor-pointer transition"
+                        >
+                          <Briefcase className="w-5 h-5 text-blue-600" />
+                          <span className="font-extrabold text-xs text-slate-900">Negosyo Hub</span>
+                        </button>
+
+                        {/* Z-oneKiddie */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setActiveTab('kiddie');
+                          }}
+                          className="bg-white hover:bg-slate-50 p-3 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col gap-1.5 text-left cursor-pointer transition"
+                        >
+                          <Sparkles className="w-5 h-5 text-pink-500" />
+                          <span className="font-extrabold text-xs text-slate-900">Z-oneKiddie</span>
+                        </button>
+
+                        {/* Classic App Launcher */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setActiveTab(null);
+                          }}
+                          className="bg-white hover:bg-slate-50 p-3 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col gap-1.5 text-left cursor-pointer transition"
+                        >
+                          <LayoutGrid className="w-5 h-5 text-slate-700" />
+                          <span className="font-extrabold text-xs text-slate-900">App Launcher</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Media & Special Feeds Section */}
+                    <div className="bg-white rounded-2xl p-3 border border-slate-200/80 space-y-1">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 px-2 block mb-1">
+                        {language === 'tl' ? 'Media at Iba Pang Feeds' : 'Media & Special Feeds'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSocialMenuDrawer(false);
+                          setActiveTab('zone');
+                          setTimeout(() => window.dispatchEvent(new CustomEvent('zone-set-post-filter', { detail: { filter: 'bilibili' } })), 120);
+                        }}
+                        className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2.5">
+                          <Film className="w-4 h-4 text-pink-500" />
+                          <span>BiliBili FLIX</span>
+                        </span>
+                        <ChevronRight className="w-4 h-4 text-slate-400" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSocialMenuDrawer(false);
+                          setActiveTab('zone');
+                          setTimeout(() => window.dispatchEvent(new CustomEvent('zone-set-post-filter', { detail: { filter: 'teleserye' } })), 120);
+                        }}
+                        className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2.5">
+                          <Tv className="w-4 h-4 text-red-500" />
+                          <span>Pinoy Teleserye</span>
+                        </span>
+                        <ChevronRight className="w-4 h-4 text-slate-400" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSocialMenuDrawer(false);
+                          setActiveTab('zone');
+                          setTimeout(() => window.dispatchEvent(new CustomEvent('zone-set-post-filter', { detail: { filter: 'news' } })), 120);
+                        }}
+                        className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2.5">
+                          <Newspaper className="w-4 h-4 text-emerald-600" />
+                          <span>{language === 'tl' ? 'Balita (Verified News)' : 'Verified News'}</span>
+                        </span>
+                        <ChevronRight className="w-4 h-4 text-slate-400" />
+                      </button>
+                    </div>
+
+                    {/* Settings, Help & Admin Section */}
+                    <div className="bg-white rounded-2xl p-3 border border-slate-200/80 space-y-1">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 px-2 block mb-1">
+                        {language === 'tl' ? 'Settings at Suporta' : 'Settings & Support'}
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => setLanguage(language === 'tl' ? 'en' : 'tl')}
+                        className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2.5">
+                          <Globe className="w-4 h-4 text-blue-600" />
+                          <span>{language === 'tl' ? 'Wika (Language)' : 'Language'}</span>
+                        </span>
+                        <span className="text-[10px] font-black bg-slate-100 px-2 py-0.5 rounded-md text-slate-700 uppercase">
+                          {language === 'tl' ? 'Tagalog' : 'English'}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSocialMenuDrawer(false);
+                          setShowDataSaverModal(true);
+                        }}
+                        className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2.5">
+                          <Smartphone className="w-4 h-4 text-amber-500" />
+                          <span>Mobile Data Saver</span>
+                        </span>
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${isDataSaverActive ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-500'}`}>
+                          {isDataSaverActive ? 'ON' : 'OFF'}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSocialMenuDrawer(false);
+                          setShowVerificationModal(true);
+                        }}
+                        className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2.5">
+                          <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                          <span>{language === 'tl' ? 'Identity Verification' : 'Identity Verification'}</span>
+                        </span>
+                        <ChevronRight className="w-4 h-4 text-slate-400" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSocialMenuDrawer(false);
+                          setActiveTab('guide');
+                        }}
+                        className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2.5">
+                          <HelpCircle className="w-4 h-4 text-indigo-600" />
+                          <span>{language === 'tl' ? 'Gabay at FAQs' : 'Help & FAQs'}</span>
+                        </span>
+                        <ChevronRight className="w-4 h-4 text-slate-400" />
+                      </button>
+
+                      {user.isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenuDrawer(false);
+                            setActiveTab('admin');
+                          }}
+                          className="w-full flex items-center justify-between p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-xs font-bold text-rose-700 cursor-pointer"
+                        >
+                          <span className="flex items-center gap-2.5">
+                            <Shield className="w-4 h-4 text-rose-600" />
+                            <span>Admin Control Panel</span>
+                          </span>
+                          <ChevronRight className="w-4 h-4 text-rose-500" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Logout Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSocialMenuDrawer(false);
+                      handleLogout();
+                    }}
+                    className="w-full py-2.5 px-4 rounded-xl bg-slate-200 hover:bg-rose-100 text-slate-800 hover:text-rose-700 font-extrabold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span>{language === 'tl' ? 'Mag-logout' : 'Log Out'}</span>
+                  </button>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
 
           {/* 🎡 LUCKY SPIN WHEEL MODAL */}
           {showSpinModal && (

@@ -99,6 +99,11 @@ interface ZoneFeedProps {
   onOpenProfile?: (userId: string) => void;
   onNavigateToShop?: (productId?: string) => void;
   onNavigateToChallenge?: (challengeId?: string) => void;
+  onOpenReels?: () => void;
+  onNavigateToEarn?: () => void;
+  onNavigateToCashout?: () => void;
+  onOpenMenu?: () => void;
+  userBalance?: number;
 }
 
 const PRESET_PHOTOS = [
@@ -275,7 +280,7 @@ const compressImage = (dataUrl: string, maxWidth: number = 800, maxHeight: numbe
   });
 };
 
-export default function ZoneFeed({ token, user, setUser, triggerNotification, onRefreshProfile, language, onOpenProfile, onNavigateToShop, onNavigateToChallenge }: ZoneFeedProps) {
+export default function ZoneFeed({ token, user, setUser, triggerNotification, onRefreshProfile, language, onOpenProfile, onNavigateToShop, onNavigateToChallenge, onOpenReels, onNavigateToEarn, onNavigateToCashout, onOpenMenu, userBalance }: ZoneFeedProps) {
   const [posts, setPosts] = useState<ZonePost[]>(() => {
     try {
       const cached = localStorage.getItem('zone_posts_cache');
@@ -373,6 +378,61 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
   // Phase 2B Communities State
   const [showCommunityModal, setShowCommunityModal] = useState(false);
+
+  // Simplified Feed Dropdown & Safety Rules Modal States
+  const [showMoreFeedsMenu, setShowMoreFeedsMenu] = useState(false);
+  const [showSafetyRulesModal, setShowSafetyRulesModal] = useState(false);
+
+  useEffect(() => {
+    const handleOpenFriends = () => setShowFriendsModal(true);
+    const handleOpenCommunities = () => setShowCommunityModal(true);
+    const handleOpenInboxEvent = () => {
+      setShowInboxPanel(true);
+      setInboxSearch('');
+    };
+    const handleOpenAnalytics = () => setShowCreatorAnalytics(true);
+    const handleOpenModPanel = () => setShowModPanel(prev => !prev);
+    const handleOpenSafety = () => setShowSafetyRulesModal(true);
+    const handleFocusComposer = () => {
+      const card = document.getElementById('zone-composer-card');
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      setTimeout(() => {
+        const ta = document.getElementById('zone-composer-textarea') as HTMLTextAreaElement | null;
+        if (ta) ta.focus();
+      }, 150);
+    };
+    const handleSetFilter = (e: Event) => {
+      const custom = e as CustomEvent;
+      const filter = custom.detail?.filter;
+      if (filter) {
+        setPostFilter(filter);
+        setShowMoreFeedsMenu(false);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    };
+
+    window.addEventListener('zone-open-friends', handleOpenFriends);
+    window.addEventListener('zone-open-communities', handleOpenCommunities);
+    window.addEventListener('zone-open-inbox', handleOpenInboxEvent);
+    window.addEventListener('zone-open-analytics', handleOpenAnalytics);
+    window.addEventListener('zone-open-mod-panel', handleOpenModPanel);
+    window.addEventListener('zone-open-safety-rules', handleOpenSafety);
+    window.addEventListener('zone-focus-composer', handleFocusComposer);
+    window.addEventListener('zone-set-post-filter', handleSetFilter);
+
+    return () => {
+      window.removeEventListener('zone-open-friends', handleOpenFriends);
+      window.removeEventListener('zone-open-communities', handleOpenCommunities);
+      window.removeEventListener('zone-open-inbox', handleOpenInboxEvent);
+      window.removeEventListener('zone-open-analytics', handleOpenAnalytics);
+      window.removeEventListener('zone-open-mod-panel', handleOpenModPanel);
+      window.removeEventListener('zone-open-safety-rules', handleOpenSafety);
+      window.removeEventListener('zone-focus-composer', handleFocusComposer);
+      window.removeEventListener('zone-set-post-filter', handleSetFilter);
+    };
+  }, []);
 
   useEffect(() => {
     if (!token) return;
@@ -3550,252 +3610,15 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
   };
 
   return (
-    <div id="z-one-container" className="space-y-6">
-
-      {/* 📶 INTELLIGENT MOBILE DATA SAVER CONTROL BAR */}
-      <div className={`rounded-3xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 border shadow-xs transition-all duration-300 ${
-        isBasicMode 
-          ? 'bg-slate-900 border-slate-800 text-white' 
-          : 'bg-indigo-50 border-indigo-100 text-indigo-950'
-      }`}>
-        <div className="flex items-center gap-3">
-          <span className="flex h-3 w-3 relative shrink-0">
-            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isBasicMode ? 'bg-amber-400' : 'bg-emerald-400'}`}></span>
-            <span className={`relative inline-flex rounded-full h-3 w-3 ${isBasicMode ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
-          </span>
-          <div className="text-xs space-y-0.5">
-            {isBasicMode ? (
-              <>
-                <div className="flex items-center gap-2">
-                  <p className="font-extrabold text-amber-400 uppercase tracking-wider text-[10px] sm:text-xs">
-                    🇵🇭 Intelligent Mobile Data Saver: ON
-                  </p>
-                  <span className="bg-amber-500/20 text-amber-300 text-[9px] font-black px-2 py-0.2 rounded-full border border-amber-500/30">
-                    {dataSaver.getNetworkInfo().effectiveType?.toUpperCase() || 'MOBILE'}
-                  </span>
-                </div>
-                <p className="text-[10px] sm:text-xs text-slate-300 font-semibold">
-                  Naka-compress ang mga larawan at naka-pause ang video auto-load para makatipid sa prepaid mobile load.
-                </p>
-              </>
-            ) : (
-              <>
-                <div className="flex items-center gap-2">
-                  <p className="font-extrabold text-indigo-800 uppercase tracking-wider text-[10px] sm:text-xs">
-                    🌐 Standard Mode (Full Quality)
-                  </p>
-                  <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black px-2 py-0.2 rounded-full border border-emerald-200">
-                    {dataSaver.getNetworkInfo().effectiveType?.toUpperCase() || 'FAST'}
-                  </span>
-                </div>
-                <p className="text-[10px] sm:text-xs text-indigo-900/85 font-semibold">
-                  Naka-load ang full resolution images at media. Awtomatikong mag-titipid kung lumipat sa mobile data.
-                </p>
-              </>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end">
-          <button
-            type="button"
-            onClick={() => setShowDataSaverModal(true)}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition cursor-pointer"
-            title="Data Saver Settings"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
-          {isBasicMode ? (
-            <button
-              onClick={() => handleToggleBasicMode(false)}
-              className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] sm:text-xs px-4 py-2 rounded-xl cursor-pointer shadow-md transition"
-            >
-              🌐 Standard Mode
-            </button>
-          ) : (
-            <button
-              onClick={() => handleToggleBasicMode(true)}
-              className="flex-1 sm:flex-none bg-slate-800 hover:bg-slate-700 text-white font-black text-[10px] sm:text-xs px-4 py-2 rounded-xl cursor-pointer shadow-md transition flex items-center justify-center gap-1.5"
-            >
-              <Smartphone className="w-3.5 h-3.5 text-amber-400" />
-              <span>📶 Data Saver (Libre)</span>
-            </button>
-          )}
-        </div>
-      </div>
-      
-      {/* 👑 BRAND HEADER */}
-      <div 
-        className="bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 rounded-3xl p-6 text-white shadow-md relative overflow-hidden"
-        style={{ 
-          background: 'linear-gradient(135deg, #2563eb 0%, #4f46e5 50%, #4338ca 100%)', 
-          backgroundColor: '#3b82f6', 
-          color: '#ffffff' 
-        }}
-      >
-        <div className="absolute top-0 right-0 p-8 opacity-10">
-          <Users className="w-48 h-48 rotate-12" />
-        </div>
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2">
-              <span className="bg-white text-blue-700 font-black text-xs px-2.5 py-1 rounded-full uppercase tracking-widest shadow-xs">
-                {language === 'tl' ? 'PANG-KAPWA FEED' : 'SOCIAL COMMUNITY'}
-              </span>
-              {user.isAdmin && (
-                <span className="bg-rose-500 text-white font-black text-[10px] px-2.5 py-1 rounded-full uppercase flex items-center gap-1">
-                  <Ban className="w-3 h-3" />
-                  Moderator Mode
-                </span>
-              )}
-            </div>
-            <h2 className="text-3xl font-black tracking-tight flex items-center gap-2">
-              <span>Z-one Social</span>
-              <Sparkles className="w-6 h-6 text-yellow-300 animate-pulse" />
-            </h2>
-            <p className="text-xs text-blue-100 font-medium max-w-xl">
-              {language === 'tl' 
-                ? 'Ang opisyal na social gateway ng GCash Click-Earn! Mag-post ng iyong mga payouts, tagumpay, makipag-ugnayan sa ibang clickers, at I-Zone (Follow) ang bawat isa.' 
-                : 'The official social hub of GCash Click-Earn! Post your payouts, success stories, interact with fellow clickers, and Zone (Follow) each other.'}
-            </p>
-          </div>
-
-          <div className="flex gap-2 shrink-0">
-            {user.isAdmin && (
-              <button
-                onClick={() => setShowModPanel(!showModPanel)}
-                className={`font-black text-xs px-4 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-1.5 ${
-                  showModPanel 
-                    ? 'bg-rose-500 text-white shadow-inner' 
-                    : 'bg-white text-rose-600 hover:bg-rose-50 shadow-xs'
-                }`}
-              >
-                <span>{showModPanel ? '❌ Isara ang Moderator Panel' : '🛡️ Admin Moderation'}</span>
-                {modReports.filter(r => r.status === 'pending').length > 0 && !showModPanel && (
-                  <span className="bg-rose-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-black animate-pulse">
-                    {modReports.filter(r => r.status === 'pending').length}
-                  </span>
-                )}
-              </button>
-            )}
-            
-            {/* 👥 Mga Kaibigan / Friends Manager */}
-            <button
-              id="friends-manager-feed-btn"
-              onClick={() => setShowFriendsModal(true)}
-              className="relative bg-white/95 hover:bg-white text-emerald-900 border border-white/60 font-black text-xs px-3.5 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-1.5 shadow-xs hover:scale-[1.02] active:scale-[0.98]"
-              title={language === 'tl' ? 'Pamahalaan ang mga Kaibigan at Requests' : 'Manage Friends & Requests'}
-            >
-              <Users className="w-4 h-4 text-emerald-600" />
-              <span className="hidden sm:inline">{language === 'tl' ? 'Mga Kaibigan' : 'Friends'}</span>
-              {pendingIncomingCount > 0 && (
-                <span className="ml-0.5 bg-rose-500 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full animate-pulse">
-                  {pendingIncomingCount}
-                </span>
-              )}
-            </button>
-
-            {/* 🌐 Mga Komunidad / Communities (Phase 2B) */}
-            <button
-              id="communities-manager-feed-btn"
-              onClick={() => setShowCommunityModal(true)}
-              className="relative bg-white/95 hover:bg-white text-indigo-900 border border-white/60 font-black text-xs px-3.5 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-1.5 shadow-xs hover:scale-[1.02] active:scale-[0.98]"
-              title={language === 'tl' ? 'Tuklasin ang mga Komunidad at Grupo' : 'Discover Communities & Groups'}
-            >
-              <Globe className="w-4 h-4 text-indigo-600" />
-              <span className="hidden sm:inline">{language === 'tl' ? 'Komunidad' : 'Communities'}</span>
-            </button>
-
-            {/* 👤 My Profile Inspection */}
-            {onOpenProfile && (
-              <button
-                onClick={() => onOpenProfile(user.id)}
-                className="bg-white text-slate-800 hover:bg-slate-100 border border-slate-200 font-black text-xs px-3.5 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-1.5 shadow-xs"
-                title={language === 'tl' ? 'Tingnan ang iyong Profile' : 'View your Profile'}
-              >
-                <User className="w-4 h-4 text-blue-600" />
-                <span className="hidden sm:inline">{language === 'tl' ? 'Aking Profile' : 'My Profile'}</span>
-              </button>
-            )}
-
-            {/* 📊 Creator Analytics Studio */}
-            <button
-              id="creator-analytics-feed-btn"
-              onClick={() => setShowCreatorAnalytics(true)}
-              className="bg-white/95 hover:bg-white text-indigo-900 border border-white/60 font-black text-xs px-3.5 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-1.5 shadow-xs hover:scale-[1.02] active:scale-[0.98]"
-              title={language === 'tl' ? 'Buksan ang Creator Analytics Studio' : 'Open Creator Analytics Studio'}
-            >
-              <BarChart3 className="w-4 h-4 text-indigo-600" />
-              <span className="hidden sm:inline">{language === 'tl' ? 'Analytics' : 'Analytics'}</span>
-            </button>
-
-            {/* 🔔 In-App Social Notification Center */}
-            <SocialNotificationCenter
-              token={token}
-              currentUserId={user.id}
-              language={language}
-              onNavigateToPost={(postId) => {
-                const el = document.getElementById(`post-card-${postId}`);
-                if (el) {
-                  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  el.classList.add('ring-2', 'ring-blue-500');
-                  setTimeout(() => el.classList.remove('ring-2', 'ring-blue-500'), 3000);
-                }
-              }}
-              onNavigateToProfile={(profileUserId) => {
-                if (onOpenProfile) onOpenProfile(profileUserId);
-                else handleOpenDm({ id: profileUserId, name: 'User', avatar: '👤' });
-              }}
-              onNavigateToChallenge={(challengeId) => {
-                onNavigateToChallenge?.(challengeId);
-              }}
-            />
-
-            <button
-              onClick={handleOpenInbox}
-              className="relative bg-white text-indigo-700 hover:bg-indigo-50 border border-slate-250 font-black text-xs px-4 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-2 shadow-xs"
-            >
-              <MessageSquare className="w-4 h-4 text-indigo-600" />
-              <span>{language === 'tl' ? 'Mga Mensahe' : 'Messages'}</span>
-              {totalUnreadCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-black text-white ring-2 ring-white animate-bounce">
-                  {totalUnreadCount}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => fetchPosts(true)}
-              className="bg-white/10 hover:bg-white/20 text-white border border-white/20 font-bold text-xs px-4 py-2.5 rounded-2xl cursor-pointer transition flex items-center gap-1.5"
-            >
-              <Users className="w-4 h-4" />
-              <span>{language === 'tl' ? 'I-Refresh ang Feed' : 'Refresh Feed'}</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* ⚠️ SYSTEM WARNING BANNER */}
-      <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-4 flex gap-3">
-        <AlertCircle className="w-5 h-5 text-yellow-600 shrink-0 mt-0.5" />
-        <div className="text-xs text-yellow-800 space-y-1 font-semibold leading-relaxed">
-          <p>
-            <strong>{language === 'tl' ? 'Alituntunin sa Z-one (Z-one Safety Rules):' : 'Z-one Safety Guidelines:'}</strong>
-          </p>
-          <ul className="list-disc pl-4 space-y-0.5">
-            <li>{language === 'tl' ? 'Bawal ang malalaswang larawan, nudes, at pornographic videos.' : 'Nude pictures, porn videos, or explicit content are strictly prohibited.'}</li>
-            <li>{language === 'tl' ? 'Bawal ang mga mura, bastos na salita, o mapanirang posts.' : 'Profanity, toxic behavior, and swear words will be auto-filtered.'}</li>
-            <li>{language === 'tl' ? 'Ang system ay may auto-moderator na nagbubura/humaharang ng posts. Ang mga lumabag ay maaaring i-ban ng Admin.' : 'The system auto-moderates and rejects posts violating rules. Violators will be banned by Administrators.'}</li>
-          </ul>
-        </div>
-      </div>
-
-      {/* 🛡️ ADMIN MODERATION PANEL */}
+    <div id="z-one-container" className="w-full">
+      {/* 🛡️ ADMIN MODERATION PANEL (Collapsible when toggled by Admin) */}
       <AnimatePresence>
         {showModPanel && user.isAdmin && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="bg-slate-900 text-white rounded-3xl p-6 border border-slate-800 space-y-4 overflow-hidden"
+            className="bg-slate-900 text-white rounded-3xl p-6 border border-slate-800 space-y-4 overflow-hidden mb-6"
           >
             <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-3 gap-3">
               <div className="flex items-center gap-2">
@@ -3805,39 +3628,46 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 </h3>
               </div>
 
-              {/* Sub tabs: Reports vs Users */}
-              <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-2xl border border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-2xl border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setModSubTab('reports')}
+                    className={`px-3 py-1.5 rounded-xl font-black text-xs cursor-pointer transition flex items-center gap-1.5 ${
+                      modSubTab === 'reports'
+                        ? 'bg-rose-600 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>⚠️ Mga Sumbong</span>
+                    {modReports.filter(r => r.status === 'pending').length > 0 && (
+                      <span className="bg-white text-rose-600 text-[9px] px-1.5 py-0.2 rounded-full font-black">
+                        {modReports.filter(r => r.status === 'pending').length}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModSubTab('users')}
+                    className={`px-3 py-1.5 rounded-xl font-black text-xs cursor-pointer transition flex items-center gap-1.5 ${
+                      modSubTab === 'users'
+                        ? 'bg-rose-600 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>👥 Users ({modUsers.length})</span>
+                  </button>
+                </div>
                 <button
                   type="button"
-                  onClick={() => setModSubTab('reports')}
-                  className={`px-3 py-1.5 rounded-xl font-black text-xs cursor-pointer transition flex items-center gap-1.5 ${
-                    modSubTab === 'reports'
-                      ? 'bg-rose-600 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
+                  onClick={() => setShowModPanel(false)}
+                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
                 >
-                  <span>⚠️ Mga Sumbong</span>
-                  {modReports.filter(r => r.status === 'pending').length > 0 && (
-                    <span className="bg-white text-rose-600 text-[9px] px-1.5 py-0.2 rounded-full font-black">
-                      {modReports.filter(r => r.status === 'pending').length}
-                    </span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setModSubTab('users')}
-                  className={`px-3 py-1.5 rounded-xl font-black text-xs cursor-pointer transition flex items-center gap-1.5 ${
-                    modSubTab === 'users'
-                      ? 'bg-rose-600 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <span>👥 Users ({modUsers.length})</span>
+                  <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            {/* TAB 1: REPORTS QUEUE */}
             {modSubTab === 'reports' && (
               <div className="space-y-3">
                 {loadingModReports ? (
@@ -3938,7 +3768,6 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
               </div>
             )}
 
-            {/* TAB 2: USERS REGISTRY & BAN CONTROL */}
             {modSubTab === 'users' && (
               <>
                 {loadingModUsers ? (
@@ -3989,46 +3818,215 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
         )}
       </AnimatePresence>
 
-      {/* 📖 FACEBOOK-STYLE STORIES ("MY DAY") TRAY */}
-      <ZoneStories
-        user={user}
-        token={token}
-        language={language}
-        stories={stories}
-        onRefreshStories={fetchStories}
-        triggerNotification={triggerNotification}
-        renderAvatar={renderFeedAvatar}
-        onOpenDm={handleOpenDm}
-      />
+      {/* 🖥️ FACEBOOK-STYLE 3-COLUMN SOCIAL FEED GRID */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* LEFT COLUMN: CREATE POST & QUICK PRESET GALLERY */}
-        <div className="lg:col-span-1 space-y-6">
-          
-          {/* CREATE POST FORM */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-5 shadow-sm space-y-4">
-            <h3 className="font-black text-slate-900 text-xs uppercase tracking-wider flex items-center gap-2 border-b border-slate-100 pb-3">
-              <PlusCircle className="w-4 h-4 text-blue-600" />
-              <span>{language === 'tl' ? 'Gumawa ng Post' : 'Create a New Post'}</span>
-            </h3>
+        {/* LEFT RAIL: DESKTOP SOCIAL NAVIGATION SHORTCUTS */}
+        <aside className="hidden lg:block lg:col-span-3 sticky top-20 space-y-1.5">
+          {/* User Profile Row */}
+          <button
+            type="button"
+            onClick={() => onOpenProfile ? onOpenProfile(user.id) : undefined}
+            className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-200/60 transition cursor-pointer text-left"
+          >
+            <div className="shrink-0">
+              {renderFeedAvatar(user.avatar, user.name, "w-9 h-9", "text-base", user.id)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-extrabold text-slate-900 text-xs truncate">{user.name}</div>
+              <div className="text-[10px] text-slate-500 font-semibold">{language === 'tl' ? 'Tingnan ang Profile' : 'View Profile'}</div>
+            </div>
+          </button>
 
-            <form onSubmit={handleCreatePost} className="space-y-4">
-              <div className="space-y-2">
-                <textarea
-                  value={postText}
-                  onChange={(e) => setPostText(e.target.value)}
-                  placeholder={language === 'tl' ? 'Ano ang naiisip mo ngayon? Mag-bahagi ng payout...' : 'What is on your mind? Share your payout or achievements...'}
-                  rows={4}
-                  className="w-full border border-slate-200 rounded-2xl p-3 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-medium resize-none"
-                />
+          {/* Friends */}
+          <button
+            type="button"
+            id="friends-manager-feed-btn"
+            onClick={() => setShowFriendsModal(true)}
+            className="w-full flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-200/60 transition cursor-pointer text-left"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                <Users className="w-5 h-5" />
+              </div>
+              <span className="font-bold text-slate-800 text-xs">{language === 'tl' ? 'Mga Kaibigan' : 'Friends'}</span>
+            </div>
+            {pendingIncomingCount > 0 && (
+              <span className="bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
+                {pendingIncomingCount}
+              </span>
+            )}
+          </button>
+
+          {/* Communities */}
+          <button
+            type="button"
+            id="communities-manager-feed-btn"
+            onClick={() => setShowCommunityModal(true)}
+            className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-200/60 transition cursor-pointer text-left"
+          >
+            <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+              <Globe className="w-5 h-5" />
+            </div>
+            <span className="font-bold text-slate-800 text-xs">{language === 'tl' ? 'Komunidad' : 'Communities'}</span>
+          </button>
+
+          {/* Reels */}
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenReels) {
+                onOpenReels();
+              } else {
+                window.dispatchEvent(new Event('open-reels-widget'));
+              }
+            }}
+            className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-200/60 transition cursor-pointer text-left"
+          >
+            <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
+              <Film className="w-5 h-5" />
+            </div>
+            <span className="font-bold text-slate-800 text-xs">Reels</span>
+          </button>
+
+          {/* Messages / Inbox */}
+          <button
+            type="button"
+            onClick={handleOpenInbox}
+            className="w-full flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-200/60 transition cursor-pointer text-left"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                <MessageSquare className="w-5 h-5" />
+              </div>
+              <span className="font-bold text-slate-800 text-xs">{language === 'tl' ? 'Mga Mensahe' : 'Messages'}</span>
+            </div>
+            {totalUnreadCount > 0 && (
+              <span className="bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
+                {totalUnreadCount}
+              </span>
+            )}
+          </button>
+
+          {/* Saved / Bookmarks */}
+          <button
+            type="button"
+            onClick={() => setPostFilter('saved')}
+            className={`w-full flex items-center justify-between p-2.5 rounded-xl transition cursor-pointer text-left ${
+              postFilter === 'saved' ? 'bg-amber-50 text-amber-900' : 'hover:bg-slate-200/60 text-slate-800'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                <Bookmark className="w-5 h-5" />
+              </div>
+              <span className="font-bold text-xs">{language === 'tl' ? 'Naka-save' : 'Saved'}</span>
+            </div>
+            {savedPostIds.size > 0 && (
+              <span className="text-[10px] font-extrabold text-slate-500">{savedPostIds.size}</span>
+            )}
+          </button>
+
+          {/* Z-oneShop */}
+          {onNavigateToShop && (
+            <button
+              type="button"
+              onClick={() => onNavigateToShop()}
+              className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-200/60 transition cursor-pointer text-left"
+            >
+              <div className="w-9 h-9 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center shrink-0">
+                <ShoppingBag className="w-5 h-5" />
+              </div>
+              <span className="font-bold text-slate-800 text-xs">Z-oneShop</span>
+            </button>
+          )}
+
+          {/* Creator Challenges */}
+          {onNavigateToChallenge && (
+            <button
+              type="button"
+              onClick={() => onNavigateToChallenge()}
+              className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-200/60 transition cursor-pointer text-left"
+            >
+              <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <span className="font-bold text-slate-800 text-xs">{language === 'tl' ? 'Challenges' : 'Challenges'}</span>
+            </button>
+          )}
+
+          {/* Earn & Wallet */}
+          {onNavigateToEarn && (
+            <button
+              type="button"
+              onClick={onNavigateToEarn}
+              className="w-full flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-200/60 transition cursor-pointer text-left"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                  <Compass className="w-5 h-5" />
+                </div>
+                <span className="font-bold text-slate-800 text-xs">{language === 'tl' ? 'Kumita & Wallet' : 'Earn & Wallet'}</span>
+              </div>
+              {userBalance !== undefined && (
+                <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-lg font-mono">
+                  ₱{userBalance.toFixed(2)}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* See More / Menu */}
+          {onOpenMenu && (
+            <button
+              type="button"
+              onClick={onOpenMenu}
+              className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-200/60 transition cursor-pointer text-left border-t border-slate-200/70 pt-3 mt-2"
+            >
+              <div className="w-9 h-9 rounded-xl bg-slate-200/80 text-slate-700 flex items-center justify-center shrink-0">
+                <MoreHorizontal className="w-5 h-5" />
+              </div>
+              <span className="font-bold text-slate-700 text-xs">{language === 'tl' ? 'Higit Pa (Menu)' : 'See More (Menu)'}</span>
+            </button>
+          )}
+        </aside>
+
+        {/* CENTER COLUMN: PRIMARY HOME FEED (CREATE POST + STORIES + POSTS) */}
+        <div className="col-span-1 lg:col-span-6 w-full max-w-2xl mx-auto space-y-4">
+
+          {/* 📝 CREATE POST COMPOSER (Facebook-style card at the top of the Home Feed) */}
+          <div id="zone-composer-card" className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200 p-4 shadow-2xs space-y-3">
+            <form onSubmit={handleCreatePost} className="space-y-3">
+              {/* Top row: Avatar + What's on your mind input */}
+              <div className="flex items-start gap-3">
+                <button
+                  type="button"
+                  onClick={() => onOpenProfile ? onOpenProfile(user.id) : undefined}
+                  className="shrink-0 mt-0.5 cursor-pointer"
+                >
+                  {renderFeedAvatar(user.avatar, user.name, "w-10 h-10", "text-lg", user.id)}
+                </button>
+                <div className="flex-1">
+                  <textarea
+                    id="zone-composer-textarea"
+                    value={postText}
+                    onChange={(e) => setPostText(e.target.value)}
+                    placeholder={
+                      language === 'tl'
+                        ? `Ano ang nasa isip mo, ${user.name.split(' ')[0]}?`
+                        : `What's on your mind, ${user.name.split(' ')[0]}?`
+                    }
+                    rows={postText.length > 60 || selectedPhotos.length > 0 || selectedVideo || taggedProduct ? 3 : 2}
+                    className="w-full bg-slate-100/80 hover:bg-slate-100 focus:bg-white border border-transparent focus:border-blue-500 rounded-2xl px-4 py-2.5 text-xs sm:text-sm text-slate-800 placeholder:text-slate-500 outline-none font-medium resize-none transition"
+                  />
+                </div>
               </div>
 
               {/* CHOSEN MEDIA PREVIEW */}
               {(selectedPhotos.length > 0 || selectedVideo || customMediaUrl) && (
-                <div className="relative border border-slate-100 p-3 rounded-2xl bg-slate-50 space-y-2">
+                <div className="relative border border-slate-150 p-3 rounded-2xl bg-slate-50 space-y-2">
                   <span className="text-[10px] text-slate-400 uppercase font-black tracking-wider block">Attached Media:</span>
-                  
+
                   {selectedPhotos.length > 0 && (
                     <div className="grid grid-cols-3 gap-2">
                       {selectedPhotos.map((photo, index) => (
@@ -4056,7 +4054,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                   )}
 
                   {selectedVideo && (
-                    <video src={selectedVideo} controls className="w-full max-h-40 rounded-xl" />
+                    <video src={selectedVideo} controls className="w-full max-h-48 rounded-xl" />
                   )}
                   {customMediaUrl && (
                     <div className="text-[10px] font-mono font-bold text-blue-600 truncate bg-blue-50 p-2 rounded-lg">
@@ -4079,218 +4077,104 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 </div>
               )}
 
-              {/* MEDIA EXPANSION CONTROLS (OPTIMIZED FOR MOBILE PWA & PHONE GALLERY) */}
-              <div className="space-y-2.5">
-                <div className="grid grid-cols-2 gap-2">
-                  {/* Photo Gallery Direct Touch Area (100% Guaranteed Native PWA/Android/iOS Picker) */}
-                  <div className="relative overflow-hidden rounded-2xl">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleLocalFileChange}
-                      multiple={true}
-                      disabled={isUploadingLocalFile}
-                      aria-label="Upload Photo"
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
-                    />
-                    <div
-                      className={`border border-indigo-200 hover:border-indigo-500 bg-indigo-50/70 hover:bg-indigo-100/70 text-indigo-800 p-2.5 rounded-2xl text-[11px] font-extrabold transition flex items-center justify-center gap-1.5 shadow-2xs select-none ${
-                        isUploadingLocalFile ? 'opacity-50 pointer-events-none' : ''
-                      }`}
-                    >
-                      {isUploadingLocalFile ? (
-                        <span className="h-4 w-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></span>
-                      ) : (
-                        <ImageIcon className="w-4 h-4 text-indigo-600 shrink-0" />
-                      )}
-                      <span className="truncate">
-                        {isUploadingLocalFile 
-                          ? (language === 'tl' ? 'Ina-upload...' : 'Uploading...') 
-                          : (language === 'tl' ? '📷 Larawan (Gallery)' : '📷 Photo (Gallery)')}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Video Gallery Direct Touch Area (100% Guaranteed Native PWA/Android/iOS Picker) */}
-                  <div className="relative overflow-hidden rounded-2xl">
-                    <input
-                      type="file"
-                      accept="video/*"
-                      onChange={handleLocalFileChange}
-                      multiple={false}
-                      disabled={isUploadingLocalFile}
-                      aria-label="Upload Video"
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
-                    />
-                    <div
-                      className={`border border-purple-200 hover:border-purple-500 bg-purple-50/70 hover:bg-purple-100/70 text-purple-800 p-2.5 rounded-2xl text-[11px] font-extrabold transition flex items-center justify-center gap-1.5 shadow-2xs select-none ${
-                        isUploadingLocalFile ? 'opacity-50 pointer-events-none' : ''
-                      }`}
-                    >
-                      {isUploadingLocalFile ? (
-                        <span className="h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin"></span>
-                      ) : (
-                        <Video className="w-4 h-4 text-purple-600 shrink-0" />
-                      )}
-                      <span className="truncate">
-                        {isUploadingLocalFile 
-                          ? (language === 'tl' ? 'Ina-upload...' : 'Uploading...') 
-                          : (language === 'tl' ? '🎥 Video (Gallery)' : '🎥 Video (Gallery)')}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Tagged Shop Product Preview */}
-                {taggedProduct && (
-                  <div className="flex items-center justify-between p-2.5 rounded-2xl bg-amber-50 border border-amber-200 shadow-2xs">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      {taggedProduct.image ? (
-                        <img src={taggedProduct.image} alt={taggedProduct.name} className="w-9 h-9 rounded-xl object-cover border border-amber-300 shrink-0" />
-                      ) : (
-                        <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700 shrink-0">
-                          <ShoppingBag className="w-4 h-4" />
-                        </div>
-                      )}
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1 text-[9px] font-black uppercase text-amber-750 tracking-wider">
-                          <ShoppingBag className="w-2.5 h-2.5 text-amber-600" />
-                          <span>Z-oneShop Tagged</span>
-                        </div>
-                        <p className="text-[11px] font-black text-slate-900 truncate">{taggedProduct.name}</p>
-                        <p className="text-[10px] font-extrabold text-emerald-600">₱{taggedProduct.price.toLocaleString()}</p>
+              {/* Tagged Shop Product Preview */}
+              {taggedProduct && (
+                <div className="flex items-center justify-between p-2.5 rounded-2xl bg-amber-50 border border-amber-200 shadow-2xs">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {taggedProduct.image ? (
+                      <img src={taggedProduct.image} alt={taggedProduct.name} className="w-9 h-9 rounded-xl object-cover border border-amber-300 shrink-0" />
+                    ) : (
+                      <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700 shrink-0">
+                        <ShoppingBag className="w-4 h-4" />
                       </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1 text-[9px] font-black uppercase text-amber-750 tracking-wider">
+                        <ShoppingBag className="w-2.5 h-2.5 text-amber-600" />
+                        <span>Z-oneShop Tagged</span>
+                      </div>
+                      <p className="text-[11px] font-black text-slate-900 truncate">{taggedProduct.name}</p>
+                      <p className="text-[10px] font-extrabold text-emerald-600">₱{taggedProduct.price.toLocaleString()}</p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setTaggedProduct(null)}
-                      className="p-1.5 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer shrink-0"
-                      title="Remove product"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
                   </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => setShowProductTagModal(true)}
-                    className="w-full border border-amber-200 hover:border-amber-400 bg-amber-50/80 hover:bg-amber-100 text-amber-900 p-2 rounded-xl text-[10.5px] font-extrabold cursor-pointer transition flex items-center justify-center gap-1.5 select-none"
+                    onClick={() => setTaggedProduct(null)}
+                    className="p-1.5 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer shrink-0"
+                    title="Remove product"
                   >
-                    <ShoppingBag className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                    <span className="truncate">{taggedProduct ? (language === 'tl' ? 'Palitan ang Tag' : 'Change Product') : (language === 'tl' ? '🛍️ I-tag ang Produkto' : '🛍️ Tag Shop Product')}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowMediaSelect(!showMediaSelect)}
-                    className="w-full border border-slate-200 hover:border-slate-300 bg-slate-50/80 hover:bg-slate-100 p-2 rounded-xl text-[10.5px] text-slate-600 font-bold cursor-pointer transition flex items-center justify-center gap-1.5 select-none"
-                  >
-                    <Camera className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                    <span className="truncate">{language === 'tl' ? 'Presets' : 'Presets'}</span>
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
+              )}
 
-                <AnimatePresence>
-                  {showMediaSelect && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="border border-slate-150 p-3 rounded-2xl bg-slate-50 space-y-3"
-                    >
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">📷 preset photos (picsum 1080x1080)</span>
+              {/* Optional Presets Drawer */}
+              <AnimatePresence>
+                {showMediaSelect && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="border border-slate-150 p-3 rounded-2xl bg-slate-50 space-y-3 overflow-hidden"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">📷 Preset Photos</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const randomUrl = `https://picsum.photos/1080/1080?random=${Date.now()}`;
+                            setSelectedPhotos([randomUrl]);
+                            setSelectedPhoto(randomUrl);
+                            setSelectedVideo(null);
+                            setCustomMediaUrl('');
+                          }}
+                          className="text-[9.5px] text-blue-600 hover:text-blue-700 font-extrabold flex items-center gap-1 cursor-pointer bg-blue-50/80 hover:bg-blue-100 px-2 py-0.5 rounded-lg transition"
+                        >
+                          <Sparkles className="w-2.5 h-2.5 text-blue-600" />
+                          <span>🎲 Random Photo</span>
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {PRESET_PHOTOS.map((ph, idx) => (
                           <button
+                            key={idx}
                             type="button"
                             onClick={() => {
-                              const randomUrl = `https://picsum.photos/1080/1080?random=${Date.now()}`;
-                              setSelectedPhotos([randomUrl]);
-                              setSelectedPhoto(randomUrl);
+                              setSelectedPhotos([ph.url]);
+                              setSelectedPhoto(ph.url);
                               setSelectedVideo(null);
                               setCustomMediaUrl('');
-                              triggerNotification(
-                                language === 'tl'
-                                  ? '🎲 Nakakuha ng bagong random 1080x1080 photo mula sa Picsum!'
-                                  : '🎲 Generated a fresh random 1080x1080 photo from Picsum!',
-                                'success'
-                              );
                             }}
-                            className="text-[9.5px] text-blue-600 hover:text-blue-700 font-extrabold flex items-center gap-1 cursor-pointer bg-blue-50/80 hover:bg-blue-100 px-2 py-0.5 rounded-lg transition"
+                            className={`p-1 border rounded-lg overflow-hidden transition ${
+                              selectedPhoto === ph.url ? 'border-blue-600 bg-blue-100/40' : 'border-slate-200 hover:border-slate-300 bg-white'
+                            }`}
                           >
-                            <Sparkles className="w-2.5 h-2.5 text-blue-600" />
-                            <span>{language === 'tl' ? '🎲 Random Roll' : '🎲 Random Roll'}</span>
+                            <img src={ph.url} alt={ph.label} className="w-full h-10 object-cover rounded" />
+                            <span className="text-[8px] font-black block mt-1 text-slate-600 text-center truncate">{ph.label}</span>
                           </button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {PRESET_PHOTOS.map((ph, idx) => (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => {
-                                setSelectedPhotos([ph.url]);
-                                setSelectedPhoto(ph.url);
-                                setSelectedVideo(null);
-                                setCustomMediaUrl('');
-                              }}
-                              className={`p-1 border rounded-lg overflow-hidden transition ${
-                                selectedPhoto === ph.url ? 'border-blue-600 bg-blue-100/40' : 'border-slate-200 hover:border-slate-300 bg-white'
-                              }`}
-                            >
-                              <img src={ph.url} alt={ph.label} className="w-full h-10 object-cover rounded" />
-                              <span className="text-[8px] font-black block mt-1 text-slate-600 text-center truncate">{ph.label}</span>
-                            </button>
-                          ))}
-                        </div>
+                        ))}
                       </div>
+                    </div>
 
-                      <div className="space-y-1.5 border-t border-slate-200 pt-2.5">
-                        <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">🎥 preset videos</span>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {PRESET_VIDEOS.map((vi, idx) => (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => {
-                                setSelectedVideo(vi.url);
-                                setSelectedPhotos([]);
-                                setSelectedPhoto(null);
-                                setCustomMediaUrl('');
-                              }}
-                              className={`p-1.5 border rounded-lg transition ${
-                                selectedVideo === vi.url ? 'border-indigo-600 bg-indigo-100/40' : 'border-slate-200 hover:border-slate-300 bg-white'
-                              }`}
-                            >
-                              <span className="text-[9px] font-black block text-slate-750 text-center truncate flex items-center justify-center gap-1">
-                                <Tv className="w-3 h-3 text-indigo-500 shrink-0" />
-                                {vi.label}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-1 border-t border-slate-200 pt-2.5">
-                        <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">🔗 custom url</span>
-                        <input
-                          type="text"
-                          value={customMediaUrl}
-                          onChange={(e) => {
-                            setCustomMediaUrl(e.target.value);
-                            setSelectedPhotos([]);
-                            setSelectedPhoto(null);
-                            setSelectedVideo(null);
-                          }}
-                          placeholder="https://example.com/image.jpg"
-                          className="w-full border border-slate-200 rounded-xl p-1.5 text-[10px] outline-none bg-white font-mono"
-                        />
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+                    <div className="space-y-1 border-t border-slate-200 pt-2">
+                      <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">🔗 Custom Media URL</span>
+                      <input
+                        type="text"
+                        value={customMediaUrl}
+                        onChange={(e) => {
+                          setCustomMediaUrl(e.target.value);
+                          setSelectedPhotos([]);
+                          setSelectedPhoto(null);
+                          setSelectedVideo(null);
+                        }}
+                        placeholder="https://example.com/image.jpg"
+                        className="w-full border border-slate-200 rounded-xl p-1.5 text-[10px] outline-none bg-white font-mono"
+                      />
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* PROGRESS BAR */}
               {isSubmittingPost && (
@@ -4299,9 +4183,9 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                     <span>{language === 'tl' ? 'Ina-upload / Inilalathala...' : 'Uploading / Posting...'}</span>
                     <span>{postUploadProgress}%</span>
                   </div>
-                  <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden border border-slate-200">
-                    <motion.div 
-                      className="bg-blue-600 h-full rounded-full shadow-inner"
+                  <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
+                    <motion.div
+                      className="bg-blue-600 h-full rounded-full"
                       initial={{ width: '0%' }}
                       animate={{ width: `${postUploadProgress}%` }}
                       transition={{ ease: "easeOut", duration: 0.1 }}
@@ -4310,247 +4194,244 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                 </div>
               )}
 
-              <button
-                type="submit"
-                disabled={isSubmittingPost}
-                className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-black py-3 rounded-2xl text-xs cursor-pointer shadow-md transition flex items-center justify-center gap-1.5"
-              >
-                {isSubmittingPost ? (
-                  <span>Inilalathala... ({postUploadProgress}%)</span>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" />
-                    <span>{language === 'tl' ? 'I-Post sa Z-one' : 'Post to Z-one'}</span>
-                  </>
-                )}
-              </button>
+              {/* Clean Facebook-style Composer Action Bar */}
+              <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-slate-100">
+                <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
+                  {/* Photo / Video Native Picker */}
+                  <div className="relative overflow-hidden rounded-xl">
+                    <input
+                      type="file"
+                      accept="image/*,video/*"
+                      onChange={handleLocalFileChange}
+                      multiple={true}
+                      disabled={isUploadingLocalFile}
+                      aria-label="Upload Photo or Video"
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
+                    />
+                    <div
+                      className={`px-3 py-2 rounded-xl hover:bg-slate-100 text-slate-700 text-xs font-bold transition flex items-center gap-1.5 select-none ${
+                        isUploadingLocalFile ? 'opacity-50 pointer-events-none' : ''
+                      }`}
+                    >
+                      {isUploadingLocalFile ? (
+                        <span className="h-4 w-4 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin"></span>
+                      ) : (
+                        <ImageIcon className="w-4 h-4 text-emerald-600 shrink-0" />
+                      )}
+                      <span>
+                        {isUploadingLocalFile
+                          ? (language === 'tl' ? 'Ina-upload...' : 'Uploading...')
+                          : 'Photo / Video'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Tag Product */}
+                  <button
+                    type="button"
+                    onClick={() => setShowProductTagModal(true)}
+                    className="px-3 py-2 rounded-xl hover:bg-slate-100 text-slate-700 text-xs font-bold cursor-pointer transition flex items-center gap-1.5 select-none"
+                  >
+                    <ShoppingBag className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span>{taggedProduct ? (language === 'tl' ? 'Palitan ang Tag' : 'Change Product') : 'Tag Product'}</span>
+                  </button>
+
+                  {/* Subtle Presets Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setShowMediaSelect(!showMediaSelect)}
+                    className={`p-2 rounded-xl text-xs font-bold cursor-pointer transition flex items-center justify-center select-none ${
+                      showMediaSelect ? 'bg-blue-50 text-blue-600' : 'hover:bg-slate-100 text-slate-400 hover:text-slate-600'
+                    }`}
+                    title="Media Presets & URL"
+                  >
+                    <Camera className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Post Button */}
+                <button
+                  type="submit"
+                  disabled={isSubmittingPost}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-extrabold px-5 py-2 rounded-xl text-xs cursor-pointer shadow-xs transition flex items-center justify-center gap-1.5 shrink-0"
+                >
+                  {isSubmittingPost ? (
+                    <span>{postUploadProgress}%</span>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Post</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </form>
           </div>
 
-          {/* QUICK ZONE GUIDE */}
-          <div className="bg-indigo-50 border border-indigo-100 rounded-3xl p-5 space-y-3">
-            <div className="flex items-center gap-2">
-              <Users className="w-5 h-5 text-indigo-600" />
-              <h4 className="font-extrabold text-indigo-950 text-xs uppercase tracking-wider">
-                Ano ang "I-Zone" (Follow)?
-              </h4>
-            </div>
-            <p className="text-[11px] text-indigo-900 font-semibold leading-relaxed">
-              {language === 'tl' 
-                ? 'Ang "I-Zone" ay kapareho ng pag-follow sa Facebook. Kapag mo "I-Zone" ang isang clicker, ipinapakita nito ang iyong suporta. Makikita mo rin kung sino ang may pinakamaraming followers sa komunidad.'
-                : 'To "I-Zone" someone is to follow them. Express community support and keep updated with top clickers by zoning their accounts!'}
-            </p>
-          </div>
+          {/* 📖 FACEBOOK-STYLE STORIES ("MY DAY") TRAY */}
+          <ZoneStories
+            user={user}
+            token={token}
+            language={language}
+            stories={stories}
+            onRefreshStories={fetchStories}
+            triggerNotification={triggerNotification}
+            renderAvatar={renderFeedAvatar}
+            onOpenDm={handleOpenDm}
+          />
 
-        </div>
-
-        {/* RIGHT COLUMN: RECENT FEED POSTS */}
-        <div className="lg:col-span-2 space-y-6">
-          
-          <div className="space-y-6 animate-fadeIn">
-              <div className="flex flex-col gap-3.5">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-black text-slate-950 text-xs tracking-wider uppercase flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-yellow-500 animate-pulse" />
-                    <span>Mga Balita at Kwento (Z-one Live Feed)</span>
-                    {loadingPosts && (
-                      <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-md font-black animate-pulse tracking-normal normal-case border border-blue-100">
-                        Ina-update...
-                      </span>
-                    )}
-                  </h3>
-                  <span className="text-[10px] text-slate-400 font-bold uppercase">
-                    {filteredPosts.length} / {visiblePosts.length} Posts
-                  </span>
-                </div>
-
-                {/* 🏷️ Interactive Post Filter Tabs */}
-                <div className="bg-slate-150/60 p-1.5 rounded-2xl flex flex-wrap gap-1.5 border border-slate-200/50">
+          {/* 🏷️ CLEAN, MINIMAL FEED SWITCHER (No dashboard clutter) */}
+          <div className="space-y-4 animate-fadeIn">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2 bg-white rounded-2xl p-1.5 border border-slate-200/80 shadow-2xs relative">
+                <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
                   <button
+                    type="button"
                     onClick={() => {
                       setPostFilter('forYou');
                       fetchPosts(true, 'for-you');
                     }}
-                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                    className={`py-1.5 px-3.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition cursor-pointer select-none whitespace-nowrap ${
                       postFilter === 'forYou'
-                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                        ? 'bg-blue-600 text-white shadow-2xs'
+                        : 'text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    <Compass className={`w-3.5 h-3.5 ${postFilter === 'forYou' ? 'text-indigo-600' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Para sa Iyo ✨' : 'For You ✨'}</span>
+                    <span>{language === 'tl' ? 'Para sa Iyo' : 'For You'}</span>
                   </button>
 
                   <button
+                    type="button"
                     onClick={() => {
                       setPostFilter('friends');
                       fetchPosts(true, 'friends');
                     }}
-                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                    className={`py-1.5 px-3.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition cursor-pointer select-none whitespace-nowrap ${
                       postFilter === 'friends'
-                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                        ? 'bg-blue-600 text-white shadow-2xs'
+                        : 'text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    <Users className={`w-3.5 h-3.5 ${postFilter === 'friends' ? 'text-emerald-600' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Kaibigan 👥' : 'Friends 👥'}</span>
+                    <span>{language === 'tl' ? 'Kaibigan' : 'Friends'}</span>
                   </button>
 
                   <button
+                    type="button"
                     onClick={() => {
                       setPostFilter('following');
                       fetchPosts(true, 'following');
                     }}
-                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
+                    className={`py-1.5 px-3.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition cursor-pointer select-none whitespace-nowrap ${
                       postFilter === 'following'
-                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                        ? 'bg-blue-600 text-white shadow-2xs'
+                        : 'text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    <UserCheck className={`w-3.5 h-3.5 ${postFilter === 'following' ? 'text-indigo-600' : 'text-slate-400'}`} />
                     <span>{language === 'tl' ? 'Sinusubaybayan' : 'Following'}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
-                      postFilter === 'following' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-200/60 text-slate-550'
-                    }`}>
-                      {visiblePosts.filter(p => (user.zonedUsers || []).includes(p.userId) || p.userId === user.id).length}
-                    </span>
                   </button>
 
-                  <button
-                    onClick={() => {
-                      setPostFilter('communities');
-                      fetchPosts(true, 'communities');
-                    }}
-                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
-                      postFilter === 'communities'
-                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
-                    }`}
-                  >
-                    <Users className={`w-3.5 h-3.5 ${postFilter === 'communities' ? 'text-blue-600' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Komunidad' : 'Communities'}</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setPostFilter('popular');
-                      fetchPosts(true, 'trending');
-                    }}
-                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
-                      postFilter === 'popular' || postFilter === 'trending'
-                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
-                    }`}
-                  >
-                    <Flame className={`w-3.5 h-3.5 ${postFilter === 'popular' || postFilter === 'trending' ? 'text-orange-500' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Trending 🔥' : 'Trending 🔥'}</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setPostFilter('all');
-                      fetchPosts(true, 'all');
-                    }}
-                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
-                      postFilter === 'all'
-                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
-                    }`}
-                  >
-                    <Clock className={`w-3.5 h-3.5 ${postFilter === 'all' ? 'text-indigo-600' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Lahat (Oras)' : 'Latest'}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
-                      postFilter === 'all' ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-200/60 text-slate-550'
-                    }`}>
-                      {visiblePosts.length}
-                    </span>
-                  </button>
-
-                  <button
-                    onClick={() => setPostFilter('saved')}
-                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
-                      postFilter === 'saved'
-                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
-                    }`}
-                  >
-                    <Bookmark className={`w-3.5 h-3.5 ${postFilter === 'saved' ? 'text-amber-500' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Naka-save 🔖' : 'Bookmarks 🔖'}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
-                      postFilter === 'saved' ? 'bg-amber-50 text-amber-700' : 'bg-slate-200/60 text-slate-550'
-                    }`}>
-                      {savedPostIds.size}
-                    </span>
-                  </button>
-
-                  <button
-                    onClick={() => setPostFilter('bilibili')}
-                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
-                      postFilter === 'bilibili'
-                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40 ring-1 ring-pink-500/30'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
-                    }`}
-                  >
-                    <Film className={`w-3.5 h-3.5 ${postFilter === 'bilibili' ? 'text-pink-600' : 'text-slate-400'}`} />
-                    <span>🎬 BiliBili</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
-                      postFilter === 'bilibili' ? 'bg-pink-50 text-pink-700' : 'bg-slate-200/60 text-slate-550'
-                    }`}>
-                      {bilibiliItems.length}
-                    </span>
-                  </button>
-
-                  <button
-                    onClick={() => setPostFilter('teleserye')}
-                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
-                      postFilter === 'teleserye'
-                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
-                    }`}
-                  >
-                    <Tv className={`w-3.5 h-3.5 ${postFilter === 'teleserye' ? 'text-red-600' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Teleserye' : 'Teleserye'}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
-                      postFilter === 'teleserye' ? 'bg-red-50 text-red-700' : 'bg-slate-200/60 text-slate-550'
-                    }`}>
-                      {visiblePosts.filter(p => p.userId === 'teleserye-feed-author' || (p as any).category === 'Teleserye').length}
-                    </span>
-                  </button>
-
-                  <button
-                    onClick={() => setPostFilter('news')}
-                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
-                      postFilter === 'news'
-                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
-                    }`}
-                  >
-                    <Newspaper className={`w-3.5 h-3.5 ${postFilter === 'news' ? 'text-emerald-600' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Balita' : 'News'}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
-                      postFilter === 'news' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-200/60 text-slate-550'
-                    }`}>
-                      {visiblePosts.filter(p => p.userId === 'balita-rss-author').length}
-                    </span>
-                  </button>
-
-                  <button
-                    onClick={() => setPostFilter('community')}
-                    className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer select-none ${
-                      postFilter === 'community'
-                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200/40'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
-                    }`}
-                  >
-                    <Users className={`w-3.5 h-3.5 ${postFilter === 'community' ? 'text-blue-600' : 'text-slate-400'}`} />
-                    <span>{language === 'tl' ? 'Komunidad' : 'Community'}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${
-                      postFilter === 'community' ? 'bg-blue-50 text-blue-700' : 'bg-slate-200/60 text-slate-550'
-                    }`}>
-                      {visiblePosts.filter(p => !(p as any).isRss && p.userId !== 'balita-rss-author' && p.userId !== 'teleserye-feed-author').length}
-                    </span>
-                  </button>
+                  {/* Show active chip if user selected a secondary feed from More/Menu */}
+                  {!['forYou', 'friends', 'following'].includes(postFilter) && (
+                    <div className="py-1.5 px-3 rounded-xl font-bold text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 flex items-center gap-1.5 whitespace-nowrap">
+                      <span className="capitalize">
+                        {postFilter === 'saved' && (language === 'tl' ? 'Naka-save' : 'Saved')}
+                        {postFilter === 'communities' && (language === 'tl' ? 'Komunidad' : 'Communities')}
+                        {(postFilter === 'popular' || postFilter === 'trending') && 'Trending'}
+                        {postFilter === 'all' && (language === 'tl' ? 'Pinakabago' : 'Latest')}
+                        {postFilter === 'bilibili' && 'BiliBili FLIX'}
+                        {postFilter === 'teleserye' && 'Teleserye'}
+                        {postFilter === 'news' && (language === 'tl' ? 'Balita' : 'News')}
+                        {postFilter === 'community' && 'Community'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPostFilter('forYou');
+                          fetchPosts(true, 'for-you');
+                        }}
+                        className="hover:text-indigo-950 cursor-pointer"
+                        title="Reset to For You"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
                 </div>
+
+                {/* Subtle More Feeds Dropdown Trigger */}
+                <div className="relative shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowMoreFeedsMenu(prev => !prev)}
+                    className="py-1.5 px-2.5 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition cursor-pointer flex items-center gap-1"
+                    title={language === 'tl' ? 'Iba pang Feed Filters' : 'More Feed Views'}
+                  >
+                    <MoreHorizontal className="w-4 h-4" />
+                  </button>
+
+                  {showMoreFeedsMenu && (
+                    <div className="absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-slate-200 py-1.5 z-30 text-xs font-bold text-slate-700">
+                      <button
+                        type="button"
+                        onClick={() => { setPostFilter('all'); fetchPosts(true, 'all'); setShowMoreFeedsMenu(false); }}
+                        className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                      >
+                        <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                        <span>{language === 'tl' ? 'Pinakabago (Latest)' : 'Latest Posts'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setPostFilter('popular'); fetchPosts(true, 'trending'); setShowMoreFeedsMenu(false); }}
+                        className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                      >
+                        <Flame className="w-3.5 h-3.5 text-orange-500" />
+                        <span>Trending</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setPostFilter('communities'); fetchPosts(true, 'communities'); setShowMoreFeedsMenu(false); }}
+                        className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                      >
+                        <Users className="w-3.5 h-3.5 text-blue-500" />
+                        <span>{language === 'tl' ? 'Komunidad Feed' : 'Communities Feed'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setPostFilter('saved'); setShowMoreFeedsMenu(false); }}
+                        className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                      >
+                        <Bookmark className="w-3.5 h-3.5 text-amber-500" />
+                        <span>{language === 'tl' ? 'Naka-save (Bookmarks)' : 'Saved Posts'}</span>
+                      </button>
+                      <div className="my-1 border-t border-slate-100" />
+                      <button
+                        type="button"
+                        onClick={() => { setPostFilter('bilibili'); setShowMoreFeedsMenu(false); }}
+                        className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                      >
+                        <Film className="w-3.5 h-3.5 text-pink-500" />
+                        <span>BiliBili FLIX</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setPostFilter('teleserye'); setShowMoreFeedsMenu(false); }}
+                        className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                      >
+                        <Tv className="w-3.5 h-3.5 text-red-500" />
+                        <span>Pinoy Teleserye</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setPostFilter('news'); setShowMoreFeedsMenu(false); }}
+                        className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                      >
+                        <Newspaper className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>{language === 'tl' ? 'Balita (News)' : 'Verified News'}</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
 
                 {smartFeedFallbackActive && ['forYou', 'friends', 'communities', 'trending', 'popular'].includes(postFilter) && (
                   <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-2.5 px-3.5 flex items-center justify-between text-xs text-slate-600 animate-fadeIn">
@@ -6185,7 +6066,174 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
         </div>
 
+        {/* RIGHT RAIL: DESKTOP MESSENGER CONTACTS & COMMUNITY SHORTCUTS */}
+        <aside className="hidden lg:block lg:col-span-3 sticky top-20 space-y-4">
+          {/* Contacts & Messenger Box */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-2xs space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="font-extrabold text-slate-700 text-xs uppercase tracking-wider">
+                {language === 'tl' ? 'Mga Mensahe at Chat' : 'Contacts & Chats'}
+              </h4>
+              <button
+                type="button"
+                onClick={handleOpenInbox}
+                className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer"
+              >
+                {language === 'tl' ? 'Buksan Inbox' : 'Open Inbox'}
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <button
+                type="button"
+                onClick={handleOpenInbox}
+                className="w-full p-2.5 rounded-xl bg-slate-50 hover:bg-blue-50/60 border border-slate-100 flex items-center justify-between transition cursor-pointer text-left"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0">
+                    <MessageSquare className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-900">Z-one Messenger</div>
+                    <div className="text-[10px] text-slate-500">
+                      {totalUnreadCount > 0 ? `${totalUnreadCount} unread messages` : (language === 'tl' ? 'Chat at Group Chats' : 'Direct & Group Chats')}
+                    </div>
+                  </div>
+                </div>
+                {totalUnreadCount > 0 && (
+                  <span className="bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
+                    {totalUnreadCount}
+                  </span>
+                )}
+              </button>
+
+              {conversations.slice(0, 4).map((conv) => {
+                const isOnline = onlineUserIds.includes(conv.userId);
+                return (
+                  <button
+                    key={conv.userId}
+                    type="button"
+                    onClick={() => handleOpenDm({ id: conv.userId, name: conv.userName, avatar: conv.userAvatar })}
+                    className="w-full p-2 rounded-xl hover:bg-slate-100 flex items-center justify-between gap-2 transition cursor-pointer text-left"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="relative shrink-0">
+                        {renderFeedAvatar(conv.userAvatar, conv.userName, "w-8 h-8", "text-sm", conv.userId)}
+                        <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white ${isOnline ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-800 truncate">{conv.userName}</div>
+                        <div className="text-[10px] text-slate-400 truncate">{conv.lastMessage}</div>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Community & Creator Tools Card */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-2xs space-y-2">
+            <h4 className="font-extrabold text-slate-700 text-xs uppercase tracking-wider mb-1">
+              {language === 'tl' ? 'Mabilisang Tools' : 'Quick Tools'}
+            </h4>
+
+            <button
+              type="button"
+              id="creator-analytics-feed-btn"
+              onClick={() => setShowCreatorAnalytics(true)}
+              className="w-full flex items-center gap-2.5 p-2 rounded-xl hover:bg-slate-100 text-xs font-bold text-slate-700 transition cursor-pointer text-left"
+            >
+              <BarChart3 className="w-4 h-4 text-indigo-600 shrink-0" />
+              <span>Creator Analytics</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowDataSaverModal(true)}
+              className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-slate-100 text-xs font-bold text-slate-700 transition cursor-pointer text-left"
+            >
+              <div className="flex items-center gap-2.5">
+                <Smartphone className="w-4 h-4 text-amber-500 shrink-0" />
+                <span>Mobile Data Saver</span>
+              </div>
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${isBasicMode ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-500'}`}>
+                {isBasicMode ? 'ON' : 'OFF'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowSafetyRulesModal(true)}
+              className="w-full flex items-center gap-2.5 p-2 rounded-xl hover:bg-slate-100 text-xs font-bold text-slate-700 transition cursor-pointer text-left"
+            >
+              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{language === 'tl' ? 'Alituntunin sa Kaligtasan' : 'Community Safety Rules'}</span>
+            </button>
+
+            {user.isAdmin && (
+              <button
+                type="button"
+                onClick={() => setShowModPanel(!showModPanel)}
+                className="w-full flex items-center justify-between p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-xs font-bold text-rose-700 transition cursor-pointer text-left"
+              >
+                <div className="flex items-center gap-2.5">
+                  <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>Feed Moderation</span>
+                </div>
+                {modReports.filter(r => r.status === 'pending').length > 0 && (
+                  <span className="bg-rose-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                    {modReports.filter(r => r.status === 'pending').length}
+                  </span>
+                )}
+              </button>
+            )}
+          </div>
+        </aside>
+
       </div>
+
+      {/* 🛡️ COMMUNITY SAFETY RULES MODAL */}
+      <AnimatePresence>
+        {showSafetyRulesModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                  <h3 className="font-black text-slate-900 text-sm">
+                    {language === 'tl' ? 'Alituntunin sa Z-one (Safety Rules)' : 'Z-one Safety Guidelines'}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSafetyRulesModal(false)}
+                  className="p-1.5 rounded-full hover:bg-slate-100 text-slate-500 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <ul className="list-disc pl-5 space-y-2 text-xs text-slate-700 font-semibold leading-relaxed">
+                <li>{language === 'tl' ? 'Bawal ang malalaswang larawan, nudes, at pornographic videos.' : 'Nude pictures, porn videos, or explicit content are strictly prohibited.'}</li>
+                <li>{language === 'tl' ? 'Bawal ang mga mura, bastos na salita, o mapanirang posts.' : 'Profanity, toxic behavior, and swear words will be auto-filtered.'}</li>
+                <li>{language === 'tl' ? 'Ang system ay may auto-moderator na nagbubura/humaharang ng posts. Ang mga lumabag ay maaaring i-ban ng Admin.' : 'The system auto-moderates and rejects posts violating rules. Violators will be banned by Administrators.'}</li>
+              </ul>
+              <button
+                type="button"
+                onClick={() => setShowSafetyRulesModal(false)}
+                className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs cursor-pointer"
+              >
+                {language === 'tl' ? 'Naiintindihan Ko' : 'Got It'}
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* 🔄 SHARING POST DIALOG / MODAL */}
       <AnimatePresence>
