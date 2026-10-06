@@ -92,6 +92,7 @@ import { DeviceTransferModal } from './components/DeviceTransferModal';
 import { UnifiedSearchDiscoveryModal } from './components/UnifiedSearchDiscoveryModal';
 import { HashtagDiscoveryModal } from './components/HashtagDiscoveryModal';
 import { UserProfileModal } from './components/UserProfileModal';
+import { ZoneLandingExperience } from './components/ZoneLandingExperience';
 import { getOrCreateDeviceKeyId, getDeviceSecurityHeaders } from './utils/deviceSecurity';
 import { dataSaver, generateIdempotencyKey } from './utils/dataSaver';
 import { idbStorage } from './utils/idbStorage';
@@ -1731,6 +1732,62 @@ export default function App() {
     }
   };
 
+  const handleExploreDemo = async (
+    targetTab: 'earn' | 'cashout' | 'zone' | 'guide' | 'negosyo' | 'va_shop' | 'kiddie' | 'challenges' | null = null
+  ) => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      localStorage.setItem('is_demo_mode', 'true');
+    } catch (e) {}
+    setIsDemoMode(true);
+
+    try {
+      const res = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-demo-mode': 'true',
+          ...getDeviceSecurityHeaders()
+        },
+        body: JSON.stringify({
+          name: 'Z-one Explorer',
+          email: `explorer.${Date.now()}@z-oneapp.demo`,
+          avatar: '🚀',
+          isDemo: true
+        })
+      });
+      const result = await res.json();
+      if (res.ok && result.token && result.user) {
+        localStorage.setItem('gcash_click_earn_token', result.token);
+        setToken(result.token);
+        setUser(result.user);
+        if (result.user.stats) setStats(result.user.stats);
+        if (Array.isArray(result.user.withdrawals)) setWithdrawals(result.user.withdrawals);
+        if (Array.isArray(result.user.activityLogs)) setActivityLogs(result.user.activityLogs);
+        if (Array.isArray(result.user.referredFriends)) setReferredFriends(result.user.referredFriends);
+        if (targetTab !== undefined) {
+          setActiveTab(targetTab);
+        }
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        triggerNotification(
+          language === 'tl'
+            ? '🌐 Maligayang pagdating sa Z-oneApp Live Exploration!'
+            : '🌐 Welcome to Z-oneApp Live Exploration!',
+          'info'
+        );
+      } else {
+        const el = document.getElementById('platform-preview');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+      }
+    } catch (e) {
+      const el = document.getElementById('platform-preview');
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleLogout = () => {
     if (isDemoMode || user?.isDemo) {
       if (user || token) {
@@ -2307,169 +2364,38 @@ export default function App() {
         triggerNotification={triggerNotification}
       />
 
-      {/* 🚀 SCREEN GATEWAY 1: NOT AUTHENTICATED SCREEN */}
+      {/* 🚀 SCREEN GATEWAY 1: NOT AUTHENTICATED OPENING LANDING EXPERIENCE */}
       {!token || !user ? (
-        <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 py-12 relative overflow-hidden">
-          
-          {/* Ambient Cosmic Neon background lights */}
-          <div className="absolute top-1/4 left-1/4 h-96 w-96 rounded-full bg-blue-600/10 blur-3xl" />
-          <div className="absolute bottom-1/4 right-1/4 h-96 w-96 rounded-full bg-indigo-600/10 blur-3xl" />
- 
-          <div className="max-w-md w-full space-y-6 z-10">
-            
-            {/* LOGO TITLE */}
-            <div className="text-center space-y-2">
-              <span className="mx-auto bg-blue-600 text-white text-[10px] font-black tracking-widest uppercase px-3 py-1 rounded-full flex items-center gap-1 w-max">
-                <Coins className="w-3.5 h-3.5 text-yellow-300 animate-bounce" />
-                <span>ACTIVE EARNING PORTAL</span>
-              </span>
-              <h1 className="text-3xl font-black text-white tracking-tight leading-none">
-                G-Click & Get rewarded every visit
-              </h1>
-              <p className="text-xs text-slate-400 max-w-sm mx-auto font-semibold">
-                Simulan ang pagbisita sa mga verified web homepage upang makakuha ng automated PPV rewards!
-              </p>
-            </div>
-
-            {/* 🚀 OFFICIAL PROMO BANNER */}
-            <ZoneAppBanner 
-              language={language} 
-              triggerNotification={triggerNotification} 
-              compact={true} 
-            />
- 
-            {/* MAIN CREDENTIAL CARD */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4 relative">
-              
-              {/* Form Tab Toggles */}
-              <div className="flex border-b border-slate-800 gap-2 text-xs font-black">
-                <button
-                  onClick={() => { setAuthMode('login'); setAuthError(null); }}
-                  className={`flex-1 py-2.5 transition rounded-t-xl cursor-pointer text-center ${
-                    authMode === 'login' 
-                      ? 'border-b-2 border-blue-500 text-blue-400 bg-slate-800/40' 
-                      : 'text-slate-500 hover:text-slate-400'
-                  }`}
-                >
-                  Naka-rehistro (Login)
-                </button>
-                <button
-                  onClick={() => { setAuthMode('register'); setAuthError(null); }}
-                  className={`flex-1 py-2.5 transition rounded-t-xl cursor-pointer text-center ${
-                    authMode === 'register' 
-                      ? 'border-b-2 border-blue-500 text-blue-400 bg-slate-800/40' 
-                      : 'text-slate-500 hover:text-slate-400'
-                  }`}
-                >
-                  Gawa ng Account (Register)
-                </button>
-              </div>
- 
-              {/* AUTH FORM */}
-              <form onSubmit={handleAuthSubmit} className="space-y-3.5 text-xs text-slate-300">
-                
-                {/* Name - Register only */}
-                {authMode === 'register' && (
-                  <div className="space-y-1.5">
-                    <label className="font-bold text-slate-400 flex items-center gap-1.5">
-                      <User className="w-4 h-4" />
-                      <span>Buong Pangalan (Profile Name-Admin Visibility)</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Hal. Juan Dela Cruz"
-                      value={nameInput}
-                      onChange={(e) => setNameInput(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 hover:border-slate-700 p-3 rounded-xl outline-none font-bold text-white transition placeholder:font-normal placeholder:text-slate-600"
-                    />
-                  </div>
-                )}
- 
-                {/* Email */}
-                <div className="space-y-1.5">
-                  <label className="font-bold text-slate-400 flex items-center gap-1.5">
-                    <Mail className="w-4 h-4" />
-                    <span>Email Address</span>
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="Hal. juan.delacruz@gmail.com"
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 hover:border-slate-700 p-3 rounded-xl outline-none font-bold text-white transition placeholder:font-normal placeholder:text-slate-600"
-                  />
-                </div>
- 
-                {/* Password */}
-                <div className="space-y-1.5">
-                  <label className="font-bold text-slate-400 flex items-center gap-1.5">
-                    <Lock className="w-4 h-4" />
-                    <span>Password</span>
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="Wag kalimutan"
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 hover:border-slate-700 p-3 rounded-xl outline-none font-bold text-white transition placeholder:font-normal placeholder:text-slate-600"
-                  />
-                </div>
- 
-                {/* Optional Referral Code - Register only */}
-                {authMode === 'register' && (
-                  <div className="space-y-1.5 animate-fadeIn">
-                    <label className="font-bold text-emerald-450 flex items-center gap-1.5">
-                      <UserPlus className="w-4 h-4 text-emerald-450" />
-                      <span>Referral Code (Opsyonal - pwedeng maiwan na blangko)</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Hal. REF-123456"
-                      value={referralInput}
-                      onChange={(e) => setReferralInput(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 hover:border-slate-700 p-3 rounded-xl outline-none font-bold text-white transition placeholder:font-normal placeholder:text-slate-600 truncate uppercase"
-                    />
-                  </div>
-                )}
- 
-                {/* Feedbacks */}
-                {authError && (
-                  <div className="p-3 bg-red-950/85 border border-red-900 rounded-xl flex items-start gap-2 text-[11px] text-red-300 leading-normal">
-                    <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
-                    <span className="font-bold text-rose-300">{authError}</span>
-                  </div>
-                )}
- 
-                {/* Submit button */}
-                <button
-                  type="submit"
-                  disabled={authLoading}
-                  className="w-full zone-btn zone-btn-primary zone-btn-lg text-xs uppercase tracking-wider cursor-pointer shadow-md flex items-center justify-center gap-2"
-                >
-                  {authLoading ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : authMode === 'login' ? (
-                    'I-verify at Mag-login'
-                  ) : (
-                    'Gumawa ng Account at Simulan'
-                  )}
-                </button>
- 
-              </form>
- 
-            </div>
- 
-            <p className="text-center text-[10px] text-slate-600 leading-normal max-w-sm mx-auto">
-              {language === 'tl'
-                ? "Sa pamamagitan ng pag-sign in, sumasang-ayon ka sa interactive simulator guidelines."
-                : "By signing in, you agree to the interactive simulator guidelines."}
-            </p>
- 
-          </div>
-        </div>
+        <ZoneLandingExperience
+          language={language}
+          onToggleLanguage={(lang) => setLanguage(lang)}
+          authMode={authMode}
+          setAuthMode={setAuthMode}
+          emailInput={emailInput}
+          setEmailInput={setEmailInput}
+          passwordInput={passwordInput}
+          setPasswordInput={setPasswordInput}
+          nameInput={nameInput}
+          setNameInput={setNameInput}
+          referralInput={referralInput}
+          setReferralInput={setReferralInput}
+          authError={authError}
+          setAuthError={setAuthError}
+          authLoading={authLoading}
+          onAuthSubmit={handleAuthSubmit}
+          onExploreDemo={handleExploreDemo}
+          onOpenReels={() => {
+            window.dispatchEvent(new Event('open-reels-widget'));
+            const openBtn = document.getElementById('reels-widget-open-btn');
+            if (openBtn) openBtn.click();
+          }}
+          onOpenSearch={() => setIsSearchModalOpen(true)}
+          onSelectShopProduct={(prod) => {
+            setGuestShopProduct(prod);
+          }}
+          reels={reels}
+          triggerNotification={triggerNotification}
+        />
       ) : (
         /* 📱 GATEWAY 2: AUTHENTICATED SYSTEM DASHBOARD */
         <>
