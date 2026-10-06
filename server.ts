@@ -966,7 +966,7 @@ Ensure your response is valid JSON and nothing else.`;
 
 // --- FULL SSRF PROTECTION SYSTEM ---
 function isIpPrivateOrReserved(ip: string): boolean {
-  let normalizedIp = ip.toLowerCase().trim();
+  let normalizedIp = ip.toLowerCase().trim().replace(/^\[|\]$/g, '');
   if (normalizedIp.startsWith('::ffff:')) {
     normalizedIp = normalizedIp.substring(7);
   }
@@ -1997,7 +1997,7 @@ interface MerchantAd {
   url: string;
   description: string;
   logo: string;
-  category: 'Shopping' | 'Balita' | 'Teknolohiya' | 'E-Services' | 'Kultura';
+  category: 'Shopping' | 'Balita' | 'Teknolohiya' | 'E-Services' | 'Kultura' | string;
   primaryColor: string;
   accentColor: string;
   planId: 'bronze' | 'silver' | 'gold' | 'platinum';
@@ -2006,13 +2006,43 @@ interface MerchantAd {
   durationDays: number;
   gcashSenderNumber: string;
   gcashReferenceNo: string;
-  status: 'pending' | 'active' | 'declined' | 'expired';
+  status: 'pending' | 'approved' | 'active' | 'paused' | 'rejected' | 'declined' | 'completed' | 'expired';
   paymentId?: string;
   rejectionReason?: string;
   createdAt: string;
   approvedAt?: string;
   expiresAt?: string;
   aiCommercial?: any;
+  // Additive Business Promotion Hub -> Z-oneSocial Feed fields
+  promotionType?: 'campaign_ad' | 'social_promotion';
+  businessName?: string;
+  businessLogo?: string;
+  businessCategory?: string;
+  headline?: string;
+  hashtags?: string[];
+  mediaSourceType?: 'upload_video' | 'upload_image' | 'external_video' | 'none';
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video' | 'embed';
+  externalVideoUrl?: string;
+  externalVideoPlatform?: 'youtube' | 'facebook' | 'vimeo' | 'direct_mp4' | string;
+  embedUrl?: string;
+  destinationUrl?: string;
+  ctaText?: string;
+  isFeatured?: boolean;
+  linkedPostId?: string;
+  viewsCount?: number;
+  videoPlaysCount?: number;
+  ctaClicksCount?: number;
+  likesCount?: number;
+  commentsCount?: number;
+  sharesCount?: number;
+  savedPostEngagement?: {
+    likes?: string[];
+    reactions?: any[];
+    reactionCounts?: any;
+    comments?: any[];
+    sharesCount?: number;
+  };
 }
 
 interface ReelVideo {
@@ -8358,7 +8388,457 @@ app.delete('/api/admin/campaigns/:id', async (req, res) => {
   res.json({ success: true, campaigns: db.campaigns });
 });
 
-// 1. GET /api/merchant/ads -> list all ads of the current user
+// ============================================================================
+// BUSINESS PROMOTION HUB -> Z-ONESOCIAL FEED HELPERS
+// ============================================================================
+
+const ALLOWED_BUSINESS_CATEGORIES = [
+  'Online Shop',
+  'Local Business',
+  'Restaurant / Food',
+  'Services',
+  'Creator / Brand',
+  'Product Launch',
+  'Event / Promo',
+  'Shopping',
+  'Balita',
+  'Teknolohiya',
+  'E-Services',
+  'Kultura'
+];
+
+const ALLOWED_CTA_OPTIONS = [
+  'Visit Website',
+  'Shop Now',
+  'Learn More',
+  'Watch Now',
+  'Order Now',
+  'Message Business',
+  'View Offer'
+];
+
+function validateSafeHttpUrl(rawUrl: string): { valid: boolean; url?: string; hostname?: string; error?: string } {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return { valid: false, error: 'Kinakailangan ang valid na URL (https://...).' };
+  }
+  const trimmed = rawUrl.trim();
+  const lower = trimmed.toLowerCase();
+  if (
+    lower.startsWith('javascript:') ||
+    lower.startsWith('data:') ||
+    lower.startsWith('file:') ||
+    lower.startsWith('vbscript:')
+  ) {
+    return { valid: false, error: 'Hindi pinapayagan ang unsafe URL protocol.' };
+  }
+  if (!lower.startsWith('https://') && !lower.startsWith('http://')) {
+    return { valid: false, error: 'Ang URL ay dapat magsimula sa https:// o http://.' };
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return { valid: false, error: 'Tanging https:// at http:// URLs lamang ang pinapayagan.' };
+    }
+    if (parsed.username || parsed.password) {
+      return { valid: false, error: 'Hindi pinapayagan ang embedded credentials sa URL.' };
+    }
+
+    const hostname = parsed.hostname.toLowerCase().trim();
+    const bareHost = hostname.replace(/^\[|\]$/g, '');
+    if (!bareHost) {
+      return { valid: false, error: 'Maglagay ng valid na website domain.' };
+    }
+
+    // Reuse SSRF internal/metadata hostname protections from validateUrlForSsrf
+    const blockedHostnames = new Set([
+      'localhost',
+      'localhost.localdomain',
+      'ip6-localhost',
+      'ip6-loopback',
+      'metadata.google.internal',
+      'metadata',
+      'instance-data'
+    ]);
+    if (
+      blockedHostnames.has(bareHost) ||
+      bareHost.endsWith('.internal') ||
+      bareHost.endsWith('.local') ||
+      bareHost.endsWith('.localhost') ||
+      bareHost.endsWith('.corp') ||
+      bareHost.endsWith('.home') ||
+      bareHost.endsWith('.lan')
+    ) {
+      return { valid: false, error: 'Access to internal, loopback, or cloud-metadata hostnames is forbidden.' };
+    }
+
+    // Reject non-standard IP notations (decimal, octal, hex)
+    if (/^0x[0-9a-f]+$/i.test(bareHost) || /^\d+$/.test(bareHost) || /^0[0-7]+$/.test(bareHost)) {
+      return { valid: false, error: 'Numeric or non-standard IP formats are forbidden.' };
+    }
+
+    // Direct IP address check (IPv4 & IPv6) reusing existing isIpPrivateOrReserved
+    if (net.isIP(bareHost) || bareHost.includes(':') || /^\d+(\.\d+){3}$/.test(bareHost)) {
+      if (isIpPrivateOrReserved(bareHost)) {
+        return { valid: false, error: 'Access to private, loopback, or cloud-metadata IP addresses is forbidden.' };
+      }
+      return { valid: true, url: parsed.toString(), hostname: bareHost };
+    }
+
+    if (!bareHost.includes('.')) {
+      return { valid: false, error: 'Maglagay ng valid na website domain.' };
+    }
+    const tld = bareHost.split('.').pop() || '';
+    if (tld.length < 2 || /^\d+$/.test(tld)) {
+      return { valid: false, error: 'Maglagay ng valid na website domain.' };
+    }
+
+    return { valid: true, url: parsed.toString(), hostname: bareHost.replace(/^www\./i, '') };
+  } catch {
+    return { valid: false, error: 'Hindi valid ang format ng URL.' };
+  }
+}
+
+function isPromotionEligibleForActiveFeed(ad: MerchantAd | undefined | null, nowMs: number = Date.now()): boolean {
+  if (!ad) return false;
+  if (ad.status !== 'active' && ad.status !== 'approved') return false;
+  if (ad.expiresAt) {
+    const expTime = new Date(ad.expiresAt).getTime();
+    if (Number.isFinite(expTime) && expTime <= nowMs) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function parseSafeExternalVideoSource(rawUrl: string): {
+  valid: boolean;
+  platform?: 'youtube' | 'facebook' | 'vimeo' | 'direct_mp4';
+  embedUrl?: string;
+  directUrl?: string;
+  cleanUrl?: string;
+  error?: string;
+} {
+  const urlCheck = validateSafeHttpUrl(rawUrl);
+  if (!urlCheck.valid || !urlCheck.url) {
+    return { valid: false, error: urlCheck.error || 'Invalid external video URL.' };
+  }
+
+  const cleanUrl = urlCheck.url;
+  try {
+    const u = new URL(cleanUrl);
+    const host = u.hostname.toLowerCase();
+
+    // 1. Direct MP4 / WebM / MOV video file URL
+    if (/\.(mp4|webm|mov)(\?.*)?$/i.test(u.pathname + u.search)) {
+      return {
+        valid: true,
+        platform: 'direct_mp4',
+        directUrl: cleanUrl,
+        cleanUrl
+      };
+    }
+
+    // 2. YouTube (watch?v=, youtu.be/, shorts/, embed/)
+    if (host.includes('youtube.com') || host.includes('youtu.be')) {
+      let videoId = '';
+      if (host.includes('youtu.be')) {
+        videoId = u.pathname.replace(/^\//, '').split('/')[0];
+      } else if (u.pathname.startsWith('/watch')) {
+        videoId = u.searchParams.get('v') || '';
+      } else if (u.pathname.startsWith('/shorts/') || u.pathname.startsWith('/embed/')) {
+        videoId = u.pathname.split('/')[2] || '';
+      }
+      videoId = videoId.replace(/[^a-zA-Z0-9_-]/g, '');
+      if (videoId.length >= 6) {
+        return {
+          valid: true,
+          platform: 'youtube',
+          embedUrl: `https://www.youtube.com/embed/${videoId}?rel=0`,
+          cleanUrl
+        };
+      }
+      return { valid: false, error: 'Hindi makuha ang YouTube Video ID mula sa link.' };
+    }
+
+    // 3. Vimeo
+    if (host.includes('vimeo.com')) {
+      const match = u.pathname.match(/\/(?:video\/)?(\d+)/);
+      if (match && match[1]) {
+        return {
+          valid: true,
+          platform: 'vimeo',
+          embedUrl: `https://player.vimeo.com/video/${match[1]}`,
+          cleanUrl
+        };
+      }
+      return { valid: false, error: 'Hindi makuha ang Vimeo Video ID mula sa link.' };
+    }
+
+    // 4. Facebook public video
+    if (host.includes('facebook.com') || host.includes('fb.watch')) {
+      return {
+        valid: true,
+        platform: 'facebook',
+        embedUrl: `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(cleanUrl)}&show_text=false`,
+        cleanUrl
+      };
+    }
+
+    return {
+      valid: false,
+      error: 'Suportadong external video sources lamang ang pinapayagan: YouTube, Facebook Video, Vimeo, o Direct MP4 URL.'
+    };
+  } catch {
+    return { valid: false, error: 'Hindi ma-parse ang external video URL.' };
+  }
+}
+
+function countSharedPostRecords(postId: string, db: DBStructure): number {
+  if (!postId || !Array.isArray(db.posts)) return 0;
+  let count = 0;
+  for (const sp of db.posts) {
+    if (sp && sp.sharedPost && sp.sharedPost.id === postId) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function enrichAdWithLiveMetrics(ad: MerchantAd, db: DBStructure): MerchantAd {
+  const postId = ad.linkedPostId || ('post-ad-' + ad.id);
+  const linkedPost = getPostById(postId, db);
+  const savedEng = ad.savedPostEngagement;
+  const sharedPostsCount = countSharedPostRecords(postId, db);
+
+  const likesCount = linkedPost
+    ? Math.max((linkedPost.likes || []).length, (linkedPost.reactions || []).length)
+    : (ad.likesCount ?? (savedEng?.likes?.length || 0));
+  const commentsCount = linkedPost
+    ? (linkedPost.comments || []).length
+    : (ad.commentsCount ?? (savedEng?.comments?.length || 0));
+  const sharesCount = linkedPost
+    ? Math.max(linkedPost.sharesCount || 0, sharedPostsCount)
+    : Math.max(ad.sharesCount ?? (savedEng?.sharesCount || 0), sharedPostsCount);
+  const viewsCount = Math.max(ad.viewsCount || 0, linkedPost?.promotionViewsCount || 0);
+  const videoPlaysCount = Math.max(ad.videoPlaysCount || 0, linkedPost?.promotionVideoPlaysCount || 0);
+  const ctaClicksCount = Math.max(ad.ctaClicksCount || 0, linkedPost?.promotionCtaClicksCount || 0);
+
+  return {
+    ...ad,
+    linkedPostId: postId,
+    likesCount,
+    commentsCount,
+    sharesCount,
+    viewsCount,
+    videoPlaysCount,
+    ctaClicksCount
+  };
+}
+
+function syncPromotionToZonePost(db: DBStructure, ad: MerchantAd): void {
+  db.posts = db.posts || [];
+  const postId = ad.linkedPostId || ('post-ad-' + ad.id);
+  ad.linkedPostId = postId;
+
+  const existingIndex = db.posts.findIndex((p: any) => p && p.id === postId);
+  const existingPost = existingIndex !== -1 ? db.posts[existingIndex] : null;
+  const sharedPostsCount = countSharedPostRecords(postId, db);
+
+  const isPublicActive = isPromotionEligibleForActiveFeed(ad);
+
+  if (!isPublicActive) {
+    if (existingPost) {
+      const resolvedShares = Math.max(existingPost.sharesCount || 0, sharedPostsCount);
+      ad.savedPostEngagement = {
+        likes: Array.isArray(existingPost.likes) ? existingPost.likes : [],
+        reactions: Array.isArray(existingPost.reactions) ? existingPost.reactions : [],
+        reactionCounts: existingPost.reactionCounts || {},
+        comments: Array.isArray(existingPost.comments) ? existingPost.comments : [],
+        sharesCount: resolvedShares
+      };
+      ad.likesCount = Math.max((existingPost.likes || []).length, (existingPost.reactions || []).length);
+      ad.commentsCount = (existingPost.comments || []).length;
+      ad.sharesCount = resolvedShares;
+      db.posts.splice(existingIndex, 1);
+      removePostFromIndex(postId);
+      invalidateSmartFeedCache();
+      safeCloudSync('delete', 'posts', postId);
+    }
+    return;
+  }
+
+  // Build or update the active/approved Sponsored Social Post in db.posts
+  const bName = (ad.businessName || ad.title || ad.userName || 'Business Partner').trim();
+  const bLogo = ad.businessLogo || ad.userAvatar || '🏢';
+  const bCategory = ad.businessCategory || ad.category || 'Local Business';
+  const promoHeadline = (ad.headline || ad.title || bName).trim();
+  const destUrl = ad.destinationUrl || ad.url;
+  const ctaText = ad.ctaText || 'Visit Website';
+
+  const rawHashtags = Array.isArray(ad.hashtags) ? ad.hashtags : [];
+  const extractedFromDesc = extractHashtags(`${promoHeadline} ${ad.description || ''}`);
+  const mergedDisplayTags = Array.from(
+    new Set([
+      ...rawHashtags.map(t => (t.startsWith('#') ? t : `#${t}`)),
+      ...extractedFromDesc.map(t => t.display)
+    ])
+  ).slice(0, 10);
+  const mergedNormalizedTags = mergedDisplayTags
+    .map(t => t.toLowerCase().replace(/[^a-z0-9]/g, ''))
+    .filter(Boolean);
+
+  let mediaType: 'image' | 'video' | 'embed' | undefined = ad.mediaType;
+  let mediaUrl = ad.mediaUrl;
+  let embedUrl = ad.embedUrl;
+
+  if (ad.mediaSourceType === 'upload_video' || ad.externalVideoPlatform === 'direct_mp4') {
+    mediaType = 'video';
+  } else if (ad.mediaSourceType === 'external_video' && embedUrl) {
+    mediaType = 'video';
+  } else if (ad.mediaSourceType === 'upload_image' && mediaUrl) {
+    mediaType = 'image';
+  } else if (!mediaUrl && !embedUrl && ad.promotionType !== 'social_promotion') {
+    mediaUrl = 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&auto=format&fit=crop&q=60';
+    mediaType = 'image';
+  }
+
+  const preservedLikes = existingPost?.likes || ad.savedPostEngagement?.likes || [];
+  const preservedReactions = existingPost?.reactions || ad.savedPostEngagement?.reactions || [];
+  const preservedReactionCounts = existingPost?.reactionCounts || ad.savedPostEngagement?.reactionCounts || undefined;
+  const preservedComments = existingPost?.comments || ad.savedPostEngagement?.comments || [];
+  const preservedSharesCount = Math.max(
+    existingPost?.sharesCount ?? ad.savedPostEngagement?.sharesCount ?? 0,
+    sharedPostsCount
+  );
+
+  const sponsorPost: any = {
+    ...(existingPost || {}),
+    id: postId,
+    userId: ad.userId || ('merchant-' + ad.id),
+    userName: bName,
+    userAvatar: bLogo,
+    text: ad.description,
+    mediaUrl: mediaUrl || undefined,
+    mediaType: mediaType || undefined,
+    embedUrl: embedUrl || undefined,
+    videoSourceAvailable: Boolean(mediaType === 'video' || embedUrl),
+    videoStreamType:
+      ad.mediaSourceType === 'upload_video' || ad.externalVideoPlatform === 'direct_mp4'
+        ? 'direct'
+        : embedUrl
+          ? 'embed'
+          : undefined,
+    hashtags: mergedDisplayTags.length > 0 ? mergedDisplayTags : undefined,
+    normalizedHashtags: mergedNormalizedTags.length > 0 ? mergedNormalizedTags : undefined,
+    likes: preservedLikes,
+    reactions: preservedReactions,
+    reactionCounts: preservedReactionCounts,
+    comments: preservedComments,
+    sharesCount: preservedSharesCount,
+    createdAt: existingPost?.createdAt || ad.approvedAt || ad.createdAt || new Date().toISOString(),
+    // Sponsored Promotion metadata
+    isSponsoredPromotion: true,
+    promotionId: ad.id,
+    promotionStatus: ad.status,
+    promotionExpiresAt: ad.expiresAt,
+    businessName: bName,
+    businessLogo: bLogo,
+    businessCategory: bCategory,
+    promotionHeadline: promoHeadline,
+    destinationUrl: destUrl,
+    ctaText,
+    mediaSourceType: ad.mediaSourceType || (mediaUrl ? 'upload_image' : 'none'),
+    externalVideoUrl: ad.externalVideoUrl,
+    externalVideoPlatform: ad.externalVideoPlatform,
+    isFeaturedPromotion: Boolean(ad.isFeatured),
+    promotionViewsCount: ad.viewsCount || 0,
+    promotionVideoPlaysCount: ad.videoPlaysCount || 0,
+    promotionCtaClicksCount: ad.ctaClicksCount || 0
+  };
+
+  if (existingIndex !== -1) {
+    db.posts[existingIndex] = sponsorPost;
+  } else {
+    db.posts.unshift(sponsorPost);
+  }
+
+  indexPost(sponsorPost);
+  onContentCreated(`post:${sponsorPost.id}`, mergedDisplayTags, undefined, sponsorPost.userId, sponsorPost.createdAt);
+  invalidateSmartFeedCache();
+
+  const { id: _, ...postWithoutId } = sponsorPost;
+  safeCloudSync('set', 'posts', sponsorPost.id, postWithoutId);
+}
+
+function interleaveSponsoredFeedPosts(posts: any[], db: DBStructure): any[] {
+  if (!Array.isArray(posts) || posts.length === 0) return posts;
+
+  const adsById = new Map<string, MerchantAd>();
+  for (const ad of db.merchantAds || []) {
+    if (ad && ad.id) adsById.set(ad.id, ad);
+  }
+
+  const nowMs = Date.now();
+  const normalPosts: any[] = [];
+  const sponsoredPosts: any[] = [];
+
+  for (const p of posts) {
+    if (!p) continue;
+    const isLegacySponsor = typeof p.id === 'string' && p.id.startsWith('post-ad-');
+    if (p.isSponsoredPromotion || isLegacySponsor) {
+      const linkedAd = p.promotionId
+        ? adsById.get(p.promotionId)
+        : isLegacySponsor
+          ? adsById.get(p.id.replace(/^post-ad-/, ''))
+          : undefined;
+      if (!isPromotionEligibleForActiveFeed(linkedAd, nowMs)) {
+        continue; // Strictly hide pending, paused, rejected, completed, expired, and orphaned legacy post-ad-* promotions
+      }
+      if (linkedAd) {
+        p.promotionStatus = linkedAd.status;
+        p.promotionExpiresAt = linkedAd.expiresAt;
+        p.isFeaturedPromotion = Boolean(linkedAd.isFeatured);
+        p.promotionViewsCount = linkedAd.viewsCount || 0;
+        p.promotionVideoPlaysCount = linkedAd.videoPlaysCount || 0;
+        p.promotionCtaClicksCount = linkedAd.ctaClicksCount || 0;
+      }
+      sponsoredPosts.push(p);
+    } else {
+      normalPosts.push(p);
+    }
+  }
+
+  if (sponsoredPosts.length === 0) return normalPosts;
+
+  // Prioritize featured promotions, then newest
+  sponsoredPosts.sort((a, b) => {
+    if (Boolean(b.isFeaturedPromotion) !== Boolean(a.isFeaturedPromotion)) {
+      return b.isFeaturedPromotion ? 1 : -1;
+    }
+    return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+  });
+
+  // Natural social-feed cadence: Normal, Normal, Normal, Sponsored Business Promotion, Normal, Normal...
+  const blended: any[] = [];
+  let promoIdx = 0;
+  const NORMAL_INTERVAL = 3;
+
+  for (let i = 0; i < normalPosts.length; i++) {
+    blended.push(normalPosts[i]);
+    if ((i + 1) % NORMAL_INTERVAL === 0 && promoIdx < sponsoredPosts.length) {
+      blended.push(sponsoredPosts[promoIdx++]);
+    }
+  }
+
+  // If fewer than 3 normal posts exist, append at most 1 active promotion after the normal posts
+  if (normalPosts.length < NORMAL_INTERVAL && promoIdx < sponsoredPosts.length) {
+    blended.push(sponsoredPosts[promoIdx++]);
+  }
+
+  return blended;
+}
+
+// 1. GET /api/merchant/ads -> list all ads/promotions of the current user with live analytics
 app.get('/api/merchant/ads', (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
@@ -8371,12 +8851,14 @@ app.get('/api/merchant/ads', (req, res) => {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
 
-  const ads = (db.merchantAds || []).filter(ad => ad.userId === userId);
+  const ads = (db.merchantAds || [])
+    .filter(ad => ad.userId === userId)
+    .map(ad => enrichAdWithLiveMetrics(ad, db));
   res.json({ ads });
 });
 
-// 2. POST /api/merchant/ads -> create a new merchant ad request
-app.post('/api/merchant/ads', (req, res) => {
+// 2. POST /api/merchant/ads -> create a new merchant ad or Z-oneSocial Feed Business Promotion
+const handleCreateBusinessPromotion = async (req: express.Request, res: express.Response) => {
   const userId = req.headers.authorization;
   if (!userId) {
     return res.status(401).json({ error: 'Sapat na login ay kailangan.' });
@@ -8388,10 +8870,31 @@ app.post('/api/merchant/ads', (req, res) => {
     return res.status(404).json({ error: 'Hindi mahanap ang user.' });
   }
 
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Ang iyong account ay banned sa system.' });
+  }
+
   const {
+    promotionType,
+    // Business Info
+    businessName,
+    businessLogo,
+    businessCategory,
+    // Promotion Content
+    headline,
     title,
-    url,
     description,
+    hashtags,
+    // Media Options
+    mediaSourceType,
+    mediaUrl,
+    mediaType,
+    externalVideoUrl,
+    // Destination & CTA
+    destinationUrl,
+    url,
+    ctaText,
+    // Legacy / Campaign Ad fields
     logo,
     category,
     primaryColor,
@@ -8401,58 +8904,349 @@ app.post('/api/merchant/ads', (req, res) => {
     gcashReferenceNo
   } = req.body;
 
-  if (!title || !url || !description || !planId || !gcashSenderNumber || !gcashReferenceNo) {
+  const isSocialPromo = promotionType === 'social_promotion';
+  const finalTitle = String(headline || title || businessName || '').trim();
+  const finalBusinessName = String(businessName || title || user.name || '').trim();
+  const finalDescription = String(description || '').trim();
+  const rawTargetUrl = String(destinationUrl || url || '').trim();
+
+  if (!finalTitle || !finalDescription || !rawTargetUrl) {
+    return res.status(400).json({ error: 'Pakikumpleto ang Business Name, Headline, Description, at Destination URL.' });
+  }
+
+  if (containsInappropriateContent(finalTitle) || containsInappropriateContent(finalDescription) || containsInappropriateContent(finalBusinessName)) {
+    return res.status(400).json({
+      error: '⚠️ Ang promotion ay naglalaman ng ipinagbabawal o hindi angkop na salita.'
+    });
+  }
+
+  const destValidation = validateSafeHttpUrl(rawTargetUrl);
+  if (!destValidation.valid || !destValidation.url) {
+    return res.status(400).json({ error: destValidation.error || 'Invalid Destination URL.' });
+  }
+
+  // Validate payment fields only if legacy campaign_ad or if user provided GCash reference
+  if (!isSocialPromo && (!planId || !gcashSenderNumber || !gcashReferenceNo)) {
     return res.status(400).json({ error: 'Pakikumpleto ang lahat ng kinakailangang impormasyon.' });
   }
 
+  // Process Business Logo (if data: URL, upload to Cloudflare R2 so no binary is stored in Firestore)
+  let finalBusinessLogo = String(businessLogo || user.avatar || '🏢').trim();
+  if (finalBusinessLogo.startsWith('data:') || finalBusinessLogo.startsWith('blob:')) {
+    const logoUpload = await uploadMediaToCloudflareR2(finalBusinessLogo, 'media', user.id);
+    if (!logoUpload || !logoUpload.url) {
+      return res.status(502).json({ error: 'Bigo ang pag-upload ng Business Logo sa Cloudflare R2.' });
+    }
+    finalBusinessLogo = logoUpload.url;
+  } else if (finalBusinessLogo.includes('://') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(finalBusinessLogo)) {
+    const logoCheck = validateSafeHttpUrl(finalBusinessLogo);
+    if (!logoCheck.valid || !logoCheck.url) {
+      return res.status(400).json({ error: logoCheck.error || 'Invalid Business Logo URL.' });
+    }
+    finalBusinessLogo = logoCheck.url;
+  }
+
+  // Process Promotional Media (Option A: Upload Video, Option B: Upload Image, Option C: External Video)
+  const resolvedMediaSourceType: 'upload_video' | 'upload_image' | 'external_video' | 'none' =
+    mediaSourceType || (externalVideoUrl ? 'external_video' : mediaUrl ? (mediaType === 'video' ? 'upload_video' : 'upload_image') : 'none');
+
+  let finalMediaUrl: string | undefined = undefined;
+  let finalMediaType: 'image' | 'video' | 'embed' | undefined = undefined;
+  let finalExternalVideoUrl: string | undefined = undefined;
+  let finalExternalPlatform: 'youtube' | 'facebook' | 'vimeo' | 'direct_mp4' | undefined = undefined;
+  let finalEmbedUrl: string | undefined = undefined;
+
+  if (resolvedMediaSourceType === 'upload_video' || resolvedMediaSourceType === 'upload_image') {
+    if (!mediaUrl || typeof mediaUrl !== 'string') {
+      return res.status(400).json({ error: 'Pakipili o i-upload muna ang iyong promotional video o larawan.' });
+    }
+    if (mediaUrl.startsWith('data:') || mediaUrl.startsWith('blob:')) {
+      const uploaded = await uploadMediaToCloudflareR2(mediaUrl, 'posts', user.id);
+      if (!uploaded || !uploaded.url) {
+        return res.status(502).json({ error: 'Bigo ang pag-upload ng promotional media sa Cloudflare R2.' });
+      }
+      finalMediaUrl = uploaded.url;
+    } else {
+      const mediaCheck = validateSafeHttpUrl(mediaUrl);
+      if (!mediaCheck.valid || !mediaCheck.url) {
+        return res.status(400).json({ error: 'Invalid promotional media URL.' });
+      }
+      finalMediaUrl = mediaCheck.url;
+    }
+    finalMediaType = resolvedMediaSourceType === 'upload_video' ? 'video' : 'image';
+  } else if (resolvedMediaSourceType === 'external_video') {
+    const extSource = String(externalVideoUrl || mediaUrl || '').trim();
+    const parsedVideo = parseSafeExternalVideoSource(extSource);
+    if (!parsedVideo.valid) {
+      return res.status(400).json({ error: parsedVideo.error || 'Invalid external video link.' });
+    }
+    finalExternalVideoUrl = parsedVideo.cleanUrl;
+    finalExternalPlatform = parsedVideo.platform;
+    if (parsedVideo.platform === 'direct_mp4') {
+      finalMediaUrl = parsedVideo.directUrl;
+      finalMediaType = 'video';
+    } else {
+      finalEmbedUrl = parsedVideo.embedUrl;
+      finalMediaUrl = parsedVideo.cleanUrl;
+      finalMediaType = 'video';
+    }
+  }
+
+  // Normalize hashtags
+  let parsedHashtags: string[] = [];
+  if (Array.isArray(hashtags)) {
+    parsedHashtags = hashtags
+      .map(t => String(t).trim())
+      .filter(Boolean)
+      .map(t => (t.startsWith('#') ? t : `#${t}`))
+      .slice(0, 10);
+  } else if (typeof hashtags === 'string' && hashtags.trim()) {
+    parsedHashtags = hashtags
+      .split(/[\s,]+/)
+      .map(t => t.trim())
+      .filter(Boolean)
+      .map(t => (t.startsWith('#') ? t : `#${t}`))
+      .slice(0, 10);
+  }
+
   // Determine plan specs
+  const selectedPlanId = planId || 'bronze';
   let planName = 'Bronze';
   let price = 299;
   let durationDays = 7;
-  if (planId === 'silver') {
+  if (selectedPlanId === 'silver') {
     planName = 'Silver';
     price = 999;
     durationDays = 30;
-  } else if (planId === 'gold') {
+  } else if (selectedPlanId === 'gold') {
     planName = 'Gold';
     price = 2499;
     durationDays = 90;
-  } else if (planId === 'platinum') {
+  } else if (selectedPlanId === 'platinum') {
     planName = 'Platinum';
     price = 7999;
     durationDays = 365;
   }
 
+  const chosenCategory = ALLOWED_BUSINESS_CATEGORIES.includes(businessCategory || category)
+    ? (businessCategory || category)
+    : 'Local Business';
+  const chosenCta = ALLOWED_CTA_OPTIONS.includes(ctaText) ? ctaText : 'Visit Website';
+
+  const isAutoActive = Boolean(user.isAdmin || user.id === 'admin-rosco');
+  const nowIso = new Date().toISOString();
+  const expiryDate = new Date();
+  expiryDate.setDate(expiryDate.getDate() + durationDays);
+
+  const adId = 'ad-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+  const linkedPostId = 'post-ad-' + adId;
+
   const newAd: MerchantAd = {
-    id: 'ad-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
+    id: adId,
     userId: user.id,
     userName: user.name,
     userAvatar: user.avatar,
-    title,
-    url,
-    description,
+    title: filterSwearWords(finalTitle),
+    url: destValidation.url,
+    description: filterSwearWords(finalDescription),
     logo: logo || 'ShoppingBag',
-    category: category || 'Shopping',
+    category: chosenCategory,
     primaryColor: primaryColor || '#2563EB',
     accentColor: accentColor || '#10B981',
-    planId,
+    planId: selectedPlanId,
     planName,
     price,
     durationDays,
-    gcashSenderNumber,
-    gcashReferenceNo,
-    status: 'pending',
-    createdAt: new Date().toISOString()
+    gcashSenderNumber: gcashSenderNumber || (isSocialPromo ? 'SOCIAL-PROMO' : ''),
+    gcashReferenceNo: gcashReferenceNo || (isSocialPromo ? 'SOCIAL-PROMO' : ''),
+    status: isAutoActive ? 'active' : 'pending',
+    createdAt: nowIso,
+    approvedAt: isAutoActive ? nowIso : undefined,
+    expiresAt: isAutoActive ? expiryDate.toISOString() : undefined,
+    // Social Promotion fields
+    promotionType: isSocialPromo ? 'social_promotion' : 'campaign_ad',
+    businessName: filterSwearWords(finalBusinessName),
+    businessLogo: finalBusinessLogo,
+    businessCategory: chosenCategory,
+    headline: filterSwearWords(finalTitle),
+    hashtags: parsedHashtags,
+    mediaSourceType: resolvedMediaSourceType,
+    mediaUrl: finalMediaUrl,
+    mediaType: finalMediaType,
+    externalVideoUrl: finalExternalVideoUrl,
+    externalVideoPlatform: finalExternalPlatform,
+    embedUrl: finalEmbedUrl,
+    destinationUrl: destValidation.url,
+    ctaText: chosenCta,
+    isFeatured: false,
+    linkedPostId,
+    viewsCount: 0,
+    videoPlaysCount: 0,
+    ctaClicksCount: 0,
+    likesCount: 0,
+    commentsCount: 0,
+    sharesCount: 0
   };
 
   db.merchantAds = db.merchantAds || [];
   db.merchantAds.push(newAd);
+
+  if (isAutoActive) {
+    syncPromotionToZonePost(db, newAd);
+  }
+
+  saveDB(db);
+  const { id: _, ...adWithoutId } = newAd;
+  safeCloudSync('set', 'merchant_ads', newAd.id, adWithoutId);
+
+  res.json({
+    success: true,
+    ad: enrichAdWithLiveMetrics(newAd, db)
+  });
+};
+
+app.post('/api/merchant/ads', handleCreateBusinessPromotion);
+app.post('/api/merchant/promotions', handleCreateBusinessPromotion);
+
+// 2B. POST /api/merchant/ads/:id/status -> allow business owner to pause, resume (active), or complete their approved promotion
+app.post('/api/merchant/ads/:id/status', (req, res) => {
+  const userId = req.headers.authorization;
+  if (!userId) {
+    return res.status(401).json({ error: 'Sapat na login ay kailangan.' });
+  }
+
+  const db = loadDB();
+  const user = getUserById(userId, db);
+  if (!user) {
+    return res.status(404).json({ error: 'Hindi mahanap ang user.' });
+  }
+
+  db.merchantAds = db.merchantAds || [];
+  const ad = db.merchantAds.find(a => a.id === req.params.id);
+  if (!ad) {
+    return res.status(404).json({ error: 'Hindi mahanap ang business promotion.' });
+  }
+
+  if (ad.userId !== user.id && !user.isAdmin) {
+    return res.status(403).json({ error: 'Wala kang pahintulot na baguhin ang promotion na ito.' });
+  }
+
+  const { status } = req.body; // 'paused' | 'active' | 'completed'
+  if (!['paused', 'active', 'completed'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid status transition.' });
+  }
+
+  // Non-admin business owner cannot self-approve a pending or rejected promotion
+  if (!user.isAdmin && (ad.status === 'pending' || ad.status === 'rejected' || ad.status === 'declined')) {
+    return res.status(400).json({ error: 'Kailangan munang ma-approve ng Admin ang promotion bago ito ma-activate.' });
+  }
+
+  ad.status = status;
+  syncPromotionToZonePost(db, ad);
   saveDB(db);
 
-  res.json({ success: true, ad: newAd });
+  const { id: _, ...adWithoutId } = ad;
+  safeCloudSync('set', 'merchant_ads', ad.id, adWithoutId);
+
+  res.json({
+    success: true,
+    ad: enrichAdWithLiveMetrics(ad, db)
+  });
 });
 
-// 3. GET /api/admin/merchant/ads -> admin lists all merchant ads
+// 2C. POST /api/zone/promotions/:id/track -> track views, video plays, and CTA clicks (Authenticated)
+const promotionTrackingDedupMap = new Map<string, number>();
+
+app.post('/api/zone/promotions/:id/track', requireAuth, (req, res) => {
+  const authUser = (req as any).user;
+  const userId = (req as any).userId || req.headers.authorization;
+  if (!authUser || !userId) {
+    return res.status(401).json({ error: 'Kailangan mag-login upang ma-access ang serbisyong ito.', code: 'AUTH_REQUIRED' });
+  }
+
+  // Reject client attempts to spoof another user's identity or submit arbitrary analytics totals
+  const body = req.body || {};
+  if (body.userId !== undefined && String(body.userId) !== String(userId)) {
+    return res.status(403).json({ error: 'Client-supplied userId spoofing is forbidden.' });
+  }
+  if (
+    body.viewsCount !== undefined ||
+    body.videoPlaysCount !== undefined ||
+    body.ctaClicksCount !== undefined ||
+    body.likesCount !== undefined ||
+    body.commentsCount !== undefined ||
+    body.sharesCount !== undefined ||
+    body.count !== undefined ||
+    body.total !== undefined
+  ) {
+    return res.status(400).json({ error: 'Directly setting arbitrary analytics totals is forbidden.' });
+  }
+
+  const { id } = req.params;
+  const { eventType } = body; // 'view' | 'video_play' | 'cta_click'
+  if (typeof eventType !== 'string' || !['view', 'video_play', 'cta_click'].includes(eventType)) {
+    return res.status(400).json({ error: 'Invalid eventType.' });
+  }
+
+  const db = loadDB();
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Ang iyong account ay banned sa system.' });
+  }
+
+  db.merchantAds = db.merchantAds || [];
+  const ad = db.merchantAds.find(a => a.id === id || a.linkedPostId === id || ('post-ad-' + a.id) === id);
+  if (!ad) {
+    return res.status(404).json({ error: 'Promotion not found.' });
+  }
+
+  // Abuse / duplicate-event protection per authenticated user + promotion + eventType
+  const dedupKey = `${userId}:${ad.id}:${eventType}`;
+  const now = Date.now();
+  const cooldownMs = eventType === 'view' ? 60_000 : 3_000;
+  const lastTrackedAt = promotionTrackingDedupMap.get(dedupKey) || 0;
+  if (now - lastTrackedAt < cooldownMs) {
+    return res.json({
+      success: true,
+      deduplicated: true,
+      metrics: {
+        viewsCount: ad.viewsCount || 0,
+        videoPlaysCount: ad.videoPlaysCount || 0,
+        ctaClicksCount: ad.ctaClicksCount || 0
+      }
+    });
+  }
+  promotionTrackingDedupMap.set(dedupKey, now);
+
+  if (eventType === 'view') {
+    ad.viewsCount = (ad.viewsCount || 0) + 1;
+  } else if (eventType === 'video_play') {
+    ad.videoPlaysCount = (ad.videoPlaysCount || 0) + 1;
+  } else if (eventType === 'cta_click') {
+    ad.ctaClicksCount = (ad.ctaClicksCount || 0) + 1;
+  }
+
+  const postId = ad.linkedPostId || ('post-ad-' + ad.id);
+  const linkedPost = getPostById(postId, db);
+  if (linkedPost) {
+    linkedPost.promotionViewsCount = ad.viewsCount || 0;
+    linkedPost.promotionVideoPlaysCount = ad.videoPlaysCount || 0;
+    linkedPost.promotionCtaClicksCount = ad.ctaClicksCount || 0;
+  }
+
+  // Non-blocking debounced persistence (Phase 5B-3 compliant)
+  saveDB(db, false);
+
+  res.json({
+    success: true,
+    metrics: {
+      viewsCount: ad.viewsCount || 0,
+      videoPlaysCount: ad.videoPlaysCount || 0,
+      ctaClicksCount: ad.ctaClicksCount || 0
+    }
+  });
+});
+
+// 3. GET /api/admin/merchant/ads -> admin lists all merchant ads & business promotions with live metrics
 app.get('/api/admin/merchant/ads', (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
@@ -8465,7 +9259,8 @@ app.get('/api/admin/merchant/ads', (req, res) => {
     return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
   }
 
-  res.json({ ads: db.merchantAds || [] });
+  const enrichedAds = (db.merchantAds || []).map(ad => enrichAdWithLiveMetrics(ad, db));
+  res.json({ ads: enrichedAds });
 });
 
 function getCuratedImagesForCategory(category: string): string[] {
@@ -8649,7 +9444,7 @@ Ibalik ang tugon sa format ng JSON na may eksaktong ganitong structure:
   return fallback;
 }
 
-// 4. POST /api/admin/merchant/ads/:id/action -> approve or decline
+// 4. POST /api/admin/merchant/ads/:id/action -> approve, activate, pause, reject, decline, complete, feature, unfeature
 app.post('/api/admin/merchant/ads/:id/action', async (req, res) => {
   const userId = req.headers.authorization;
   if (!userId) {
@@ -8662,8 +9457,9 @@ app.post('/api/admin/merchant/ads/:id/action', async (req, res) => {
     return res.status(403).json({ error: 'Sapat na Admin privileges ay kailangan.' });
   }
 
-  const { action } = req.body; // 'approve' | 'decline'
-  if (!action || (action !== 'approve' && action !== 'decline')) {
+  const { action, rejectionReason } = req.body;
+  const allowedActions = ['approve', 'activate', 'pause', 'reject', 'decline', 'complete', 'feature', 'unfeature'];
+  if (!action || !allowedActions.includes(action)) {
     return res.status(400).json({ error: 'Invalid action.' });
   }
 
@@ -8673,101 +9469,118 @@ app.post('/api/admin/merchant/ads/:id/action', async (req, res) => {
     return res.status(404).json({ error: 'Hindi mahanap ang merchant ad request.' });
   }
 
-  if (ad.status !== 'pending') {
-    return res.status(400).json({ error: 'Ang promotion request na ito ay naproseso na.' });
-  }
-
-  if (action === 'decline') {
-    ad.status = 'declined';
+  if (action === 'feature' || action === 'unfeature') {
+    ad.isFeatured = action === 'feature';
+    syncPromotionToZonePost(db, ad);
     saveDB(db);
-    return res.json({ success: true, ad });
+    const { id: _, ...adWithoutId } = ad;
+    safeCloudSync('set', 'merchant_ads', ad.id, adWithoutId);
+    return res.json({ success: true, ad: enrichAdWithLiveMetrics(ad, db) });
   }
 
-  // Calculate expiration dates
+  if (action === 'decline' || action === 'reject') {
+    ad.status = action === 'reject' ? 'rejected' : 'declined';
+    if (rejectionReason) ad.rejectionReason = String(rejectionReason).trim();
+    syncPromotionToZonePost(db, ad);
+    saveDB(db);
+    const { id: _, ...adWithoutId } = ad;
+    safeCloudSync('set', 'merchant_ads', ad.id, adWithoutId);
+    return res.json({ success: true, ad: enrichAdWithLiveMetrics(ad, db) });
+  }
+
+  if (action === 'pause') {
+    ad.status = 'paused';
+    syncPromotionToZonePost(db, ad);
+    saveDB(db);
+    const { id: _, ...adWithoutId } = ad;
+    safeCloudSync('set', 'merchant_ads', ad.id, adWithoutId);
+    return res.json({ success: true, ad: enrichAdWithLiveMetrics(ad, db) });
+  }
+
+  if (action === 'complete') {
+    ad.status = 'completed';
+    syncPromotionToZonePost(db, ad);
+    saveDB(db);
+    const { id: _, ...adWithoutId } = ad;
+    safeCloudSync('set', 'merchant_ads', ad.id, adWithoutId);
+    return res.json({ success: true, ad: enrichAdWithLiveMetrics(ad, db) });
+  }
+
+  // 'approve' or 'activate'
   const now = new Date();
   const expiry = new Date();
-  expiry.setDate(now.getDate() + ad.durationDays);
+  expiry.setDate(now.getDate() + (ad.durationDays || 30));
 
   ad.status = 'active';
-  ad.approvedAt = now.toISOString();
-  ad.expiresAt = expiry.toISOString();
+  if (!ad.approvedAt) ad.approvedAt = now.toISOString();
+  if (!ad.expiresAt) ad.expiresAt = expiry.toISOString();
 
-  // Generate AI Commercial (100% related to the business promotion!)
-  const aiCommercial = await generateAICommercial(ad);
-  ad.aiCommercial = aiCommercial;
-
-  // Determine rewards amount based on plan
-  let rewardAmount = 1.50;
-  let maxClicks = 150;
-  if (ad.planId === 'silver') {
-    rewardAmount = 2.50;
-    maxClicks = 300;
-  } else if (ad.planId === 'gold') {
-    rewardAmount = 3.50;
-    maxClicks = 550;
-  } else if (ad.planId === 'platinum') {
-    rewardAmount = 5.00;
-    maxClicks = 1200;
+  // Generate AI Commercial & WebsiteCampaign if not already generated for campaign ads
+  if (!ad.aiCommercial && ad.promotionType !== 'social_promotion') {
+    const aiCommercial = await generateAICommercial(ad);
+    ad.aiCommercial = aiCommercial;
   }
 
-  // Generate a mock WebsiteCampaign
-  const newCampaign = {
-    id: 'campaign-merchant-' + ad.id,
-    title: ad.title,
-    url: ad.url,
-    reward: rewardAmount,
-    timer: 10,
-    logo: ad.logo || 'ShoppingBag',
-    category: ad.category || 'Shopping',
-    description: ad.description,
-    completed: false,
-    clicks: 0,
-    maxClicks: maxClicks,
-    aiCommercial: aiCommercial,
-    mockPageContent: {
-      heroTitle: `⭐ ${ad.title}`,
-      heroSubtitle: `Sponsored Promotion - Bisitahin ang website upang makakuha ng Reward!`,
-      primaryColor: ad.primaryColor || '#2563EB',
-      accentColor: ad.accentColor || '#10B981',
-      paragraphs: [
-        ad.description,
-        `Salamat sa pagsuporta sa aming lokal na negosyo! Ang pagbisita sa aming page ay nagbibigay-daan sa amin na lumago. Ikinagalak naming makita ka!`
-      ],
-      features: [
-        `🔗 Opisyal na Website: Bisitahin ang link para sa karagdagang impormasyon`,
-        `💵 Gantimpala: ₱${rewardAmount.toFixed(2)} pagkatapos basahin ng 10 segundo`,
-        `🏷️ Alok: Magtanong o makipag-ugnay sa merchant para sa discounts`,
-        `🛡️ Ligtas at beripikadong negosyo sa Z-one`
-      ]
+  if (ad.promotionType !== 'social_promotion') {
+    let rewardAmount = 1.50;
+    let maxClicks = 150;
+    if (ad.planId === 'silver') {
+      rewardAmount = 2.50;
+      maxClicks = 300;
+    } else if (ad.planId === 'gold') {
+      rewardAmount = 3.50;
+      maxClicks = 550;
+    } else if (ad.planId === 'platinum') {
+      rewardAmount = 5.00;
+      maxClicks = 1200;
     }
-  };
 
-  db.campaigns = db.campaigns || [];
-  db.campaigns.unshift(newCampaign);
+    const campaignId = 'campaign-merchant-' + ad.id;
+    db.campaigns = db.campaigns || [];
+    if (!db.campaigns.some((c: any) => c && c.id === campaignId)) {
+      const newCampaign = {
+        id: campaignId,
+        title: ad.title,
+        url: ad.destinationUrl || ad.url,
+        reward: rewardAmount,
+        timer: 10,
+        logo: ad.logo || 'ShoppingBag',
+        category: ad.category || 'Shopping',
+        description: ad.description,
+        completed: false,
+        clicks: 0,
+        maxClicks: maxClicks,
+        aiCommercial: ad.aiCommercial,
+        mockPageContent: {
+          heroTitle: `⭐ ${ad.title}`,
+          heroSubtitle: `Sponsored Promotion - Bisitahin ang website upang makakuha ng Reward!`,
+          primaryColor: ad.primaryColor || '#2563EB',
+          accentColor: ad.accentColor || '#10B981',
+          paragraphs: [
+            ad.description,
+            `Salamat sa pagsuporta sa aming lokal na negosyo! Ang pagbisita sa aming page ay nagbibigay-daan sa amin na lumago. Ikinagalak naming makita ka!`
+          ],
+          features: [
+            `🔗 Opisyal na Website: Bisitahin ang link para sa karagdagang impormasyon`,
+            `💵 Gantimpala: ₱${rewardAmount.toFixed(2)} pagkatapos basahin ng 10 segundo`,
+            `🏷️ Alok: Magtanong o makipag-ugnay sa merchant para sa discounts`,
+            `🛡️ Ligtas at beripikadong negosyo sa Z-one`
+          ]
+        }
+      };
+      db.campaigns.unshift(newCampaign);
+      safeCloudSync('set', 'campaigns', newCampaign.id, newCampaign);
+    }
+  }
 
-  // Generate a sponsored Social Post inside the community feed!
-  const sponsorPost = {
-    id: 'post-ad-' + ad.id,
-    userId: 'merchant-' + ad.id,
-    userName: ad.title + ' 📢 [Sponsor]',
-    userAvatar: '🏢',
-    text: `${ad.description}\n\n👉 Bisitahin kami sa aming pahina sa: ${ad.url}\n\n✨ (Maaari mo ring mahanap ang aming promotion sa 'Mag-ipon' tab para makakuha ng ₱${rewardAmount.toFixed(2)} reward!)`,
-    mediaUrl: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&auto=format&fit=crop&q=60',
-    likes: [],
-    comments: [],
-    createdAt: new Date().toISOString()
-  };
-
-  db.posts = db.posts || [];
-  db.posts.unshift(sponsorPost);
-  indexPost(sponsorPost);
+  // Publish / Sync Sponsored Social Post inside the Z-oneSocial Feed!
+  syncPromotionToZonePost(db, ad);
 
   saveDB(db);
+  const { id: _, ...adWithoutId } = ad;
+  safeCloudSync('set', 'merchant_ads', ad.id, adWithoutId);
 
-  safeCloudSync('set', 'campaigns', newCampaign.id, newCampaign);
-  safeCloudSync('set', 'posts', sponsorPost.id, sponsorPost);
-
-  res.json({ success: true, ad });
+  res.json({ success: true, ad: enrichAdWithLiveMetrics(ad, db) });
 });
 
 // COMPLETED TASK REWARD SYNC
@@ -11917,7 +12730,7 @@ app.get('/api/zone/posts', (req, res) => {
       if (Math.abs(b.score - a.score) > 0.01) return b.score - a.score;
       return b.createdAtTime - a.createdAtTime;
     });
-    sortedPosts = scoredPosts.map(sp => sp.post);
+    sortedPosts = interleaveSponsoredFeedPosts(scoredPosts.map(sp => sp.post), db);
   }
 
   // Enrich with user's personal saved state
@@ -13120,12 +13933,18 @@ app.post('/api/zone/posts/:postId/share', enforceCommunitySafety, (req, res) => 
 
   db.posts.push(newPost);
   indexPost(newPost);
+
+  // Sync sharesCount on the original post using established sharedPost.id === rootPostId counting (no double counting)
+  const rootPostId = originalPost.sharedPost ? originalPost.sharedPost.id : originalPost.id;
+  const rootPost = getPostById(rootPostId, db) || originalPost;
+  rootPost.sharesCount = countSharedPostRecords(rootPostId, db);
+
   saveDB(db, true);
 
   const { id: _, ...pWithoutId } = newPost;
   safeCloudSync('set', 'posts', newPost.id, pWithoutId);
 
-  res.json({ success: true, post: newPost, message: 'Matagumpay na na-share ang post!' });
+  res.json({ success: true, post: newPost, sharesCount: rootPost.sharesCount, message: 'Matagumpay na na-share ang post!' });
 });
 
 // 4c. EDIT A POST
@@ -18379,6 +19198,9 @@ app.get('/api/zone/feed/smart', (req, res) => {
       limit,
       section
     });
+    if ((section === 'for-you' || section === 'forYou' || section === 'explore') && Array.isArray(result.items)) {
+      result.items = interleaveSponsoredFeedPosts(result.items, db);
+    }
     res.json(result);
   } catch (err) {
     console.error('⚠️ [Phase 3 Smart Feed Error - Falling back to Standard Feed]:', err);

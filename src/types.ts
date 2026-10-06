@@ -218,6 +218,24 @@ export interface ZonePost {
   userReaction?: ReactionType | null;
   recommendationReason?: 'friend' | 'following' | 'community' | 'hashtag' | 'trending' | 'popular' | 'fresh' | 'suggested_creator';
   recommendationLabel?: string;
+  // Business Promotion Hub -> Z-oneSocial Feed additive fields
+  isSponsoredPromotion?: boolean;
+  promotionId?: string;
+  promotionStatus?: 'pending' | 'approved' | 'active' | 'paused' | 'rejected' | 'declined' | 'completed' | 'expired';
+  promotionExpiresAt?: string;
+  businessName?: string;
+  businessLogo?: string;
+  businessCategory?: string;
+  promotionHeadline?: string;
+  destinationUrl?: string;
+  ctaText?: string;
+  mediaSourceType?: 'upload_video' | 'upload_image' | 'external_video' | 'none';
+  externalVideoUrl?: string;
+  externalVideoPlatform?: 'youtube' | 'facebook' | 'vimeo' | 'direct_mp4' | string;
+  isFeaturedPromotion?: boolean;
+  promotionViewsCount?: number;
+  promotionVideoPlaysCount?: number;
+  promotionCtaClicksCount?: number;
 }
 
 export type ReactionType = 'like' | 'love' | 'haha' | 'wow' | 'sad' | 'angry' | 'care';
@@ -430,7 +448,7 @@ export interface MerchantAd {
   url: string;
   description: string;
   logo: string;
-  category: 'Shopping' | 'Balita' | 'Teknolohiya' | 'E-Services' | 'Kultura';
+  category: 'Shopping' | 'Balita' | 'Teknolohiya' | 'E-Services' | 'Kultura' | string;
   primaryColor: string;
   accentColor: string;
   planId: 'bronze' | 'silver' | 'gold' | 'platinum';
@@ -439,13 +457,36 @@ export interface MerchantAd {
   durationDays: number;
   gcashSenderNumber: string;
   gcashReferenceNo: string;
-  status: 'pending' | 'active' | 'declined' | 'expired';
+  status: 'pending' | 'approved' | 'active' | 'paused' | 'rejected' | 'declined' | 'completed' | 'expired';
   paymentId?: string;
   rejectionReason?: string;
   createdAt: string;
   approvedAt?: string;
   expiresAt?: string;
   aiCommercial?: any;
+  // Additive Business Promotion Hub -> Z-oneSocial Feed fields
+  promotionType?: 'campaign_ad' | 'social_promotion';
+  businessName?: string;
+  businessLogo?: string;
+  businessCategory?: string;
+  headline?: string;
+  hashtags?: string[];
+  mediaSourceType?: 'upload_video' | 'upload_image' | 'external_video' | 'none';
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video' | 'embed';
+  externalVideoUrl?: string;
+  externalVideoPlatform?: 'youtube' | 'facebook' | 'vimeo' | 'direct_mp4' | string;
+  embedUrl?: string;
+  destinationUrl?: string;
+  ctaText?: string;
+  isFeatured?: boolean;
+  linkedPostId?: string;
+  viewsCount?: number;
+  videoPlaysCount?: number;
+  ctaClicksCount?: number;
+  likesCount?: number;
+  commentsCount?: number;
+  sharesCount?: number;
 }
 
 export interface ReelVideo {

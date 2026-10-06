@@ -2506,18 +2506,74 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     return [...outboxPosts, ...nonOutboxPosts];
   }, [posts, outbox, user.id, user.name, user.avatar]);
 
+  const trackedPromoViewsRef = React.useRef<Set<string>>(new Set());
+
+  const trackPromotionEvent = React.useCallback((promoIdOrPostId: string, eventType: 'view' | 'video_play' | 'cta_click') => {
+    if (!promoIdOrPostId) return;
+    fetch(`/api/zone/promotions/${encodeURIComponent(promoIdOrPostId)}/track`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': token } : {})
+      },
+      body: JSON.stringify({ eventType })
+    }).catch(() => {});
+  }, [token]);
+
+  const blendSponsoredPromotionsNaturally = React.useCallback((list: ZonePost[]): ZonePost[] => {
+    const normal: ZonePost[] = [];
+    const promos: ZonePost[] = [];
+    const nowMs = Date.now();
+    for (const p of list) {
+      if (p.isSponsoredPromotion || (typeof p.id === 'string' && p.id.startsWith('post-ad-'))) {
+        if (p.promotionStatus !== 'active' && p.promotionStatus !== 'approved') {
+          continue;
+        }
+        if (p.promotionExpiresAt) {
+          const expMs = new Date(p.promotionExpiresAt).getTime();
+          if (Number.isFinite(expMs) && expMs <= nowMs) {
+            continue;
+          }
+        }
+        promos.push(p);
+      } else {
+        normal.push(p);
+      }
+    }
+    if (promos.length === 0) return normal;
+    promos.sort((a, b) => {
+      if (Boolean(b.isFeaturedPromotion) !== Boolean(a.isFeaturedPromotion)) {
+        return b.isFeaturedPromotion ? 1 : -1;
+      }
+      return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+    });
+    const blended: ZonePost[] = [];
+    let promoIdx = 0;
+    const INTERVAL = 3;
+    for (let i = 0; i < normal.length; i++) {
+      blended.push(normal[i]);
+      if ((i + 1) % INTERVAL === 0 && promoIdx < promos.length) {
+        blended.push(promos[promoIdx++]);
+      }
+    }
+    if (normal.length < INTERVAL && promoIdx < promos.length) {
+      blended.push(promos[promoIdx++]);
+    }
+    return blended;
+  }, []);
+
   // Memoized filtered posts list based on selected filter
   const filteredPosts = React.useMemo(() => {
     if (postFilter === 'forYou') {
-      return visiblePosts;
+      return blendSponsoredPromotionsNaturally(visiblePosts);
     }
     if (postFilter === 'friends') {
       const friendSet = new Set((user as any).friends || []);
-      return visiblePosts.filter(p => p.recommendationReason === 'friend' || friendSet.has(p.userId) || p.userId === user.id);
+      return visiblePosts.filter(p => !p.isSponsoredPromotion && (p.recommendationReason === 'friend' || friendSet.has(p.userId) || p.userId === user.id));
     }
     if (postFilter === 'following') {
       const zonedSet = new Set(user.zonedUsers || []);
-      return visiblePosts.filter(p => p.recommendationReason === 'following' || zonedSet.has(p.userId) || p.userId === user.id);
+      return visiblePosts.filter(p => !p.isSponsoredPromotion && (p.recommendationReason === 'following' || zonedSet.has(p.userId) || p.userId === user.id));
     }
     if (postFilter === 'communities') {
       return visiblePosts.filter(p => Boolean(p.communityId) || p.recommendationReason === 'community');
@@ -2555,13 +2611,25 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
     if (postFilter === 'community') {
       return visiblePosts.filter(p => !(p as any).isRss && p.userId !== 'balita-rss-author' && p.userId !== 'teleserye-feed-author');
     }
-    return visiblePosts;
-  }, [visiblePosts, postFilter, teleseryeSearch, teleseryeStreamFilter, user.zonedUsers, user.id, (user as any).friends, savedPostIds]);
+    return blendSponsoredPromotionsNaturally(visiblePosts);
+  }, [visiblePosts, postFilter, teleseryeSearch, teleseryeStreamFilter, user.zonedUsers, user.id, (user as any).friends, savedPostIds, blendSponsoredPromotionsNaturally]);
 
   // Progressive posts slicing for ultra-fast 60 FPS performance (like Facebook News Feed)
   const displayedPosts = React.useMemo(() => {
     return filteredPosts.slice(0, visiblePostLimit);
   }, [filteredPosts, visiblePostLimit]);
+
+  useEffect(() => {
+    for (const p of displayedPosts) {
+      if (p.isSponsoredPromotion || (typeof p.id === 'string' && p.id.startsWith('post-ad-'))) {
+        const promoKey = p.promotionId || p.id;
+        if (!trackedPromoViewsRef.current.has(promoKey)) {
+          trackedPromoViewsRef.current.add(promoKey);
+          trackPromotionEvent(promoKey, 'view');
+        }
+      }
+    }
+  }, [displayedPosts, trackPromotionEvent]);
 
   // Memoized BiliBili FLIX filtered list
   const filteredBilibiliItems = React.useMemo(() => {
@@ -4824,11 +4892,11 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                           </div>
                         ) : (
                           <button
-                            onClick={() => !isPending && !isFailed && handleOpenDm({ id: post.userId, name: post.userName, avatar: post.userAvatar || '👤' })}
+                            onClick={() => !isPending && !isFailed && handleOpenDm({ id: post.userId, name: post.businessName || post.userName, avatar: post.businessLogo || post.userAvatar || '🏢' })}
                             className={`leading-none shrink-0 select-none block hover:scale-105 transition text-left focus:outline-hidden ${isPending || isFailed ? 'cursor-not-allowed' : 'cursor-pointer'}`}
                             title={isPending || isFailed ? undefined : "I-Message o Tawagan"}
                           >
-                            {renderFeedAvatar(post.userAvatar, post.userName, "w-10 h-10", "text-xl", post.userId)}
+                            {renderFeedAvatar(post.businessLogo || post.userAvatar, post.businessName || post.userName, "w-10 h-10", "text-xl", post.userId)}
                           </button>
                         )}
                         <div>
@@ -4839,14 +4907,24 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                               </span>
                             ) : (
                               <button
-                                onClick={() => !isPending && !isFailed && handleOpenDm({ id: post.userId, name: post.userName, avatar: post.userAvatar || '👤' })}
+                                onClick={() => !isPending && !isFailed && handleOpenDm({ id: post.userId, name: post.businessName || post.userName, avatar: post.businessLogo || post.userAvatar || '🏢' })}
                                 className={`font-extrabold text-left transition focus:outline-hidden ${isPending || isFailed ? 'text-slate-500 cursor-not-allowed' : 'hover:underline hover:text-blue-600 cursor-pointer'}`}
                                 title={isPending || isFailed ? undefined : "I-Message o Tawagan"}
                               >
-                                {post.userName}
+                                {post.businessName || post.userName}
                               </button>
                             )}
-                            {post.userId === 'admin-rosco' && (
+                            {post.isSponsoredPromotion && (
+                              <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase">
+                                Business
+                              </span>
+                            )}
+                            {post.isFeaturedPromotion && (
+                              <span className="bg-amber-100 text-amber-800 border border-amber-300 text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase">
+                                ⭐ Featured
+                              </span>
+                            )}
+                            {post.userId === 'admin-rosco' && !post.isSponsoredPromotion && (
                               <span className="bg-blue-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase">Admin</span>
                             )}
                             {post.userId === 'balita-rss-author' && (
@@ -4855,9 +4933,19 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                               </span>
                             )}
                           </div>
-                          <span className="text-[9px] text-slate-400 block font-mono">
-                            {new Date(post.createdAt).toLocaleString('fil-PH', { hour12: true, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                          </span>
+                          {post.isSponsoredPromotion ? (
+                            <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-bold mt-0.5">
+                              <span className="text-amber-700 bg-amber-50 border border-amber-200/80 px-1.5 py-0.2 rounded font-extrabold">
+                                Sponsored
+                              </span>
+                              <span>•</span>
+                              <span>{post.businessCategory || post.category || 'Business'}</span>
+                            </div>
+                          ) : (
+                            <span className="text-[9px] text-slate-400 block font-mono">
+                              {new Date(post.createdAt).toLocaleString('fil-PH', { hour12: true, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -5006,27 +5094,54 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                           </div>
                         </div>
                       ) : (
-                        post.text && (
-                          <div className="space-y-3">
-                            <p className="text-slate-800 text-xs font-semibold leading-relaxed whitespace-pre-wrap">
-                              {post.text.split(/(#[a-zA-Z0-9_\u00C0-\u017F]+)/g).map((part, idx) => {
-                                if (part.startsWith('#')) {
+                        (post.text || post.promotionHeadline) && (
+                          <div className="space-y-2.5">
+                            {post.isSponsoredPromotion && post.promotionHeadline && (
+                              <h4 className="font-black text-sm text-slate-900 leading-snug">
+                                {post.promotionHeadline}
+                              </h4>
+                            )}
+                            {post.text && (
+                              <p className="text-slate-800 text-xs font-semibold leading-relaxed whitespace-pre-wrap">
+                                {post.text.split(/(#[a-zA-Z0-9_\u00C0-\u017F]+)/g).map((part, idx) => {
+                                  if (part.startsWith('#')) {
+                                    return (
+                                      <span
+                                        key={idx}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          window.dispatchEvent(new CustomEvent('open-hashtag-modal', { detail: { hashtag: part.replace('#', '') } }));
+                                        }}
+                                        className="text-blue-600 hover:text-blue-800 hover:underline font-bold cursor-pointer inline-block"
+                                      >
+                                        {part}
+                                      </span>
+                                    );
+                                  }
+                                  return part;
+                                })}
+                              </p>
+                            )}
+                            {post.isSponsoredPromotion && post.hashtags && post.hashtags.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                {post.hashtags.map((tag, idx) => {
+                                  const formattedTag = tag.startsWith('#') ? tag : `#${tag}`;
+                                  if (post.text && post.text.includes(formattedTag)) return null;
                                   return (
                                     <span
                                       key={idx}
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        window.dispatchEvent(new CustomEvent('open-hashtag-modal', { detail: { hashtag: part.replace('#', '') } }));
+                                        window.dispatchEvent(new CustomEvent('open-hashtag-modal', { detail: { hashtag: formattedTag.replace('#', '') } }));
                                       }}
-                                      className="text-blue-600 hover:text-blue-800 hover:underline font-bold cursor-pointer inline-block"
+                                      className="text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                                     >
-                                      {part}
+                                      {formattedTag}
                                     </span>
                                   );
-                                }
-                                return part;
-                              })}
-                            </p>
+                                })}
+                              </div>
+                            )}
 
                             {/* 🛍️ Social Commerce Tagged Product Card */}
                             {post.productRef && (
@@ -5255,7 +5370,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                       )}
 
                       {/* Single Attached Media Render */}
-                      {post.mediaUrl && (!post.mediaUrls || post.mediaUrls.length === 0) && !failedImages.has(post.mediaUrl) && (
+                      {(post.mediaUrl || post.embedUrl || (post.embedUrls && post.embedUrls.length > 0)) && (!post.mediaUrls || post.mediaUrls.length === 0) && (!post.mediaUrl || !failedImages.has(post.mediaUrl)) && (
                         <>
                           {isBasicMode && !revealedMedia.has(post.id) ? (
                             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center space-y-3">
@@ -5289,7 +5404,7 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                             </div>
                           ) : (
                             <>
-                              {post.mediaType === 'image' && (
+                              {post.mediaType === 'image' && post.mediaUrl && (
                                 <div className="rounded-2xl overflow-hidden border border-slate-100 relative cursor-zoom-in group hover:opacity-95 transition">
                                   <img 
                                     src={dataSaver.getOptimizedImageUrl(post.mediaUrl, { width: 720, quality: 55 })} 
@@ -5318,8 +5433,8 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
 
                               {(post.mediaType === 'video' || (post as any).mediaType === 'embed' || post.embedUrl || post.userId === 'teleserye-feed-author' || (post as any).category === 'Teleserye') && (
                                 <div className="rounded-2xl overflow-hidden border border-slate-800/80 relative bg-slate-950 shadow-md">
-                                  {/* Pinoy Teleserye Replay Header Bar */}
-                                  {(post.userId === 'teleserye-feed-author' || (post as any).category === 'Teleserye' || post.embedUrl) && (
+                                  {/* Pinoy Teleserye Replay Header Bar (only for Teleserye posts, not Sponsored Business Promotions) */}
+                                  {!post.isSponsoredPromotion && (post.userId === 'teleserye-feed-author' || (post as any).category === 'Teleserye') && (
                                     <div className="bg-gradient-to-r from-red-950/90 via-slate-900 to-slate-900 px-3.5 py-2 border-b border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
                                       <div className="flex items-center gap-1.5 font-bold text-white">
                                         <span className="flex h-2 w-2 relative">
@@ -5369,8 +5484,60 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                                   {/* Video Player or Tap-to-Play Poster */}
                                   {(() => {
                                     const activeEmbed = selectedServerMap[post.id] || post.embedUrl || (post.embedUrls && post.embedUrls.length > 0 ? post.embedUrls[0] : null);
-                                    const isDirectFile = post.videoStreamType === 'direct' || post.videoStreamType === 'hls' || (activeEmbed && /\.(mp4|webm|m3u8|ogg)(\?|$)/i.test(activeEmbed)) || (post.mediaUrl && /\.(mp4|webm|m3u8|ogg)(\?|$)/i.test(post.mediaUrl));
-                                    const hasValidStream = !!activeEmbed || (post.mediaUrl && /\.(mp4|webm|m3u8|ogg)(\?|$)/i.test(post.mediaUrl));
+                                    const isDirectFile = post.videoStreamType === 'direct' || post.videoStreamType === 'hls' || post.mediaSourceType === 'upload_video' || post.externalVideoPlatform === 'direct_mp4' || (activeEmbed && /\.(mp4|webm|mov|m3u8|ogg)(\?|$)/i.test(activeEmbed)) || (post.mediaUrl && /\.(mp4|webm|mov|m3u8|ogg)(\?|$)/i.test(post.mediaUrl));
+                                    const hasValidStream = !!activeEmbed || !!post.mediaUrl;
+
+                                    // Sponsored Business Promotion Video: Render ready-to-play HTML5 video or clean responsive embed directly
+                                    if (post.isSponsoredPromotion && hasValidStream) {
+                                      const promoKey = post.promotionId || post.id;
+                                      if (isDirectFile && post.mediaUrl) {
+                                        return (
+                                          <div className="relative w-full bg-black flex items-center justify-center">
+                                            <video
+                                              src={post.mediaUrl}
+                                              controls
+                                              playsInline
+                                              preload="metadata"
+                                              onPlay={() => trackPromotionEvent(promoKey, 'video_play')}
+                                              className="w-full max-h-[420px] object-contain bg-black"
+                                            />
+                                          </div>
+                                        );
+                                      }
+                                      if (activeEmbed) {
+                                        return (
+                                          <div className="flex flex-col bg-black">
+                                            <div
+                                              className="relative w-full aspect-video bg-black"
+                                              onClick={() => trackPromotionEvent(promoKey, 'video_play')}
+                                            >
+                                              <iframe
+                                                src={activeEmbed}
+                                                className="w-full h-full border-0 bg-black"
+                                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                                allowFullScreen
+                                                title={post.promotionHeadline || post.businessName || 'Sponsored Video'}
+                                              />
+                                            </div>
+                                            {post.externalVideoUrl && (
+                                              <div className="bg-slate-900 px-3.5 py-2 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-300">
+                                                <span className="font-bold capitalize">{post.externalVideoPlatform || 'External'} Video</span>
+                                                <a
+                                                  href={post.externalVideoUrl}
+                                                  target="_blank"
+                                                  rel="noopener noreferrer"
+                                                  onClick={() => trackPromotionEvent(promoKey, 'video_play')}
+                                                  className="text-blue-400 hover:text-blue-300 font-bold flex items-center gap-1"
+                                                >
+                                                  <span>Watch on Source</span>
+                                                  <ExternalLink className="w-3 h-3" />
+                                                </a>
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      }
+                                    }
 
                                     if (!revealedVideos.has(post.id)) {
                                       return (
@@ -5520,6 +5687,36 @@ export default function ZoneFeed({ token, user, setUser, triggerNotification, on
                         </>
                       )}
                     </div>
+
+                    {/* Sponsored Business Promotion Destination & CTA Action Bar */}
+                    {post.isSponsoredPromotion && post.destinationUrl && (
+                      <div className="bg-slate-50 px-4 py-3 border-t border-slate-200/80 flex items-center justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 truncate">
+                            {(() => {
+                              try {
+                                return new URL(post.destinationUrl).hostname.replace(/^www\./i, '');
+                              } catch {
+                                return post.destinationUrl.replace(/^https?:\/\/(www\.)?/i, '').split('/')[0] || 'business.com';
+                              }
+                            })()}
+                          </p>
+                          <p className="text-xs font-black text-slate-900 truncate">
+                            {post.promotionHeadline || post.businessName || post.userName}
+                          </p>
+                        </div>
+                        <a
+                          href={post.destinationUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => trackPromotionEvent(post.promotionId || post.id, 'cta_click')}
+                          className="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shrink-0 shadow-xs transition cursor-pointer"
+                        >
+                          <span>{post.ctaText || 'Visit Website'}</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      </div>
+                    )}
 
                     {!isPending && !isFailed && (
                       <>

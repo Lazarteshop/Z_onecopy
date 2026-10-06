@@ -1112,7 +1112,10 @@ export default function AdminPanel({
     }
   };
 
-  const handleMerchantAdAction = async (adId: string, action: 'approve' | 'decline') => {
+  const handleMerchantAdAction = async (
+    adId: string,
+    action: 'approve' | 'activate' | 'pause' | 'reject' | 'decline' | 'complete' | 'feature' | 'unfeature'
+  ) => {
     setProcessingId(adId);
     try {
       const res = await fetch(`/api/admin/merchant/ads/${adId}/action`, {
@@ -1125,11 +1128,19 @@ export default function AdminPanel({
       });
       const result = await res.json();
       if (res.ok) {
+        const msgMap: Record<string, string> = {
+          approve: '🟢 Promosyon ng Negosyo ay Inaprubahan! Live na ito sa Z-oneSocial Feed.',
+          activate: '🟢 Promosyon ay Na-activate muli sa Z-oneSocial Feed.',
+          pause: '⏸️ Pansamantalang naka-pause ang promosyon mula sa public feed.',
+          reject: '🔴 Promosyon ay Tinanggihan (Rejected).',
+          decline: '🔴 Promosyon ay Tinanggihan (Declined).',
+          complete: '✅ Promosyon ay minarkahan bilang Completed.',
+          feature: '⭐ Na-feature ang Business Promotion sa Z-oneSocial Feed!',
+          unfeature: 'Inalis sa Featured list ang Business Promotion.'
+        };
         triggerNotification(
-          action === 'approve' 
-            ? `🟢 Promosyon ng Negosyo ay Inaprubahan! Aktibo na ito sa Z-one.`
-            : `🔴 Promosyon ay Tinanggihan!`,
-          action === 'approve' ? 'success' : 'info'
+          msgMap[action] || 'Na-update ang Business Promotion.',
+          action === 'approve' || action === 'activate' || action === 'feature' ? 'success' : 'info'
         );
         fetchMerchantAds();
         fetchAdminData();
@@ -2979,58 +2990,71 @@ export default function AdminPanel({
                         </div>
 
                         <span className="bg-amber-100 text-amber-800 text-[9px] font-black px-2 py-0.5 rounded-full uppercase animate-pulse">
-                          Pending GCash Pay
+                          {ad.promotionType === 'social_promotion' ? 'Social Feed Promo' : 'Pending GCash Pay'}
                         </span>
                       </div>
 
                       <div className="text-xs space-y-1.5 font-semibold text-slate-700 bg-white/60 rounded-xl p-3 border border-slate-150">
                         <div className="flex justify-between text-[10px] text-slate-400 border-b border-slate-100 pb-1.5 mb-1.5">
-                          <span>SENDER DETALYE:</span>
+                          <span>BUSINESS / MERCHANT DETALYE:</span>
                           <span className="font-bold text-indigo-700">User ID: {ad.userId}</span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          👤 <span>Merchant:</span> 
-                          <strong className="text-slate-900 font-bold">{ad.userName}</strong>
+                          🏢 <span>Business Name:</span> 
+                          <strong className="text-slate-900 font-bold">{ad.businessName || ad.title}</strong>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          📱 <span>GCash Number:</span> 
-                          <strong className="text-slate-950 font-black">{ad.gcashSenderNumber}</strong>
+                          🏷️ <span>Category & CTA:</span> 
+                          <strong className="text-indigo-700 font-bold">{ad.businessCategory || ad.category} • [{ad.ctaText || 'Visit Website'}]</strong>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          🔑 <span>Reference No:</span> 
-                          <strong className="text-emerald-700 font-black select-all bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">{ad.gcashReferenceNo}</strong>
-                        </div>
+                        {ad.gcashSenderNumber && ad.gcashSenderNumber !== 'SOCIAL-PROMO' && (
+                          <>
+                            <div className="flex items-center gap-1.5">
+                              📱 <span>GCash Number:</span> 
+                              <strong className="text-slate-950 font-black">{ad.gcashSenderNumber}</strong>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              🔑 <span>Reference No:</span> 
+                              <strong className="text-emerald-700 font-black select-all bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">{ad.gcashReferenceNo}</strong>
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       <div className="space-y-1">
-                        <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Ad Content & Target Link:</h5>
+                        <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Promotion Content & Target Link:</h5>
                         <p className="text-[11px] text-slate-600 font-medium leading-relaxed bg-white p-2 rounded-lg border border-slate-150 line-clamp-3">
                           {ad.description}
                         </p>
+                        {ad.mediaUrl && (
+                          <div className="text-[10px] text-indigo-600 font-bold truncate">
+                            🎬 Media ({ad.mediaSourceType || ad.mediaType || 'image'}): {ad.mediaUrl}
+                          </div>
+                        )}
                         <a 
-                          href={ad.url} 
+                          href={ad.destinationUrl || ad.url} 
                           target="_blank" 
                           rel="noreferrer" 
                           className="text-[10px] text-blue-600 hover:underline font-bold truncate block"
                         >
-                          🔗 Link: {ad.url}
+                          🔗 Destination: {ad.destinationUrl || ad.url}
                         </a>
                       </div>
 
                       <div className="flex gap-2.5 pt-2 border-t border-slate-150 justify-end">
                         <button
                           disabled={processingId !== null}
-                          onClick={() => handleMerchantAdAction(ad.id, 'decline')}
+                          onClick={() => handleMerchantAdAction(ad.id, 'reject')}
                           className="bg-rose-50 hover:bg-rose-100 text-rose-700 font-black text-[10px] px-3.5 py-2 rounded-xl transition cursor-pointer"
                         >
-                          Decline Request
+                          Reject
                         </button>
                         <button
                           disabled={processingId !== null}
                           onClick={() => handleMerchantAdAction(ad.id, 'approve')}
                           className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] px-4.5 py-2 rounded-xl transition cursor-pointer shadow-md shadow-emerald-600/10"
                         >
-                          Approve & Go Live ✔️
+                          Approve & Publish to Feed ✔️
                         </button>
                       </div>
                     </div>
@@ -3039,9 +3063,9 @@ export default function AdminPanel({
               )}
             </div>
 
-            {/* PROCESSED HISTORY */}
+            {/* PROCESSED HISTORY & ACTIVE PROMOTIONS MANAGEMENT */}
             <div className="mt-8 space-y-4">
-              <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">📋 Verified Ads Registry & History</h4>
+              <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">📋 Active & Processed Business Promotions Registry</h4>
               {merchantAds.filter(a => a.status !== 'pending').length === 0 ? (
                 <div className="text-center py-6 text-slate-400 text-xs font-semibold">
                   Walang nakaraang natapos na promosyon request.
@@ -3051,39 +3075,86 @@ export default function AdminPanel({
                   <table className="w-full text-left text-xs font-semibold text-slate-700 border-collapse">
                     <thead>
                       <tr className="bg-slate-50 text-[10px] uppercase font-black text-slate-400 tracking-wider border-b border-slate-200">
-                        <th className="p-3">Ad Title / Merchant</th>
-                        <th className="p-3">Plan Details</th>
-                        <th className="p-3">GCash Verification</th>
+                        <th className="p-3">Business / Promotion</th>
+                        <th className="p-3">Category & Media</th>
+                        <th className="p-3">Feed Analytics</th>
                         <th className="p-3">Status</th>
-                        <th className="p-3">Created At</th>
+                        <th className="p-3">Admin Controls</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {merchantAds.filter(a => a.status !== 'pending').map(ad => (
                         <tr key={ad.id} className="hover:bg-slate-50/50">
                           <td className="p-3 space-y-0.5">
-                            <div className="font-black text-slate-950">{ad.title}</div>
-                            <div className="text-[10px] text-slate-400 font-medium">Merchant: {ad.userName} (ID: {ad.userId})</div>
+                            <div className="font-black text-slate-950 flex items-center gap-1.5">
+                              <span>{ad.headline || ad.title}</span>
+                              {ad.isFeatured && (
+                                <span className="bg-amber-100 text-amber-800 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">
+                                  ⭐ Featured
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-500 font-bold">
+                              {ad.businessName || ad.userName} • CTA: {ad.ctaText || 'Visit Website'}
+                            </div>
                           </td>
                           <td className="p-3">
-                            <div className="font-extrabold text-indigo-700">{ad.planName}</div>
-                            <div className="text-[10px] text-slate-550 font-bold">Paid ₱{ad.price} for {ad.durationDays} Days</div>
+                            <div className="font-extrabold text-indigo-700">{ad.businessCategory || ad.category}</div>
+                            <div className="text-[10px] text-slate-500 font-bold">
+                              {ad.mediaSourceType || ad.planName}
+                            </div>
                           </td>
                           <td className="p-3 text-[10px] font-mono leading-relaxed">
-                            <div>From: <strong className="text-slate-800">{ad.gcashSenderNumber}</strong></div>
-                            <div>Ref: <strong className="text-slate-800">{ad.gcashReferenceNo}</strong></div>
+                            <div>👁️ Views: <strong>{ad.viewsCount || 0}</strong> | ▶️ Plays: <strong>{ad.videoPlaysCount || 0}</strong></div>
+                            <div>🔗 Clicks: <strong>{ad.ctaClicksCount || 0}</strong> | ❤️ Likes: <strong>{ad.likesCount || 0}</strong> | 💬 {ad.commentsCount || 0}</div>
                           </td>
                           <td className="p-3">
                             <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                              ad.status === 'active' ? 'bg-emerald-100 text-emerald-800' :
-                              ad.status === 'declined' ? 'bg-rose-100 text-rose-800' :
+                              ad.status === 'active' || ad.status === 'approved' ? 'bg-emerald-100 text-emerald-800' :
+                              ad.status === 'paused' ? 'bg-amber-100 text-amber-800' :
+                              ad.status === 'declined' || ad.status === 'rejected' ? 'bg-rose-100 text-rose-800' :
                               'bg-slate-100 text-slate-600'
                             }`}>
                               {ad.status}
                             </span>
                           </td>
-                          <td className="p-3 text-[10px] text-slate-400 font-mono">
-                            {new Date(ad.createdAt).toLocaleString('fil-PH', { hour12: true })}
+                          <td className="p-3">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {(ad.status === 'active' || ad.status === 'approved') && (
+                                <button
+                                  disabled={processingId !== null}
+                                  onClick={() => handleMerchantAdAction(ad.id, 'pause')}
+                                  className="px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-black cursor-pointer"
+                                >
+                                  Pause
+                                </button>
+                              )}
+                              {(ad.status === 'paused' || ad.status === 'rejected' || ad.status === 'declined' || ad.status === 'completed') && (
+                                <button
+                                  disabled={processingId !== null}
+                                  onClick={() => handleMerchantAdAction(ad.id, 'activate')}
+                                  className="px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[10px] font-black cursor-pointer"
+                                >
+                                  Activate
+                                </button>
+                              )}
+                              <button
+                                disabled={processingId !== null}
+                                onClick={() => handleMerchantAdAction(ad.id, ad.isFeatured ? 'unfeature' : 'feature')}
+                                className="px-2 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] font-black cursor-pointer"
+                              >
+                                {ad.isFeatured ? 'Unfeature' : '⭐ Feature'}
+                              </button>
+                              {ad.status !== 'rejected' && ad.status !== 'declined' && (
+                                <button
+                                  disabled={processingId !== null}
+                                  onClick={() => handleMerchantAdAction(ad.id, 'reject')}
+                                  className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-black cursor-pointer"
+                                >
+                                  Reject
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}
