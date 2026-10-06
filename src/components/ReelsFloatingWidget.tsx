@@ -157,7 +157,7 @@ export default function ReelsFloatingWidget({
   onRefreshReels
 }: ReelsFloatingWidgetProps) {
   const authToken = token ? (token.startsWith('Bearer ') ? token : `Bearer ${token}`) : '';
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
 
   // Sorting and filtering tabs: 'all' | 'for_you' | 'following' | 'popular' | 'low_likes' | 'saved' (Phase 4C)
   const [activeTab, setActiveTab] = useState<'all' | 'for_you' | 'following' | 'popular' | 'low_likes' | 'saved'>('for_you');
@@ -430,8 +430,15 @@ export default function ReelsFloatingWidget({
         }
       }
     };
+    const handleOpenWidgetEvent = () => {
+      setIsOpen(true);
+    };
     window.addEventListener('open-reel-detail', handleOpenReelEvent);
-    return () => window.removeEventListener('open-reel-detail', handleOpenReelEvent);
+    window.addEventListener('open-reels-widget', handleOpenWidgetEvent);
+    return () => {
+      window.removeEventListener('open-reel-detail', handleOpenReelEvent);
+      window.removeEventListener('open-reels-widget', handleOpenWidgetEvent);
+    };
   }, [reels]);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -603,23 +610,17 @@ export default function ReelsFloatingWidget({
     };
   }, [isOpen]);
 
-  // Hide floating Install App button when open
+  // Manage body class when Reels widget is open
   useEffect(() => {
     const installBtn = document.getElementById('installBtn');
-    const userLoggedIn = document.body.classList.contains('user-logged-in');
+    if (installBtn) {
+      installBtn.style.setProperty('display', 'none', 'important');
+    }
 
     if (isOpen) {
       document.body.classList.add('reels-widget-open');
-      if (installBtn) {
-        installBtn.style.setProperty('display', 'none', 'important');
-      }
     } else {
       document.body.classList.remove('reels-widget-open');
-      if (installBtn && !userLoggedIn) {
-        installBtn.style.display = 'block';
-      } else if (installBtn && userLoggedIn) {
-        installBtn.style.setProperty('display', 'none', 'important');
-      }
     }
 
     return () => {
@@ -877,62 +878,16 @@ export default function ReelsFloatingWidget({
     scrollToCard(0);
   };
 
-  // Closed Trigger Floating Button
+  // Closed Trigger (Hidden programmatic button so no floating pill overlays the UI)
   if (!isOpen) {
-    if (isLoggedIn || (typeof document !== 'undefined' && document.body.classList.contains('user-logged-in'))) {
-      return null;
-    }
-
-    const posStyle = btnPos
-      ? { left: `${btnPos.x}px`, top: `${btnPos.y}px` }
-      : { bottom: '16px', right: '16px' };
-
     return (
-      <div 
-        ref={widgetRef}
-        style={posStyle}
-        className="fixed z-50 touch-none select-none"
-        onMouseDown={(e) => handleDragStart(e.clientX, e.clientY)}
-        onMouseMove={(e) => handleDragMove(e.clientX, e.clientY)}
-        onMouseUp={() => handleDragEnd()}
-        onTouchStart={(e) => {
-          if (e.touches.length === 1) {
-            handleDragStart(e.touches[0].clientX, e.touches[0].clientY);
-          }
-        }}
-        onTouchMove={(e) => {
-          if (e.touches.length === 1) {
-            handleDragMove(e.touches[0].clientX, e.touches[0].clientY);
-          }
-        }}
-        onTouchEnd={() => handleDragEnd()}
-      >
-        <button
-          id="reels-widget-open-btn"
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (isDraggingRef.current) {
-              isDraggingRef.current = false;
-              return;
-            }
-            setIsOpen(true);
-          }}
-          className="bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black px-5 py-3.5 rounded-full shadow-[0_12px_35px_rgba(225,29,72,0.75)] border-2 border-white flex items-center gap-2.5 transition-transform duration-150 hover:scale-105 active:scale-95 cursor-grab active:cursor-grabbing select-none"
-        >
-          <div className="relative pointer-events-none flex items-center justify-center bg-white/25 p-1.5 rounded-full shadow-inner">
-            <Tv className="w-5 h-5 text-amber-300 drop-shadow-md" />
-            {activeReels.length > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 bg-yellow-400 text-slate-950 text-[10px] font-black w-4.5 h-4.5 rounded-full flex items-center justify-center border-2 border-slate-950 shadow-md">
-                {activeReels.length}
-              </span>
-            )}
-          </div>
-          <span className="text-xs uppercase tracking-wider font-black text-white drop-shadow-md pointer-events-none flex items-center gap-1.5">
-            🎬 {language === 'tl' ? 'Panoorin ang Reels' : 'Watch Reels'}
-          </span>
-        </button>
-      </div>
+      <button
+        id="reels-widget-open-btn"
+        type="button"
+        onClick={() => setIsOpen(true)}
+        className="hidden"
+        aria-hidden="true"
+      />
     );
   }
 
