@@ -25,6 +25,8 @@ import {
 } from 'lucide-react';
 import { ReelVideo, SocialProductRef } from '../types';
 import { formatEmbedUrl } from '../utils/reels';
+import { StudioVisualOverlays } from './reels/StudioVisualOverlays';
+import { StudioAudioController } from '../utils/zoneStudioEngine';
 
 interface ReelsVideoCardProps {
   reel: ReelVideo;
@@ -161,15 +163,37 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
     hasClaimedDirectRewardRef.current = isClaimed;
   }, [isClaimed, reel.id]);
 
+  const studioAudioRef = useRef<StudioAudioController | null>(null);
+
+  useEffect(() => {
+    studioAudioRef.current = new StudioAudioController();
+    return () => {
+      studioAudioRef.current?.stop();
+    };
+  }, []);
+
   // Reset audio state to strictly muted whenever a Reel becomes inactive, changes, or mounts
   useEffect(() => {
     setIsTikTokMuted(true);
     setIsYouTubeMuted(true);
     setIsDirectMuted(true);
+    studioAudioRef.current?.stop();
     if (videoRef.current) {
       videoRef.current.muted = true;
     }
   }, [isActive, reel.id]);
+
+  // Synchronize Studio Music Track playback when direct video is active, playing, and unmuted
+  useEffect(() => {
+    if (isActive && isPlaying && !isDirectMuted && reel.musicTrack) {
+      studioAudioRef.current?.startTrack(reel.musicTrack, reel.musicTrack.volume ?? 0.8);
+    } else {
+      studioAudioRef.current?.stop();
+    }
+    return () => {
+      studioAudioRef.current?.stop();
+    };
+  }, [isActive, isPlaying, isDirectMuted, reel.id, reel.musicTrack]);
 
   const sendTikTokCommand = useCallback((type: 'unMute' | 'mute' | 'play' | 'pause') => {
     if (!iframeRef.current?.contentWindow) return;
@@ -244,12 +268,13 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
   const formatted = formatEmbedUrl(reel.embedUrl || reel.url || '');
 
   const isDirectVideo = formatted.platform === 'direct' && (
-    Boolean(formatted.embedUrl?.match(/\.(mp4|webm|mov|ogg)($|\?)/i)) || 
-    Boolean(reel.url?.match(/\.(mp4|webm|mov|ogg)($|\?)/i)) ||
+    Boolean(formatted.embedUrl?.match(/\.(mp4|webm|mov|ogg|mkv)($|\?)/i)) || 
+    Boolean(reel.url?.match(/\.(mp4|webm|mov|ogg|mkv)($|\?)/i)) ||
     Boolean(reel.url?.startsWith('/uploads/')) ||
     Boolean(reel.url?.startsWith('blob:')) ||
     Boolean(reel.embedUrl?.startsWith('/uploads/')) ||
-    Boolean(reel.embedUrl?.startsWith('blob:'))
+    Boolean(reel.embedUrl?.startsWith('blob:')) ||
+    reel.source === 'zone_create_studio'
   );
 
   // Universal Explicit Play handler: unMute + play on user gesture
@@ -424,6 +449,9 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
     if (reel.platform === 'youtube') {
       return <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-950/80 text-rose-200 border border-rose-500/40">▶️ YT Short</span>;
     }
+    if (reel.source === 'zone_create_studio') {
+      return <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-950/80 text-amber-300 border border-rose-500/40">🎬 Z-one Studio</span>;
+    }
     return <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-slate-800/80 text-slate-200 border border-slate-700">📹 Video</span>;
   };
 
@@ -444,26 +472,41 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
         {/* Video / Iframe Rendering */}
         {isActive ? (
           isDirectVideo ? (
-            <video
-              ref={videoRef}
-              src={formatted.embedUrl || reel.url}
-              playsInline
-              loop
-              autoPlay={isPlaying}
-              muted={isDirectMuted}
-              className={`relative z-10 w-full max-w-full transition-all duration-300 ${
-                fitMode === 'contain'
-                  ? 'aspect-video object-contain drop-shadow-[0_10px_35px_rgba(0,0,0,0.85)] max-h-[85vh]'
-                  : 'h-full object-cover'
-              }`}
-              onPlay={() => {}}
-              onPause={() => {}}
-              onLoadedMetadata={(e) => {
-                const v = e.currentTarget;
-                if (v.duration && !isNaN(v.duration) && isFinite(v.duration)) {
-                  setDuration(v.duration);
-                }
-              }}
+            <>
+              <video
+                ref={videoRef}
+                src={formatted.embedUrl || reel.url}
+                playsInline
+                loop
+                autoPlay={isPlaying}
+                muted={isDirectMuted || Boolean(reel.musicTrack?.originalAudioMuted)}
+                style={{
+                  filter: reel.filterCss && reel.filterCss !== 'none' ? reel.filterCss : undefined
+                }}
+                className={`relative z-10 w-full max-w-full transition-all duration-300 ${
+                  fitMode === 'contain'
+                    ? 'aspect-video object-contain drop-shadow-[0_10px_35px_rgba(0,0,0,0.85)] max-h-[85vh]'
+                    : 'h-full object-cover'
+                }`}
+                onPlay={() => {}}
+                onPause={() => {}}
+                onLoadedMetadata={(e) => {
+                  const v = e.currentTarget;
+                  if (reel.playbackSpeed && reel.playbackSpeed >= 0.25 && reel.playbackSpeed <= 3) {
+                    v.playbackRate = reel.playbackSpeed;
+                  }
+                  if (reel.musicTrack?.originalAudioMuted) {
+                    v.volume = 0;
+                  } else if (typeof reel.musicTrack?.originalAudioVolume === 'number') {
+                    v.volume = Math.max(0, Math.min(1, reel.musicTrack.originalAudioVolume));
+                  }
+                  if (v.duration && !isNaN(v.duration) && isFinite(v.duration)) {
+                    setDuration(v.duration);
+                    if (typeof reel.trimStart === 'number' && reel.trimStart > 0 && reel.trimStart < v.duration) {
+                      v.currentTime = reel.trimStart;
+                    }
+                  }
+                }}
               onTimeUpdate={(e) => {
                 const v = e.currentTarget;
                 const cur = v.currentTime;
@@ -473,29 +516,37 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                 if (dur && !isNaN(dur) && isFinite(dur) && dur > 0) {
                   setDuration(dur);
 
-                  // If already claimed, protect against looping regression or re-triggers
-                  if (hasClaimedDirectRewardRef.current || isClaimed) {
-                    return;
+                  const effectiveStart =
+                    typeof reel.trimStart === 'number' && reel.trimStart > 0 && reel.trimStart < dur
+                      ? reel.trimStart
+                      : 0;
+                  const effectiveEnd =
+                    typeof reel.trimEnd === 'number' && reel.trimEnd > effectiveStart && reel.trimEnd <= dur
+                      ? reel.trimEnd
+                      : dur;
+                  const effectiveDur = Math.max(0.5, effectiveEnd - effectiveStart);
+
+                  // Calculate actual watch progress percentage over the effective (trimmed) segment
+                  const pct = Math.min(100, Math.floor((Math.max(0, cur - effectiveStart) / effectiveDur) * 100));
+                  const isGenuineCompletion = v.ended || cur >= effectiveEnd - 0.25;
+
+                  if (!hasClaimedDirectRewardRef.current && !isClaimed) {
+                    if (isGenuineCompletion) {
+                      hasClaimedDirectRewardRef.current = true;
+                      if (onProgressUpdate) {
+                        onProgressUpdate(reel.id, 100, true);
+                      }
+                      onClaimReward(reel.id);
+                    } else {
+                      if (onProgressUpdate) {
+                        onProgressUpdate(reel.id, pct, false);
+                      }
+                    }
                   }
 
-                  // Calculate actual watch progress percentage
-                  const pct = Math.min(100, Math.floor((cur / dur) * 100));
-
-                  // Genuine completion check:
-                  // Video has ended or current playback time reached genuine end of duration
-                  // (accounting for small frame delta / loop boundary within 0.25s)
-                  const isGenuineCompletion = v.ended || (cur >= dur - 0.25);
-
-                  if (isGenuineCompletion) {
-                    hasClaimedDirectRewardRef.current = true;
-                    if (onProgressUpdate) {
-                      onProgressUpdate(reel.id, 100, true);
-                    }
-                    onClaimReward(reel.id);
-                  } else {
-                    if (onProgressUpdate) {
-                      onProgressUpdate(reel.id, pct, false);
-                    }
+                  // Enforce trimmed loop range if creator set trimStart / trimEnd
+                  if ((effectiveEnd < dur || effectiveStart > 0) && cur >= effectiveEnd) {
+                    v.currentTime = effectiveStart;
                   }
                 }
               }}
@@ -509,6 +560,13 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
                 }
               }}
             />
+            {(reel.effectPreset || (reel.textOverlays && reel.textOverlays.length > 0)) && (
+              <StudioVisualOverlays
+                effectPreset={reel.effectPreset}
+                textOverlays={reel.textOverlays}
+              />
+            )}
+            </>
           ) : (
             <div className="relative z-10 w-full h-full flex items-center justify-center">
               <iframe
@@ -1063,6 +1121,16 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
             )}
 
             {platformBadge()}
+            {reel.status === 'pending' && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/90 text-slate-950 border border-amber-300 shadow">
+                ⏳ Pending Admin Review
+              </span>
+            )}
+            {reel.status === 'disapproved' && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-600/90 text-white border border-rose-300 shadow">
+                ❌ Disapproved
+              </span>
+            )}
             <span className="text-[9px] font-bold text-slate-300 bg-white/10 px-1.5 py-0.5 rounded-md backdrop-blur-xs">
               #{index + 1}/{totalCount}
             </span>
@@ -1228,7 +1296,11 @@ export const ReelsVideoCard: React.FC<ReelsVideoCardProps> = ({
             <Music className="w-3.5 h-3.5 shrink-0 text-amber-400 animate-bounce" />
             <div className="overflow-hidden whitespace-nowrap w-full">
               <p className="inline-block animate-marquee font-medium text-[11px]">
-                {reel.title ? `${reel.title} • Original Sound & Audio` : 'Z-oneApp Reels Viral Sound • Trending Audio'}
+                {reel.musicTrack?.title
+                  ? `🎵 ${reel.musicTrack.title} • ${reel.musicTrack.artist || 'Z-one Sound Studio'}`
+                  : reel.title
+                  ? `${reel.title} • Original Sound & Audio`
+                  : 'Z-oneApp Reels Viral Sound • Trending Audio'}
               </p>
             </div>
           </div>

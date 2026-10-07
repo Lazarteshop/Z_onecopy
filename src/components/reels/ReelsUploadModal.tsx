@@ -410,6 +410,31 @@ export const ReelsUploadModal: React.FC<ReelsUploadModalProps> = ({
           </button>
         </div>
 
+        {/* Z-ONE CREATE CAMERA & REELS STUDIO SHORTCUT */}
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            window.dispatchEvent(new Event('open-zone-create-studio'));
+          }}
+          className="w-full p-3 rounded-2xl bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white shadow-lg flex items-center justify-between transition cursor-pointer active:scale-98"
+        >
+          <div className="flex items-center gap-2.5 text-left">
+            <div className="w-9 h-9 rounded-xl bg-black/25 flex items-center justify-center shrink-0">
+              <Video className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <span className="text-xs font-black uppercase tracking-wide block">
+                🎬 Buksan ang Z-one Create Camera & Studio
+              </span>
+              <span className="text-[10px] text-white/90 font-semibold block">
+                Mag-record sa Camera · Magdagdag ng Music, Effects at Text
+              </span>
+            </div>
+          </div>
+          <ChevronRight className="w-5 h-5 shrink-0" />
+        </button>
+
         {/* TOKEN BALANCE & BENEFIT BANNER */}
         <div className="bg-gradient-to-r from-indigo-950/90 via-slate-900 to-rose-950/80 border border-indigo-500/30 rounded-2xl p-3.5 space-y-2">
           <div className="flex items-center justify-between text-xs">

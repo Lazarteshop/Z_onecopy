@@ -290,6 +290,8 @@ export default function ReelsFloatingWidget({
       const metadataOnly = reels.map(r => ({
         id: r.id,
         title: r.title,
+        description: r.description,
+        thumbnailUrl: r.thumbnailUrl,
         platform: r.platform,
         embedUrl: r.embedUrl,
         url: r.url,
@@ -298,7 +300,20 @@ export default function ReelsFloatingWidget({
         likedBy: r.likedBy,
         watchedBy: r.watchedBy,
         addedBy: r.addedBy,
-        createdAt: r.createdAt
+        addedByUserId: r.addedByUserId,
+        authorAvatar: r.authorAvatar,
+        status: r.status,
+        createdAt: r.createdAt,
+        source: r.source,
+        musicTrack: r.musicTrack,
+        filterPreset: r.filterPreset,
+        filterCss: r.filterCss,
+        effectPreset: r.effectPreset,
+        textOverlays: r.textOverlays,
+        playbackSpeed: r.playbackSpeed,
+        durationSeconds: r.durationSeconds,
+        trimStart: r.trimStart,
+        trimEnd: r.trimEnd
       }));
       idbStorage.set('reels_metadata_cache', metadataOnly);
     }
@@ -420,6 +435,8 @@ export default function ReelsFloatingWidget({
       if (targetId && reels) {
         const idx = reels.findIndex(r => r.id === targetId);
         if (idx !== -1) {
+          setActiveTab('all');
+          setSearchQuery('');
           setCurrentIndex(idx);
           setIsOpen(true);
           setTimeout(() => {
@@ -433,11 +450,17 @@ export default function ReelsFloatingWidget({
     const handleOpenWidgetEvent = () => {
       setIsOpen(true);
     };
+    const handleOpenUploadModalEvent = () => {
+      setIsOpen(true);
+      setShowUploadModal(true);
+    };
     window.addEventListener('open-reel-detail', handleOpenReelEvent);
     window.addEventListener('open-reels-widget', handleOpenWidgetEvent);
+    window.addEventListener('open-reels-upload-modal', handleOpenUploadModalEvent);
     return () => {
       window.removeEventListener('open-reel-detail', handleOpenReelEvent);
       window.removeEventListener('open-reels-widget', handleOpenWidgetEvent);
+      window.removeEventListener('open-reels-upload-modal', handleOpenUploadModalEvent);
     };
   }, [reels]);
 

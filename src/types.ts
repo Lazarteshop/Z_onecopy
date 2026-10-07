@@ -489,6 +489,30 @@ export interface MerchantAd {
   sharesCount?: number;
 }
 
+export interface ReelTextOverlay {
+  id: string;
+  text: string;
+  color: string;
+  bgColor?: string;
+  fontStyle?: 'modern' | 'neon' | 'serif' | 'mono' | 'impact';
+  fontSize?: 'sm' | 'md' | 'lg';
+  x: number;
+  y: number;
+}
+
+export interface ReelMusicTrack {
+  id: string;
+  title: string;
+  artist: string;
+  genre?: string;
+  bpm?: number;
+  audioUrl?: string;
+  synthPreset?: string;
+  volume?: number;
+  originalAudioMuted?: boolean;
+  originalAudioVolume?: number;
+}
+
 export interface ReelVideo {
   id: string;
   url: string;
@@ -519,6 +543,17 @@ export interface ReelVideo {
   status?: 'approved' | 'pending' | 'disapproved';
   disapproveReason?: string;
   createdAt: string;
+  // Additive Z-one Create Camera & Reels Studio fields
+  source?: 'zone_create_studio' | 'upload_modal' | 'admin';
+  musicTrack?: ReelMusicTrack;
+  filterPreset?: string;
+  filterCss?: string;
+  effectPreset?: string;
+  textOverlays?: ReelTextOverlay[];
+  playbackSpeed?: number;
+  durationSeconds?: number;
+  trimStart?: number;
+  trimEnd?: number;
 }
 
 export interface SavedReelRef {

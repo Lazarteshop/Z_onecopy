@@ -82,6 +82,7 @@ import AICommercialPlayer from './components/AICommercialPlayer';
 import SpinWheel from './components/SpinWheel';
 import PayoutMarquee from './components/PayoutMarquee';
 import ReelsFloatingWidget, { parseVideoUrl } from './components/ReelsFloatingWidget';
+import { ZoneCreateStudioModal } from './components/reels/ZoneCreateStudioModal';
 import ZoneAppBanner from './components/ZoneAppBanner';
 import { SmartphoneAppLauncher } from './components/SmartphoneAppLauncher';
 import { PromoAdBannerModal } from './components/PromoAdBannerModal';
@@ -301,6 +302,13 @@ export default function App() {
     return 'zone';
   });
   const [showSocialMenuDrawer, setShowSocialMenuDrawer] = useState<boolean>(false);
+  const [showZoneCreateStudio, setShowZoneCreateStudio] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleOpenCreateStudio = () => setShowZoneCreateStudio(true);
+    window.addEventListener('open-zone-create-studio', handleOpenCreateStudio);
+    return () => window.removeEventListener('open-zone-create-studio', handleOpenCreateStudio);
+  }, []);
 
   const [showVerificationModal, setShowVerificationModal] = useState<boolean>(false);
   const [showDeviceTransferModal, setShowDeviceTransferModal] = useState<boolean>(false);
@@ -3529,12 +3537,7 @@ export default function App() {
               id="bottom-nav-create"
               onClick={() => {
                 try { soundEffects.playClick(); } catch (e) {}
-                if (activeTab !== 'zone') {
-                  setActiveTab('zone');
-                  setTimeout(() => window.dispatchEvent(new Event('zone-focus-composer')), 150);
-                } else {
-                  window.dispatchEvent(new Event('zone-focus-composer'));
-                }
+                setShowZoneCreateStudio(true);
               }}
               className="flex flex-col items-center justify-center py-1 px-3 rounded-xl transition cursor-pointer text-slate-700 font-bold active:scale-90"
             >
@@ -4091,6 +4094,37 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
         }}
         triggerNotification={triggerNotification}
         onRefreshReels={fetchReels}
+      />
+
+      {/* 🎬 Z-ONE CREATE CAMERA & REELS STUDIO MODAL (Opened by Center Blue + Create Button) */}
+      <ZoneCreateStudioModal
+        isOpen={showZoneCreateStudio}
+        onClose={() => setShowZoneCreateStudio(false)}
+        token={token || ''}
+        isAdmin={user?.isAdmin || false}
+        currentUserId={user?.id}
+        currentUserName={user?.name}
+        userTokens={user?.reelsTokens || 0}
+        language={language}
+        onPublishSuccess={(newReel) => {
+          setReels((prev) => [newReel, ...prev.filter((r) => r.id !== newReel.id)]);
+          fetchReels();
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('open-reel-detail', { detail: { reelId: newReel.id } }));
+          }, 120);
+        }}
+        onSwitchToPostComposer={() => {
+          if (activeTab !== 'zone') {
+            setActiveTab('zone');
+            setTimeout(() => window.dispatchEvent(new Event('zone-focus-composer')), 150);
+          } else {
+            window.dispatchEvent(new Event('zone-focus-composer'));
+          }
+        }}
+        onSwitchToClassicUpload={() => {
+          window.dispatchEvent(new Event('open-reels-upload-modal'));
+        }}
+        triggerNotification={triggerNotification}
       />
 
       {/* 🔍 UNIFIED SEARCH & DISCOVERY MODAL */}

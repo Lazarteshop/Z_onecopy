@@ -2075,6 +2075,16 @@ interface ReelVideo {
   status?: 'approved' | 'pending' | 'disapproved';
   disapproveReason?: string;
   createdAt: string;
+  source?: 'zone_create_studio' | 'upload_modal' | 'admin';
+  musicTrack?: any;
+  filterPreset?: string;
+  filterCss?: string;
+  effectPreset?: string;
+  textOverlays?: any[];
+  playbackSpeed?: number;
+  durationSeconds?: number;
+  trimStart?: number;
+  trimEnd?: number;
 }
 
 interface ReelTokenSubscription {
@@ -7333,7 +7343,28 @@ app.get('/api/reels', (req, res) => {
 });
 
 app.post('/api/reels', enforceCommunitySafety, (req, res) => {
-  const { url, embedUrl, platform, title, description, thumbnailUrl, addedBy, communityId, productRef, productRefs } = req.body;
+  const {
+    url,
+    embedUrl,
+    platform,
+    title,
+    description,
+    thumbnailUrl,
+    addedBy,
+    communityId,
+    productRef,
+    productRefs,
+    source,
+    musicTrack,
+    filterPreset,
+    filterCss,
+    effectPreset,
+    textOverlays,
+    playbackSpeed,
+    durationSeconds,
+    trimStart,
+    trimEnd
+  } = req.body;
   if (!url || !url.trim()) {
     return res.status(400).json({ error: 'Kailangan ibigay ang Video URL.' });
   }
@@ -7351,8 +7382,13 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
   const authUserId = user.id;
   const isAdmin = user.isAdmin === true;
 
-  const { embedUrl: autoEmbedUrl, platform: autoPlatform } = formatEmbedUrlServer(url.trim());
-  const finalEmbedUrl = embedUrl || autoEmbedUrl;
+  const trimmedUrl = url.trim();
+  if (trimmedUrl.startsWith('blob:') || trimmedUrl.startsWith('data:')) {
+    return res.status(400).json({ error: 'Invalid o temporary media URL. Kailangang ma-upload muna sa Cloud Storage.' });
+  }
+
+  const { embedUrl: autoEmbedUrl, platform: autoPlatform } = formatEmbedUrlServer(trimmedUrl);
+  const finalEmbedUrl = (embedUrl && !String(embedUrl).startsWith('blob:') && !String(embedUrl).startsWith('data:')) ? embedUrl : autoEmbedUrl;
   const finalPlatform = platform || autoPlatform;
 
   // Optional Community association & privacy validation
@@ -7396,8 +7432,72 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
   }
   const finalProductRef = validProductRefs.length > 0 ? validProductRefs[0] : undefined;
 
+  // Sanitize optional Z-one Create Studio metadata
+  const sanitizedStudioMeta: Partial<ReelVideo> = {};
+  if (source === 'zone_create_studio' || source === 'upload_modal' || source === 'admin') {
+    sanitizedStudioMeta.source = source === 'admin' && !isAdmin ? 'upload_modal' : source;
+  }
+  if (musicTrack && typeof musicTrack === 'object' && musicTrack.title) {
+    const safeAudioUrl =
+      typeof musicTrack.audioUrl === 'string' &&
+      !musicTrack.audioUrl.startsWith('blob:') &&
+      !musicTrack.audioUrl.startsWith('data:')
+        ? musicTrack.audioUrl.trim().slice(0, 500)
+        : undefined;
+    sanitizedStudioMeta.musicTrack = {
+      id: String(musicTrack.id || 'track-1'),
+      title: String(musicTrack.title).slice(0, 120),
+      artist: String(musicTrack.artist || 'Z-one Sound Studio').slice(0, 100),
+      genre: musicTrack.genre ? String(musicTrack.genre).slice(0, 50) : undefined,
+      bpm: typeof musicTrack.bpm === 'number' ? musicTrack.bpm : undefined,
+      audioUrl: safeAudioUrl,
+      synthPreset: typeof musicTrack.synthPreset === 'string' ? musicTrack.synthPreset : undefined,
+      volume: typeof musicTrack.volume === 'number' ? Math.max(0, Math.min(1, musicTrack.volume)) : 0.8,
+      originalAudioMuted: Boolean(musicTrack.originalAudioMuted),
+      originalAudioVolume: typeof musicTrack.originalAudioVolume === 'number' ? Math.max(0, Math.min(1, musicTrack.originalAudioVolume)) : 1
+    };
+  }
+  if (typeof filterPreset === 'string' && filterPreset.trim()) {
+    sanitizedStudioMeta.filterPreset = filterPreset.trim().slice(0, 50);
+  }
+  if (typeof filterCss === 'string' && filterCss.trim()) {
+    sanitizedStudioMeta.filterCss = filterCss.trim().slice(0, 200);
+  }
+  if (typeof effectPreset === 'string' && effectPreset.trim()) {
+    sanitizedStudioMeta.effectPreset = effectPreset.trim().slice(0, 50);
+  }
+  if (Array.isArray(textOverlays) && textOverlays.length > 0) {
+    sanitizedStudioMeta.textOverlays = textOverlays.slice(0, 10).map((t: any, idx: number) => ({
+      id: String(t?.id || `txt-${idx}`),
+      text: String(t?.text || '').slice(0, 160),
+      color: String(t?.color || '#ffffff').slice(0, 30),
+      bgColor: t?.bgColor ? String(t.bgColor).slice(0, 40) : undefined,
+      fontStyle: ['modern', 'neon', 'serif', 'mono', 'impact'].includes(t?.fontStyle) ? t.fontStyle : 'modern',
+      fontSize: ['sm', 'md', 'lg'].includes(t?.fontSize) ? t.fontSize : 'md',
+      x: typeof t?.x === 'number' ? Math.max(5, Math.min(95, t.x)) : 50,
+      y: typeof t?.y === 'number' ? Math.max(8, Math.min(92, t.y)) : 50
+    })).filter((t: any) => t.text.trim().length > 0);
+  }
+  if (typeof playbackSpeed === 'number' && playbackSpeed >= 0.25 && playbackSpeed <= 3) {
+    sanitizedStudioMeta.playbackSpeed = playbackSpeed;
+  }
+  if (typeof durationSeconds === 'number' && durationSeconds > 0) {
+    sanitizedStudioMeta.durationSeconds = Math.min(300, durationSeconds);
+  }
+  if (typeof trimStart === 'number' && trimStart >= 0) {
+    sanitizedStudioMeta.trimStart = trimStart;
+  }
+  if (typeof trimEnd === 'number' && trimEnd > 0) {
+    sanitizedStudioMeta.trimEnd = trimEnd;
+  }
+
+  const safeThumbnailUrl =
+    thumbnailUrl && typeof thumbnailUrl === 'string' && !thumbnailUrl.trim().startsWith('blob:') && !thumbnailUrl.trim().startsWith('data:')
+      ? thumbnailUrl.trim()
+      : undefined;
+
   if (!isAdmin) {
-    // User upload: Check token balance (0.50 tokens per reel upload required)
+    // Non-admin user upload: Strictly enforce 0.50 token balance and pending admin moderation for ALL submissions (including Z-one Create Studio)
     const currentTokens = user ? (user.reelsTokens || 0) : 0;
     if (currentTokens < 0.50) {
       return res.status(400).json({ 
@@ -7408,16 +7508,16 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
     }
 
     const reelTitle = title?.trim() || (finalPlatform === 'tiktok' ? '🎵 TikTok Reel Video' : finalPlatform === 'facebook' ? '📘 FB Reel Video' : finalPlatform === 'youtube' ? '▶️ YouTube Short' : '🎬 Reel Video');
-    const userReelTags = extractHashtags(reelTitle);
+    const userReelTags = extractHashtags(`${reelTitle} ${description || ''}`);
 
     const newReel: ReelVideo = {
       id: 'reel-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-      url: url.trim(),
+      url: trimmedUrl,
       embedUrl: finalEmbedUrl,
       platform: finalPlatform,
       title: reelTitle,
       description: description?.trim() || undefined,
-      thumbnailUrl: thumbnailUrl?.trim() || undefined,
+      thumbnailUrl: safeThumbnailUrl,
       communityId: verifiedCommunityId,
       communityName: verifiedCommunityName,
       productRef: finalProductRef,
@@ -7425,27 +7525,37 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
       likes: 0,
       addedBy: user ? user.name : (addedBy || 'User'),
       addedByUserId: user ? user.id : undefined,
+      authorAvatar: user?.avatar || undefined,
       hashtags: userReelTags.length > 0 ? userReelTags.map(t => t.display) : undefined,
       normalizedHashtags: userReelTags.length > 0 ? userReelTags.map(t => t.normalized) : undefined,
       status: 'pending',
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      ...sanitizedStudioMeta
     };
 
     db.reels.unshift(newReel);
     indexReel(newReel);
     saveDB(db);
 
+    const { id: _, ...rWithoutId } = newReel;
+    safeCloudSync('set', 'reels', newReel.id, rWithoutId);
+
+    const visibleReels = db.reels.filter(r => {
+      if (!r.status || r.status === 'approved') return true;
+      return r.addedByUserId === authUserId || Boolean(r.addedBy && user.name && r.addedBy.toLowerCase().trim() === user.name.toLowerCase().trim());
+    });
+
     return res.json({ 
       success: true, 
       reel: newReel, 
-      reels: db.reels.filter(r => !r.status || r.status === 'approved'),
+      reels: visibleReels,
       message: 'Matagumpay na naisumite ang iyong Reel! Isasailalim ito sa Review ng Admin. Ang 0.50 tokens ay mababawas LAMANG kapag ito ay MA-APPROVE ng Admin.' 
     });
   }
 
   // Admin upload (Auto-approved, no tokens needed)
   const adminReelTitle = title?.trim() || '🎬 Official Reel Video';
-  const adminReelTags = extractHashtags(adminReelTitle);
+  const adminReelTags = extractHashtags(`${adminReelTitle} ${description || ''}`);
 
   const newReel: ReelVideo = {
     id: 'reel-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
@@ -7460,11 +7570,14 @@ app.post('/api/reels', enforceCommunitySafety, (req, res) => {
     productRef: finalProductRef,
     productRefs: validProductRefs.length > 0 ? validProductRefs : undefined,
     likes: 0,
-    addedBy: 'Admin',
+    addedBy: user?.name || 'Admin',
+    addedByUserId: user?.id,
+    authorAvatar: user?.avatar || undefined,
     hashtags: adminReelTags.length > 0 ? adminReelTags.map(t => t.display) : undefined,
     normalizedHashtags: adminReelTags.length > 0 ? adminReelTags.map(t => t.normalized) : undefined,
     status: 'approved',
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    ...sanitizedStudioMeta
   };
 
   db.reels.unshift(newReel);
@@ -7683,10 +7796,23 @@ app.post('/api/admin/reels/:id/approve', (req, res) => {
     }
   }
 
+  invalidateSmartFeedCache();
   saveDB(db);
 
   if (reel.hashtags && reel.hashtags.length > 0) {
     onContentCreated(`reel:${reel.id}`, reel.hashtags, undefined, reel.addedByUserId, reel.createdAt);
+  }
+
+  const { id: _, ...rWithoutId } = reel;
+  safeCloudSync('set', 'reels', reel.id, rWithoutId);
+  if (reel.addedByUserId) {
+    const approvedUser = getUserById(reel.addedByUserId, db);
+    if (approvedUser) {
+      safeCloudSync('update', 'users', approvedUser.id, {
+        reelsTokens: approvedUser.reelsTokens,
+        activityLogs: approvedUser.activityLogs
+      });
+    }
   }
 
   res.json({ success: true, reel, reels: db.reels, message: 'Matagumpay na na-approve ang Reel at nabawasan ng 0.50 tokens ang user!' });
@@ -7722,7 +7848,12 @@ app.post('/api/admin/reels/:id/disapprove', (req, res) => {
     }
   }
 
+  invalidateSmartFeedCache();
   saveDB(db);
+
+  const { id: __, ...rDisapprovedWithoutId } = reel;
+  safeCloudSync('set', 'reels', reel.id, rDisapprovedWithoutId);
+
   res.json({ success: true, reel, reels: db.reels, message: 'Disapproved ang Reel. Walang nabawas na tokens sa user!' });
 });
 
@@ -11396,7 +11527,8 @@ async function uploadMediaToCloudflareR2Detailed(
         };
       }
 
-      const commaIndex = dataUrlOrBuffer.indexOf(',');
+      const base64MarkerIndex = dataUrlOrBuffer.indexOf(';base64,');
+      const commaIndex = base64MarkerIndex !== -1 ? base64MarkerIndex + 7 : dataUrlOrBuffer.indexOf(',');
       if (commaIndex === -1) {
         return { result: null, status: 400, errorCode: 'INVALID_BASE64', errorMessage: 'Malformed base64 data URL.' };
       }
@@ -11405,14 +11537,14 @@ async function uploadMediaToCloudflareR2Detailed(
       const base64Data = dataUrlOrBuffer.substring(commaIndex + 1);
       const mimeMatch = metaPart.match(/data:([^;]+)/);
       if (mimeMatch) {
-        mimeType = mimeMatch[1].toLowerCase();
+        mimeType = mimeMatch[1].split(';')[0].trim().toLowerCase();
       }
       buffer = Buffer.from(base64Data, 'base64');
     } else {
       buffer = dataUrlOrBuffer;
     }
 
-    // Determine clean file extension for JPG, PNG, MP4, WEBP, GIF, MOV, etc.
+    // Determine clean file extension for JPG, PNG, MP4, WEBM, WEBP, GIF, MOV, MP3, WAV, etc.
     let extension = 'bin';
     if (mimeType.includes('/')) {
       extension = mimeType.split('/')[1];
@@ -11422,6 +11554,9 @@ async function uploadMediaToCloudflareR2Detailed(
     if (extension === 'jpeg') extension = 'jpg';
     if (extension === 'quicktime') extension = 'mov';
     if (extension === 'x-matroska') extension = 'mkv';
+    if (extension === 'mpeg') extension = 'mp3';
+    if (extension === 'x-m4a' || extension === 'mp4a-latm') extension = 'm4a';
+    if (extension === 'x-wav') extension = 'wav';
 
     // Unique file identifier to prevent overwriting
     const uniqueFileId = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${extension}`;
