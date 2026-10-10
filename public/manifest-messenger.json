@@ -1,0 +1,61 @@
+{
+  "id": "/messenger",
+  "name": "Z-oneMessenger",
+  "short_name": "Z-oneMessenger",
+  "description": "Z-oneMessenger — Instant Direct Messages, Group Chats, Media Sharing & HD Voice/Video Calls powered by Z-oneApp.",
+  "start_url": "/messenger",
+  "scope": "/messenger",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#3730a3",
+  "categories": ["social", "communication"],
+  "icons": [
+    {
+      "src": "/messenger-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/messenger-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/messenger-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/messenger-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/messenger-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Direct Messages",
+      "short_name": "Chats",
+      "description": "Open your Z-oneMessenger Direct Chats",
+      "url": "/messenger?tab=chats",
+      "icons": [{ "src": "/messenger-icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Group Chats",
+      "short_name": "Groups",
+      "description": "Open your Z-oneMessenger Group Chats",
+      "url": "/messenger?tab=groups",
+      "icons": [{ "src": "/messenger-icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}

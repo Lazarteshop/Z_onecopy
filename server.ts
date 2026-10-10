@@ -110,6 +110,37 @@ import {
   invalidateSmartFeedCache,
   setSmartFeedIndexHooks
 } from './server/phase3SmartFeed';
+import {
+  rebuildSecondaryHotIndexes,
+  indexSecondaryPost,
+  removeSecondaryPost,
+  getPostsByUserId,
+  getPostsByCommunityId,
+  getTeleseryePosts,
+  getPostsBySharedPostId,
+  indexSecondaryReel,
+  removeSecondaryReel,
+  getReelsByAuthor,
+  getReelsByCommunityId,
+  indexSecondaryNotification,
+  getNotificationsByRecipientId,
+  indexSecondaryDirectMessage,
+  removeSecondaryDirectMessage,
+  getDirectMessagesForUser,
+  indexSecondaryGroupMessage,
+  removeSecondaryGroupMessage,
+  getGroupMessagesByGroupId,
+  getGroupMessagesByGroupIds,
+  indexSecondarySavedPost,
+  removeSecondarySavedPost,
+  getSavedPostsByUserId,
+  indexSecondarySavedReel,
+  removeSecondarySavedReel,
+  getSavedReelsByUserId,
+  indexSecondaryChallengeEntry,
+  getChallengeEntriesByChallengeId,
+  getChallengeEntriesByParticipantId
+} from './server/phase5c1SecondaryIndexes';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -4042,6 +4073,9 @@ export function rebuildHotLookupIndexes(db?: DBStructure): void {
     reelByIdIndex,
     communityByIdIndex
   });
+
+  // Phase 5C-1: Rebuild secondary hot lookup indexes
+  rebuildSecondaryHotIndexes(targetDb);
 }
 
 // Accessor helpers (O(1) average lookup with stale-reference protection and safe fallback)
@@ -4235,11 +4269,15 @@ export function indexPost(post: any): void {
     dbBackedEntities.add(post);
   }
   postByIdIndex.set(post.id, post);
+  indexSecondaryPost(post, cachedDB || indexedDbRef || undefined);
 }
 
 export function removePostFromIndex(postId: string): void {
   if (!postId) return;
-  postByIdIndex.delete(postId.trim());
+  const cleanId = postId.trim();
+  const existing = postByIdIndex.get(cleanId);
+  postByIdIndex.delete(cleanId);
+  removeSecondaryPost(existing || cleanId);
 }
 
 export function indexReel(reel: ReelVideo): void {
@@ -4248,11 +4286,15 @@ export function indexReel(reel: ReelVideo): void {
     dbBackedEntities.add(reel);
   }
   reelByIdIndex.set(reel.id, reel);
+  indexSecondaryReel(reel, cachedDB || indexedDbRef || undefined);
 }
 
 export function removeReelFromIndex(reelId: string): void {
   if (!reelId) return;
-  reelByIdIndex.delete(reelId.trim());
+  const cleanId = reelId.trim();
+  const existing = reelByIdIndex.get(cleanId);
+  reelByIdIndex.delete(cleanId);
+  removeSecondaryReel(existing || cleanId);
 }
 
 export function indexCommunity(community: CommunityRecord): void {
@@ -7657,10 +7699,7 @@ app.get('/api/reels/my-activity', (req, res) => {
   db.reelRedemptions = db.reelRedemptions || [];
 
   // Filter reels uploaded by this user
-  const userReels = db.reels.filter(r => 
-    r.addedByUserId === user.id || 
-    (r.addedBy && r.addedBy.toLowerCase().trim() === user.name.toLowerCase().trim())
-  );
+  const userReels = getReelsByAuthor(user.id, user.name, db, { trimAuthorName: true });
 
   // Filter redemptions by this user
   const userRedemptions = db.reelRedemptions.filter(r => r.userId === user.id);
@@ -7691,10 +7730,7 @@ app.post('/api/reels/redeem-profit', checkIdempotency, (req, res) => {
   db.reelRedemptions = db.reelRedemptions || [];
 
   // Authoritative server-side reel earnings calculation (Anti-Tamper)
-  const userReels = (db.reels || []).filter(r => 
-    r.addedByUserId === user.id || 
-    (r.addedBy && r.addedBy.toLowerCase().trim() === user.name.toLowerCase().trim())
-  );
+  const userReels = getReelsByAuthor(user.id, user.name, db, { trimAuthorName: true });
   const approvedReels = userReels.filter(r => r.status === 'approved' || !r.status);
   let totalGrossRevenue = 0;
   for (const r of approvedReels) {
@@ -7978,6 +8014,7 @@ app.delete('/api/reels/:id', enforceCommunitySafety, (req, res) => {
   removeReelFromIndex(id);
   if (db.savedReels) {
     db.savedReels = db.savedReels.filter(s => s.reelId !== id);
+    removeSecondarySavedReel(null, undefined, id);
   }
   onContentDeleted(`reel:${id}`);
   invalidateSmartFeedCache();
@@ -8210,31 +8247,37 @@ app.post('/api/reels/:id/save', enforceCommunitySafety, (req, res) => {
   const { action } = req.body || {};
   if (action === 'save') {
     if (existingIdx === -1) {
-      db.savedReels.push({
+      const savedEntry = {
         id: 'saved-reel-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
         userId,
         reelId: id,
         savedAt: new Date().toISOString()
-      });
+      };
+      db.savedReels.push(savedEntry);
+      indexSecondarySavedReel(savedEntry, db);
     }
     isSaved = true;
   } else if (action === 'unsave') {
     if (existingIdx > -1) {
-      db.savedReels.splice(existingIdx, 1);
+      const [removed] = db.savedReels.splice(existingIdx, 1);
+      removeSecondarySavedReel(removed, userId, id);
     }
     isSaved = false;
   } else {
     // Default idempotent toggle
     if (existingIdx > -1) {
-      db.savedReels.splice(existingIdx, 1);
+      const [removed] = db.savedReels.splice(existingIdx, 1);
+      removeSecondarySavedReel(removed, userId, id);
       isSaved = false;
     } else {
-      db.savedReels.push({
+      const savedEntry = {
         id: 'saved-reel-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
         userId,
         reelId: id,
         savedAt: new Date().toISOString()
-      });
+      };
+      db.savedReels.push(savedEntry);
+      indexSecondarySavedReel(savedEntry, db);
       isSaved = true;
     }
   }
@@ -8252,7 +8295,7 @@ app.get('/api/reels/saved', enforceCommunitySafety, (req, res) => {
   const userId = user.id;
 
   const db = loadDB();
-  const savedRefs = (db.savedReels || []).filter(s => s.userId === userId);
+  const savedRefs = getSavedReelsByUserId(userId, db);
   const savedReelMap = new Map<string, string>();
   for (const s of savedRefs) {
     savedReelMap.set(s.reelId, s.savedAt);
@@ -8335,8 +8378,8 @@ app.get('/api/zone/communities/:communityId/reels', (req, res) => {
     }
   }
 
-  const communityReels = (db.reels || []).filter(r => 
-    r.communityId === communityId && (!r.status || r.status === 'approved')
+  const communityReels = getReelsByCommunityId(communityId, db).filter(r => 
+    !r.status || r.status === 'approved'
   );
 
   res.json({
@@ -8725,14 +8768,8 @@ function parseSafeExternalVideoSource(rawUrl: string): {
 }
 
 function countSharedPostRecords(postId: string, db: DBStructure): number {
-  if (!postId || !Array.isArray(db.posts)) return 0;
-  let count = 0;
-  for (const sp of db.posts) {
-    if (sp && sp.sharedPost && sp.sharedPost.id === postId) {
-      count++;
-    }
-  }
-  return count;
+  if (!postId) return 0;
+  return getPostsBySharedPostId(postId, db).length;
 }
 
 function enrichAdWithLiveMetrics(ad: MerchantAd, db: DBStructure): MerchantAd {
@@ -11843,8 +11880,29 @@ function getSocialShareMetadata(req?: express.Request) {
 }
 
 function injectSocialMetaTags(html: string, req?: express.Request): string {
+  const reqPath = (req?.path || req?.originalUrl || '').split('?')[0].replace(/\/+$/, '');
+  const isMessenger = reqPath === '/messenger' || reqPath.startsWith('/messenger/');
   const meta = getSocialShareMetadata(req);
   let modified = html;
+
+  const effectiveTitle = isMessenger
+    ? 'Z-oneMessenger: Instant Direct Messages, Group Chats & HD Calls'
+    : meta.title;
+  const effectiveDescription = isMessenger
+    ? 'Z-oneMessenger — Instant Direct Messages, Group Chats, Media Sharing & HD Voice/Video Calls powered by Z-oneApp.'
+    : meta.description;
+  const effectiveUrl = isMessenger ? `${meta.url}/messenger` : meta.url;
+  const effectiveImage = isMessenger ? `${meta.url}/messenger-icon-512.png` : meta.imageUrl;
+  const effectiveSiteName = isMessenger ? 'Z-oneMessenger' : meta.siteName;
+
+  if (isMessenger) {
+    modified = modified
+      .replace(/<title>[\s\S]*?<\/title>/i, `<title>${effectiveTitle}</title>`)
+      .replace(/href=["']\/?manifest\.json["']/gi, 'href="/manifest-messenger.json"')
+      .replace(/content=["']#2196f3["']/gi, 'content="#4f46e5"')
+      .replace(/<meta([^>]*name=["']apple-mobile-web-app-title["'][^>]*)content=["'][^"']*["']/gi, '<meta$1content="Z-oneMessenger"')
+      .replace(/<link([^>]*rel=["']apple-touch-icon["'][^>]*)href=["'][^"']*["']/gi, '<link$1href="/messenger-icon-192.png"');
+  }
 
   const replaceOrInsertMeta = (nameOrProp: string, content: string, isTwitter = false) => {
     const attr = isTwitter ? 'name' : 'property';
@@ -11860,21 +11918,54 @@ function injectSocialMetaTags(html: string, req?: express.Request): string {
   };
 
   replaceOrInsertMeta('og:type', 'website');
-  replaceOrInsertMeta('og:site_name', meta.siteName);
-  replaceOrInsertMeta('og:url', meta.url);
-  replaceOrInsertMeta('og:title', meta.title);
-  replaceOrInsertMeta('og:description', meta.description);
-  replaceOrInsertMeta('og:image', meta.imageUrl);
-  replaceOrInsertMeta('og:image:width', '1200');
-  replaceOrInsertMeta('og:image:height', '630');
+  replaceOrInsertMeta('og:site_name', effectiveSiteName);
+  replaceOrInsertMeta('og:url', effectiveUrl);
+  replaceOrInsertMeta('og:title', effectiveTitle);
+  replaceOrInsertMeta('og:description', effectiveDescription);
+  replaceOrInsertMeta('og:image', effectiveImage);
+  replaceOrInsertMeta('og:image:width', isMessenger ? '512' : '1200');
+  replaceOrInsertMeta('og:image:height', isMessenger ? '512' : '630');
 
   replaceOrInsertMeta('twitter:card', 'summary_large_image', true);
-  replaceOrInsertMeta('twitter:title', meta.title, true);
-  replaceOrInsertMeta('twitter:description', meta.description, true);
-  replaceOrInsertMeta('twitter:image', meta.imageUrl, true);
+  replaceOrInsertMeta('twitter:title', effectiveTitle, true);
+  replaceOrInsertMeta('twitter:description', effectiveDescription, true);
+  replaceOrInsertMeta('twitter:image', effectiveImage, true);
 
   return modified;
 }
+
+// Public static endpoints for Z-oneMessenger PWA manifest & icons
+app.get('/manifest-messenger.json', (_req, res) => {
+  res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+  const p = path.join(process.cwd(), 'public', 'manifest-messenger.json');
+  if (fs.existsSync(p)) return res.sendFile(p);
+  res.status(404).json({ error: 'Manifest not found' });
+});
+
+app.get('/messenger-icon-192.png', (_req, res) => {
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  const p = path.join(process.cwd(), 'public', 'messenger-icon-192.png');
+  if (fs.existsSync(p)) return res.sendFile(p);
+  res.status(404).send('Not found');
+});
+
+app.get('/messenger-icon-512.png', (_req, res) => {
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  const p = path.join(process.cwd(), 'public', 'messenger-icon-512.png');
+  if (fs.existsSync(p)) return res.sendFile(p);
+  res.status(404).send('Not found');
+});
+
+app.get('/messenger-icon.svg', (_req, res) => {
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  const p = path.join(process.cwd(), 'public', 'messenger-icon.svg');
+  if (fs.existsSync(p)) return res.sendFile(p);
+  res.status(404).send('Not found');
+});
 
 // Public static endpoints for Open Graph cover image (No auth required)
 app.get('/default-share-cover.jpg', (req, res) => {
@@ -12842,7 +12933,7 @@ app.get('/api/zone/posts', (req, res) => {
     });
     if (sortedPosts.length === 0) sortedPosts = [...eligiblePosts];
   } else if (feedType === 'saved' && requesterId) {
-    const savedIds = (db.savedPosts || []).filter(s => s.userId === requesterId).map(s => s.postId);
+    const savedIds = getSavedPostsByUserId(requesterId, db).map(s => s.postId);
     sortedPosts = eligiblePosts.filter(p => savedIds.includes(p.id));
     sortedPosts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   } else if (feedType === 'foryou' || feedType === 'for-you') {
@@ -12882,7 +12973,7 @@ app.get('/api/zone/posts', (req, res) => {
 
   // Enrich with user's personal saved state
   const userSavedSet = new Set(
-    requesterId ? (db.savedPosts || []).filter(s => s.userId === requesterId).map(s => s.postId) : []
+    requesterId ? getSavedPostsByUserId(requesterId, db).map(s => s.postId) : []
   );
 
   const page = Math.max(parseInt(req.query.page as string) || 1, 1);
@@ -13086,7 +13177,7 @@ app.post('/api/zone/posts/refresh-rss', async (req, res) => {
     lastRssSyncTime = Date.now();
     await syncRssToDatabase();
     const db = loadDB();
-    const teleseryeCount = (db.posts || []).filter(p => p.userId === 'teleserye-feed-author' || p.category === 'Teleserye').length;
+    const teleseryeCount = getTeleseryePosts(db).length;
     res.json({ success: true, teleseryeCount, totalPosts: (db.posts || []).length, posts: db.posts });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -13133,7 +13224,7 @@ app.post('/api/zone/posts/:id/check-stream', async (req, res) => {
 app.get('/api/zone/teleserye-diagnostics', (_req, res) => {
   try {
     const db = loadDB();
-    const teleseryePosts = (db.posts || []).filter(p => p.userId === 'teleserye-feed-author' || p.category === 'Teleserye');
+    const teleseryePosts = getTeleseryePosts(db);
     const withVideo = teleseryePosts.filter(p => p.videoSourceAvailable && (p.embedUrl || (p.embedUrls && p.embedUrls.length > 0)));
     const pending = teleseryePosts.filter(p => !p.videoSourceAvailable);
 
@@ -13497,7 +13588,7 @@ app.get('/api/zone/sync', (req, res) => {
   const isDelta = !isNaN(sinceTime) && sinceTime > 0;
 
   const db = loadDB();
-  const allUserMessages = (db.directMessages || []).filter(m => m.senderId === userId || m.receiverId === userId);
+  const allUserMessages = getDirectMessagesForUser(userId, db);
   const messages = isDelta 
     ? allUserMessages.filter(m => new Date(m.createdAt).getTime() > sinceTime)
     : allUserMessages;
@@ -13531,7 +13622,7 @@ app.get('/api/zone/sync', (req, res) => {
 
   const myGroups = db.groupChats.filter(g => (g.members || []).includes(userId) || g.id === 'gc-community-main');
   const myGroupIds = myGroups.map(g => g.id);
-  const allGroupMessages = (db.groupMessages || []).filter(m => myGroupIds.includes(m.groupId));
+  const allGroupMessages = getGroupMessagesByGroupIds(myGroupIds, db);
   const myGroupMessages = isDelta
     ? allGroupMessages.filter(m => new Date(m.createdAt).getTime() > sinceTime)
     : allGroupMessages;
@@ -13550,7 +13641,7 @@ app.get('/api/zone/sync', (req, res) => {
 
   // Format group chats with detailed member info & last message
   const formattedGroups = myGroups.map(g => {
-    const groupMsgs = (db.groupMessages || []).filter(m => m.groupId === g.id);
+    const groupMsgs = getGroupMessagesByGroupId(g.id, db);
     const lastMsg = groupMsgs.length > 0 ? groupMsgs[groupMsgs.length - 1] : null;
     return {
       ...g,
@@ -13630,6 +13721,7 @@ function createSocialNotification(db: DBStructure, notif: Omit<SocialNotificatio
     createdAt: new Date().toISOString()
   };
   db.socialNotifications.unshift(newNotif);
+  indexSecondaryNotification(newNotif, db);
   if (db.socialNotifications.length > 2500) {
     db.socialNotifications = db.socialNotifications.slice(0, 2500);
   }
@@ -14465,15 +14557,18 @@ app.post('/api/zone/posts/:postId/save', (req, res) => {
   let isSaved = false;
 
   if (existingIndex > -1) {
-    db.savedPosts.splice(existingIndex, 1);
+    const [removed] = db.savedPosts.splice(existingIndex, 1);
+    removeSecondarySavedPost(removed, userId, postId);
     isSaved = false;
   } else {
-    db.savedPosts.push({
+    const savedEntry = {
       id: 'saved-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
       userId,
       postId,
       savedAt: new Date().toISOString()
-    });
+    };
+    db.savedPosts.push(savedEntry);
+    indexSecondarySavedPost(savedEntry, db);
     isSaved = true;
   }
 
@@ -14493,7 +14588,7 @@ app.get('/api/zone/saved', (req, res) => {
   }
 
   const db = loadDB();
-  const savedRefs = (db.savedPosts || []).filter(s => s.userId === userId);
+  const savedRefs = getSavedPostsByUserId(userId, db);
   const savedPostIds = new Set(savedRefs.map(s => s.postId));
 
   const allPosts = db.posts || [];
@@ -14809,9 +14904,7 @@ app.get('/api/zone/notifications', (req, res) => {
   }
 
   const db = loadDB();
-  const allNotifs = db.socialNotifications || [];
-  const userNotifs = allNotifs
-    .filter(n => n.recipientUserId === userId)
+  const userNotifs = getNotificationsByRecipientId(userId, db)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 100);
 
@@ -14830,7 +14923,7 @@ app.post('/api/zone/notifications/:id/read', (req, res) => {
 
   const { id } = req.params;
   const db = loadDB();
-  const notif = (db.socialNotifications || []).find(n => n.id === id && n.recipientUserId === userId);
+  const notif = getNotificationsByRecipientId(userId, db).find(n => n.id === id);
   if (notif) {
     notif.read = true;
     saveDB(db);
@@ -14844,10 +14937,8 @@ app.post('/api/zone/notifications/read-all', (req, res) => {
 
   const db = loadDB();
   if (db.socialNotifications) {
-    for (const n of db.socialNotifications) {
-      if (n.recipientUserId === userId) {
-        n.read = true;
-      }
+    for (const n of getNotificationsByRecipientId(userId, db)) {
+      n.read = true;
     }
     saveDB(db);
   }
@@ -15214,7 +15305,7 @@ app.get('/api/zone/creator/analytics', (req, res) => {
   };
 
   // 1. POSTS AGGREGATION
-  const creatorPosts = (db.posts || []).filter(p => p.userId === targetCreator.id);
+  const creatorPosts = getPostsByUserId(targetCreator.id, db);
   const periodPosts = creatorPosts.filter(p => isInPeriod(p.createdAt));
   const prevPeriodPosts = creatorPosts.filter(p => isInPrevPeriod(p.createdAt));
 
@@ -15226,7 +15317,7 @@ app.get('/api/zone/creator/analytics', (req, res) => {
   const postItems = periodPosts.map(p => {
     const pLikes = p.likes ? p.likes.length : 0;
     const pComments = p.comments ? p.comments.length : 0;
-    const pShares = p.sharesCount || (db.posts || []).filter(sp => sp.sharedPost && sp.sharedPost.id === p.id).length;
+    const pShares = p.sharesCount || getPostsBySharedPostId(p.id, db).length;
     const pViews = p.viewsCount !== undefined && p.viewsCount > 0 
       ? p.viewsCount 
       : Math.max((pLikes * 3) + (pComments * 5) + (pShares * 8) + 12, 1);
@@ -15257,7 +15348,7 @@ app.get('/api/zone/creator/analytics', (req, res) => {
   postItems.sort((a, b) => (b.views + b.likes * 2) - (a.views + a.likes * 2));
 
   // 2. REELS AGGREGATION
-  const creatorReels = (db.reels || []).filter(r => r.addedByUserId === targetCreator.id || r.addedBy === targetCreator.name);
+  const creatorReels = getReelsByAuthor(targetCreator.id, targetCreator.name, db, { exactAuthorName: true });
   const periodReels = creatorReels.filter(r => isInPeriod(r.createdAt));
 
   let reelsViews = 0;
@@ -15309,7 +15400,7 @@ app.get('/api/zone/creator/analytics', (req, res) => {
     const cViews = c.viewsCount || 0;
     const cLikes = c.likesCount || (c.likes ? c.likes.length : 0);
     const cParticipants = c.participantsCount || 0;
-    const cEntries = c.entriesCount || (db.challengeEntries || []).filter(e => e.challengeId === c.id).length;
+    const cEntries = c.entriesCount || getChallengeEntriesByChallengeId(c.id, db).length;
     const cPrize = c.prizePool || 0;
 
     challengesViews += cViews;
@@ -15333,7 +15424,7 @@ app.get('/api/zone/creator/analytics', (req, res) => {
     };
   });
 
-  const creatorEntriesCount = (db.challengeEntries || []).filter(e => e.participantId === targetCreator.id && isInPeriod(e.createdAt)).length;
+  const creatorEntriesCount = getChallengeEntriesByParticipantId(targetCreator.id, db).filter(e => isInPeriod(e.createdAt)).length;
 
   // 4. PRODUCTS & AFFILIATE COMMERCE AGGREGATION
   const taggedProductMap = new Map<string, any>();
@@ -15393,8 +15484,7 @@ app.get('/api/zone/creator/analytics', (req, res) => {
 
   // 5. FOLLOWERS / COMMUNITY AGGREGATION
   const allFollowers = (db.users || []).filter(u => (u.zonedUsers || []).includes(targetCreator.id));
-  const periodFollowerNotifs = (db.socialNotifications || []).filter(n => 
-    n.recipientUserId === targetCreator.id && 
+  const periodFollowerNotifs = getNotificationsByRecipientId(targetCreator.id, db).filter(n => 
     n.type === 'follow' && 
     isInPeriod(n.createdAt)
   );
@@ -15746,8 +15836,7 @@ app.get('/api/zone/messages', (req, res) => {
     return res.status(401).json({ error: 'Unauthenticated.' });
   }
   const db = loadDB();
-  const messages = db.directMessages || [];
-  const myMessages = messages.filter(m => m.senderId === userId || m.receiverId === userId);
+  const myMessages = getDirectMessagesForUser(userId, db);
   res.json({ messages: myMessages });
 });
 
@@ -15833,7 +15922,7 @@ async function handleAdminAutoReply(userSenderId: string, userText: string) {
   const user = getUserById(userSenderId, db);
   if (!user) return;
 
-  const messages = db.directMessages || [];
+  const messages = getDirectMessagesForUser(userSenderId, db);
   const chatHistory = messages
     .filter(m => (m.senderId === userSenderId && m.receiverId === 'admin-rosco') || (m.senderId === 'admin-rosco' && m.receiverId === userSenderId))
     .slice(-10);
@@ -15890,6 +15979,7 @@ async function handleAdminAutoReply(userSenderId: string, userText: string) {
     freshDb.directMessages = [];
   }
   freshDb.directMessages.push(adminReply);
+  indexSecondaryDirectMessage(adminReply, freshDb);
   saveDB(freshDb);
   notifyNewDirectMessage(adminReply);
 }
@@ -15910,7 +16000,7 @@ app.post('/api/zone/messages', enforceCommunitySafety, async (req, res) => {
   // Server-Side Idempotency Protection: Prevent duplicate message creation on network retries
   const dedupId = (clientMessageId || tempId) ? String(clientMessageId || tempId).trim() : '';
   if (dedupId && Array.isArray(db.directMessages)) {
-    const existingMsg = db.directMessages.find(
+    const existingMsg = getDirectMessagesForUser(senderId, db).find(
       m => (m.clientMessageId === dedupId || m.id === dedupId) && m.senderId === senderId
     );
     if (existingMsg) {
@@ -15961,6 +16051,7 @@ app.post('/api/zone/messages', enforceCommunitySafety, async (req, res) => {
     db.directMessages = [];
   }
   db.directMessages.push(newMsg);
+  indexSecondaryDirectMessage(newMsg, db);
   saveDB(db, true);
 
   const { id: _, ...dmWithoutId } = newMsg;
@@ -16059,6 +16150,7 @@ app.delete('/api/zone/messages/:messageId', enforceCommunitySafety, (req, res) =
   }
 
   db.directMessages.splice(msgIndex, 1);
+  removeSecondaryDirectMessage(msg);
   saveDB(db, true);
 
   safeCloudSync('delete', 'direct_messages', messageId);
@@ -16137,7 +16229,7 @@ app.get('/api/zone/groups', (req, res) => {
   const myGroups = db.groupChats.filter(g => (g.members || []).includes(userId) || g.id === 'gc-community-main');
 
   const formattedGroups = myGroups.map(g => {
-    const groupMsgs = (db.groupMessages || []).filter(m => m.groupId === g.id);
+    const groupMsgs = getGroupMessagesByGroupId(g.id, db);
     const lastMsg = groupMsgs.length > 0 ? groupMsgs[groupMsgs.length - 1] : null;
     return {
       ...g,
@@ -16211,6 +16303,7 @@ app.post('/api/zone/groups', enforceCommunitySafety, (req, res) => {
     createdAt: new Date().toISOString()
   };
   db.groupMessages.push(initialMsg);
+  indexSecondaryGroupMessage(initialMsg, db);
 
   saveDB(db, true);
 
@@ -16260,7 +16353,7 @@ app.get('/api/zone/groups/:groupId/messages', (req, res) => {
     return res.status(403).json({ error: 'Hindi ka miyembro ng Group Chat na ito.' });
   }
 
-  const messages = db.groupMessages.filter(m => m.groupId === groupId);
+  const messages = getGroupMessagesByGroupId(groupId, db);
   res.json({ messages });
 });
 
@@ -16282,7 +16375,7 @@ app.post('/api/zone/groups/:groupId/messages', enforceCommunitySafety, async (re
   // Server-Side Idempotency Protection: Prevent duplicate group message creation on network retries
   const dedupId = (clientMessageId || tempId) ? String(clientMessageId || tempId).trim() : '';
   if (dedupId && Array.isArray(db.groupMessages)) {
-    const existingMsg = db.groupMessages.find(
+    const existingMsg = getGroupMessagesByGroupId(groupId, db).find(
       m => (m.clientMessageId === dedupId || m.id === dedupId) && m.groupId === groupId && m.senderId === userId
     );
     if (existingMsg) {
@@ -16343,6 +16436,7 @@ app.post('/api/zone/groups/:groupId/messages', enforceCommunitySafety, async (re
   };
 
   db.groupMessages.push(newMsg);
+  indexSecondaryGroupMessage(newMsg, db);
   group.updatedAt = new Date().toISOString();
   saveDB(db, true);
 
@@ -16384,7 +16478,7 @@ app.put('/api/zone/groups/:groupId/messages/:messageId', enforceCommunitySafety,
   }
 
   if (!db.groupMessages) db.groupMessages = [];
-  const msg = db.groupMessages.find(m => m.id === messageId && m.groupId === groupId);
+  const msg = getGroupMessagesByGroupId(groupId, db).find(m => m.id === messageId);
   if (!msg) {
     return res.status(404).json({ error: 'Hindi mahanap ang mensahe.' });
   }
@@ -16440,6 +16534,7 @@ app.delete('/api/zone/groups/:groupId/messages/:messageId', enforceCommunitySafe
   }
 
   db.groupMessages.splice(msgIndex, 1);
+  removeSecondaryGroupMessage(msg);
   saveDB(db, true);
 
   safeCloudSync('delete', 'group_messages', messageId);
@@ -16449,8 +16544,9 @@ app.delete('/api/zone/groups/:groupId/messages/:messageId', enforceCommunitySafe
 
 // 7. ADD MEMBERS TO GROUP CHAT
 app.post('/api/zone/groups/:groupId/members', enforceCommunitySafety, (req, res) => {
-  const userId = req.headers.authorization;
-  if (!userId) {
+  const authedUser = (req as any).user;
+  const userId = typeof (req as any).userId === 'string' ? (req as any).userId : req.headers.authorization;
+  if (!authedUser || !userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
   }
 
@@ -16460,14 +16556,42 @@ app.post('/api/zone/groups/:groupId/members', enforceCommunitySafety, (req, res)
     return res.status(400).json({ error: 'Pumili ng miyembro na idadagdag.' });
   }
 
+  const normalizedMemberIds = Array.from(
+    new Set(
+      memberIds
+        .filter((id: any): id is string => typeof id === 'string' && id.trim().length > 0)
+        .map((id: string) => id.trim())
+    )
+  );
+  if (normalizedMemberIds.length === 0) {
+    return res.status(400).json({ error: 'Pumili ng miyembro na idadagdag.' });
+  }
+
   const db = loadDB();
+  if (isUserBanned(db, userId)) {
+    return res.status(403).json({ error: 'Banned ka sa system.' });
+  }
+
   if (!db.groupChats) db.groupChats = [];
   const group = db.groupChats.find(g => g.id === groupId);
   if (!group) {
     return res.status(404).json({ error: 'Hindi mahanap ang Group Chat.' });
   }
 
-  const addedUsers = db.users.filter(u => memberIds.includes(u.id) && !group.members.includes(u.id));
+  if (!Array.isArray(group.members)) {
+    group.members = [];
+  }
+
+  const isGroupCreator = group.createdBy === userId;
+  const isExistingMember = group.members.includes(userId);
+  const isAdmin = Boolean(authedUser.isAdmin) || userId === 'admin-rosco';
+  if (!isGroupCreator && !isExistingMember && !isAdmin) {
+    return res.status(403).json({ error: 'Hindi ka miyembro ng Group Chat na ito.' });
+  }
+
+  const addedUsers = (db.users || []).filter(
+    u => u && normalizedMemberIds.includes(u.id) && !group.members.includes(u.id)
+  );
   if (addedUsers.length === 0) {
     return res.status(400).json({ error: 'Lahat ng napili ay miyembro na ng group na ito.' });
   }
@@ -16476,7 +16600,7 @@ app.post('/api/zone/groups/:groupId/members', enforceCommunitySafety, (req, res)
   group.updatedAt = new Date().toISOString();
 
   // Add system notice
-  const actor = getUserById(userId, db);
+  const actor = getUserById(userId, db) || authedUser;
   const names = addedUsers.map(u => u.name).join(', ');
   if (!db.groupMessages) db.groupMessages = [];
   const addSysMsg: GroupMessage = {
@@ -16489,6 +16613,7 @@ app.post('/api/zone/groups/:groupId/members', enforceCommunitySafety, (req, res)
     createdAt: new Date().toISOString()
   };
   db.groupMessages.push(addSysMsg);
+  indexSecondaryGroupMessage(addSysMsg, db);
 
   saveDB(db, true);
 
@@ -16542,6 +16667,7 @@ app.post('/api/zone/groups/:groupId/leave', enforceCommunitySafety, (req, res) =
     createdAt: new Date().toISOString()
   };
   db.groupMessages.push(leaveSysMsg);
+  indexSecondaryGroupMessage(leaveSysMsg, db);
 
   saveDB(db, true);
 
@@ -16846,6 +16972,7 @@ app.post('/api/zone/stories/:storyId/react', enforceCommunitySafety, (req, res) 
         createdAt: new Date().toISOString()
       };
       db.directMessages.push(dmMsg);
+      indexSecondaryDirectMessage(dmMsg, db);
 
       const { id: _, ...dmWithoutId } = dmMsg;
       safeCloudSync('set', 'direct_messages', dmMsg.id, dmWithoutId);
@@ -16888,8 +17015,9 @@ app.get('/api/zone/calls', (req, res) => {
 
 // 4. INITIATE OR UPDATE CALL SESSION STATE
 app.post('/api/zone/calls', enforceCommunitySafety, (req, res) => {
-  const callerId = req.headers.authorization;
-  if (!callerId) {
+  const authedUser = (req as any).user;
+  const callerId = typeof (req as any).userId === 'string' ? (req as any).userId : req.headers.authorization;
+  if (!authedUser || !callerId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
   }
   const { receiverId, type, status, callId } = req.body;
@@ -16901,16 +17029,19 @@ app.post('/api/zone/calls', enforceCommunitySafety, (req, res) => {
 
   if (callId) {
     const call = db.activeCalls.find(c => c.id === callId);
-    if (call) {
-      if (status) call.status = status;
-      if (req.body.callerSignal) call.callerSignal = req.body.callerSignal;
-      if (req.body.receiverSignal) call.receiverSignal = req.body.receiverSignal;
-      if (req.body.callerCandidates) call.callerCandidates = req.body.callerCandidates;
-      if (req.body.receiverCandidates) call.receiverCandidates = req.body.receiverCandidates;
-      saveDB(db);
-      return res.json({ success: true, call });
+    if (!call) {
+      return res.status(404).json({ error: 'Hindi mahanap ang call session.' });
     }
-    return res.status(404).json({ error: 'Hindi mahanap ang call session.' });
+    if (callerId !== call.callerId && callerId !== call.receiverId) {
+      return res.status(403).json({ error: 'Wala kang pahintulot sa call session na ito.' });
+    }
+    if (status) call.status = status;
+    if (req.body.callerSignal) call.callerSignal = req.body.callerSignal;
+    if (req.body.receiverSignal) call.receiverSignal = req.body.receiverSignal;
+    if (req.body.callerCandidates) call.callerCandidates = req.body.callerCandidates;
+    if (req.body.receiverCandidates) call.receiverCandidates = req.body.receiverCandidates;
+    saveDB(db);
+    return res.json({ success: true, call });
   }
 
   if (!receiverId) {
@@ -16951,8 +17082,9 @@ app.post('/api/zone/calls', enforceCommunitySafety, (req, res) => {
 
 // 5. END ACTIVE CALL SESSION
 app.post('/api/zone/calls/end', (req, res) => {
-  const userId = req.headers.authorization;
-  if (!userId) {
+  const authedUser = (req as any).user;
+  const userId = typeof (req as any).userId === 'string' ? (req as any).userId : req.headers.authorization;
+  if (!authedUser || !userId) {
     return res.status(401).json({ error: 'Unauthenticated.' });
   }
   const { callId } = req.body;
@@ -16960,12 +17092,15 @@ app.post('/api/zone/calls/end', (req, res) => {
   if (db.activeCalls) {
     const call = db.activeCalls.find(c => c.id === callId);
     if (call) {
+      if (userId !== call.callerId && userId !== call.receiverId) {
+        return res.status(403).json({ error: 'Wala kang pahintulot sa call session na ito.' });
+      }
       call.status = 'ended';
       saveDB(db);
       return res.json({ success: true });
     }
   }
-  res.json({ success: false, message: 'Wala nang active call session.' });
+  return res.status(404).json({ success: false, message: 'Wala nang active call session.', error: 'Hindi mahanap ang call session.' });
 });
 
 // ==========================================
@@ -16984,8 +17119,7 @@ app.get('/api/zone/profile/:targetUserId', (req, res) => {
   }
 
   const isOwner = requesterId === targetUserId;
-  const allPosts = db.posts || [];
-  const userPosts = allPosts.filter(p => p.userId === targetUserId);
+  const userPosts = getPostsByUserId(targetUserId, db);
   
   const allAlbums = db.albums || [];
   const userAlbums = allAlbums.filter(a => a.userId === targetUserId);
@@ -17009,7 +17143,7 @@ app.get('/api/zone/profile/:targetUserId', (req, res) => {
   const isFollowing = requesterId ? Boolean(getUserById(requesterId, db)?.zonedUsers?.includes(targetUserId)) : false;
   const handle = '@' + (targetUser.name || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_');
 
-  const userReels = (db.reels || []).filter(r => r.addedByUserId === targetUserId || (r.addedBy && r.addedBy.toLowerCase() === targetUser.name.toLowerCase()));
+  const userReels = getReelsByAuthor(targetUserId, targetUser.name, db, { trimAuthorName: false });
   const userChallenges = (db.creatorChallenges || []).filter(c => c.hostId === targetUserId);
   const userProducts = (db.shopProducts || []).filter(p => p.creatorId === targetUserId || p.sellerId === targetUserId);
 
@@ -19280,7 +19414,7 @@ app.get('/api/zone/content/:contentId/related', (req, res) => {
     if (contentId.startsWith('post-')) targetKey = `post:${contentId}`;
     else if (contentId.startsWith('reel-')) targetKey = `reel:${contentId}`;
     else {
-      const isPost = (db.posts || []).some((p: any) => p.id === contentId);
+      const isPost = Boolean(getPostById(contentId, db));
       targetKey = isPost ? `post:${contentId}` : `reel:${contentId}`;
     }
   }
@@ -19315,8 +19449,7 @@ app.get('/api/zone/communities/:communityId/posts', (req, res) => {
   const blockedUserIds = (requesterId && db.userBlocks?.[requesterId]) || [];
   const mutedUserIds = (requesterId && db.userMutes?.[requesterId]) || [];
 
-  const communityPosts = (db.posts || []).filter((p: any) => {
-    if (p.communityId !== communityId) return false;
+  const communityPosts = getPostsByCommunityId(communityId, db).filter((p: any) => {
     if (hiddenPostIds.includes(p.id)) return false;
     if (p.userId && blockedUserIds.includes(p.userId)) return false;
     if (p.userId && mutedUserIds.includes(p.userId)) return false;
@@ -22037,7 +22170,7 @@ app.get('/api/challenges/:id', (req, res) => {
                   challenge.status === 'cancelled' || 
                   (challenge.endDate && new Date(challenge.endDate).getTime() <= Date.now());
 
-  const allEntries = (db.challengeEntries || []).filter(e => e.challengeId === id);
+  const allEntries = getChallengeEntriesByChallengeId(id, db);
   const approvedEntries = allEntries.filter(e => e.status !== 'rejected');
   
   // Sorted leaderboard by score and votes
@@ -22312,8 +22445,8 @@ app.get('/api/challenges/:id/my-entry', (req, res) => {
   if (!user) return res.status(401).json({ error: 'User not found' });
 
   const { id } = req.params;
-  const entry = (db.challengeEntries || []).find(
-    e => e.challengeId === id && e.participantId === user.id && e.status !== 'rejected'
+  const entry = getChallengeEntriesByChallengeId(id, db).find(
+    e => e.participantId === user.id && e.status !== 'rejected'
   );
 
   return res.json({
@@ -22353,8 +22486,8 @@ app.post('/api/challenges/:id/entries', (req, res) => {
   if (!db.challengeEntries) db.challengeEntries = [];
 
   // ONE USER = ONE ENTRY ENFORCEMENT (Server-side validation)
-  const existingEntry = db.challengeEntries.find(
-    e => e.challengeId === challenge.id && e.participantId === user.id && e.status !== 'rejected'
+  const existingEntry = getChallengeEntriesByChallengeId(challenge.id, db).find(
+    e => e.participantId === user.id && e.status !== 'rejected'
   );
 
   if (existingEntry) {
@@ -22413,6 +22546,7 @@ app.post('/api/challenges/:id/entries', (req, res) => {
   };
 
   db.challengeEntries.unshift(newEntry);
+  indexSecondaryChallengeEntry(newEntry, db);
   challenge.entriesCount = (challenge.entriesCount || 0) + 1;
 
   saveDB(db);
@@ -22449,9 +22583,10 @@ app.put('/api/challenges/:id/entries/:entryId', (req, res) => {
 
   if (!db.challengeEntries) db.challengeEntries = [];
 
+  const challengeEntries = getChallengeEntriesByChallengeId(challenge.id, db);
   const entry = entryId === 'my-entry'
-    ? db.challengeEntries.find(e => e.challengeId === challenge.id && e.participantId === user.id && e.status !== 'rejected')
-    : db.challengeEntries.find(e => e.id === entryId && e.challengeId === challenge.id);
+    ? challengeEntries.find(e => e.participantId === user.id && e.status !== 'rejected')
+    : challengeEntries.find(e => e.id === entryId && e.challengeId === challenge.id);
 
   if (!entry) {
     return res.status(404).json({ error: 'Entry not found' });
@@ -22515,7 +22650,7 @@ app.post('/api/challenges/:id/entries/:entryId/vote', (req, res) => {
     return res.status(400).json({ error: 'Ended na ang challenge. Hindi na maaaring bumoto.' });
   }
 
-  const allChallengeEntries = (db.challengeEntries || []).filter(e => e.challengeId === id && e.status !== 'rejected');
+  const allChallengeEntries = getChallengeEntriesByChallengeId(id, db).filter(e => e.status !== 'rejected');
   const validEntryCount = allChallengeEntries.length;
   const maxAllowedVotes = calculateMaxVotesPerUser(validEntryCount);
 
@@ -22934,7 +23069,7 @@ function disburseChallengePrizesAndEarnings(
   error?: string;
   distributions: { userId: string; name: string; role: string; rank?: number; amount: number }[];
 } {
-  const allEntries = (db.challengeEntries || []).filter(e => e.challengeId === challenge.id && e.status !== 'rejected');
+  const allEntries = getChallengeEntriesByChallengeId(challenge.id, db).filter(e => e.status !== 'rejected');
   const sorted = [...allEntries].sort((a, b) => (b.score || 0) - (a.score || 0) || (b.votesCount || 0) - (a.votesCount || 0));
 
   const totalPrize = challenge.prizePool || 0;
@@ -23265,7 +23400,7 @@ function runChallengeCleanupWorker(): {
         } else {
           const prize = challenge.prizePool || 0;
           const hostEarn = challenge.hostEarnings || 0;
-          const approvedEntries = (db.challengeEntries || []).filter(e => e.challengeId === challenge.id && e.status !== 'rejected');
+          const approvedEntries = getChallengeEntriesByChallengeId(challenge.id, db).filter(e => e.status !== 'rejected');
 
           if (prize <= 0 && hostEarn <= 0) {
             // No financial rewards owed
@@ -23588,7 +23723,7 @@ app.get('/api/public/challenges/:challengeId/entries/:entryId', (req, res) => {
   const db = loadDB();
 
   const challenge = (db.creatorChallenges || []).find(c => c.id === challengeId);
-  const entry = (db.challengeEntries || []).find(e => e.id === entryId && e.challengeId === challengeId);
+  const entry = getChallengeEntriesByChallengeId(challengeId, db).find(e => e.id === entryId && e.challengeId === challengeId);
 
   if (!challenge || !entry) {
     return res.status(404).json({ error: 'Challenge entry not found' });
@@ -23790,7 +23925,8 @@ async function startServer() {
     activeUsersMap,
     sendPushNotificationToUser,
     handleAdminAutoReply,
-    verifyToken
+    verifyToken,
+    indexSecondaryDirectMessage
   });
 
   server.listen(PORT, '0.0.0.0', () => {

@@ -1,13 +1,18 @@
-const CACHE = "zone-v13-fresh-entry-fix";
+const CACHE = "zone-v15-messenger-pwa";
 const MEDIA_CACHE = "zone-media-v8";
-const API_CACHE = "zone-api-v8";
+const API_CACHE = "zone-api-v9";
 
 const STATIC_ASSETS = [
   "/",
+  "/messenger",
   "/index.html",
   "/manifest.json",
+  "/manifest-messenger.json",
   "/icon-192.png",
   "/icon-512.png",
+  "/messenger-icon-192.png",
+  "/messenger-icon-512.png",
+  "/messenger-icon.svg",
   "/admin_gcash_qr.png"
 ];
 
@@ -59,6 +64,8 @@ self.addEventListener("fetch", event => {
   const url = new URL(event.request.url);
   const isNavigate = event.request.mode === 'navigate' || 
                      url.pathname === '/' || 
+                     url.pathname === '/messenger' ||
+                     url.pathname.startsWith('/messenger/') ||
                      url.pathname.endsWith('.html') || 
                      (event.request.headers.get('accept') && event.request.headers.get('accept').includes('text/html'));
   const isMedia = url.pathname.startsWith('/uploads/') || 
@@ -66,20 +73,35 @@ self.addEventListener("fetch", event => {
                   url.hostname.includes('unsplash.com') || 
                   url.hostname.includes('picsum.photos');
   const isApi = url.pathname.startsWith('/api/');
+  const hasAuthHeader = Boolean(
+    event.request.headers.get('authorization') ||
+    event.request.headers.get('Authorization') ||
+    url.searchParams.has('token')
+  );
 
-  // Critical Financial / Auth / Live Realtime State Endpoints - ALWAYS Network Only
+  // Critical Financial / Auth / Private User & Messaging State Endpoints - ALWAYS Network Only (never stored in Cache Storage)
   const isStrictNetworkApi = 
+    hasAuthHeader ||
     url.pathname.includes('/api/auth/') ||
-    url.pathname.includes('/api/user/withdraw') ||
-    url.pathname.includes('/api/user/task-complete') ||
-    url.pathname.includes('/api/user/daily-checkin') ||
-    url.pathname.includes('/api/user/spin-wheel') ||
+    url.pathname === '/api/user/profile' ||
+    url.pathname.includes('/api/user/') ||
     url.pathname.includes('/api/va/') ||
     url.pathname.includes('/api/shop/checkout') ||
-    url.pathname.includes('/api/admin/');
+    url.pathname.includes('/api/admin/') ||
+    url.pathname === '/api/zone/sync' ||
+    url.pathname.startsWith('/api/zone/sync') ||
+    url.pathname === '/api/zone/messages' ||
+    url.pathname.startsWith('/api/zone/messages') ||
+    url.pathname === '/api/zone/groups' ||
+    url.pathname.startsWith('/api/zone/groups/') ||
+    url.pathname === '/api/zone/calls' ||
+    url.pathname.startsWith('/api/zone/calls') ||
+    url.pathname.includes('/api/zone/upload') ||
+    url.pathname.includes('/api/chat/') ||
+    url.pathname.includes('/api/notifications');
 
   if (isStrictNetworkApi) {
-    // Pure network pass-through, no caching
+    // Pure network pass-through before all cache branches (no SWR, no API_CACHE, no offline fallback)
     return;
   }
 
@@ -128,14 +150,12 @@ self.addEventListener("fetch", event => {
       })
     );
   } else if (isApi) {
-    // SWR Strategy for Read APIs (posts, stories, groups, users, reels)
+    // SWR Strategy for Public Read APIs only (never private messages, groups, sync, or auth-dependent responses)
     const isSwrApi = 
       url.pathname.includes('/posts') || 
       url.pathname.includes('/stories') || 
-      url.pathname.includes('/groups') || 
       url.pathname.includes('/users') || 
-      url.pathname.includes('/reels') || 
-      url.pathname.includes('/sync');
+      url.pathname.includes('/reels');
 
     if (isSwrApi) {
       event.respondWith(
@@ -143,7 +163,7 @@ self.addEventListener("fetch", event => {
           const cachedResponse = await cache.match(event.request);
           const networkPromise = fetch(event.request)
             .then((networkResponse) => {
-              if (networkResponse && networkResponse.status === 200) {
+              if (networkResponse && networkResponse.status === 200 && !event.request.headers.get('authorization')) {
                 cache.put(event.request, networkResponse.clone());
               }
               return networkResponse;
@@ -154,11 +174,11 @@ self.addEventListener("fetch", event => {
         })
       );
     } else {
-      // General Network-First for other GET APIs
+      // General Network-First for other non-authenticated public GET APIs
       event.respondWith(
         fetch(event.request)
           .then(response => {
-            if (response.status === 200) {
+            if (response.status === 200 && !event.request.headers.get('authorization')) {
               const copy = response.clone();
               caches.open(API_CACHE).then(cache => cache.put(event.request, copy));
             }

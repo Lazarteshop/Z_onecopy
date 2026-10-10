@@ -16,6 +16,7 @@ import { areFriends, getFriendIds, getMutualFriendIds } from './phase1Social';
 import { getFollowingIds, isFollowing, generateSuggestedCreators } from './phase2Discovery';
 import { getUserCommunityIds, isUserInCommunity } from './phase2bCommunities';
 import { isContentVisibleToUser, getTrendingHashtags, extractHashtags } from './phase2cContentGraph';
+import { getSavedPostsByUserId } from './phase5c1SecondaryIndexes';
 import { ZonePost, SmartFeedSection, SmartFeedResponse, ReactionType } from '../src/types';
 
 // ============================================================================
@@ -756,7 +757,7 @@ function candidateToZonePost(candidate: FeedCandidate, db: any, requesterId?: st
 
   // Standard post candidate
   const userSavedSet = new Set(
-    requesterId ? (db.savedPosts || []).filter((s: any) => s.userId === requesterId).map((s: any) => s.postId) : []
+    requesterId ? getSavedPostsByUserId(requesterId, db).map((s: any) => s.postId) : []
   );
 
   let userReaction: ReactionType | null = null;

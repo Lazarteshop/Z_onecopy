@@ -1,6 +1,7 @@
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { DirectMessage } from '../src/types';
+import { indexSecondaryDirectMessage } from './phase5c1SecondaryIndexes';
 
 interface SocketSession {
   userId: string;
@@ -22,6 +23,7 @@ interface ChatSocketDeps {
   sendPushNotificationToUser?: (userId: string, payload: any) => Promise<any>;
   handleAdminAutoReply?: (userId: string, text: string) => Promise<any>;
   verifyToken?: (token: string) => { valid: boolean; userId?: string; error?: string };
+  indexSecondaryDirectMessage?: (dm: any, db?: any) => void;
 }
 
 // In-Memory Real-Time State (ZERO Firestore writes for ephemeral events)
@@ -464,6 +466,11 @@ function handleSocketMessage(ws: WebSocket, rawData: any) {
       db.directMessages = [];
     }
     db.directMessages.push(newMsg);
+    if (deps.indexSecondaryDirectMessage) {
+      deps.indexSecondaryDirectMessage(newMsg, db);
+    } else {
+      indexSecondaryDirectMessage(newMsg, db);
+    }
     deps.saveDB(db, true);
 
     // Secondary Cloud Sync (Queue-backed, quota safe)

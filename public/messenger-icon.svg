@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="zmBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3730a3" />
+      <stop offset="55%" stop-color="#2563eb" />
+      <stop offset="100%" stop-color="#0ea5e9" />
+    </linearGradient>
+    <linearGradient id="zmBolt" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3730a3" />
+      <stop offset="100%" stop-color="#2563eb" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#zmBg)" />
+  <path d="M256 104c-92.8 0-168 67.2-168 150.1 0 47.1 24.3 89.1 62.4 116.7V424l53.5-29.4c16.6 4.6 34.1 7.1 52.1 7.1 92.8 0 168-67.2 168-150.1S348.8 104 256 104z" fill="#ffffff" />
+  <polygon points="222,268 292,176 266,244 326,244 218,340 246,268" fill="url(#zmBolt)" />
+</svg>

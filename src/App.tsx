@@ -103,6 +103,7 @@ import { HashtagDiscoveryModal } from './components/HashtagDiscoveryModal';
 import { UserProfileModal } from './components/UserProfileModal';
 import { ZoneLandingExperience } from './components/ZoneLandingExperience';
 import { SocialNotificationCenter } from './components/SocialNotificationCenter';
+import ZoneMessengerApp from './components/ZoneMessengerApp';
 import { getOrCreateDeviceKeyId, getDeviceSecurityHeaders } from './utils/deviceSecurity';
 import { dataSaver, generateIdempotencyKey } from './utils/dataSaver';
 import { idbStorage } from './utils/idbStorage';
@@ -971,8 +972,24 @@ export default function App() {
   }, []);
 
 
+  const [isMessengerRoute, setIsMessengerRoute] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const p = window.location.pathname.replace(/\/+$/, '');
+    return p === '/messenger' || p.startsWith('/messenger/');
+  });
+
+  useEffect(() => {
+    const checkMessengerRoute = () => {
+      const p = window.location.pathname.replace(/\/+$/, '');
+      setIsMessengerRoute(p === '/messenger' || p.startsWith('/messenger/'));
+    };
+    window.addEventListener('popstate', checkMessengerRoute);
+    return () => window.removeEventListener('popstate', checkMessengerRoute);
+  }, []);
+
   // Central Asia/Manila Monetag Ad Scheduler Controller
   useEffect(() => {
+    if (isMessengerRoute) return;
     // Run automated boundary checks
     const testSuite = runMonetagBoundaryTests();
     console.log(`[MonetagScheduler] Boundary verification complete: ${testSuite.allPassed ? '✅ ALL PASSED' : '❌ FAILED'}`, testSuite.results);
@@ -983,7 +1000,7 @@ export default function App() {
     return () => {
       monetagScheduler.destroy();
     };
-  }, []);
+  }, [isMessengerRoute]);
 
   // Hide Install App button when user is logged in
   useEffect(() => {
@@ -1886,6 +1903,91 @@ export default function App() {
     if (campaignFilter === 'available') return !c.completed;
     return true;
   });
+
+  if (isMessengerRoute) {
+    return (
+      <div id="messenger-pwa-root" className="min-h-screen bg-slate-950 flex flex-col text-slate-800 font-sans antialiased">
+        {/* 🔔 FLOATING NOTIFICATION SYSTEM */}
+        <AnimatePresence>
+          {notification && (
+            <div className="fixed top-3 sm:top-5 inset-x-0 z-[9999999] flex justify-center px-3 pointer-events-none">
+              <motion.div
+                initial={{ opacity: 0, y: -40, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                transition={{ type: 'spring', stiffness: 450, damping: 30 }}
+                className={`pointer-events-auto w-full max-w-[420px] p-3.5 sm:p-4 rounded-[22px] bg-white border-2 flex items-center gap-3 shadow-2xl ${
+                  notification.type === 'success'
+                    ? 'border-emerald-500'
+                    : notification.type === 'error'
+                    ? 'border-rose-500'
+                    : 'border-indigo-500'
+                }`}
+              >
+                <div className={`w-10 h-10 rounded-xl shrink-0 flex items-center justify-center text-lg border ${
+                  notification.type === 'success'
+                    ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                    : notification.type === 'error'
+                    ? 'bg-rose-100 text-rose-700 border-rose-300'
+                    : 'bg-indigo-100 text-indigo-700 border-indigo-300'
+                }`}>
+                  {notification.type === 'success' ? '✅' : notification.type === 'error' ? '🚨' : '💬'}
+                </div>
+                <div className="flex-1 min-w-0 pr-1">
+                  <span className="text-[10px] font-black block text-indigo-600 uppercase tracking-widest leading-none mb-1">
+                    Z-ONEMESSENGER
+                  </span>
+                  <p className="text-xs sm:text-sm font-extrabold leading-snug text-slate-900 break-words">
+                    {notification.message}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setNotification(null)}
+                  className="p-1.5 text-slate-500 hover:text-slate-900 rounded-full bg-slate-100 hover:bg-slate-200 transition shrink-0 cursor-pointer"
+                >
+                  <X className="w-4 h-4 text-slate-700" />
+                </button>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* 📱 SECURE DEVICE RECOVERY & TRANSFER MODAL */}
+        <DeviceTransferModal
+          isOpen={showDeviceTransferModal}
+          onClose={() => setShowDeviceTransferModal(false)}
+          userEmail={user?.email}
+          token={token || undefined}
+          onSuccess={() => {
+            triggerNotification('🎉 Tagumpay na nailipat ang iyong account sa bagong device!', 'success');
+            if (token) {
+              fetchUserProfile(token);
+            }
+          }}
+          triggerNotification={triggerNotification}
+        />
+
+        <ZoneMessengerApp
+          token={token}
+          user={user}
+          setToken={setToken}
+          setUser={setUser}
+          language={language}
+          setLanguage={setLanguage}
+          onLogout={handleLogout}
+          onRefreshProfile={() => {
+            if (token) fetchUserProfile(token, true);
+          }}
+          onNavigateHome={() => {
+            window.location.href = '/';
+          }}
+          onOpenDeviceTransfer={() => setShowDeviceTransferModal(true)}
+          triggerNotification={triggerNotification}
+        />
+      </div>
+    );
+  }
 
   return (
     <div id="application-sandbox-root" className="min-h-screen bg-slate-100 flex flex-col text-slate-800 font-sans antialiased selection:bg-blue-600 selection:text-white">

@@ -46,12 +46,30 @@
  <!----- <meta name="monetag" content="11e081287c25e53b58eb8233ab78e674"> ---->
     
     <!-- PWA Settings -->
-    <link rel="manifest" href="manifest.json">
-    <meta name="theme-color" content="#2196f3">
+    <link id="app-manifest-link" rel="manifest" href="/manifest.json">
+    <meta id="app-theme-color" name="theme-color" content="#2196f3">
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Z-oneApp" />
-    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <meta id="app-apple-title" name="apple-mobile-web-app-title" content="Z-oneApp" />
+    <link id="app-apple-touch-icon" rel="apple-touch-icon" href="/icon-192.png">
+    <script>
+      (function() {
+        try {
+          var p = window.location.pathname.replace(/\/+$/, '');
+          if (p === '/messenger' || p.indexOf('/messenger/') === 0) {
+            document.title = 'Z-oneMessenger: Instant Direct Messages, Group Chats & HD Calls';
+            var mLink = document.getElementById('app-manifest-link');
+            if (mLink) mLink.setAttribute('href', '/manifest-messenger.json');
+            var tColor = document.getElementById('app-theme-color');
+            if (tColor) tColor.setAttribute('content', '#4f46e5');
+            var aTitle = document.getElementById('app-apple-title');
+            if (aTitle) aTitle.setAttribute('content', 'Z-oneMessenger');
+            var aIcon = document.getElementById('app-apple-touch-icon');
+            if (aIcon) aIcon.setAttribute('href', '/messenger-icon-192.png');
+          }
+        } catch (e) {}
+      })();
+    </script>
     
     <style>
       .install-btn {
@@ -221,7 +239,10 @@
       window.addEventListener("beforeinstallprompt", (e) => {
         e.preventDefault();
         deferredPrompt = e;
-        if (!document.body.classList.contains('user-logged-in') && installBtn) {
+        window.deferredPrompt = e;
+        window.deferredMessengerPrompt = e;
+        var isMessengerPath = window.location.pathname.replace(/\/+$/, '') === '/messenger' || window.location.pathname.indexOf('/messenger/') === 0;
+        if (!isMessengerPath && !document.body.classList.contains('user-logged-in') && installBtn) {
           installBtn.style.display = "block";
         }
       });
