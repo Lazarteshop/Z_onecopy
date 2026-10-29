@@ -1,0 +1,1171 @@
+import * as THREE from 'three';
+
+export type HoloClipName = 'idle' | 'walk' | 'wave' | 'converse' | 'look';
+
+export interface HoloCitizenConfig {
+  id: string;
+  label: string;
+  roleTag: string;
+  primaryColor: string;
+  secondaryColor: string;
+  heightScale: number;
+  walkSpeed: number;
+  waypoints: THREE.Vector3[];
+  initialWaypointIndex: number;
+  phaseOffset: number;
+}
+
+export interface HoloShaderUniforms {
+  uTime: { value: number };
+  uPrimaryColor: { value: THREE.Color };
+  uSecondaryColor: { value: THREE.Color };
+  uScanlineDensity: { value: number };
+  uOpacity: { value: number };
+}
+
+/**
+ * Bone indices in the 17-bone humanoid skeleton:
+ * 0: pelvis (root)
+ * 1: spine
+ * 2: chest
+ * 3: neck
+ * 4: head
+ * 5: shoulderL
+ * 6: upperArmL
+ * 7: lowerArmL
+ * 8: shoulderR
+ * 9: upperArmR
+ * 10: lowerArmR
+ * 11: thighL
+ * 12: shinL
+ * 13: footL
+ * 14: thighR
+ * 15: shinR
+ * 16: footR
+ */
+export const BONE_INDEX = {
+  pelvis: 0,
+  spine: 1,
+  chest: 2,
+  neck: 3,
+  head: 4,
+  shoulderL: 5,
+  upperArmL: 6,
+  lowerArmL: 7,
+  shoulderR: 8,
+  upperArmR: 9,
+  lowerArmR: 10,
+  thighL: 11,
+  shinL: 12,
+  footL: 13,
+  thighR: 14,
+  shinR: 15,
+  footR: 16,
+} as const;
+
+interface SkinnedPartSpec {
+  geometry: THREE.BufferGeometry;
+  primaryBone: number;
+  secondaryBone?: number;
+  blendStartY?: number;
+  blendEndY?: number;
+}
+
+/**
+ * Merges multiple BufferGeometries with explicit bone skinning indices and smooth joint weights
+ * into a single unified BufferGeometry suitable for a THREE.SkinnedMesh.
+ */
+function buildUnifiedSkinnedHumanoidGeometry(liteMode: boolean): THREE.BufferGeometry {
+  const radialSegs = liteMode ? 8 : 14;
+  const heightSegs = liteMode ? 4 : 8;
+
+  const parts: SkinnedPartSpec[] = [];
+
+  const addPart = (
+    geo: THREE.BufferGeometry,
+    translateX: number,
+    translateY: number,
+    translateZ: number,
+    primaryBone: number,
+    secondaryBone?: number,
+    blendStartY?: number,
+    blendEndY?: number
+  ) => {
+    const nonIndexed = geo.index ? geo.toNonIndexed() : geo.clone();
+    nonIndexed.translate(translateX, translateY, translateZ);
+    parts.push({
+      geometry: nonIndexed,
+      primaryBone,
+      secondaryBone,
+      blendStartY,
+      blendEndY,
+    });
+    geo.dispose();
+  };
+
+  // 0. Pelvis / Hip core (centered around y = 0.97)
+  const pelvisGeo = new THREE.CylinderGeometry(0.145, 0.13, 0.16, radialSegs, heightSegs);
+  pelvisGeo.scale(1.15, 1.0, 0.78);
+  addPart(pelvisGeo, 0, 0.97, 0, BONE_INDEX.pelvis, BONE_INDEX.spine, 1.01, 1.06);
+
+  // 1. Lower & Mid Spine / Abdomen (y = 1.05 to 1.23)
+  const spineGeo = new THREE.CylinderGeometry(0.145, 0.135, 0.20, radialSegs, heightSegs);
+  spineGeo.scale(1.1, 1.0, 0.75);
+  addPart(spineGeo, 0, 1.14, 0, BONE_INDEX.spine, BONE_INDEX.chest, 1.18, 1.25);
+
+  // 2. Upper Torso / Chest (y = 1.22 to 1.48)
+  const chestGeo = new THREE.CylinderGeometry(0.185, 0.145, 0.27, radialSegs, heightSegs);
+  chestGeo.scale(1.18, 1.0, 0.78);
+  addPart(chestGeo, 0, 1.35, 0, BONE_INDEX.chest, BONE_INDEX.spine, 1.25, 1.20);
+
+  // Chest holographic core emblem plate
+  const emblemGeo = new THREE.BoxGeometry(0.16, 0.10, 0.04, 2, 2, 1);
+  addPart(emblemGeo, 0, 1.38, 0.135, BONE_INDEX.chest);
+
+  // 3. Neck (y = 1.48 to 1.58)
+  const neckGeo = new THREE.CylinderGeometry(0.058, 0.068, 0.11, radialSegs, 3);
+  addPart(neckGeo, 0, 1.53, 0, BONE_INDEX.neck, BONE_INDEX.head, 1.55, 1.59);
+
+  // 4. Sculpted Cranium & Jaw (y = 1.58 to 1.82)
+  const headGeo = new THREE.SphereGeometry(0.115, radialSegs + 2, radialSegs);
+  headGeo.scale(0.92, 1.12, 0.98);
+  addPart(headGeo, 0, 1.69, 0.01, BONE_INDEX.head, BONE_INDEX.neck, 1.60, 1.56);
+
+  // Futuristic Holographic Visor band on front of head so head turns are immediately readable
+  const visorGeo = new THREE.BoxGeometry(0.17, 0.048, 0.08, 4, 1, 2);
+  addPart(visorGeo, 0, 1.70, 0.085, BONE_INDEX.head);
+
+  // 5 & 8. Left & Right Shoulder Deltoid Caps
+  const shoulderGeoL = new THREE.SphereGeometry(0.072, radialSegs, Math.max(4, heightSegs));
+  shoulderGeoL.scale(1.1, 0.95, 0.95);
+  addPart(shoulderGeoL, 0.23, 1.44, 0, BONE_INDEX.shoulderL, BONE_INDEX.upperArmL, 1.42, 1.38);
+
+  const shoulderGeoR = new THREE.SphereGeometry(0.072, radialSegs, Math.max(4, heightSegs));
+  shoulderGeoR.scale(1.1, 0.95, 0.95);
+  addPart(shoulderGeoR, -0.23, 1.44, 0, BONE_INDEX.shoulderR, BONE_INDEX.upperArmR, 1.42, 1.38);
+
+  // 6 & 9. Upper Arms (y = 1.14 to 1.42)
+  const upperArmGeoL = new THREE.CapsuleGeometry(0.05, 0.21, 4, radialSegs);
+  addPart(upperArmGeoL, 0.24, 1.28, 0, BONE_INDEX.upperArmL, BONE_INDEX.lowerArmL, 1.19, 1.13);
+
+  const upperArmGeoR = new THREE.CapsuleGeometry(0.05, 0.21, 4, radialSegs);
+  addPart(upperArmGeoR, -0.24, 1.28, 0, BONE_INDEX.upperArmR, BONE_INDEX.lowerArmR, 1.19, 1.13);
+
+  // 7 & 10. Forearms + Stylized Hands (y = 0.84 to 1.14)
+  const lowerArmGeoL = new THREE.CapsuleGeometry(0.042, 0.20, 4, radialSegs);
+  addPart(lowerArmGeoL, 0.24, 1.00, 0, BONE_INDEX.lowerArmL, BONE_INDEX.upperArmL, 1.10, 1.15);
+
+  const handGeoL = new THREE.BoxGeometry(0.045, 0.09, 0.065, 2, 2, 2);
+  addPart(handGeoL, 0.24, 0.85, 0.01, BONE_INDEX.lowerArmL);
+
+  const lowerArmGeoR = new THREE.CapsuleGeometry(0.042, 0.20, 4, radialSegs);
+  addPart(lowerArmGeoR, -0.24, 1.00, 0, BONE_INDEX.lowerArmR, BONE_INDEX.upperArmR, 1.10, 1.15);
+
+  const handGeoR = new THREE.BoxGeometry(0.045, 0.09, 0.065, 2, 2, 2);
+  addPart(handGeoR, -0.24, 0.85, 0.01, BONE_INDEX.lowerArmR);
+
+  // 11 & 14. Left & Right Thighs (y = 0.50 to 0.92)
+  const thighGeoL = new THREE.CapsuleGeometry(0.068, 0.32, 4, radialSegs);
+  addPart(thighGeoL, 0.11, 0.71, 0, BONE_INDEX.thighL, BONE_INDEX.shinL, 0.56, 0.48);
+
+  const thighGeoR = new THREE.CapsuleGeometry(0.068, 0.32, 4, radialSegs);
+  addPart(thighGeoR, -0.11, 0.71, 0, BONE_INDEX.thighR, BONE_INDEX.shinR, 0.56, 0.48);
+
+  // 12 & 15. Left & Right Shins / Calves (y = 0.08 to 0.50)
+  const shinGeoL = new THREE.CapsuleGeometry(0.052, 0.32, 4, radialSegs);
+  addPart(shinGeoL, 0.11, 0.28, 0, BONE_INDEX.shinL, BONE_INDEX.thighL, 0.44, 0.51);
+
+  const shinGeoR = new THREE.CapsuleGeometry(0.052, 0.32, 4, radialSegs);
+  addPart(shinGeoR, -0.11, 0.28, 0, BONE_INDEX.shinR, BONE_INDEX.thighR, 0.44, 0.51);
+
+  // 13 & 16. Left & Right Feet (y = 0.0 to 0.08)
+  const footGeoL = new THREE.BoxGeometry(0.085, 0.065, 0.19, 2, 2, 3);
+  addPart(footGeoL, 0.11, 0.035, 0.04, BONE_INDEX.footL, BONE_INDEX.shinL, 0.05, 0.08);
+
+  const footGeoR = new THREE.BoxGeometry(0.085, 0.065, 0.19, 2, 2, 3);
+  addPart(footGeoR, -0.11, 0.035, 0.04, BONE_INDEX.footR, BONE_INDEX.shinR, 0.05, 0.08);
+
+  // Count total vertices
+  let totalVertices = 0;
+  for (const part of parts) {
+    totalVertices += part.geometry.attributes.position.count;
+  }
+
+  const positions = new Float32Array(totalVertices * 3);
+  const normals = new Float32Array(totalVertices * 3);
+  const uvs = new Float32Array(totalVertices * 2);
+  const skinIndices = new Uint16Array(totalVertices * 4);
+  const skinWeights = new Float32Array(totalVertices * 4);
+
+  let vOffset = 0;
+  for (const part of parts) {
+    const posAttr = part.geometry.attributes.position;
+    const normAttr = part.geometry.attributes.normal;
+    const uvAttr = part.geometry.attributes.uv;
+    const count = posAttr.count;
+
+    for (let i = 0; i < count; i++) {
+      const idx3 = (vOffset + i) * 3;
+      const idx2 = (vOffset + i) * 2;
+      const idx4 = (vOffset + i) * 4;
+
+      const vx = posAttr.getX(i);
+      const vy = posAttr.getY(i);
+      const vz = posAttr.getZ(i);
+
+      positions[idx3] = vx;
+      positions[idx3 + 1] = vy;
+      positions[idx3 + 2] = vz;
+
+      if (normAttr) {
+        normals[idx3] = normAttr.getX(i);
+        normals[idx3 + 1] = normAttr.getY(i);
+        normals[idx3 + 2] = normAttr.getZ(i);
+      } else {
+        normals[idx3 + 1] = 1;
+      }
+
+      if (uvAttr) {
+        uvs[idx2] = uvAttr.getX(i);
+        uvs[idx2 + 1] = uvAttr.getY(i);
+      }
+
+      let wPrimary = 1.0;
+      let wSecondary = 0.0;
+      const bSecondary = part.secondaryBone ?? part.primaryBone;
+
+      if (
+        part.secondaryBone !== undefined &&
+        part.blendStartY !== undefined &&
+        part.blendEndY !== undefined &&
+        part.blendStartY !== part.blendEndY
+      ) {
+        const t = THREE.MathUtils.clamp(
+          (vy - part.blendStartY) / (part.blendEndY - part.blendStartY),
+          0,
+          1
+        );
+        wSecondary = t * 0.45;
+        wPrimary = 1.0 - wSecondary;
+      }
+
+      skinIndices[idx4] = part.primaryBone;
+      skinIndices[idx4 + 1] = bSecondary;
+      skinIndices[idx4 + 2] = 0;
+      skinIndices[idx4 + 3] = 0;
+
+      skinWeights[idx4] = wPrimary;
+      skinWeights[idx4 + 1] = wSecondary;
+      skinWeights[idx4 + 2] = 0;
+      skinWeights[idx4 + 3] = 0;
+    }
+
+    vOffset += count;
+    part.geometry.dispose();
+  }
+
+  const unified = new THREE.BufferGeometry();
+  unified.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  unified.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  unified.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  unified.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
+  unified.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
+  unified.computeBoundingSphere();
+
+  return unified;
+}
+
+/**
+ * Creates the 17-bone hierarchy matching the anatomical bind-pose coordinates.
+ */
+function createHumanoidBones(): THREE.Bone[] {
+  const bones: THREE.Bone[] = [];
+
+  const makeBone = (name: string, x: number, y: number, z: number, parent?: THREE.Bone) => {
+    const bone = new THREE.Bone();
+    bone.name = name;
+    bone.position.set(x, y, z);
+    if (parent) {
+      parent.add(bone);
+    }
+    bones.push(bone);
+    return bone;
+  };
+
+  // 0: pelvis at world (0, 0.97, 0)
+  const pelvis = makeBone('pelvis', 0, 0.97, 0);
+  // 1: spine at world (0, 1.08, 0) -> local (0, 0.11, 0)
+  const spine = makeBone('spine', 0, 0.11, 0, pelvis);
+  // 2: chest at world (0, 1.24, 0) -> local (0, 0.16, 0)
+  const chest = makeBone('chest', 0, 0.16, 0, spine);
+  // 3: neck at world (0, 1.49, 0) -> local (0, 0.25, 0)
+  const neck = makeBone('neck', 0, 0.25, 0, chest);
+  // 4: head at world (0, 1.59, 0) -> local (0, 0.10, 0)
+  makeBone('head', 0, 0.10, 0, neck);
+
+  // 5: shoulderL at world (0.18, 1.44, 0) -> local (0.18, 0.20, 0)
+  const shoulderL = makeBone('shoulderL', 0.18, 0.20, 0, chest);
+  // 6: upperArmL at world (0.24, 1.42, 0) -> local (0.06, -0.02, 0)
+  const upperArmL = makeBone('upperArmL', 0.06, -0.02, 0, shoulderL);
+  // 7: lowerArmL at world (0.24, 1.14, 0) -> local (0, -0.28, 0)
+  makeBone('lowerArmL', 0, -0.28, 0, upperArmL);
+
+  // 8: shoulderR at world (-0.18, 1.44, 0) -> local (-0.18, 0.20, 0)
+  const shoulderR = makeBone('shoulderR', -0.18, 0.20, 0, chest);
+  // 9: upperArmR at world (-0.24, 1.42, 0) -> local (-0.06, -0.02, 0)
+  const upperArmR = makeBone('upperArmR', -0.06, -0.02, 0, shoulderR);
+  // 10: lowerArmR at world (-0.24, 1.14, 0) -> local (0, -0.28, 0)
+  makeBone('lowerArmR', 0, -0.28, 0, upperArmR);
+
+  // 11: thighL at world (0.11, 0.91, 0) -> local (0.11, -0.06, 0)
+  const thighL = makeBone('thighL', 0.11, -0.06, 0, pelvis);
+  // 12: shinL at world (0.11, 0.49, 0) -> local (0, -0.42, 0)
+  const shinL = makeBone('shinL', 0, -0.42, 0, thighL);
+  // 13: footL at world (0.11, 0.06, 0) -> local (0, -0.43, 0)
+  makeBone('footL', 0, -0.43, 0, shinL);
+
+  // 14: thighR at world (-0.11, 0.91, 0) -> local (-0.11, -0.06, 0)
+  const thighR = makeBone('thighR', -0.11, -0.06, 0, pelvis);
+  // 15: shinR at world (-0.11, 0.49, 0) -> local (0, -0.42, 0)
+  const shinR = makeBone('shinR', 0, -0.42, 0, thighR);
+  // 16: footR at world (-0.11, 0.06, 0) -> local (0, -0.43, 0)
+  makeBone('footR', 0, -0.43, 0, shinR);
+
+  return bones;
+}
+
+/**
+ * Helper to create a QuaternionKeyframeTrack from Euler angles (XYZ) at keyframe times.
+ */
+function createEulerTrack(
+  boneName: string,
+  times: number[],
+  eulers: Array<[number, number, number]>
+): THREE.QuaternionKeyframeTrack {
+  const values: number[] = [];
+  const euler = new THREE.Euler();
+  const quat = new THREE.Quaternion();
+  for (const [rx, ry, rz] of eulers) {
+    euler.set(rx, ry, rz, 'XYZ');
+    quat.setFromEuler(euler);
+    values.push(quat.x, quat.y, quat.z, quat.w);
+  }
+  return new THREE.QuaternionKeyframeTrack(`${boneName}.quaternion`, times, values);
+}
+
+/**
+ * Builds the 5 skeletal AnimationClips:
+ * 1. idle (breathing + natural weight shift)
+ * 2. walk (natural bipedal stride + counter-swinging arms)
+ * 3. wave (friendly raised hand wave + welcoming head tilt)
+ * 4. converse (expressive conversational two-hand gestures + head nods)
+ * 5. look (curious architectural head scan + subtle torso turn)
+ */
+export function buildHumanoidAnimationClips(): Record<HoloClipName, THREE.AnimationClip> {
+  // 1. IDLE CLIP (3.6s loop: breathing chest + lateral weight shift)
+  const idleTimes = [0, 0.9, 1.8, 2.7, 3.6];
+  const idleTracks: THREE.KeyframeTrack[] = [
+    new THREE.VectorKeyframeTrack(
+      'pelvis.position',
+      idleTimes,
+      [
+        0.0, 0.97, 0.0,
+        0.022, 0.964, 0.005,
+        0.0, 0.972, 0.0,
+        -0.022, 0.964, -0.005,
+        0.0, 0.97, 0.0,
+      ]
+    ),
+    createEulerTrack('pelvis', idleTimes, [
+      [0, 0, 0],
+      [0.01, 0.03, -0.035],
+      [0, 0, 0],
+      [0.01, -0.03, 0.035],
+      [0, 0, 0],
+    ]),
+    createEulerTrack('spine', idleTimes, [
+      [0.02, 0, 0],
+      [-0.025, -0.02, 0.025],
+      [0.025, 0, 0],
+      [-0.025, 0.02, -0.025],
+      [0.02, 0, 0],
+    ]),
+    createEulerTrack('chest', idleTimes, [
+      [-0.02, 0, 0],
+      [0.045, 0.02, 0.015],
+      [-0.02, 0, 0],
+      [0.045, -0.02, -0.015],
+      [-0.02, 0, 0],
+    ]),
+    createEulerTrack('head', idleTimes, [
+      [0, 0, 0],
+      [-0.03, 0.08, 0.01],
+      [0.02, 0, 0],
+      [-0.02, -0.08, -0.01],
+      [0, 0, 0],
+    ]),
+    createEulerTrack('upperArmL', idleTimes, [
+      [0.04, 0, -0.08],
+      [-0.02, 0, -0.11],
+      [0.04, 0, -0.08],
+      [0.01, 0, -0.09],
+      [0.04, 0, -0.08],
+    ]),
+    createEulerTrack('lowerArmL', idleTimes, [
+      [-0.18, 0, 0],
+      [-0.24, 0, 0],
+      [-0.18, 0, 0],
+      [-0.22, 0, 0],
+      [-0.18, 0, 0],
+    ]),
+    createEulerTrack('upperArmR', idleTimes, [
+      [0.04, 0, 0.08],
+      [0.01, 0, 0.09],
+      [0.04, 0, 0.08],
+      [-0.02, 0, 0.11],
+      [0.04, 0, 0.08],
+    ]),
+    createEulerTrack('lowerArmR', idleTimes, [
+      [-0.18, 0, 0],
+      [-0.22, 0, 0],
+      [-0.18, 0, 0],
+      [-0.24, 0, 0],
+      [-0.18, 0, 0],
+    ]),
+    createEulerTrack('thighL', idleTimes, [
+      [0, 0, 0],
+      [-0.03, 0, 0.03],
+      [0, 0, 0],
+      [0.02, 0, -0.02],
+      [0, 0, 0],
+    ]),
+    createEulerTrack('shinL', idleTimes, [
+      [0.04, 0, 0],
+      [0.08, 0, 0],
+      [0.04, 0, 0],
+      [0.03, 0, 0],
+      [0.04, 0, 0],
+    ]),
+    createEulerTrack('thighR', idleTimes, [
+      [0, 0, 0],
+      [0.02, 0, 0.02],
+      [0, 0, 0],
+      [-0.03, 0, -0.03],
+      [0, 0, 0],
+    ]),
+    createEulerTrack('shinR', idleTimes, [
+      [0.04, 0, 0],
+      [0.03, 0, 0],
+      [0.04, 0, 0],
+      [0.08, 0, 0],
+      [0.04, 0, 0],
+    ]),
+  ];
+  const idleClip = new THREE.AnimationClip('idle', 3.6, idleTracks);
+
+  // 2. WALK CLIP (1.2s full stride cycle)
+  const walkTimes = [0, 0.3, 0.6, 0.9, 1.2];
+  const walkTracks: THREE.KeyframeTrack[] = [
+    new THREE.VectorKeyframeTrack(
+      'pelvis.position',
+      walkTimes,
+      [
+        0.0, 0.955, 0.0,
+        0.016, 0.985, 0.0,
+        0.0, 0.955, 0.0,
+        -0.016, 0.985, 0.0,
+        0.0, 0.955, 0.0,
+      ]
+    ),
+    createEulerTrack('pelvis', walkTimes, [
+      [0.03, -0.07, -0.02],
+      [0.02, 0.0, -0.035],
+      [0.03, 0.07, 0.02],
+      [0.02, 0.0, 0.035],
+      [0.03, -0.07, -0.02],
+    ]),
+    createEulerTrack('spine', walkTimes, [
+      [0.04, 0.05, 0.01],
+      [0.03, 0.0, 0.02],
+      [0.04, -0.05, -0.01],
+      [0.03, 0.0, -0.02],
+      [0.04, 0.05, 0.01],
+    ]),
+    createEulerTrack('chest', walkTimes, [
+      [0.03, 0.06, 0],
+      [0.02, 0.0, 0],
+      [0.03, -0.06, 0],
+      [0.02, 0.0, 0],
+      [0.03, 0.06, 0],
+    ]),
+    createEulerTrack('head', walkTimes, [
+      [-0.02, -0.04, 0],
+      [0.01, 0.0, 0],
+      [-0.02, 0.04, 0],
+      [0.01, 0.0, 0],
+      [-0.02, -0.04, 0],
+    ]),
+    // Arms counter-swinging opposite to legs
+    createEulerTrack('upperArmL', walkTimes, [
+      [0.36, 0, -0.07],
+      [0.0, 0, -0.08],
+      [-0.38, 0, -0.07],
+      [0.0, 0, -0.08],
+      [0.36, 0, -0.07],
+    ]),
+    createEulerTrack('lowerArmL', walkTimes, [
+      [-0.20, 0, 0],
+      [-0.36, 0, 0],
+      [-0.52, 0, 0],
+      [-0.32, 0, 0],
+      [-0.20, 0, 0],
+    ]),
+    createEulerTrack('upperArmR', walkTimes, [
+      [-0.38, 0, 0.07],
+      [0.0, 0, 0.08],
+      [0.36, 0, 0.07],
+      [0.0, 0, 0.08],
+      [-0.38, 0, 0.07],
+    ]),
+    createEulerTrack('lowerArmR', walkTimes, [
+      [-0.52, 0, 0],
+      [-0.32, 0, 0],
+      [-0.20, 0, 0],
+      [-0.36, 0, 0],
+      [-0.52, 0, 0],
+    ]),
+    // Left leg: forward at t=0, passing back at t=0.6
+    createEulerTrack('thighL', walkTimes, [
+      [-0.45, 0, 0],
+      [0.02, 0, 0],
+      [0.40, 0, 0],
+      [-0.12, 0, 0],
+      [-0.45, 0, 0],
+    ]),
+    createEulerTrack('shinL', walkTimes, [
+      [0.12, 0, 0],
+      [0.18, 0, 0],
+      [0.32, 0, 0],
+      [0.72, 0, 0],
+      [0.12, 0, 0],
+    ]),
+    createEulerTrack('footL', walkTimes, [
+      [-0.15, 0, 0],
+      [0.0, 0, 0],
+      [0.22, 0, 0],
+      [-0.18, 0, 0],
+      [-0.15, 0, 0],
+    ]),
+    // Right leg: opposite phase to left leg
+    createEulerTrack('thighR', walkTimes, [
+      [0.40, 0, 0],
+      [-0.12, 0, 0],
+      [-0.45, 0, 0],
+      [0.02, 0, 0],
+      [0.40, 0, 0],
+    ]),
+    createEulerTrack('shinR', walkTimes, [
+      [0.32, 0, 0],
+      [0.72, 0, 0],
+      [0.12, 0, 0],
+      [0.18, 0, 0],
+      [0.32, 0, 0],
+    ]),
+    createEulerTrack('footR', walkTimes, [
+      [0.22, 0, 0],
+      [-0.18, 0, 0],
+      [-0.15, 0, 0],
+      [0.0, 0, 0],
+      [0.22, 0, 0],
+    ]),
+  ];
+  const walkClip = new THREE.AnimationClip('walk', 1.2, walkTracks);
+
+  // 3. FRIENDLY WAVE CLIP (2.4s loop: raised right arm waving + friendly head tilt + weight shift)
+  const waveTimes = [0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4];
+  const waveTracks: THREE.KeyframeTrack[] = [
+    new THREE.VectorKeyframeTrack(
+      'pelvis.position',
+      waveTimes,
+      [
+        0.0, 0.97, 0.0,
+        0.02, 0.968, 0.0,
+        0.025, 0.972, 0.0,
+        0.02, 0.968, 0.0,
+        0.025, 0.972, 0.0,
+        0.015, 0.969, 0.0,
+        0.0, 0.97, 0.0,
+      ]
+    ),
+    createEulerTrack('chest', waveTimes, [
+      [0, 0, 0],
+      [-0.04, 0.08, 0.04],
+      [-0.05, 0.10, 0.05],
+      [-0.04, 0.08, 0.04],
+      [-0.05, 0.10, 0.05],
+      [-0.03, 0.05, 0.02],
+      [0, 0, 0],
+    ]),
+    createEulerTrack('head', waveTimes, [
+      [0, 0, 0],
+      [-0.06, 0.12, -0.06],
+      [-0.02, 0.15, -0.08],
+      [-0.07, 0.10, -0.04],
+      [-0.02, 0.14, -0.08],
+      [-0.04, 0.06, -0.03],
+      [0, 0, 0],
+    ]),
+    createEulerTrack('upperArmR', waveTimes, [
+      [-0.35, 0.0, 0.45],
+      [-0.85, -0.2, 1.85],
+      [-0.85, -0.2, 2.15],
+      [-0.85, -0.2, 1.75],
+      [-0.85, -0.2, 2.15],
+      [-0.65, -0.1, 1.35],
+      [-0.35, 0.0, 0.45],
+    ]),
+    createEulerTrack('lowerArmR', waveTimes, [
+      [-0.45, 0, 0],
+      [-0.85, 0, 0.28],
+      [-0.75, 0, -0.26],
+      [-0.85, 0, 0.30],
+      [-0.75, 0, -0.26],
+      [-0.65, 0, 0.12],
+      [-0.45, 0, 0],
+    ]),
+    createEulerTrack('upperArmL', waveTimes, [
+      [0.05, 0, -0.10],
+      [0.08, 0, -0.14],
+      [0.06, 0, -0.12],
+      [0.08, 0, -0.14],
+      [0.06, 0, -0.12],
+      [0.05, 0, -0.11],
+      [0.05, 0, -0.10],
+    ]),
+    createEulerTrack('lowerArmL', waveTimes, [
+      [-0.22, 0, 0],
+      [-0.28, 0, 0],
+      [-0.25, 0, 0],
+      [-0.28, 0, 0],
+      [-0.25, 0, 0],
+      [-0.24, 0, 0],
+      [-0.22, 0, 0],
+    ]),
+  ];
+  const waveClip = new THREE.AnimationClip('wave', 2.4, waveTracks);
+
+  // 4. CONVERSE CLIP (3.2s loop: natural conversational gestures + nods + torso engagement)
+  const convTimes = [0, 0.8, 1.6, 2.4, 3.2];
+  const convTracks: THREE.KeyframeTrack[] = [
+    new THREE.VectorKeyframeTrack(
+      'pelvis.position',
+      convTimes,
+      [
+        0.0, 0.97, 0.0,
+        -0.018, 0.966, 0.01,
+        0.012, 0.971, 0.0,
+        0.02, 0.965, 0.01,
+        0.0, 0.97, 0.0,
+      ]
+    ),
+    createEulerTrack('spine', convTimes, [
+      [0.02, 0, 0],
+      [0.04, 0.05, -0.02],
+      [0.01, -0.04, 0.02],
+      [0.05, 0.03, 0.01],
+      [0.02, 0, 0],
+    ]),
+    createEulerTrack('chest', convTimes, [
+      [0, 0, 0],
+      [0.03, 0.06, 0],
+      [-0.02, -0.05, 0],
+      [0.04, 0.04, 0],
+      [0, 0, 0],
+    ]),
+    createEulerTrack('head', convTimes, [
+      [0.02, 0.05, 0],
+      [0.09, 0.14, 0.03],
+      [-0.04, -0.12, -0.02],
+      [0.08, 0.08, 0.02],
+      [0.02, 0.05, 0],
+    ]),
+    createEulerTrack('upperArmL', convTimes, [
+      [-0.32, 0.12, -0.14],
+      [-0.55, 0.25, -0.26],
+      [-0.28, 0.08, -0.12],
+      [-0.48, 0.18, -0.20],
+      [-0.32, 0.12, -0.14],
+    ]),
+    createEulerTrack('lowerArmL', convTimes, [
+      [-0.75, 0.2, 0],
+      [-1.12, 0.35, -0.15],
+      [-0.65, 0.1, 0],
+      [-0.98, 0.28, -0.1],
+      [-0.75, 0.2, 0],
+    ]),
+    createEulerTrack('upperArmR', convTimes, [
+      [-0.28, -0.08, 0.12],
+      [-0.36, -0.15, 0.16],
+      [-0.58, -0.25, 0.28],
+      [-0.42, -0.18, 0.20],
+      [-0.28, -0.08, 0.12],
+    ]),
+    createEulerTrack('lowerArmR', convTimes, [
+      [-0.68, -0.12, 0],
+      [-0.82, -0.20, 0.08],
+      [-1.15, -0.35, 0.18],
+      [-0.95, -0.25, 0.12],
+      [-0.68, -0.12, 0],
+    ]),
+  ];
+  const converseClip = new THREE.AnimationClip('converse', 3.2, convTracks);
+
+  // 5. LOOK / SCAN CLIP (3.0s loop: admiring the Z-ONEAPP building & entrance portal)
+  const lookTimes = [0, 0.75, 1.5, 2.25, 3.0];
+  const lookTracks: THREE.KeyframeTrack[] = [
+    createEulerTrack('chest', lookTimes, [
+      [0, 0, 0],
+      [-0.06, 0.14, 0],
+      [-0.08, 0.0, 0],
+      [-0.06, -0.14, 0],
+      [0, 0, 0],
+    ]),
+    createEulerTrack('neck', lookTimes, [
+      [0, 0, 0],
+      [-0.08, 0.12, 0],
+      [-0.12, 0, 0],
+      [-0.08, -0.12, 0],
+      [0, 0, 0],
+    ]),
+    createEulerTrack('head', lookTimes, [
+      [0, 0, 0],
+      [-0.16, 0.32, 0.03],
+      [-0.22, 0.02, 0],
+      [-0.16, -0.32, -0.03],
+      [0, 0, 0],
+    ]),
+    createEulerTrack('upperArmL', lookTimes, [
+      [0.05, 0, -0.09],
+      [-0.05, 0, -0.13],
+      [-0.08, 0, -0.14],
+      [-0.05, 0, -0.13],
+      [0.05, 0, -0.09],
+    ]),
+    createEulerTrack('upperArmR', lookTimes, [
+      [0.05, 0, 0.09],
+      [-0.05, 0, 0.13],
+      [-0.08, 0, 0.14],
+      [-0.05, 0, 0.13],
+      [0.05, 0, 0.09],
+    ]),
+  ];
+  const lookClip = new THREE.AnimationClip('look', 3.0, lookTracks);
+
+  return {
+    idle: idleClip,
+    walk: walkClip,
+    wave: waveClip,
+    converse: converseClip,
+    look: lookClip,
+  };
+}
+
+/**
+ * Creates a holographic material that preserves Three.js hardware bone skinning (USE_SKINNING)
+ * while injecting cyan/blue/violet Fresnel edge glow, animated horizontal scanlines, and
+ * translucent digital interference.
+ */
+export function createHolographicSkinnedMaterial(
+  primaryHex: string,
+  secondaryHex: string,
+  liteMode: boolean
+): { material: THREE.MeshStandardMaterial; uniforms: HoloShaderUniforms } {
+  const uniforms: HoloShaderUniforms = {
+    uTime: { value: 0 },
+    uPrimaryColor: { value: new THREE.Color(primaryHex) },
+    uSecondaryColor: { value: new THREE.Color(secondaryHex) },
+    uScanlineDensity: { value: liteMode ? 28.0 : 48.0 },
+    uOpacity: { value: 0.84 },
+  };
+
+  const material = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(primaryHex).multiplyScalar(0.35),
+    emissive: new THREE.Color(primaryHex),
+    emissiveIntensity: 0.72,
+    roughness: 0.18,
+    metalness: 0.65,
+    transparent: true,
+    opacity: 0.86,
+    depthWrite: true,
+  });
+
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = uniforms.uTime;
+    shader.uniforms.uPrimaryColor = uniforms.uPrimaryColor;
+    shader.uniforms.uSecondaryColor = uniforms.uSecondaryColor;
+    shader.uniforms.uScanlineDensity = uniforms.uScanlineDensity;
+    shader.uniforms.uOpacity = uniforms.uOpacity;
+
+    shader.vertexShader =
+      `
+      varying vec3 vHoloWorldPos;
+      varying float vHoloLocalY;
+      ` +
+      shader.vertexShader.replace(
+        '#include <worldpos_vertex>',
+        `
+        #include <worldpos_vertex>
+        vec4 holoWp = modelMatrix * vec4(transformed, 1.0);
+        vHoloWorldPos = holoWp.xyz;
+        vHoloLocalY = transformed.y;
+        `
+      );
+
+    shader.fragmentShader =
+      `
+      uniform float uTime;
+      uniform vec3 uPrimaryColor;
+      uniform vec3 uSecondaryColor;
+      uniform float uScanlineDensity;
+      uniform float uOpacity;
+      varying vec3 vHoloWorldPos;
+      varying float vHoloLocalY;
+      ` +
+      shader.fragmentShader.replace(
+        '#include <dithering_fragment>',
+        `
+        #include <dithering_fragment>
+        vec3 viewDir = normalize(cameraPosition - vHoloWorldPos);
+        float fresnel = pow(1.0 - abs(dot(normalize(vNormal), viewDir)), 2.2);
+        float scanWave = 0.5 + 0.5 * sin(vHoloLocalY * uScanlineDensity - uTime * 5.2);
+        float slowPulse = 0.5 + 0.5 * sin(vHoloLocalY * 4.5 - uTime * 1.8);
+        vec3 holoAccent = mix(uPrimaryColor, uSecondaryColor, clamp(vHoloLocalY * 0.55, 0.0, 1.0));
+        gl_FragColor.rgb += holoAccent * (fresnel * 1.35 + scanWave * 0.22 + slowPulse * 0.14);
+        gl_FragColor.a = clamp(uOpacity * (0.62 + fresnel * 0.48 + scanWave * 0.12), 0.42, 0.96);
+        `
+      );
+  };
+
+  return { material, uniforms };
+}
+
+/**
+ * Controller for an individual articulated holographic citizen with:
+ * - 17-bone THREE.Skeleton + THREE.SkinnedMesh
+ * - THREE.AnimationMixer with smooth crossfading (no snapping)
+ * - Autonomous plaza pathing + pauses for idle breathing, friendly waving, conversation, and head turns
+ * - Manual animation override support for deterministic inspection
+ */
+export class HoloCitizenController {
+  public readonly config: HoloCitizenConfig;
+  public readonly rootGroup: THREE.Group;
+  public readonly skinnedMesh: THREE.SkinnedMesh;
+  public readonly skeleton: THREE.Skeleton;
+  public readonly mixer: THREE.AnimationMixer;
+  public readonly uniforms: HoloShaderUniforms;
+
+  private readonly actions: Record<HoloClipName, THREE.AnimationAction>;
+  private currentClip: HoloClipName = 'idle';
+  private manualOverride: HoloClipName | null = null;
+  private waypointIndex: number;
+  private stateTimer = 0;
+  private pauseDuration = 0;
+  private baseRingMesh: THREE.Mesh;
+  private disposedResources: Array<{ dispose: () => void }> = [];
+
+  constructor(
+    config: HoloCitizenConfig,
+    clips: Record<HoloClipName, THREE.AnimationClip>,
+    liteMode: boolean
+  ) {
+    this.config = config;
+    this.waypointIndex = config.initialWaypointIndex % config.waypoints.length;
+
+    this.rootGroup = new THREE.Group();
+    this.rootGroup.name = `HoloCitizen_${config.id}`;
+
+    const startPos = config.waypoints[this.waypointIndex].clone();
+    this.rootGroup.position.copy(startPos);
+    this.rootGroup.scale.setScalar(config.heightScale);
+
+    // Build 17-bone hierarchy & unified skinned geometry
+    const bones = createHumanoidBones();
+    this.skeleton = new THREE.Skeleton(bones);
+
+    const geometry = buildUnifiedSkinnedHumanoidGeometry(liteMode);
+    const { material, uniforms } = createHolographicSkinnedMaterial(
+      config.primaryColor,
+      config.secondaryColor,
+      liteMode
+    );
+    this.uniforms = uniforms;
+
+    this.skinnedMesh = new THREE.SkinnedMesh(geometry, material);
+    this.skinnedMesh.castShadow = !liteMode;
+    this.skinnedMesh.receiveShadow = false;
+    this.skinnedMesh.frustumCulled = false;
+
+    // Attach root pelvis bone to SkinnedMesh and bind skeleton
+    this.skinnedMesh.add(bones[0]);
+    this.skinnedMesh.bind(this.skeleton);
+    this.rootGroup.add(this.skinnedMesh);
+
+    // Subtle holographic Emitter Ring under feet
+    const ringGeo = new THREE.RingGeometry(0.18, 0.25, liteMode ? 16 : 28);
+    ringGeo.rotateX(-Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(config.primaryColor),
+      transparent: true,
+      opacity: 0.45,
+      side: THREE.DoubleSide,
+    });
+    this.baseRingMesh = new THREE.Mesh(ringGeo, ringMat);
+    this.baseRingMesh.position.y = 0.015;
+    this.rootGroup.add(this.baseRingMesh);
+
+    this.disposedResources.push(geometry, material, ringGeo, ringMat);
+
+    // Setup AnimationMixer & Actions
+    this.mixer = new THREE.AnimationMixer(this.skinnedMesh);
+    this.actions = {
+      idle: this.mixer.clipAction(clips.idle),
+      walk: this.mixer.clipAction(clips.walk),
+      wave: this.mixer.clipAction(clips.wave),
+      converse: this.mixer.clipAction(clips.converse),
+      look: this.mixer.clipAction(clips.look),
+    };
+
+    (Object.keys(this.actions) as HoloClipName[]).forEach((name) => {
+      const action = this.actions[name];
+      action.enabled = true;
+      action.setEffectiveWeight(name === 'walk' ? 1 : 0);
+      if (name === 'walk') {
+        action.play();
+      }
+    });
+
+    this.currentClip = 'walk';
+    // Desynchronize initial mixer clock so citizens never move in robotic lockstep
+    this.mixer.update(config.phaseOffset);
+  }
+
+  public getCurrentClip(): HoloClipName {
+    return this.currentClip;
+  }
+
+  /**
+   * Smoothly crossfades from the active skeletal animation clip to targetClip
+   * over `duration` seconds without joint snapping.
+   */
+  public crossFadeTo(targetClip: HoloClipName, duration = 0.45): void {
+    if (this.currentClip === targetClip) return;
+
+    const prevAction = this.actions[this.currentClip];
+    const nextAction = this.actions[targetClip];
+
+    nextAction.reset();
+    nextAction.enabled = true;
+    nextAction.setEffectiveTimeScale(1);
+    nextAction.setEffectiveWeight(1);
+    nextAction.play();
+
+    prevAction.crossFadeTo(nextAction, duration, false);
+    this.currentClip = targetClip;
+  }
+
+  public setManualOverride(clip: HoloClipName | null): void {
+    this.manualOverride = clip;
+    if (clip) {
+      this.crossFadeTo(clip, 0.45);
+    }
+  }
+
+  public update(deltaSeconds: number, elapsedSeconds: number): void {
+    const dt = Math.min(deltaSeconds, 0.1);
+    this.uniforms.uTime.value = elapsedSeconds + this.config.phaseOffset;
+
+    // Pulse emitter foot ring
+    const ringScale = 0.94 + 0.08 * Math.sin(elapsedSeconds * 3.0 + this.config.phaseOffset);
+    this.baseRingMesh.scale.set(ringScale, ringScale, 1);
+
+    if (this.manualOverride) {
+      this.mixer.update(dt);
+      return;
+    }
+
+    // Autonomous plaza behavior state machine
+    if (this.pauseDuration > 0) {
+      this.stateTimer += dt;
+      if (this.stateTimer >= this.pauseDuration) {
+        this.pauseDuration = 0;
+        this.stateTimer = 0;
+        this.waypointIndex = (this.waypointIndex + 1) % this.config.waypoints.length;
+        this.crossFadeTo('walk', 0.45);
+      }
+      this.mixer.update(dt);
+      return;
+    }
+
+    const target = this.config.waypoints[this.waypointIndex];
+    const currentPos = this.rootGroup.position;
+    const toTarget = new THREE.Vector3().subVectors(target, currentPos);
+    toTarget.y = 0;
+    const dist = toTarget.length();
+
+    if (dist < 0.22) {
+      // Reached waypoint: transition smoothly into an expressive social/ambient clip
+      this.stateTimer = 0;
+      const socialCycle = (this.waypointIndex + Math.floor(this.config.phaseOffset)) % 4;
+      if (socialCycle === 0) {
+        this.crossFadeTo('wave', 0.45);
+        this.pauseDuration = 2.6;
+      } else if (socialCycle === 1) {
+        this.crossFadeTo('converse', 0.45);
+        this.pauseDuration = 3.2;
+      } else if (socialCycle === 2) {
+        this.crossFadeTo('look', 0.45);
+        this.pauseDuration = 2.8;
+      } else {
+        this.crossFadeTo('idle', 0.45);
+        this.pauseDuration = 2.5;
+      }
+    } else {
+      if (this.currentClip !== 'walk') {
+        this.crossFadeTo('walk', 0.42);
+      }
+      toTarget.normalize();
+      const step = Math.min(dist, this.config.walkSpeed * dt);
+      currentPos.addScaledVector(toTarget, step);
+
+      // Smoothly slerp character heading toward walking direction
+      const desiredYaw = Math.atan2(toTarget.x, toTarget.z);
+      const targetQuat = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        desiredYaw
+      );
+      this.rootGroup.quaternion.slerp(targetQuat, Math.min(1, dt * 6.5));
+    }
+
+    this.mixer.update(dt);
+  }
+
+  public dispose(): void {
+    this.mixer.stopAllAction();
+    this.mixer.uncacheRoot(this.skinnedMesh);
+    this.skeleton.dispose();
+    for (const res of this.disposedResources) {
+      res.dispose();
+    }
+    this.disposedResources = [];
+  }
+}
+
+/**
+ * Default 6 stylized holographic citizens with distinct plaza paths, speeds, and cyan/blue/violet palettes.
+ */
+export function getDefaultHoloCitizenConfigs(): HoloCitizenConfig[] {
+  return [
+    {
+      id: 'citizen-alpha',
+      label: 'Holo Citizen 01',
+      roleTag: 'Plaza Greeter (Stylized Rig)',
+      primaryColor: '#00f2fe',
+      secondaryColor: '#38bdf8',
+      heightScale: 1.0,
+      walkSpeed: 1.18,
+      phaseOffset: 0.0,
+      initialWaypointIndex: 0,
+      waypoints: [
+        new THREE.Vector3(-2.6, 0, 5.2),
+        new THREE.Vector3(-1.3, 0, 2.8),
+        new THREE.Vector3(-0.9, 0, 1.4),
+        new THREE.Vector3(-2.4, 0, 3.2),
+      ],
+    },
+    {
+      id: 'citizen-beta',
+      label: 'Holo Citizen 02',
+      roleTag: 'Portal Guide (Stylized Rig)',
+      primaryColor: '#38bdf8',
+      secondaryColor: '#a855f7',
+      heightScale: 0.97,
+      walkSpeed: 1.12,
+      phaseOffset: 1.3,
+      initialWaypointIndex: 1,
+      waypoints: [
+        new THREE.Vector3(2.6, 0, 5.0),
+        new THREE.Vector3(1.3, 0, 2.6),
+        new THREE.Vector3(0.95, 0, 1.35),
+        new THREE.Vector3(2.3, 0, 3.4),
+      ],
+    },
+    {
+      id: 'citizen-gamma',
+      label: 'Holo Citizen 03',
+      roleTag: 'Concourse Walker (Stylized Rig)',
+      primaryColor: '#a855f7',
+      secondaryColor: '#00f2fe',
+      heightScale: 1.03,
+      walkSpeed: 1.24,
+      phaseOffset: 2.1,
+      initialWaypointIndex: 0,
+      waypoints: [
+        new THREE.Vector3(-4.2, 0, 4.4),
+        new THREE.Vector3(-1.6, 0, 4.6),
+        new THREE.Vector3(1.6, 0, 4.6),
+        new THREE.Vector3(4.2, 0, 4.4),
+      ],
+    },
+    {
+      id: 'citizen-delta',
+      label: 'Holo Citizen 04',
+      roleTag: 'Atrium Envoy (Stylized Rig)',
+      primaryColor: '#22d3ee',
+      secondaryColor: '#818cf8',
+      heightScale: 0.95,
+      walkSpeed: 1.08,
+      phaseOffset: 3.4,
+      initialWaypointIndex: 2,
+      waypoints: [
+        new THREE.Vector3(3.8, 0, 6.2),
+        new THREE.Vector3(1.8, 0, 4.8),
+        new THREE.Vector3(0.0, 0, 3.6),
+        new THREE.Vector3(2.4, 0, 5.8),
+      ],
+    },
+    {
+      id: 'citizen-epsilon',
+      label: 'Holo Citizen 05',
+      roleTag: 'West Terrace Citizen (Stylized Rig)',
+      primaryColor: '#60a5fa',
+      secondaryColor: '#c084fc',
+      heightScale: 1.01,
+      walkSpeed: 1.15,
+      phaseOffset: 4.2,
+      initialWaypointIndex: 1,
+      waypoints: [
+        new THREE.Vector3(-3.8, 0, 6.4),
+        new THREE.Vector3(-2.1, 0, 4.9),
+        new THREE.Vector3(-0.6, 0, 3.8),
+        new THREE.Vector3(-2.8, 0, 6.0),
+      ],
+    },
+    {
+      id: 'citizen-zeta',
+      label: 'Holo Citizen 06',
+      roleTag: 'Portal Forecourt Citizen (Stylized Rig)',
+      primaryColor: '#06b6d4',
+      secondaryColor: '#a855f7',
+      heightScale: 0.99,
+      walkSpeed: 1.2,
+      phaseOffset: 5.1,
+      initialWaypointIndex: 0,
+      waypoints: [
+        new THREE.Vector3(-1.4, 0, 6.8),
+        new THREE.Vector3(0.0, 0, 5.2),
+        new THREE.Vector3(1.4, 0, 6.8),
+        new THREE.Vector3(0.0, 0, 7.2),
+      ],
+    },
+  ];
+}

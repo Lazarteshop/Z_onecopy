@@ -6,5 +6,7 @@
   "firestoreDatabaseId": "ai-studio-websiteviewerand-39fa42c9-2ddb-4a73-9de1-b8f9fc2b550c",
   "storageBucket": "feisty-listener-3d2jw.firebasestorage.app",
   "messagingSenderId": "828078909829",
-  "measurementId": ""
+  "measurementId": "",
+  "oAuthClientId": "828078909829-gfn65bluu6qvovsouj3he5ordcucc8hi.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
 }

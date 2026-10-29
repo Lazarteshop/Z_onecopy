@@ -1,0 +1,683 @@
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
+import {
+  BONE_COUNT_PER_CITIZEN,
+  buildHumanoidAnimationClips,
+  getDefaultHoloCitizenConfigs,
+  HoloCitizenController,
+  HoloClipName,
+} from './holoHumanoidRig';
+import { buildHoloArchitecture, HoloArchitectureController } from './holoArchitecture';
+
+export type HoloQualityMode = 'full' | 'lite' | 'fallback2d';
+export type HoloCameraMode = 'plaza' | 'approach' | 'closeup';
+
+interface GpuMetrics {
+  fps: number;
+  frameTimeMs: number;
+  drawCalls: number;
+  triangles: number;
+  geometries: number;
+  textures: number;
+  activeCitizens: number;
+  totalBones: number;
+  rendererDisposed: boolean;
+  lastDisposeSummary: string | null;
+}
+
+export const ZoneHoloPrototype: React.FC = () => {
+  const mountRef = useRef<HTMLDivElement | null>(null);
+
+  const [qualityMode, setQualityMode] = useState<HoloQualityMode>(() => {
+    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      return 'lite';
+    }
+    return 'full';
+  });
+  const [cameraMode, setCameraMode] = useState<HoloCameraMode>('plaza');
+  const [selectedCitizenIdx, setSelectedCitizenIdx] = useState<number>(0);
+  const [citizenCount, setCitizenCount] = useState<number>(6);
+  const [animOverride, setAnimOverride] = useState<HoloClipName | 'auto'>('auto');
+  const [remountKey, setRemountKey] = useState<number>(0);
+
+  const [metrics, setMetrics] = useState<GpuMetrics>({
+    fps: 60,
+    frameTimeMs: 16.6,
+    drawCalls: 0,
+    triangles: 0,
+    geometries: 0,
+    textures: 0,
+    activeCitizens: 6,
+    totalBones: 6 * BONE_COUNT_PER_CITIZEN,
+    rendererDisposed: false,
+    lastDisposeSummary: null,
+  });
+
+  // Refs shared with the live animation loop so camera / override switches don't rebuild the WebGL context
+  const cameraModeRef = useRef<HoloCameraMode>(cameraMode);
+  cameraModeRef.current = cameraMode;
+
+  const animOverrideRef = useRef<HoloClipName | 'auto'>(animOverride);
+  animOverrideRef.current = animOverride;
+
+  const selectedCitizenIdxRef = useRef<number>(selectedCitizenIdx);
+  selectedCitizenIdxRef.current = selectedCitizenIdx;
+
+  const citizensRef = useRef<HoloCitizenController[]>([]);
+  const approachProgressRef = useRef<number>(0);
+
+  // Sync manual animation override with active citizen controllers immediately via smooth crossFadeTo
+  useEffect(() => {
+    for (const citizen of citizensRef.current) {
+      citizen.setManualOverride(animOverride === 'auto' ? null : animOverride);
+    }
+  }, [animOverride]);
+
+  // Reset approach progress when switching to 'approach' camera mode
+  useEffect(() => {
+    if (cameraMode === 'approach') {
+      approachProgressRef.current = 0;
+    }
+  }, [cameraMode]);
+
+  const handleTriggerApproach = useCallback(() => {
+    approachProgressRef.current = 0;
+    setCameraMode('approach');
+  }, []);
+
+  const handleTestDisposeAndVerify = useCallback(() => {
+    // Switching to fallback2d triggers the cleanup return function of the WebGL effect
+    setQualityMode('fallback2d');
+  }, []);
+
+  useEffect(() => {
+    if (qualityMode === 'fallback2d') {
+      setMetrics((prev) => ({
+        ...prev,
+        drawCalls: 0,
+        triangles: 0,
+        geometries: 0,
+        textures: 0,
+        activeCitizens: 0,
+        totalBones: 0,
+        rendererDisposed: true,
+        lastDisposeSummary: 'WebGLRenderer & all SkinnedMesh/Geometry/Texture GPU resources cleanly disposed (0 active contexts).',
+      }));
+      return;
+    }
+
+    const container = mountRef.current;
+    if (!container) return;
+
+    const isLite = qualityMode === 'lite';
+    const effectiveCitizenCount = isLite ? Math.min(citizenCount, 4) : citizenCount;
+
+    // 1. Scene, Fog & Camera
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#030712');
+    scene.fog = new THREE.FogExp2('#030712', isLite ? 0.035 : 0.028);
+
+    const width = Math.max(container.clientWidth, 320);
+    const height = Math.max(container.clientHeight, 320);
+    const camera = new THREE.PerspectiveCamera(48, width / height, 0.1, 120);
+    camera.position.set(0, 3.6, 11.2);
+    camera.lookAt(0, 2.6, 0);
+
+    // 2. WebGLRenderer with mobile-friendly pixel ratio cap
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        antialias: !isLite,
+        powerPreference: isLite ? 'low-power' : 'high-performance',
+        alpha: false,
+      });
+    } catch {
+      setQualityMode('fallback2d');
+      return;
+    }
+
+    const maxDpr = isLite ? 1.0 : Math.min(window.devicePixelRatio || 1, 1.75);
+    renderer.setPixelRatio(maxDpr);
+    renderer.setSize(width, height);
+    renderer.shadowMap.enabled = !isLite;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+
+    container.innerHTML = '';
+    container.appendChild(renderer.domElement);
+
+    // 3. Holographic Cyan / Blue / Violet Lighting Rig
+    const ambientLight = new THREE.AmbientLight('#0ea5e9', isLite ? 0.85 : 0.65);
+    scene.add(ambientLight);
+
+    const hemiLight = new THREE.HemisphereLight('#38bdf8', '#1e1b4b', 0.9);
+    hemiLight.position.set(0, 14, 0);
+    scene.add(hemiLight);
+
+    const keyDirLight = new THREE.DirectionalLight('#00f2fe', 1.65);
+    keyDirLight.position.set(6, 12, 8);
+    if (!isLite) {
+      keyDirLight.castShadow = true;
+      keyDirLight.shadow.mapSize.set(1024, 1024);
+      keyDirLight.shadow.camera.near = 1;
+      keyDirLight.shadow.camera.far = 30;
+    }
+    scene.add(keyDirLight);
+
+    const violetRimLight = new THREE.PointLight('#a855f7', 2.4, 18);
+    violetRimLight.position.set(-5.5, 4.5, 3.5);
+    scene.add(violetRimLight);
+
+    const cyanPortalLight = new THREE.PointLight('#00f2fe', 2.8, 16);
+    cyanPortalLight.position.set(0, 2.4, 0.6);
+    scene.add(cyanPortalLight);
+
+    // 4. Build Z-ONEAPP Holographic Building & Plaza Architecture
+    const architecture: HoloArchitectureController = buildHoloArchitecture(isLite);
+    scene.add(architecture.rootGroup);
+
+    // 5. Build Shared Skeletal AnimationClips & Articulated Holographic Citizens
+    const sharedClips = buildHumanoidAnimationClips();
+    const allConfigs = getDefaultHoloCitizenConfigs().slice(0, effectiveCitizenCount);
+    const citizens: HoloCitizenController[] = allConfigs.map((cfg) => {
+      const controller = new HoloCitizenController(cfg, sharedClips, isLite);
+      if (animOverrideRef.current !== 'auto') {
+        controller.setManualOverride(animOverrideRef.current);
+      }
+      scene.add(controller.rootGroup);
+      return controller;
+    });
+    citizensRef.current = citizens;
+
+    // 6. Subtle Pointer Parallax
+    let pointerX = 0;
+    let pointerY = 0;
+    const onPointerMove = (e: PointerEvent) => {
+      const rect = container.getBoundingClientRect();
+      pointerX = ((e.clientX - rect.left) / Math.max(rect.width, 1) - 0.5) * 2;
+      pointerY = ((e.clientY - rect.top) / Math.max(rect.height, 1) - 0.5) * 2;
+    };
+    container.addEventListener('pointermove', onPointerMove, { passive: true });
+
+    // 7. Resize Handling
+    const onResize = () => {
+      if (!container) return;
+      const w = Math.max(container.clientWidth, 320);
+      const h = Math.max(container.clientHeight, 320);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    };
+    window.addEventListener('resize', onResize);
+
+    // 8. Pause-on-hidden-tab Handling
+    let isTabHidden = document.hidden;
+    let lastTimestamp = performance.now();
+    const onVisibilityChange = () => {
+      isTabHidden = document.hidden;
+      lastTimestamp = performance.now();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    // 9. Animation & Telemetry Loop
+    let rafId = 0;
+    let elapsedSeconds = 0;
+    let frameCounter = 0;
+    let fpsAccumulator = 0;
+    const desiredCamPos = new THREE.Vector3();
+    const desiredLookAt = new THREE.Vector3();
+    const currentLookAt = new THREE.Vector3(0, 2.6, 0);
+
+    const animate = (now: number) => {
+      rafId = requestAnimationFrame(animate);
+      if (isTabHidden) return;
+
+      const rawDeltaMs = Math.max(1, now - lastTimestamp);
+      lastTimestamp = now;
+      const deltaSeconds = Math.min(rawDeltaMs / 1000, 0.1);
+      elapsedSeconds += deltaSeconds;
+
+      // Update architectural lighting & portal rings
+      architecture.update(elapsedSeconds);
+
+      // Update all articulated holographic citizens
+      for (const citizen of citizens) {
+        citizen.update(deltaSeconds, elapsedSeconds);
+      }
+
+      // Camera trajectory modes
+      const activeCamMode = cameraModeRef.current;
+      if (activeCamMode === 'approach') {
+        // Smooth camera dolly from plaza overlook toward the glowing Z-ONEAPP entrance portal
+        approachProgressRef.current = Math.min(1, approachProgressRef.current + deltaSeconds * 0.18);
+        const t = THREE.MathUtils.smoothstep(approachProgressRef.current, 0, 1);
+
+        desiredCamPos.set(
+          Math.sin(elapsedSeconds * 0.35) * 0.25 * (1 - t),
+          THREE.MathUtils.lerp(3.5, 1.75, t),
+          THREE.MathUtils.lerp(11.4, 1.35, t)
+        );
+        desiredLookAt.set(
+          0,
+          THREE.MathUtils.lerp(3.2, 1.75, t),
+          THREE.MathUtils.lerp(-2.5, -2.0, t)
+        );
+      } else if (activeCamMode === 'closeup' && citizens.length > 0) {
+        // Focus directly on the selected Citizen to inspect sculpted facial anatomy, hairstyle, attire, and skeletal gestures
+        const safeIdx = Math.min(selectedCitizenIdxRef.current, citizens.length - 1);
+        const activeCitizen = citizens[safeIdx];
+        const targetCitizen = activeCitizen.rootGroup.position;
+        const facingYaw = activeCitizen.rootGroup.rotation.y;
+        const camDist = 1.65;
+        const camAngle = facingYaw + pointerX * 0.55;
+        desiredCamPos.set(
+          targetCitizen.x + Math.sin(camAngle) * camDist,
+          targetCitizen.y + 1.48 - pointerY * 0.22,
+          targetCitizen.z + Math.cos(camAngle) * camDist
+        );
+        desiredLookAt.set(targetCitizen.x, targetCitizen.y + 1.38, targetCitizen.z);
+      } else {
+        // Default cinematic plaza overview with gentle orbital sway
+        const orbitAngle = Math.sin(elapsedSeconds * 0.22) * 0.24 + pointerX * 0.32;
+        desiredCamPos.set(
+          Math.sin(orbitAngle) * 10.8,
+          3.45 - pointerY * 0.45,
+          Math.cos(orbitAngle) * 10.8
+        );
+        desiredLookAt.set(0, 2.85, -1.2);
+      }
+
+      camera.position.lerp(desiredCamPos, Math.min(1, deltaSeconds * 3.8));
+      currentLookAt.lerp(desiredLookAt, Math.min(1, deltaSeconds * 4.5));
+      camera.lookAt(currentLookAt);
+
+      renderer.render(scene, camera);
+
+      // Update HUD performance metrics every 20 frames
+      frameCounter++;
+      fpsAccumulator += rawDeltaMs;
+      if (frameCounter >= 20) {
+        const avgFrameMs = fpsAccumulator / frameCounter;
+        const measuredFps = Math.min(120, Math.round(1000 / Math.max(avgFrameMs, 1)));
+        setMetrics({
+          fps: measuredFps,
+          frameTimeMs: Number(avgFrameMs.toFixed(1)),
+          drawCalls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+          geometries: renderer.info.memory.geometries,
+          textures: renderer.info.memory.textures,
+          activeCitizens: citizens.length,
+          totalBones: citizens.length * BONE_COUNT_PER_CITIZEN,
+          rendererDisposed: false,
+          lastDisposeSummary: null,
+        });
+        frameCounter = 0;
+        fpsAccumulator = 0;
+      }
+    };
+
+    rafId = requestAnimationFrame(animate);
+
+    // 10. Deterministic GPU Resource Cleanup
+    return () => {
+      cancelAnimationFrame(rafId);
+      container.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('resize', onResize);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+
+      for (const citizen of citizens) {
+        scene.remove(citizen.rootGroup);
+        citizen.dispose();
+      }
+      citizensRef.current = [];
+
+      scene.remove(architecture.rootGroup);
+      architecture.dispose();
+
+      // Dispose shared AnimationClips cache
+      renderer.renderLists.dispose();
+      renderer.dispose();
+
+      if (renderer.domElement && renderer.domElement.parentNode === container) {
+        container.removeChild(renderer.domElement);
+      }
+    };
+  }, [qualityMode, citizenCount, remountKey]);
+
+  return (
+    <div className="relative min-h-screen w-full bg-[#030712] text-slate-100 overflow-hidden select-none font-sans">
+      {/* 3D WebGL Canvas Mount or 2D Holographic Fallback */}
+      {qualityMode !== 'fallback2d' ? (
+        <div
+          ref={mountRef}
+          data-testid="holo-webgl-viewport"
+          className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing"
+        />
+      ) : (
+        <div
+          data-testid="holo-2d-fallback"
+          className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-gradient-to-b from-[#030712] via-[#07142e] to-[#0f172a]"
+        >
+          <div className="max-w-2xl w-full rounded-2xl border border-cyan-400/40 bg-slate-950/85 p-8 shadow-[0_0_50px_rgba(0,242,254,0.18)] backdrop-blur-md text-center space-y-5">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded border border-cyan-400/40 bg-cyan-500/10 text-cyan-300 text-xs font-mono uppercase tracking-widest">
+              2D Fallback Mode Active • 0 WebGL Contexts
+            </div>
+            <h2 className="text-3xl sm:text-4xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-sky-400 to-purple-400">
+              Z-ONEAPP HOLOGRAPHIC CITADEL
+            </h2>
+            <p className="text-sm text-slate-300 leading-relaxed">
+              The 3D WebGL renderer and all GPU buffers (SkinnedMeshes, 21-bone anatomical skeletons, geometries, and textures) have been cleanly disposed. This lightweight 2D architectural representation preserves accessibility on devices without WebGL or with reduced-motion preferences.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-left text-xs font-mono">
+              <div className="p-3 rounded-lg border border-cyan-500/30 bg-cyan-950/30">
+                <div className="text-cyan-300 font-bold">Z-ONEAPP TOWER</div>
+                <div className="text-slate-400 mt-1">Central Atrium & Glowing Entrance Portal</div>
+              </div>
+              <div className="p-3 rounded-lg border border-sky-500/30 bg-sky-950/30">
+                <div className="text-sky-300 font-bold">HOLOGRAPHIC CITIZENS</div>
+                <div className="text-slate-400 mt-1">Stylized Procedural Figures (Paused in 2D)</div>
+              </div>
+              <div className="p-3 rounded-lg border border-purple-500/30 bg-purple-950/30">
+                <div className="text-purple-300 font-bold">GPU MEMORY</div>
+                <div className="text-emerald-300 mt-1">0 Geometries • 0 Textures</div>
+              </div>
+            </div>
+            <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setRemountKey((k) => k + 1);
+                  setQualityMode('full');
+                }}
+                className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-bold text-xs uppercase tracking-wider hover:bg-cyan-400 transition"
+              >
+                Restore Full 3D Prototype
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRemountKey((k) => k + 1);
+                  setQualityMode('lite');
+                }}
+                className="px-4 py-2 rounded-lg border border-sky-400/50 bg-sky-500/10 text-sky-200 font-bold text-xs uppercase tracking-wider hover:bg-sky-500/20 transition"
+              >
+                Restore Lite 3D Mode
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Subtle Holographic Scanline Overlay */}
+      <div
+        className="pointer-events-none absolute inset-0 opacity-15"
+        style={{
+          backgroundImage:
+            'repeating-linear-gradient(to bottom, rgba(0, 242, 254, 0.14) 0px, rgba(0, 242, 254, 0.14) 1px, transparent 2px, transparent 6px)',
+        }}
+      />
+
+      {/* TOP BAR: Prototype Isolation Banner & Safe Exit Links */}
+      <header className="relative z-10 flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-cyan-500/25 bg-slate-950/75 backdrop-blur-md">
+        <div className="flex items-center gap-3">
+          <span className="inline-block w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_10px_#00f2fe]" />
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-sm sm:text-base font-extrabold tracking-wider text-cyan-200">
+                Z-ONEAPP HOLOGRAPHIC WORLD
+              </h1>
+              <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest rounded bg-purple-500/20 border border-purple-400/40 text-purple-200">
+                Phase 1C Sculpted Human & Gait Prototype
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Smooth-Shaded Anatomical Humans (Sculpted Face, Blinking Irises, 6 Hair/Attire Archetypes, 21-Bone Rig) • Zero Fake Online Presence
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              try {
+                sessionStorage.removeItem('zone_holo_prototype_preview');
+                window.history.pushState({}, '', '/');
+              } catch {
+                // Ignore history/storage restrictions in sandboxed iframes
+              }
+              window.dispatchEvent(
+                new CustomEvent('zone:holo-prototype-switch', { detail: { active: false } }),
+              );
+            }}
+            data-testid="exit-holo-prototype-preview"
+            className="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900/90 hover:border-cyan-400/50 text-xs font-semibold text-slate-200 transition cursor-pointer"
+          >
+            ← Back to Production Z-oneApp
+          </button>
+          <a
+            href="/messenger"
+            onClick={() => {
+              try {
+                sessionStorage.removeItem('zone_holo_prototype_preview');
+              } catch {
+                // Ignore storage restrictions
+              }
+            }}
+            className="px-3 py-1.5 rounded-lg border border-cyan-500/30 bg-cyan-950/40 hover:bg-cyan-900/50 text-xs font-semibold text-cyan-200 transition"
+          >
+            Z-oneMessenger
+          </a>
+        </div>
+      </header>
+
+      {/* LEFT HUD: GPU Telemetry & Skeletal Rig Inspector */}
+      <aside className="relative z-10 m-4 max-w-xs rounded-xl border border-cyan-500/30 bg-slate-950/75 p-3.5 backdrop-blur-md space-y-2.5 text-xs">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+          <span className="font-mono uppercase tracking-wider text-cyan-300 font-bold">
+            Skeletal & GPU Telemetry
+          </span>
+          <span className="font-mono text-[11px] text-emerald-300">
+            {qualityMode === 'fallback2d' ? '2D MODE' : `${metrics.fps} FPS (${metrics.frameTimeMs}ms)`}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+          <div className="p-2 rounded bg-slate-900/80 border border-slate-800">
+            <div className="text-slate-400">Skinned Citizens</div>
+            <div className="text-cyan-200 font-bold text-sm">{metrics.activeCitizens}</div>
+          </div>
+          <div className="p-2 rounded bg-slate-900/80 border border-slate-800">
+            <div className="text-slate-400">Active Bones</div>
+            <div className="text-purple-300 font-bold text-sm">{metrics.totalBones} ({BONE_COUNT_PER_CITIZEN}/rig)</div>
+          </div>
+          <div className="p-2 rounded bg-slate-900/80 border border-slate-800">
+            <div className="text-slate-400">Draw Calls</div>
+            <div className="text-sky-200 font-bold">{metrics.drawCalls}</div>
+          </div>
+          <div className="p-2 rounded bg-slate-900/80 border border-slate-800">
+            <div className="text-slate-400">Triangles</div>
+            <div className="text-sky-200 font-bold">{metrics.triangles.toLocaleString()}</div>
+          </div>
+          <div className="p-2 rounded bg-slate-900/80 border border-slate-800">
+            <div className="text-slate-400">GPU Geometries</div>
+            <div className="text-emerald-300 font-bold">{metrics.geometries}</div>
+          </div>
+          <div className="p-2 rounded bg-slate-900/80 border border-slate-800">
+            <div className="text-slate-400">GPU Textures</div>
+            <div className="text-emerald-300 font-bold">{metrics.textures}</div>
+          </div>
+        </div>
+
+        {metrics.lastDisposeSummary && (
+          <div className="p-2 rounded bg-emerald-950/50 border border-emerald-500/40 text-emerald-200 text-[11px]">
+            {metrics.lastDisposeSummary}
+          </div>
+        )}
+
+        <div className="pt-1 flex items-center justify-between gap-2">
+          <span className="text-[11px] text-slate-400">Citizens (4–6):</span>
+          <div className="flex gap-1">
+            {[4, 5, 6].map((count) => (
+              <button
+                key={count}
+                type="button"
+                onClick={() => setCitizenCount(count)}
+                disabled={qualityMode === 'lite' && count > 4}
+                className={`px-2.5 py-1 rounded text-xs font-mono font-bold transition ${
+                  citizenCount === count
+                    ? 'bg-cyan-400 text-slate-950'
+                    : 'bg-slate-900 text-slate-300 border border-slate-700 hover:border-cyan-400/50 disabled:opacity-40'
+                }`}
+              >
+                {count}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleTestDisposeAndVerify}
+          className="w-full py-1.5 px-3 rounded-lg border border-rose-400/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-200 font-mono text-[11px] transition"
+        >
+          Verify GPU Cleanup (Close WebGL)
+        </button>
+      </aside>
+
+      {/* BOTTOM CONTROL DOCK: Camera Trajectory, Animation Crossfade & Lite/2D Fallback */}
+      <section className="fixed bottom-4 left-4 right-4 z-10 mx-auto max-w-5xl rounded-2xl border border-cyan-500/30 bg-slate-950/80 p-3.5 backdrop-blur-md shadow-[0_0_40px_rgba(0,0,0,0.75)]">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+          {/* 1. Camera Mode Controls */}
+          <div className="space-y-1.5">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-cyan-300">
+              1. Camera Trajectory & Portal Entry
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setCameraMode('plaza')}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  cameraMode === 'plaza'
+                    ? 'bg-cyan-400 text-slate-950 font-bold'
+                    : 'bg-slate-900 text-slate-300 border border-slate-700 hover:border-cyan-400/40'
+                }`}
+              >
+                Plaza Overview
+              </button>
+              <button
+                type="button"
+                onClick={handleTriggerApproach}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  cameraMode === 'approach'
+                    ? 'bg-purple-400 text-slate-950 font-bold'
+                    : 'bg-purple-950/60 text-purple-200 border border-purple-400/40 hover:bg-purple-900/60'
+                }`}
+              >
+                Enter Z-ONEAPP Portal
+              </button>
+              <button
+                type="button"
+                onClick={() => setCameraMode('closeup')}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  cameraMode === 'closeup'
+                    ? 'bg-sky-400 text-slate-950 font-bold'
+                    : 'bg-slate-900 text-slate-300 border border-slate-700 hover:border-sky-400/40'
+                }`}
+              >
+                Inspect Citizen Rig
+              </button>
+              {cameraMode === 'closeup' && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedCitizenIdx((prev) => (prev + 1) % citizenCount)}
+                  className="px-2 py-1.5 rounded-lg text-[11px] font-mono bg-sky-950/70 text-sky-200 border border-sky-400/40 hover:bg-sky-900/70 transition"
+                  title="Cycle through the 6 sculpted citizen archetypes in close-up view"
+                >
+                  Citizen #{(selectedCitizenIdx % citizenCount) + 1} ↻
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 2. Skeletal Animation Crossfade Controls */}
+          <div className="space-y-1.5">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-cyan-300">
+              2. Skeletal Animation Crossfade (0.45s Blend)
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {(
+                [
+                  { id: 'auto', label: 'Auto Pathing' },
+                  { id: 'idle', label: 'Idle Breathing' },
+                  { id: 'walk', label: 'Walk' },
+                  { id: 'wave', label: 'Wave' },
+                  { id: 'converse', label: 'Converse' },
+                  { id: 'look', label: 'Head Turn' },
+                ] as const
+              ).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setAnimOverride(item.id)}
+                  className={`px-2 py-1 rounded text-[11px] font-mono transition ${
+                    animOverride === item.id
+                      ? 'bg-cyan-400 text-slate-950 font-bold'
+                      : 'bg-slate-900 text-slate-300 border border-slate-700 hover:border-cyan-400/40'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 3. Quality Mode & Fallback Switcher */}
+          <div className="space-y-1.5">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-cyan-300">
+              3. Adaptive Quality & Fallback Controls
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setQualityMode('full')}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  qualityMode === 'full'
+                    ? 'bg-emerald-400 text-slate-950 font-bold'
+                    : 'bg-slate-900 text-slate-300 border border-slate-700 hover:border-emerald-400/40'
+                }`}
+              >
+                Full 3D
+              </button>
+              <button
+                type="button"
+                onClick={() => setQualityMode('lite')}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  qualityMode === 'lite'
+                    ? 'bg-amber-400 text-slate-950 font-bold'
+                    : 'bg-slate-900 text-slate-300 border border-slate-700 hover:border-amber-400/40'
+                }`}
+              >
+                Lite Mode (Mobile)
+              </button>
+              <button
+                type="button"
+                onClick={() => setQualityMode('fallback2d')}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  qualityMode === 'fallback2d'
+                    ? 'bg-sky-400 text-slate-950 font-bold'
+                    : 'bg-slate-900 text-slate-300 border border-slate-700 hover:border-sky-400/40'
+                }`}
+              >
+                2D Fallback
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+};
+
+export default ZoneHoloPrototype;

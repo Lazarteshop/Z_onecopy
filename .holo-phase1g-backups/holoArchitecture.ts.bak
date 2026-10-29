@@ -1,0 +1,451 @@
+import * as THREE from 'three';
+
+export interface HoloArchitectureController {
+  rootGroup: THREE.Group;
+  portalPosition: THREE.Vector3;
+  update: (elapsedSeconds: number) => void;
+  dispose: () => void;
+}
+
+/**
+ * Generates a crisp holographic signage texture for the Z-ONEAPP building crown and portal marquee.
+ */
+function createSignageTexture(
+  title: string,
+  subtitle: string,
+  accentHex: string,
+  secondaryHex: string
+): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+
+  if (ctx) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Translucent dark cyber-glass background
+    const bgGrad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    bgGrad.addColorStop(0, 'rgba(4, 12, 32, 0.92)');
+    bgGrad.addColorStop(0.5, 'rgba(10, 25, 58, 0.95)');
+    bgGrad.addColorStop(1, 'rgba(24, 12, 48, 0.92)');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(12, 12, canvas.width - 24, canvas.height - 24);
+
+    // Outer neon border
+    const borderGrad = ctx.createLinearGradient(0, 0, canvas.width, 0);
+    borderGrad.addColorStop(0, accentHex);
+    borderGrad.addColorStop(0.5, '#38bdf8');
+    borderGrad.addColorStop(1, secondaryHex);
+    ctx.strokeStyle = borderGrad;
+    ctx.lineWidth = 6;
+    ctx.strokeRect(16, 16, canvas.width - 32, canvas.height - 32);
+
+    // Subtle horizontal scanlines
+    ctx.fillStyle = 'rgba(0, 242, 254, 0.06)';
+    for (let y = 20; y < canvas.height - 20; y += 8) {
+      ctx.fillRect(20, y, canvas.width - 40, 2);
+    }
+
+    // Main title glow
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = accentHex;
+    ctx.shadowBlur = 26;
+    ctx.fillStyle = '#ecfeff';
+    ctx.font = '900 94px "Inter", "Segoe UI", system-ui, sans-serif';
+    ctx.fillText(title, canvas.width / 2, 108);
+    ctx.restore();
+
+    // Subtitle
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#7dd3fc';
+    ctx.font = '600 28px "JetBrains Mono", monospace, sans-serif';
+    ctx.fillText(subtitle, canvas.width / 2, 194);
+    ctx.restore();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/**
+ * Builds the Z-ONEAPP futuristic holographic glass building, glowing entrance portal,
+ * plaza walkways, and animated architectural lighting.
+ */
+export function buildHoloArchitecture(liteMode: boolean): HoloArchitectureController {
+  const rootGroup = new THREE.Group();
+  rootGroup.name = 'ZoneHoloArchitecture';
+
+  const geometries: THREE.BufferGeometry[] = [];
+  const materials: THREE.Material[] = [];
+  const textures: THREE.Texture[] = [];
+
+  const trackGeo = <T extends THREE.BufferGeometry>(g: T): T => {
+    geometries.push(g);
+    return g;
+  };
+  const trackMat = <T extends THREE.Material>(m: T): T => {
+    materials.push(m);
+    return m;
+  };
+  const trackTex = <T extends THREE.Texture>(t: T): T => {
+    textures.push(t);
+    return t;
+  };
+
+  // 1. PLAZA GROUND & WALKWAY GRID
+  const plazaGeo = trackGeo(new THREE.PlaneGeometry(34, 34, 1, 1));
+  plazaGeo.rotateX(-Math.PI / 2);
+  const plazaMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#040817'),
+      roughness: 0.24,
+      metalness: 0.78,
+    })
+  );
+  const plazaMesh = new THREE.Mesh(plazaGeo, plazaMat);
+  plazaMesh.receiveShadow = !liteMode;
+  rootGroup.add(plazaMesh);
+
+  // Illuminated central promenade leading to the entrance portal
+  const walkwayGeo = trackGeo(new THREE.PlaneGeometry(3.2, 11.5));
+  walkwayGeo.rotateX(-Math.PI / 2);
+  const walkwayMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#081b3a'),
+      emissive: new THREE.Color('#00f2fe'),
+      emissiveIntensity: 0.22,
+      roughness: 0.15,
+      metalness: 0.85,
+    })
+  );
+  const walkwayMesh = new THREE.Mesh(walkwayGeo, walkwayMat);
+  walkwayMesh.position.set(0, 0.01, 4.9);
+  rootGroup.add(walkwayMesh);
+
+  // Cyan & Violet guide rails along the central promenade
+  const railGeo = trackGeo(new THREE.BoxGeometry(0.08, 0.03, 11.5));
+  const cyanRailMat = trackMat(
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#00f2fe'),
+    })
+  );
+  const violetRailMat = trackMat(
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#a855f7'),
+    })
+  );
+
+  const leftRail = new THREE.Mesh(railGeo, cyanRailMat);
+  leftRail.position.set(-1.62, 0.02, 4.9);
+  const rightRail = new THREE.Mesh(railGeo, cyanRailMat);
+  rightRail.position.set(1.62, 0.02, 4.9);
+  const innerLeftRail = new THREE.Mesh(railGeo, violetRailMat);
+  innerLeftRail.position.set(-1.42, 0.02, 4.9);
+  const innerRightRail = new THREE.Mesh(railGeo, violetRailMat);
+  innerRightRail.position.set(1.42, 0.02, 4.9);
+  rootGroup.add(leftRail, rightRail, innerLeftRail, innerRightRail);
+
+  // Cross-plaza walkway strips where citizens stroll
+  const crossWalkGeo = trackGeo(new THREE.PlaneGeometry(11.0, 1.6));
+  crossWalkGeo.rotateX(-Math.PI / 2);
+  const crossWalkMat = trackMat(
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#0ea5e9'),
+      transparent: true,
+      opacity: 0.14,
+    })
+  );
+  const crossWalkMesh = new THREE.Mesh(crossWalkGeo, crossWalkMat);
+  crossWalkMesh.position.set(0, 0.012, 4.6);
+  rootGroup.add(crossWalkMesh);
+
+  // 2. Z-ONEAPP FUTURISTIC GLASS TOWER (Centered at z = -3.2)
+  const buildingGroup = new THREE.Group();
+  buildingGroup.position.set(0, 0, -3.2);
+  rootGroup.add(buildingGroup);
+
+  // Core interior spire
+  const coreGeo = trackGeo(new THREE.BoxGeometry(7.6, 10.6, 5.2));
+  const coreMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#050d24'),
+      emissive: new THREE.Color('#0c244d'),
+      emissiveIntensity: 0.45,
+      roughness: 0.3,
+      metalness: 0.8,
+    })
+  );
+  const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+  coreMesh.position.set(0, 5.3, 0);
+  buildingGroup.add(coreMesh);
+
+  // Outer translucent holographic glass facade shell
+  const glassGeo = trackGeo(new THREE.BoxGeometry(8.8, 11.2, 6.0));
+  const glassMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#0ea5e9'),
+      emissive: new THREE.Color('#1e3a8a'),
+      emissiveIntensity: 0.35,
+      roughness: 0.08,
+      metalness: 0.9,
+      transparent: true,
+      opacity: 0.34,
+    })
+  );
+  const glassShell = new THREE.Mesh(glassGeo, glassMat);
+  glassShell.position.set(0, 5.6, 0);
+  buildingGroup.add(glassShell);
+
+  // Flanking angled holographic wings (West & East)
+  const wingGeo = trackGeo(new THREE.BoxGeometry(3.2, 8.2, 4.6));
+  const wingMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#08142c'),
+      emissive: new THREE.Color('#3b0764'),
+      emissiveIntensity: 0.4,
+      roughness: 0.16,
+      metalness: 0.85,
+      transparent: true,
+      opacity: 0.78,
+    })
+  );
+  const westWing = new THREE.Mesh(wingGeo, wingMat);
+  westWing.position.set(-5.6, 4.1, 0.3);
+  westWing.rotation.y = 0.14;
+
+  const eastWing = new THREE.Mesh(wingGeo, wingMat);
+  eastWing.position.set(5.6, 4.1, 0.3);
+  eastWing.rotation.y = -0.14;
+  buildingGroup.add(westWing, eastWing);
+
+  // Illuminated horizontal floor decks inside the glass tower
+  const floorDeckGeo = trackGeo(new THREE.BoxGeometry(8.92, 0.09, 6.12));
+  const floorDeckCyanMat = trackMat(
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#00f2fe'),
+      transparent: true,
+      opacity: 0.72,
+    })
+  );
+  const floorDeckVioletMat = trackMat(
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#a855f7'),
+      transparent: true,
+      opacity: 0.68,
+    })
+  );
+
+  const floorCount = liteMode ? 5 : 8;
+  for (let i = 1; i <= floorCount; i++) {
+    const y = (i / (floorCount + 1)) * 10.6 + 0.6;
+    const deck = new THREE.Mesh(
+      floorDeckGeo,
+      i % 2 === 0 ? floorDeckCyanMat : floorDeckVioletMat
+    );
+    deck.position.set(0, y, 0);
+    buildingGroup.add(deck);
+  }
+
+  // Vertical architectural energy columns along the front facade
+  const colGeo = trackGeo(new THREE.BoxGeometry(0.14, 11.2, 0.16));
+  const colMat = trackMat(
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#38bdf8'),
+    })
+  );
+  const columnXPositions = [-4.35, -2.5, 2.5, 4.35];
+  for (const cx of columnXPositions) {
+    const col = new THREE.Mesh(colGeo, colMat);
+    col.position.set(cx, 5.6, 3.04);
+    buildingGroup.add(col);
+  }
+
+  // 3. Z-ONEAPP HOLOGRAPHIC CROWN SIGNBOARD & ENTRANCE MARQUEE
+  const crownTex = trackTex(
+    createSignageTexture(
+      'Z-ONEAPP',
+      'HOLOGRAPHIC DIGITAL WORLD • PROTOTYPE',
+      '#00f2fe',
+      '#a855f7'
+    )
+  );
+  const crownGeo = trackGeo(new THREE.PlaneGeometry(7.4, 1.85));
+  const crownMat = trackMat(
+    new THREE.MeshBasicMaterial({
+      map: crownTex,
+      transparent: true,
+      side: THREE.DoubleSide,
+    })
+  );
+  const crownSign = new THREE.Mesh(crownGeo, crownMat);
+  crownSign.position.set(0, 10.1, 3.16);
+  buildingGroup.add(crownSign);
+
+  // Lower entrance canopy marquee directly above the portal
+  const marqueeTex = trackTex(
+    createSignageTexture(
+      'Z-ONEAPP PORTAL',
+      'CENTRAL ATRIUM ENTRANCE',
+      '#38bdf8',
+      '#c084fc'
+    )
+  );
+  const marqueeGeo = trackGeo(new THREE.PlaneGeometry(4.2, 1.05));
+  const marqueeMat = trackMat(
+    new THREE.MeshBasicMaterial({
+      map: marqueeTex,
+      transparent: true,
+      side: THREE.DoubleSide,
+    })
+  );
+  const marqueeSign = new THREE.Mesh(marqueeGeo, marqueeMat);
+  marqueeSign.position.set(0, 4.15, 3.45);
+  buildingGroup.add(marqueeSign);
+
+  // 4. GLOWING ENTRANCE PORTAL ARCHWAY (World Z ≈ 0.0)
+  const portalGroup = new THREE.Group();
+  portalGroup.position.set(0, 0, 3.12);
+  buildingGroup.add(portalGroup);
+
+  // Outer portal frame pillars & lintel
+  const pillarGeo = trackGeo(new THREE.BoxGeometry(0.32, 3.5, 0.45));
+  const pillarMat = trackMat(
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#091938'),
+      emissive: new THREE.Color('#00f2fe'),
+      emissiveIntensity: 0.65,
+      roughness: 0.2,
+      metalness: 0.8,
+    })
+  );
+  const leftPillar = new THREE.Mesh(pillarGeo, pillarMat);
+  leftPillar.position.set(-1.55, 1.75, 0);
+  const rightPillar = new THREE.Mesh(pillarGeo, pillarMat);
+  rightPillar.position.set(1.55, 1.75, 0);
+  portalGroup.add(leftPillar, rightPillar);
+
+  // Concentric rotating energy rings inside the portal threshold
+  const outerRingGeo = trackGeo(new THREE.TorusGeometry(1.55, 0.055, 12, liteMode ? 32 : 56));
+  const outerRingMat = trackMat(
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#00f2fe'),
+      transparent: true,
+      opacity: 0.88,
+    })
+  );
+  const outerPortalRing = new THREE.Mesh(outerRingGeo, outerRingMat);
+  outerPortalRing.position.set(0, 1.75, 0.12);
+  portalGroup.add(outerPortalRing);
+
+  const innerRingGeo = trackGeo(new THREE.TorusGeometry(1.28, 0.04, 10, liteMode ? 28 : 48));
+  const innerRingMat = trackMat(
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#a855f7'),
+      transparent: true,
+      opacity: 0.82,
+    })
+  );
+  const innerPortalRing = new THREE.Mesh(innerRingGeo, innerRingMat);
+  innerPortalRing.position.set(0, 1.75, 0.18);
+  portalGroup.add(innerPortalRing);
+
+  // Translucent energy curtain inside the portal opening
+  const curtainGeo = trackGeo(new THREE.CircleGeometry(1.48, liteMode ? 28 : 48));
+  const curtainMat = trackMat(
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#22d3ee'),
+      transparent: true,
+      opacity: 0.28,
+      side: THREE.DoubleSide,
+    })
+  );
+  const portalCurtain = new THREE.Mesh(curtainGeo, curtainMat);
+  portalCurtain.position.set(0, 1.75, 0.08);
+  portalGroup.add(portalCurtain);
+
+  // 5. FLOATING ARCHITECTURAL HOLO-PANELS FLANKING THE PLAZA
+  const holoPanels: THREE.Mesh[] = [];
+  const panelSpecs = [
+    { title: 'SOCIAL FEED ZONE', sub: 'INTERACTIVE SECTOR 01', x: -4.8, y: 2.5, z: 2.2, ry: 0.35, color: '#00f2fe' },
+    { title: 'MESSENGER CORE', sub: 'ENCRYPTED COMMS SECTOR', x: 4.8, y: 2.5, z: 2.2, ry: -0.35, color: '#a855f7' },
+  ];
+
+  for (const spec of panelSpecs) {
+    const pTex = trackTex(createSignageTexture(spec.title, spec.sub, spec.color, '#38bdf8'));
+    const pGeo = trackGeo(new THREE.PlaneGeometry(2.7, 0.72));
+    const pMat = trackMat(
+      new THREE.MeshBasicMaterial({
+        map: pTex,
+        transparent: true,
+        opacity: 0.86,
+        side: THREE.DoubleSide,
+      })
+    );
+    const panel = new THREE.Mesh(pGeo, pMat);
+    panel.position.set(spec.x, spec.y, spec.z);
+    panel.rotation.y = spec.ry;
+    rootGroup.add(panel);
+    holoPanels.push(panel);
+  }
+
+  // 6. ANIMATED VERTICAL LIGHT PULSES ALONG BUILDING FACADE
+  const pulseGeo = trackGeo(new THREE.BoxGeometry(0.22, 1.2, 0.22));
+  const pulseMat = trackMat(
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color('#00f2fe'),
+      transparent: true,
+      opacity: 0.9,
+    })
+  );
+  const lightPulses: THREE.Mesh[] = [];
+  for (let i = 0; i < columnXPositions.length; i++) {
+    const pulse = new THREE.Mesh(pulseGeo, pulseMat);
+    pulse.position.set(columnXPositions[i], 1.5 + i * 2.1, 3.06);
+    buildingGroup.add(pulse);
+    lightPulses.push(pulse);
+  }
+
+  const portalWorldPos = new THREE.Vector3(0, 1.65, 0.0);
+
+  return {
+    rootGroup,
+    portalPosition: portalWorldPos,
+    update: (elapsedSeconds: number) => {
+      outerPortalRing.rotation.z = elapsedSeconds * 0.55;
+      innerPortalRing.rotation.z = -elapsedSeconds * 0.85;
+
+      const curtainPulse = 0.22 + 0.1 * Math.sin(elapsedSeconds * 2.8);
+      curtainMat.opacity = curtainPulse;
+
+      const innerScale = 0.96 + 0.05 * Math.sin(elapsedSeconds * 3.4);
+      innerPortalRing.scale.set(innerScale, innerScale, 1);
+
+      // Animate ascending light pulses on the Z-ONEAPP facade columns
+      for (let i = 0; i < lightPulses.length; i++) {
+        const pulse = lightPulses[i];
+        const y = ((elapsedSeconds * 2.4 + i * 2.3) % 10.2) + 0.8;
+        pulse.position.y = y;
+      }
+
+      // Gentle float on plaza holographic panels
+      for (let i = 0; i < holoPanels.length; i++) {
+        holoPanels[i].position.y = 2.5 + 0.12 * Math.sin(elapsedSeconds * 1.8 + i * 1.7);
+      }
+    },
+    dispose: () => {
+      for (const g of geometries) g.dispose();
+      for (const m of materials) m.dispose();
+      for (const t of textures) t.dispose();
+      geometries.length = 0;
+      materials.length = 0;
+      textures.length = 0;
+    },
+  };
+}

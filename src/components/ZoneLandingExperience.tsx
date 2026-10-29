@@ -82,7 +82,21 @@ export const ZoneLandingExperience: React.FC<ZoneLandingExperienceProps> = ({
   triggerNotification
 }) => {
   const isTl = language === 'tl';
-  const [activePreview, setActivePreview] = useState<PreviewFeatureKey>('feed');
+  const [activePreview, setActivePreview] = useState<PreviewFeatureKey>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const p = new URLSearchParams(window.location.search);
+        const v = p.get('view');
+        const tab = p.get('tab');
+        if (v === 'reels') return 'reels';
+        if (v === 'communities') return 'communities';
+        if (tab === 'challenges') return 'challenges';
+        if (tab === 'va_shop' || p.get('shop') || p.get('shopProduct')) return 'shop';
+        if (tab === 'cashout' || tab === 'earn') return 'wallet';
+      } catch {}
+    }
+    return 'feed';
+  });
   const [publicProducts, setPublicProducts] = useState<ShopProduct[]>([]);
   const [publicChallenges, setPublicChallenges] = useState<CreatorChallenge[]>([]);
   const [exploringDemo, setExploringDemo] = useState(false);
@@ -112,6 +126,34 @@ export const ZoneLandingExperience: React.FC<ZoneLandingExperienceProps> = ({
       mounted = false;
     };
   }, []);
+
+  // Listen for direct destination events from 3D Holographic Prototype
+  useEffect(() => {
+    const handleSetPreview = (e: any) => {
+      const key = e.detail?.feature as PreviewFeatureKey;
+      if (key && ['feed', 'reels', 'communities', 'challenges', 'shop', 'wallet'].includes(key)) {
+        setUserInteractedPreview(true);
+        setActivePreview(key);
+        const el = document.getElementById('platform-preview');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+    const handleOpenProfileFromPrototype = () => {
+      scrollToAuth('login');
+      triggerNotification(
+        isTl
+          ? 'Mag-login o gumawa ng account upang matingnan ang iyong Z-oneApp Profile.'
+          : 'Please log in or create an account to view your Z-oneApp Profile.',
+        'info'
+      );
+    };
+    window.addEventListener('zone-set-landing-preview', handleSetPreview);
+    window.addEventListener('open-my-profile-modal', handleOpenProfileFromPrototype);
+    return () => {
+      window.removeEventListener('zone-set-landing-preview', handleSetPreview);
+      window.removeEventListener('open-my-profile-modal', handleOpenProfileFromPrototype);
+    };
+  }, [isTl]);
 
   // Subtle auto-rotation for the live platform preview unless user interacts
   const [userInteractedPreview, setUserInteractedPreview] = useState(false);

@@ -56,6 +56,7 @@ interface ZoneCreateStudioModalProps {
   onPublishSuccess?: (newReel: ReelVideo) => void;
   onSwitchToPostComposer?: () => void;
   onSwitchToClassicUpload?: () => void;
+  onSwitchToComicStudio?: () => void;
   triggerNotification?: (message: string, type?: 'success' | 'info' | 'error') => void;
 }
 
@@ -74,6 +75,7 @@ export const ZoneCreateStudioModal: React.FC<ZoneCreateStudioModalProps> = ({
   onPublishSuccess,
   onSwitchToPostComposer,
   onSwitchToClassicUpload,
+  onSwitchToComicStudio,
   triggerNotification
 }) => {
   const authToken = token ? (token.startsWith('Bearer ') ? token : `Bearer ${token}`) : '';
@@ -1519,8 +1521,20 @@ export const ZoneCreateStudioModal: React.FC<ZoneCreateStudioModalProps> = ({
                 )}
               </div>
 
-              {/* Bottom Mode Switcher Bar (Reel Camera | Upload | Social Post | Classic Upload) */}
+              {/* Bottom Mode Switcher Bar (Reel Camera | Upload | AI Comic | Social Post | Classic Upload) */}
               <div className="flex items-center justify-center gap-1.5 pt-1 border-t border-white/10 overflow-x-auto no-scrollbar">
+                {onSwitchToComicStudio && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleResetAndClose();
+                      onSwitchToComicStudio();
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-violet-600 hover:from-cyan-400 hover:to-violet-500 text-white font-black text-[11px] shrink-0 cursor-pointer transition shadow-md shadow-cyan-500/20 flex items-center gap-1 active:scale-95"
+                  >
+                    <span>⚡ AI Comic Video</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   className="px-3 py-1.5 rounded-lg bg-rose-600 text-white font-black text-[11px] shrink-0 cursor-pointer"

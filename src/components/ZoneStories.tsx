@@ -491,7 +491,7 @@ export const ZoneStories: React.FC<ZoneStoriesProps> = ({
   };
 
   return (
-    <div className="w-full mb-4 select-none">
+    <div id="zone-stories-tray" className="w-full mb-4 select-none">
       {/* 🚀 STORIES HORIZONTAL CAROUSEL TRAY */}
       <div className="relative bg-white rounded-3xl p-3 sm:p-4 border border-slate-200/80 shadow-xs">
         <div className="flex items-center justify-between mb-2.5 px-1">

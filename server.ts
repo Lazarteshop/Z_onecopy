@@ -27,6 +27,7 @@ import webpush from 'web-push';
 import vm from 'vm';
 import { BilibiliFeedItem, BilibiliFeedConfig } from './src/types';
 import { extractProductFromUrl } from './server/affiliateExtractor';
+import { handleComicStudioImportUrl, handleComicStudioAnalyzeVideo, handleComicStudioFinalizeVideo } from './server/comicStudio';
 import http from 'http';
 import { initChatWebSocket, notifyNewDirectMessage, getChatDiagnostics } from './server/chatSocket';
 import {
@@ -199,7 +200,8 @@ app.use((req, res, next) => {
   if (
     req.path === '/api/zone/upload' ||
     req.path === '/api/challenges/upload-media' ||
-    req.path === '/api/admin/social-share'
+    req.path === '/api/admin/social-share' ||
+    req.path.startsWith('/api/comic-studio')
   ) {
     return jsonParserUpload(req, res, next);
   }
@@ -7347,6 +7349,13 @@ function formatEmbedUrlServer(rawUrl: string) {
   // 5. Direct
   return { embedUrl: url, platform: 'direct' as const };
 }
+
+// ==========================================
+// 🎨 Z-ONE COMIC STUDIO APIS
+// ==========================================
+app.post('/api/comic-studio/import-url', handleComicStudioImportUrl);
+app.post('/api/comic-studio/analyze-video', handleComicStudioAnalyzeVideo);
+app.post('/api/comic-studio/finalize-video', handleComicStudioFinalizeVideo);
 
 app.get('/api/reels', (req, res) => {
   const db = loadDB();
@@ -23926,7 +23935,6 @@ async function startServer() {
     sendPushNotificationToUser,
     handleAdminAutoReply,
     verifyToken,
-    indexSecondaryDirectMessage
   });
 
   server.listen(PORT, '0.0.0.0', () => {

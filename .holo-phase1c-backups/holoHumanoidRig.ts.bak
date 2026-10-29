@@ -1,0 +1,1751 @@
+import * as THREE from 'three';
+
+export type HoloClipName = 'idle' | 'walk' | 'wave' | 'converse' | 'look';
+
+export interface HoloBodyProportions {
+  shoulderWidthScale: number;
+  torsoDepthScale: number;
+  hipWidthScale: number;
+  limbThicknessScale: number;
+  headScale: number;
+}
+
+export interface HoloCitizenConfig {
+  id: string;
+  label: string;
+  roleTag: string;
+  primaryColor: string;
+  secondaryColor: string;
+  heightScale: number;
+  walkSpeed: number;
+  strideScale: number;
+  turnSpeed: number;
+  pauseMinSeconds: number;
+  pauseMaxSeconds: number;
+  gestureOrder: HoloClipName[];
+  proportions: HoloBodyProportions;
+  waypoints: THREE.Vector3[];
+  initialWaypointIndex: number;
+  phaseOffset: number;
+}
+
+export interface HoloShaderUniforms {
+  uTime: { value: number };
+  uPrimaryColor: { value: THREE.Color };
+  uSecondaryColor: { value: THREE.Color };
+  uScanlineDensity: { value: number };
+  uOpacity: { value: number };
+}
+
+/**
+ * Bone indices in the 21-bone anatomical humanoid skeleton:
+ * 0: pelvis (root hip center)
+ * 1: spine (lumbar waist pivot)
+ * 2: chest (thoracic ribcage pivot)
+ * 3: neck (cervical base pivot)
+ * 4: head (cranium/jaw pivot)
+ * 5: shoulderL (left clavicle)
+ * 6: upperArmL (left glenohumeral shoulder)
+ * 7: lowerArmL (left elbow)
+ * 8: handL (left wrist/palm)
+ * 9: shoulderR (right clavicle)
+ * 10: upperArmR (right glenohumeral shoulder)
+ * 11: lowerArmR (right elbow)
+ * 12: handR (right wrist/palm)
+ * 13: thighL (left hip socket)
+ * 14: shinL (left knee)
+ * 15: footL (left ankle)
+ * 16: toeL (left ball-of-foot / forefoot roll)
+ * 17: thighR (right hip socket)
+ * 18: shinR (right knee)
+ * 19: footR (right ankle)
+ * 20: toeR (right ball-of-foot / forefoot roll)
+ */
+export const BONE_INDEX = {
+  pelvis: 0,
+  spine: 1,
+  chest: 2,
+  neck: 3,
+  head: 4,
+  shoulderL: 5,
+  upperArmL: 6,
+  lowerArmL: 7,
+  handL: 8,
+  shoulderR: 9,
+  upperArmR: 10,
+  lowerArmR: 11,
+  handR: 12,
+  thighL: 13,
+  shinL: 14,
+  footL: 15,
+  toeL: 16,
+  thighR: 17,
+  shinR: 18,
+  footR: 19,
+  toeR: 20,
+} as const;
+
+export const BONE_COUNT_PER_CITIZEN = 21;
+
+interface LoftSlice {
+  y: number;
+  cx: number;
+  cz: number;
+  rx: number;
+  rz: number;
+  boneA: number;
+  boneB: number;
+  weightB: number;
+  /** Optional subtle anatomical front/back asymmetry factor */
+  frontBulge?: number;
+  backBulge?: number;
+}
+
+/**
+ * Builds a smooth, continuous organic lofted mesh from anatomical cross-section slices
+ * with analytical smooth normals and multi-bone skinning weights.
+ */
+function buildAnatomicalLoft(
+  slices: LoftSlice[],
+  radialSegments: number,
+  capBottom = true,
+  capTop = true
+): THREE.BufferGeometry {
+  const ringCount = slices.length;
+  const cols = radialSegments + 1;
+
+  const tempPositions: number[] = [];
+  const tempUvs: number[] = [];
+  const tempSkinIndices: number[] = [];
+  const tempSkinWeights: number[] = [];
+  const indices: number[] = [];
+
+  for (let r = 0; r < ringCount; r++) {
+    const s = slices[r];
+    const v = r / Math.max(1, ringCount - 1);
+    const wB = THREE.MathUtils.clamp(s.weightB, 0, 1);
+    const wA = 1.0 - wB;
+
+    for (let c = 0; c <= radialSegments; c++) {
+      const u = c / radialSegments;
+      const theta = u * Math.PI * 2;
+      const cosT = Math.cos(theta);
+      const sinT = Math.sin(theta);
+
+      // Apply subtle front (+Z) or back (-Z) anatomical contour shaping
+      let zRadius = s.rz;
+      if (sinT > 0 && s.frontBulge !== undefined) {
+        zRadius *= 1.0 + s.frontBulge * Math.pow(sinT, 2);
+      } else if (sinT < 0 && s.backBulge !== undefined) {
+        zRadius *= 1.0 + s.backBulge * Math.pow( -sinT, 2);
+      }
+
+      const x = s.cx + s.rx * cosT;
+      const y = s.y;
+      const z = s.cz + zRadius * sinT;
+
+      tempPositions.push(x, y, z);
+      tempUvs.push(u, v);
+      tempSkinIndices.push(s.boneA, s.boneB, 0, 0);
+      tempSkinWeights.push(wA, wB, 0, 0);
+    }
+  }
+
+  for (let r = 0; r < ringCount - 1; r++) {
+    for (let c = 0; c < radialSegments; c++) {
+      const a = r * cols + c;
+      const b = (r + 1) * cols + c;
+      const d = (r + 1) * cols + (c + 1);
+      const e = r * cols + (c + 1);
+
+      indices.push(a, b, e);
+      indices.push(b, d, e);
+    }
+  }
+
+  // Optional bottom cap
+  if (capBottom && slices.length > 0) {
+    const first = slices[0];
+    const centerIdx = tempPositions.length / 3;
+    tempPositions.push(first.cx, first.y, first.cz);
+    tempUvs.push(0.5, 0);
+    const wB = THREE.MathUtils.clamp(first.weightB, 0, 1);
+    tempSkinIndices.push(first.boneA, first.boneB, 0, 0);
+    tempSkinWeights.push(1.0 - wB, wB, 0, 0);
+
+    for (let c = 0; c < radialSegments; c++) {
+      indices.push(centerIdx, c + 1, c);
+    }
+  }
+
+  // Optional top cap
+  if (capTop && slices.length > 0) {
+    const lastIdx = slices.length - 1;
+    const last = slices[lastIdx];
+    const baseRingOffset = lastIdx * cols;
+    const centerIdx = tempPositions.length / 3;
+    tempPositions.push(last.cx, last.y, last.cz);
+    tempUvs.push(0.5, 1);
+    const wB = THREE.MathUtils.clamp(last.weightB, 0, 1);
+    tempSkinIndices.push(last.boneA, last.boneB, 0, 0);
+    tempSkinWeights.push(1.0 - wB, wB, 0, 0);
+
+    for (let c = 0; c < radialSegments; c++) {
+      indices.push(baseRingOffset + c, baseRingOffset + c + 1, centerIdx);
+    }
+  }
+
+  const indexedGeo = new THREE.BufferGeometry();
+  indexedGeo.setAttribute('position', new THREE.Float32BufferAttribute(tempPositions, 3));
+  indexedGeo.setAttribute('uv', new THREE.Float32BufferAttribute(tempUvs, 2));
+  indexedGeo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(tempSkinIndices, 4));
+  indexedGeo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(tempSkinWeights, 4));
+  indexedGeo.setIndex(indices);
+  indexedGeo.computeVertexNormals();
+
+  const nonIndexed = indexedGeo.toNonIndexed();
+  indexedGeo.dispose();
+  return nonIndexed;
+}
+
+/**
+ * Builds a continuous horizontal/forward loft for the sculpted human foot (heel -> arch -> ball -> tapered toes).
+ */
+function buildSculptedFootLoft(
+  sideSign: number,
+  hipX: number,
+  radialSegments: number
+): THREE.BufferGeometry {
+  // Foot extends from heel (z = -0.055) forward to toe tip (z = +0.165)
+  interface FootSection {
+    z: number;
+    cy: number;
+    cxOffset: number;
+    rx: number;
+    ry: number;
+    boneA: number;
+    boneB: number;
+    weightB: number;
+  }
+
+  const footBone = sideSign > 0 ? BONE_INDEX.footL : BONE_INDEX.footR;
+  const toeBone = sideSign > 0 ? BONE_INDEX.toeL : BONE_INDEX.toeR;
+  const shinBone = sideSign > 0 ? BONE_INDEX.shinL : BONE_INDEX.shinR;
+
+  const sections: FootSection[] = [
+    // Rounded back of heel
+    { z: -0.058, cy: 0.042, cxOffset: 0.0, rx: 0.016, ry: 0.018, boneA: footBone, boneB: shinBone, weightB: 0.15 },
+    // Heel cushion
+    { z: -0.038, cy: 0.042, cxOffset: 0.0, rx: 0.036, ry: 0.038, boneA: footBone, boneB: shinBone, weightB: 0.22 },
+    // Ankle / talus bridge
+    { z: -0.005, cy: 0.046, cxOffset: 0.0, rx: 0.040, ry: 0.044, boneA: footBone, boneB: shinBone, weightB: 0.25 },
+    // Mid-foot arch (slightly narrower waist, high instep)
+    { z: 0.038, cy: 0.038, cxOffset: sideSign * 0.002, rx: 0.041, ry: 0.035, boneA: footBone, boneB: toeBone, weightB: 0.18 },
+    // Ball of foot / metatarsals (wider, flatter)
+    { z: 0.085, cy: 0.028, cxOffset: sideSign * 0.004, rx: 0.046, ry: 0.025, boneA: footBone, boneB: toeBone, weightB: 0.65 },
+    // Forefoot toe box
+    { z: 0.128, cy: 0.022, cxOffset: sideSign * 0.002, rx: 0.041, ry: 0.019, boneA: toeBone, boneB: footBone, weightB: 0.15 },
+    // Rounded organic toe tip
+    { z: 0.160, cy: 0.018, cxOffset: -sideSign * 0.003, rx: 0.024, ry: 0.012, boneA: toeBone, boneB: footBone, weightB: 0.0 },
+  ];
+
+  const ringCount = sections.length;
+  const cols = radialSegments + 1;
+  const tempPositions: number[] = [];
+  const tempUvs: number[] = [];
+  const tempSkinIndices: number[] = [];
+  const tempSkinWeights: number[] = [];
+  const indices: number[] = [];
+
+  for (let r = 0; r < ringCount; r++) {
+    const s = sections[r];
+    const v = r / Math.max(1, ringCount - 1);
+    const wB = THREE.MathUtils.clamp(s.weightB, 0, 1);
+    const wA = 1.0 - wB;
+
+    for (let c = 0; c <= radialSegments; c++) {
+      const u = c / radialSegments;
+      const theta = u * Math.PI * 2;
+      const cosT = Math.cos(theta);
+      const sinT = Math.sin(theta);
+
+      const x = hipX + s.cxOffset + s.rx * cosT;
+      // Flatten the sole of the foot so it contacts the ground plane naturally at y >= 0.004
+      const rawY = s.cy + s.ry * sinT;
+      const y = sinT < 0 ? Math.max(0.004, s.cy + s.ry * sinT * 0.62) : rawY;
+      const z = s.z;
+
+      tempPositions.push(x, y, z);
+      tempUvs.push(u, v);
+      tempSkinIndices.push(s.boneA, s.boneB, 0, 0);
+      tempSkinWeights.push(wA, wB, 0, 0);
+    }
+  }
+
+  for (let r = 0; r < ringCount - 1; r++) {
+    for (let c = 0; c < radialSegments; c++) {
+      const a = r * cols + c;
+      const b = (r + 1) * cols + c;
+      const d = (r + 1) * cols + (c + 1);
+      const e = r * cols + (c + 1);
+
+      indices.push(a, e, b);
+      indices.push(b, e, d);
+    }
+  }
+
+  // Heel cap
+  const first = sections[0];
+  const heelCenterIdx = tempPositions.length / 3;
+  tempPositions.push(hipX + first.cxOffset, first.cy, first.z);
+  tempUvs.push(0.5, 0);
+  tempSkinIndices.push(first.boneA, first.boneB, 0, 0);
+  tempSkinWeights.push(1 - first.weightB, first.weightB, 0, 0);
+  for (let c = 0; c < radialSegments; c++) {
+    indices.push(heelCenterIdx, c, c + 1);
+  }
+
+  // Toe cap
+  const lastIdx = sections.length - 1;
+  const last = sections[lastIdx];
+  const baseRingOffset = lastIdx * cols;
+  const toeCenterIdx = tempPositions.length / 3;
+  tempPositions.push(hipX + last.cxOffset, last.cy, last.z);
+  tempUvs.push(0.5, 1);
+  tempSkinIndices.push(last.boneA, last.boneB, 0, 0);
+  tempSkinWeights.push(1 - last.weightB, last.weightB, 0, 0);
+  for (let c = 0; c < radialSegments; c++) {
+    indices.push(baseRingOffset + c + 1, baseRingOffset + c, toeCenterIdx);
+  }
+
+  const indexedGeo = new THREE.BufferGeometry();
+  indexedGeo.setAttribute('position', new THREE.Float32BufferAttribute(tempPositions, 3));
+  indexedGeo.setAttribute('uv', new THREE.Float32BufferAttribute(tempUvs, 2));
+  indexedGeo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(tempSkinIndices, 4));
+  indexedGeo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(tempSkinWeights, 4));
+  indexedGeo.setIndex(indices);
+  indexedGeo.computeVertexNormals();
+
+  const nonIndexed = indexedGeo.toNonIndexed();
+  indexedGeo.dispose();
+  return nonIndexed;
+}
+
+/**
+ * Merges multiple anatomical lofted BufferGeometries into a single unified BufferGeometry
+ * with smooth multi-bone weights for a single draw-call THREE.SkinnedMesh per citizen.
+ */
+function buildUnifiedSkinnedHumanoidGeometry(
+  liteMode: boolean,
+  proportions: HoloBodyProportions
+): THREE.BufferGeometry {
+  const radialSegs = liteMode ? 10 : 18;
+  const limbSegs = liteMode ? 8 : 14;
+
+  const sw = proportions.shoulderWidthScale;
+  const td = proportions.torsoDepthScale;
+  const hw = proportions.hipWidthScale;
+  const lt = proportions.limbThicknessScale;
+  const hs = proportions.headScale;
+
+  const geometries: THREE.BufferGeometry[] = [];
+
+  // 1. CONTINUOUS SCULPTED TORSO + NECK + CRANIUM LOFT
+  // Flows organically from lower pelvis (y=0.88) -> hips -> waist -> ribcage -> chest -> collarbones -> neck -> head/jaw/cranium (y=1.81)
+  const torsoAndHeadSlices: LoftSlice[] = [
+    // Lower pelvis base
+    { y: 0.885, cx: 0, cz: -0.006, rx: 0.118 * hw, rz: 0.088 * td, boneA: BONE_INDEX.pelvis, boneB: BONE_INDEX.spine, weightB: 0.0, backBulge: 0.18 },
+    // Hip / gluteal fullness
+    { y: 0.945, cx: 0, cz: -0.010, rx: 0.148 * hw, rz: 0.106 * td, boneA: BONE_INDEX.pelvis, boneB: BONE_INDEX.spine, weightB: 0.08, backBulge: 0.26, frontBulge: 0.05 },
+    // Upper iliac crest
+    { y: 1.015, cx: 0, cz: -0.004, rx: 0.140 * hw, rz: 0.098 * td, boneA: BONE_INDEX.pelvis, boneB: BONE_INDEX.spine, weightB: 0.42, backBulge: 0.12 },
+    // Natural anatomical waist taper (lumbar curve)
+    { y: 1.095, cx: 0, cz: 0.004, rx: 0.124 * hw, rz: 0.088 * td, boneA: BONE_INDEX.spine, boneB: BONE_INDEX.pelvis, weightB: 0.20, frontBulge: 0.08 },
+    // Mid abdomen / lower ribs
+    { y: 1.180, cx: 0, cz: 0.006, rx: 0.138 * sw, rz: 0.096 * td, boneA: BONE_INDEX.spine, boneB: BONE_INDEX.chest, weightB: 0.35, frontBulge: 0.12 },
+    // Lower thoracic ribcage
+    { y: 1.265, cx: 0, cz: 0.008, rx: 0.158 * sw, rz: 0.108 * td, boneA: BONE_INDEX.chest, boneB: BONE_INDEX.spine, weightB: 0.22, frontBulge: 0.18, backBulge: 0.08 },
+    // Full pectoral / latissimus chest contour
+    { y: 1.355, cx: 0, cz: 0.010, rx: 0.178 * sw, rz: 0.114 * td, boneA: BONE_INDEX.chest, boneB: BONE_INDEX.spine, weightB: 0.0, frontBulge: 0.22, backBulge: 0.10 },
+    // Upper chest / clavicle shelf
+    { y: 1.430, cx: 0, cz: 0.003, rx: 0.172 * sw, rz: 0.098 * td, boneA: BONE_INDEX.chest, boneB: BONE_INDEX.neck, weightB: 0.12, frontBulge: 0.10 },
+    // Trapezius slope into base of neck
+    { y: 1.472, cx: 0, cz: -0.002, rx: 0.096 * sw, rz: 0.072 * td, boneA: BONE_INDEX.chest, boneB: BONE_INDEX.neck, weightB: 0.55 },
+    // Lower cervical neck
+    { y: 1.505, cx: 0, cz: 0.000, rx: 0.056 * hs, rz: 0.058 * hs, boneA: BONE_INDEX.neck, boneB: BONE_INDEX.chest, weightB: 0.20 },
+    // Mid-upper neck
+    { y: 1.555, cx: 0, cz: 0.004, rx: 0.052 * hs, rz: 0.055 * hs, boneA: BONE_INDEX.neck, boneB: BONE_INDEX.head, weightB: 0.38 },
+    // Under-chin / jaw base transition
+    { y: 1.588, cx: 0, cz: 0.016, rx: 0.068 * hs, rz: 0.078 * hs, boneA: BONE_INDEX.head, boneB: BONE_INDEX.neck, weightB: 0.25, frontBulge: 0.26 },
+    // Jawline & lower cheeks
+    { y: 1.630, cx: 0, cz: 0.018, rx: 0.088 * hs, rz: 0.098 * hs, boneA: BONE_INDEX.head, boneB: BONE_INDEX.neck, weightB: 0.05, frontBulge: 0.22, backBulge: 0.12 },
+    // Cheekbones & nose bridge contour
+    { y: 1.682, cx: 0, cz: 0.014, rx: 0.096 * hs, rz: 0.108 * hs, boneA: BONE_INDEX.head, boneB: BONE_INDEX.head, weightB: 0.0, frontBulge: 0.24, backBulge: 0.18 },
+    // Brow ridge & temples
+    { y: 1.732, cx: 0, cz: 0.008, rx: 0.094 * hs, rz: 0.106 * hs, boneA: BONE_INDEX.head, boneB: BONE_INDEX.head, weightB: 0.0, frontBulge: 0.15, backBulge: 0.20 },
+    // Forehead & parietal cranium
+    { y: 1.778, cx: 0, cz: 0.000, rx: 0.076 * hs, rz: 0.090 * hs, boneA: BONE_INDEX.head, boneB: BONE_INDEX.head, weightB: 0.0, backBulge: 0.15 },
+    // Crown of head
+    { y: 1.810, cx: 0, cz: -0.006, rx: 0.036 * hs, rz: 0.044 * hs, boneA: BONE_INDEX.head, boneB: BONE_INDEX.head, weightB: 0.0 },
+  ];
+  geometries.push(buildAnatomicalLoft(torsoAndHeadSlices, radialSegs, true, true));
+
+  // 2. CONTINUOUS SCULPTED LEFT & RIGHT ARMS + WRISTS + HANDS
+  const buildArmWithHand = (sideSign: number) => {
+    const shBone = sideSign > 0 ? BONE_INDEX.shoulderL : BONE_INDEX.shoulderR;
+    const uaBone = sideSign > 0 ? BONE_INDEX.upperArmL : BONE_INDEX.upperArmR;
+    const laBone = sideSign > 0 ? BONE_INDEX.lowerArmL : BONE_INDEX.lowerArmR;
+    const hdBone = sideSign > 0 ? BONE_INDEX.handL : BONE_INDEX.handR;
+
+    const armX = sideSign * 0.195 * sw;
+    const elbowX = sideSign * 0.206 * sw;
+    const wristX = sideSign * 0.214 * sw;
+
+    const armSlices: LoftSlice[] = [
+      // Clavicle / inner deltoid blend into chest
+      { y: 1.455, cx: sideSign * 0.162 * sw, cz: 0.000, rx: 0.052 * lt, rz: 0.050 * lt, boneA: shBone, boneB: BONE_INDEX.chest, weightB: 0.45 },
+      // Rounded deltoid shoulder cap
+      { y: 1.415, cx: armX, cz: 0.000, rx: 0.062 * lt, rz: 0.058 * lt, boneA: uaBone, boneB: shBone, weightB: 0.40 },
+      // Upper bicep / tricep contour
+      { y: 1.320, cx: armX + sideSign * 0.004, cz: -0.004, rx: 0.051 * lt, rz: 0.053 * lt, boneA: uaBone, boneB: shBone, weightB: 0.0, frontBulge: 0.14, backBulge: 0.16 },
+      // Lower bicep tapering toward elbow
+      { y: 1.215, cx: elbowX - sideSign * 0.003, cz: -0.006, rx: 0.044 * lt, rz: 0.045 * lt, boneA: uaBone, boneB: laBone, weightB: 0.22 },
+      // Elbow articulation crease
+      { y: 1.150, cx: elbowX, cz: -0.008, rx: 0.041 * lt, rz: 0.042 * lt, boneA: uaBone, boneB: laBone, weightB: 0.50, backBulge: 0.14 },
+      // Upper forearm (brachioradialis / pronator fullness)
+      { y: 1.080, cx: elbowX + sideSign * 0.003, cz: 0.000, rx: 0.045 * lt, rz: 0.046 * lt, boneA: laBone, boneB: uaBone, weightB: 0.15, frontBulge: 0.12 },
+      // Mid forearm taper
+      { y: 0.990, cx: wristX - sideSign * 0.002, cz: 0.008, rx: 0.037 * lt, rz: 0.038 * lt, boneA: laBone, boneB: hdBone, weightB: 0.15 },
+      // Slender oval wrist joint
+      { y: 0.905, cx: wristX, cz: 0.014, rx: 0.029 * lt, rz: 0.033 * lt, boneA: laBone, boneB: hdBone, weightB: 0.50 },
+      // Palm base (carpus / thenar eminence)
+      { y: 0.865, cx: wristX + sideSign * 0.002, cz: 0.020, rx: 0.026 * lt, rz: 0.042 * lt, boneA: hdBone, boneB: laBone, weightB: 0.20, frontBulge: 0.24 },
+      // Mid palm + thumb silhouette
+      { y: 0.820, cx: wristX + sideSign * 0.003, cz: 0.024, rx: 0.024 * lt, rz: 0.045 * lt, boneA: hdBone, boneB: hdBone, weightB: 0.0, frontBulge: 0.28 },
+      // Knuckles / proximal fingers
+      { y: 0.778, cx: wristX + sideSign * 0.001, cz: 0.020, rx: 0.020 * lt, rz: 0.038 * lt, boneA: hdBone, boneB: hdBone, weightB: 0.0 },
+      // Tapered fingertips
+      { y: 0.742, cx: wristX - sideSign * 0.002, cz: 0.016, rx: 0.013 * lt, rz: 0.026 * lt, boneA: hdBone, boneB: hdBone, weightB: 0.0 },
+    ];
+
+    geometries.push(buildAnatomicalLoft(armSlices, limbSegs, true, true));
+  };
+
+  buildArmWithHand(1);  // Left Arm + Hand
+  buildArmWithHand(-1); // Right Arm + Hand
+
+  // 3. CONTINUOUS SCULPTED LEFT & RIGHT LEGS + FEET
+  const buildLegWithFoot = (sideSign: number) => {
+    const thighBone = sideSign > 0 ? BONE_INDEX.thighL : BONE_INDEX.thighR;
+    const shinBone = sideSign > 0 ? BONE_INDEX.shinL : BONE_INDEX.shinR;
+    const footBone = sideSign > 0 ? BONE_INDEX.footL : BONE_INDEX.footR;
+
+    const hipX = sideSign * 0.098 * hw;
+
+    const legSlices: LoftSlice[] = [
+      // Upper thigh / hip socket blend into pelvis
+      { y: 0.935, cx: hipX, cz: -0.006, rx: 0.078 * lt, rz: 0.082 * lt, boneA: thighBone, boneB: BONE_INDEX.pelvis, weightB: 0.45, backBulge: 0.22 },
+      // Upper quadriceps & hamstring fullness
+      { y: 0.810, cx: hipX, cz: 0.004, rx: 0.076 * lt, rz: 0.080 * lt, boneA: thighBone, boneB: BONE_INDEX.pelvis, weightB: 0.10, frontBulge: 0.20, backBulge: 0.16 },
+      // Mid thigh natural taper
+      { y: 0.655, cx: hipX, cz: 0.006, rx: 0.066 * lt, rz: 0.068 * lt, boneA: thighBone, boneB: shinBone, weightB: 0.12, frontBulge: 0.16 },
+      // Above-knee tear-drop taper
+      { y: 0.545, cx: hipX, cz: 0.004, rx: 0.056 * lt, rz: 0.058 * lt, boneA: thighBone, boneB: shinBone, weightB: 0.35, frontBulge: 0.12 },
+      // Knee patella & popliteal joint
+      { y: 0.490, cx: hipX, cz: 0.002, rx: 0.053 * lt, rz: 0.056 * lt, boneA: thighBone, boneB: shinBone, weightB: 0.50, frontBulge: 0.18 },
+      // Upper tibia / below knee
+      { y: 0.430, cx: hipX, cz: -0.004, rx: 0.052 * lt, rz: 0.055 * lt, boneA: shinBone, boneB: thighBone, weightB: 0.22, backBulge: 0.16 },
+      // Gastrocnemius calf muscle belly (high anatomical curve on back of lower leg)
+      { y: 0.345, cx: hipX, cz: -0.010, rx: 0.056 * lt, rz: 0.062 * lt, boneA: shinBone, boneB: shinBone, weightB: 0.0, backBulge: 0.32, frontBulge: 0.05 },
+      // Mid-lower shin taper (soleus)
+      { y: 0.225, cx: hipX, cz: -0.006, rx: 0.044 * lt, rz: 0.048 * lt, boneA: shinBone, boneB: footBone, weightB: 0.10, backBulge: 0.18 },
+      // Slender ankle / Achilles tendon
+      { y: 0.120, cx: hipX, cz: -0.004, rx: 0.036 * lt, rz: 0.040 * lt, boneA: shinBone, boneB: footBone, weightB: 0.35, backBulge: 0.12 },
+      // Malleolus / ankle joint bridge into foot
+      { y: 0.068, cx: hipX, cz: 0.002, rx: 0.038 * lt, rz: 0.043 * lt, boneA: footBone, boneB: shinBone, weightB: 0.35 },
+    ];
+
+    geometries.push(buildAnatomicalLoft(legSlices, limbSegs, false, true));
+    geometries.push(buildSculptedFootLoft(sideSign, hipX, limbSegs));
+  };
+
+  buildLegWithFoot(1);  // Left Leg + Foot
+  buildLegWithFoot(-1); // Right Leg + Foot
+
+  // Merge all non-indexed lofted geometries into a single unified BufferGeometry
+  let totalVertices = 0;
+  for (const geo of geometries) {
+    totalVertices += geo.attributes.position.count;
+  }
+
+  const positions = new Float32Array(totalVertices * 3);
+  const normals = new Float32Array(totalVertices * 3);
+  const uvs = new Float32Array(totalVertices * 2);
+  const skinIndices = new Uint16Array(totalVertices * 4);
+  const skinWeights = new Float32Array(totalVertices * 4);
+
+  let vOffset = 0;
+  for (const geo of geometries) {
+    const posAttr = geo.attributes.position;
+    const normAttr = geo.attributes.normal;
+    const uvAttr = geo.attributes.uv;
+    const siAttr = geo.attributes.skinIndex;
+    const swAttr = geo.attributes.skinWeight;
+    const count = posAttr.count;
+
+    positions.set(posAttr.array as Float32Array, vOffset * 3);
+    if (normAttr) {
+      normals.set(normAttr.array as Float32Array, vOffset * 3);
+    }
+    if (uvAttr) {
+      uvs.set(uvAttr.array as Float32Array, vOffset * 2);
+    }
+    skinIndices.set(siAttr.array as Uint16Array, vOffset * 4);
+    skinWeights.set(swAttr.array as Float32Array, vOffset * 4);
+
+    vOffset += count;
+    geo.dispose();
+  }
+
+  const unified = new THREE.BufferGeometry();
+  unified.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  unified.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  unified.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  unified.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
+  unified.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
+  unified.computeBoundingSphere();
+
+  return unified;
+}
+
+/**
+ * Creates the 21-bone hierarchy matching the anatomical bind-pose coordinates.
+ */
+function createHumanoidBones(proportions: HoloBodyProportions): THREE.Bone[] {
+  const bones: THREE.Bone[] = [];
+  const sw = proportions.shoulderWidthScale;
+  const hw = proportions.hipWidthScale;
+
+  const makeBone = (name: string, x: number, y: number, z: number, parent?: THREE.Bone) => {
+    const bone = new THREE.Bone();
+    bone.name = name;
+    bone.position.set(x, y, z);
+    if (parent) {
+      parent.add(bone);
+    }
+    bones.push(bone);
+    return bone;
+  };
+
+  // 0: pelvis at world (0, 0.96, 0)
+  const pelvis = makeBone('pelvis', 0, 0.96, 0);
+  // 1: spine at world (0, 1.09, 0) -> local (0, 0.13, 0)
+  const spine = makeBone('spine', 0, 0.13, 0, pelvis);
+  // 2: chest at world (0, 1.26, 0) -> local (0, 0.17, 0)
+  const chest = makeBone('chest', 0, 0.17, 0, spine);
+  // 3: neck at world (0, 1.48, 0) -> local (0, 0.22, 0)
+  const neck = makeBone('neck', 0, 0.22, 0, chest);
+  // 4: head at world (0, 1.57, 0) -> local (0, 0.09, 0)
+  makeBone('head', 0, 0.09, 0, neck);
+
+  // 5: shoulderL (clavicle) at world (0.08 * sw, 1.44, 0) -> local (0.08 * sw, 0.18, 0)
+  const shoulderL = makeBone('shoulderL', 0.08 * sw, 0.18, 0, chest);
+  // 6: upperArmL at world (0.195 * sw, 1.42, 0) -> local (0.115 * sw, -0.02, 0)
+  const upperArmL = makeBone('upperArmL', 0.115 * sw, -0.02, 0, shoulderL);
+  // 7: lowerArmL (elbow) at world (0.205 * sw, 1.15, 0) -> local (0.01 * sw, -0.27, 0)
+  const lowerArmL = makeBone('lowerArmL', 0.01 * sw, -0.27, 0, upperArmL);
+  // 8: handL (wrist) at world (0.214 * sw, 0.90, 0.014) -> local (0.009 * sw, -0.25, 0.014)
+  makeBone('handL', 0.009 * sw, -0.25, 0.014, lowerArmL);
+
+  // 9: shoulderR (clavicle) at world (-0.08 * sw, 1.44, 0) -> local (-0.08 * sw, 0.18, 0)
+  const shoulderR = makeBone('shoulderR', -0.08 * sw, 0.18, 0, chest);
+  // 10: upperArmR at world (-0.195 * sw, 1.42, 0) -> local (-0.115 * sw, -0.02, 0)
+  const upperArmR = makeBone('upperArmR', -0.115 * sw, -0.02, 0, shoulderR);
+  // 11: lowerArmR (elbow) at world (-0.205 * sw, 1.15, 0) -> local (-0.01 * sw, -0.27, 0)
+  const lowerArmR = makeBone('lowerArmR', -0.01 * sw, -0.27, 0, upperArmR);
+  // 12: handR (wrist) at world (-0.214 * sw, 0.90, 0.014) -> local (-0.009 * sw, -0.25, 0.014)
+  makeBone('handR', -0.009 * sw, -0.25, 0.014, lowerArmR);
+
+  // 13: thighL at world (0.098 * hw, 0.91, 0) -> local (0.098 * hw, -0.05, 0)
+  const thighL = makeBone('thighL', 0.098 * hw, -0.05, 0, pelvis);
+  // 14: shinL (knee) at world (0.098 * hw, 0.49, 0) -> local (0, -0.42, 0)
+  const shinL = makeBone('shinL', 0, -0.42, 0, thighL);
+  // 15: footL (ankle) at world (0.098 * hw, 0.08, 0) -> local (0, -0.41, 0)
+  const footL = makeBone('footL', 0, -0.41, 0, shinL);
+  // 16: toeL (forefoot ball) at world (0.098 * hw, 0.028, 0.085) -> local (0, -0.052, 0.085)
+  makeBone('toeL', 0, -0.052, 0.085, footL);
+
+  // 17: thighR at world (-0.098 * hw, 0.91, 0) -> local (-0.098 * hw, -0.05, 0)
+  const thighR = makeBone('thighR', -0.098 * hw, -0.05, 0, pelvis);
+  // 18: shinR (knee) at world (-0.098 * hw, 0.49, 0) -> local (0, -0.42, 0)
+  const shinR = makeBone('shinR', 0, -0.42, 0, thighR);
+  // 19: footR (ankle) at world (-0.098 * hw, 0.08, 0) -> local (0, -0.41, 0)
+  const footR = makeBone('footR', 0, -0.41, 0, shinR);
+  // 20: toeR (forefoot ball) at world (-0.098 * hw, 0.028, 0.085) -> local (0, -0.052, 0.085)
+  makeBone('toeR', 0, -0.052, 0.085, footR);
+
+  return bones;
+}
+
+/**
+ * Samples a continuous Euler (XYZ) function over [0, duration] into a smooth QuaternionKeyframeTrack.
+ */
+function sampleEulerTrack(
+  boneName: string,
+  duration: number,
+  sampleCount: number,
+  evalFn: (u: number, phaseRad: number) => [number, number, number]
+): THREE.QuaternionKeyframeTrack {
+  const times: number[] = [];
+  const values: number[] = [];
+  const euler = new THREE.Euler();
+  const quat = new THREE.Quaternion();
+
+  for (let i = 0; i < sampleCount; i++) {
+    const u = i / (sampleCount - 1);
+    // Ensure exact periodic loop closure at u = 1.0
+    const uWrapped = i === sampleCount - 1 ? 0 : u;
+    const phaseRad = uWrapped * Math.PI * 2;
+    const [rx, ry, rz] = evalFn(uWrapped, phaseRad);
+
+    times.push(u * duration);
+    euler.set(rx, ry, rz, 'XYZ');
+    quat.setFromEuler(euler);
+    values.push(quat.x, quat.y, quat.z, quat.w);
+  }
+
+  return new THREE.QuaternionKeyframeTrack(`${boneName}.quaternion`, times, values);
+}
+
+/**
+ * Samples a continuous Vector3 position function over [0, duration] into a VectorKeyframeTrack.
+ */
+function sampleVectorTrack(
+  boneName: string,
+  duration: number,
+  sampleCount: number,
+  evalFn: (u: number, phaseRad: number) => [number, number, number]
+): THREE.VectorKeyframeTrack {
+  const times: number[] = [];
+  const values: number[] = [];
+
+  for (let i = 0; i < sampleCount; i++) {
+    const u = i / (sampleCount - 1);
+    const uWrapped = i === sampleCount - 1 ? 0 : u;
+    const p = uWrapped * Math.PI * 2;
+    const [x, y, z] = evalFn(uWrapped, p);
+
+    times.push(u * duration);
+    values.push(x, y, z);
+  }
+
+  return new THREE.VectorKeyframeTrack(`${boneName}.position`, times, values);
+}
+
+/**
+ * Biomechanical gait helper for a single leg over phase p in [0, 2π):
+ * p = 0: Left Heel Strike
+ * p = π/2: Left Mid-Stance (flat foot carrying body weight, right leg swinging)
+ * p = π: Left Terminal Stance / Heel Rise & Toe-Off (Right Heel Strike)
+ * p = 3π/2: Left Mid-Swing (high knee flexion for ground clearance)
+ */
+function evaluateBiomechanicalLegGait(p: number, sideSign: number): {
+  thigh: [number, number, number];
+  shin: [number, number, number];
+  foot: [number, number, number];
+  toe: [number, number, number];
+} {
+  // 1. Hip flexion/extension: smooth fundamental + second harmonic for longer stance and brisker swing
+  // Negative rx swings thigh forward (+Z), positive rx extends thigh backward (-Z)
+  const hipFlex = -0.37 * Math.cos(p) - 0.055 * Math.sin(2 * p) + 0.015;
+  // Subtle hip adduction during stance and slight abduction during swing
+  const hipAdduct = sideSign * (-0.022 * Math.sin(p) + 0.008);
+  const hipYaw = sideSign * (0.025 * Math.cos(p));
+
+  // 2. Knee flexion (always positive rx, bending lower leg backward -Z):
+  // Dual-peak biomechanical curve:
+  // - Small cushion flexion peak (~0.20 rad) during loading response / early mid-stance (around p = 0.85 rad)
+  // - Major swing clearance peak (~0.78 rad) during toe-off & mid-swing (around p = 4.35 rad)
+  const stanceAbsorb = 0.17 * Math.exp(-Math.pow(((p - 0.85 + Math.PI * 3) % (Math.PI * 2)) - Math.PI, 2) / 0.45);
+  const swingClearance = 0.72 * Math.pow(Math.max(0, -Math.sin(p - 0.32)), 1.45);
+  const kneeFlex = 0.06 + stanceAbsorb + swingClearance;
+
+  // 3. Ankle dorsiflexion / plantarflexion + subtalar ankle roll:
+  // - At heel strike (p ≈ 0): dorsiflexed (rx ≈ -0.19) so heel strikes first
+  // - At mid-stance (p ≈ π/2): neutral/slight dorsiflexion as tibia rolls forward over planted foot
+  // - At push-off (p ≈ π): strong plantarflexion (rx ≈ +0.28) as heel lifts off ground
+  // - During swing (p ≈ 3π/2): dorsiflexed (rx ≈ -0.12) so toes clear the ground
+  const anklePitch =
+    -0.16 * Math.cos(p) +
+    0.14 * Math.sin(p - 0.65) +
+    0.08 * Math.sin(2 * p - 0.4);
+  const ankleRoll = sideSign * (0.032 * Math.sin(p));
+
+  // 4. Forefoot / Toe metatarsal roll:
+  // Bends upward relative to the pitched foot during terminal stance / push-off (p ≈ 2.2 to 3.4)
+  // so the toes stay grounded while the heel rises
+  const pushOffWindow = Math.max(0, Math.sin(p - 1.15));
+  const toePitch = -0.26 * Math.pow(pushOffWindow, 2.2) - 0.04 * Math.cos(p);
+
+  return {
+    thigh: [hipFlex, hipYaw, hipAdduct],
+    shin: [kneeFlex, 0, 0],
+    foot: [anklePitch, 0, ankleRoll],
+    toe: [toePitch, 0, 0],
+  };
+}
+
+/**
+ * Builds the 5 natural biomechanical AnimationClips using 19-point high-resolution periodic curves:
+ * 1. idle (thoracic breathing, collarbone lift, contrapposto weight shift, relaxed wrists/elbows, micro gaze)
+ * 2. walk (alternating heel-to-toe steps, knee cushioning & swing flexion, ankle roll, hip sway, spine/shoulder counter-rotation, relaxed wrist lag)
+ * 3. wave (weight shift, chest/shoulder engagement, bent elbow, natural forearm + lagging wrist wave, warm head tilt)
+ * 4. converse (expressive asymmetric two-hand gestures, natural pauses, wrist articulation, head nods, torso engagement)
+ * 5. look (coordinated pelvis + spine + chest + neck + head turn instead of stiff isolated head rotation)
+ */
+export function buildHumanoidAnimationClips(): Record<HoloClipName, THREE.AnimationClip> {
+  const N = 19; // High-resolution keyframe sampling for smooth cubic/quaternion interpolation
+
+  // ============================================================================
+  // 1. NATURAL IDLE BREATHING & MICRO-POSTURE CLIP (4.4s loop)
+  // ============================================================================
+  const idleDur = 4.4;
+  const idleTracks: THREE.KeyframeTrack[] = [
+    // Subtle contrapposto weight shift + gentle vertical breathing settlement
+    sampleVectorTrack('pelvis', idleDur, N, (_u, p) => [
+      0.024 * Math.sin(p) + 0.006 * Math.sin(2 * p),
+      0.956 - 0.005 * Math.pow(Math.sin(p), 2) + 0.003 * Math.sin(2 * p),
+      0.005 * Math.cos(p),
+    ]),
+    sampleEulerTrack('pelvis', idleDur, N, (_u, p) => [
+      0.012 * Math.sin(2 * p),
+      0.038 * Math.sin(p),
+      -0.036 * Math.sin(p),
+    ]),
+    // Lumbar spine compensates opposite to pelvis tilt + subtle breath extension
+    sampleEulerTrack('spine', idleDur, N, (_u, p) => [
+      0.018 - 0.022 * Math.sin(2 * p),
+      -0.024 * Math.sin(p),
+      0.028 * Math.sin(p),
+    ]),
+    // Thoracic chest expands on inhalation (2 cycles per 4.4s = 2.2s breath cycle)
+    sampleEulerTrack('chest', idleDur, N, (_u, p) => [
+      -0.015 - 0.036 * Math.sin(2 * p - 0.3),
+      -0.018 * Math.sin(p - 0.2),
+      0.016 * Math.sin(p),
+    ]),
+    // Clavicles / shoulders gently rise and fall with inhalation
+    sampleEulerTrack('shoulderL', idleDur, N, (_u, p) => [
+      0.01 * Math.sin(2 * p),
+      -0.015 * Math.sin(2 * p),
+      0.028 * Math.sin(2 * p - 0.2),
+    ]),
+    sampleEulerTrack('shoulderR', idleDur, N, (_u, p) => [
+      0.01 * Math.sin(2 * p),
+      0.015 * Math.sin(2 * p),
+      -0.028 * Math.sin(2 * p - 0.2),
+    ]),
+    // Coordinated neck & head micro-posture + calm awareness
+    sampleEulerTrack('neck', idleDur, N, (_u, p) => [
+      0.014 * Math.sin(2 * p) - 0.015 * Math.cos(p),
+      0.045 * Math.sin(p + 0.3),
+      -0.012 * Math.sin(p),
+    ]),
+    sampleEulerTrack('head', idleDur, N, (_u, p) => [
+      0.020 * Math.sin(2 * p - 0.4) - 0.022 * Math.cos(p),
+      0.068 * Math.sin(p + 0.45),
+      0.018 * Math.sin(p - 0.3),
+    ]),
+    // Relaxed arms with soft elbow bend & natural wrist relaxation
+    sampleEulerTrack('upperArmL', idleDur, N, (_u, p) => [
+      0.045 + 0.022 * Math.sin(p),
+      0.04,
+      -0.075 - 0.018 * Math.sin(2 * p),
+    ]),
+    sampleEulerTrack('lowerArmL', idleDur, N, (_u, p) => [
+      -0.24 - 0.035 * Math.sin(2 * p - 0.4),
+      0.08,
+      0.02,
+    ]),
+    sampleEulerTrack('handL', idleDur, N, (_u, p) => [
+      -0.06 - 0.03 * Math.sin(2 * p - 0.8),
+      0.05,
+      0.05 + 0.02 * Math.sin(p),
+    ]),
+    sampleEulerTrack('upperArmR', idleDur, N, (_u, p) => [
+      0.035 - 0.022 * Math.sin(p),
+      -0.04,
+      0.075 + 0.018 * Math.sin(2 * p),
+    ]),
+    sampleEulerTrack('lowerArmR', idleDur, N, (_u, p) => [
+      -0.26 - 0.035 * Math.sin(2 * p - 0.6),
+      -0.08,
+      -0.02,
+    ]),
+    sampleEulerTrack('handR', idleDur, N, (_u, p) => [
+      -0.06 - 0.03 * Math.sin(2 * p - 1.0),
+      -0.05,
+      -0.05 - 0.02 * Math.sin(p),
+    ]),
+    // Legs & feet adjust subtly to weight shift while keeping feet planted
+    sampleEulerTrack('thighL', idleDur, N, (_u, p) => [
+      -0.025 + 0.028 * Math.sin(p),
+      0.02,
+      -0.028 * Math.sin(p),
+    ]),
+    sampleEulerTrack('shinL', idleDur, N, (_u, p) => [
+      0.055 - 0.035 * Math.sin(p),
+      0,
+      0,
+    ]),
+    sampleEulerTrack('footL', idleDur, N, (_u, p) => [
+      -0.025 + 0.012 * Math.sin(p),
+      0,
+      0.022 * Math.sin(p),
+    ]),
+    sampleEulerTrack('toeL', idleDur, N, () => [0, 0, 0]),
+    sampleEulerTrack('thighR', idleDur, N, (_u, p) => [
+      -0.025 - 0.028 * Math.sin(p),
+      -0.02,
+      -0.028 * Math.sin(p),
+    ]),
+    sampleEulerTrack('shinR', idleDur, N, (_u, p) => [
+      0.055 + 0.035 * Math.sin(p),
+      0,
+      0,
+    ]),
+    sampleEulerTrack('footR', idleDur, N, (_u, p) => [
+      -0.025 - 0.012 * Math.sin(p),
+      0,
+      0.022 * Math.sin(p),
+    ]),
+    sampleEulerTrack('toeR', idleDur, N, () => [0, 0, 0]),
+  ];
+  const idleClip = new THREE.AnimationClip('idle', idleDur, idleTracks);
+
+  // ============================================================================
+  // 2. NATURAL BIOMECHANICAL WALK CLIP (1.26s full gait cycle)
+  // ============================================================================
+  const walkDur = 1.26;
+  const walkTracks: THREE.KeyframeTrack[] = [
+    // Pelvis lateral weight shift (1x frequency) + double-support vertical bounce (2x frequency)
+    sampleVectorTrack('pelvis', walkDur, N, (_u, p) => [
+      0.021 * Math.sin(p),
+      0.952 - 0.020 * Math.cos(2 * p - 0.25),
+      0.008 * Math.sin(2 * p),
+    ]),
+    // Pelvic tilt, transverse rotation, and frontal pelvic list (hip drop on swing side)
+    sampleEulerTrack('pelvis', walkDur, N, (_u, p) => [
+      0.032 + 0.016 * Math.sin(2 * p),
+      -0.072 * Math.cos(p),
+      -0.044 * Math.sin(p),
+    ]),
+    // Lumbar spine counter-rotates and damps pelvic list
+    sampleEulerTrack('spine', walkDur, N, (_u, p) => [
+      0.035 + 0.014 * Math.cos(2 * p),
+      0.052 * Math.cos(p - 0.15),
+      0.032 * Math.sin(p),
+    ]),
+    // Thoracic chest counter-rotation (opposite to hips) + slight forward posture
+    sampleEulerTrack('chest', walkDur, N, (_u, p) => [
+      0.028 - 0.012 * Math.cos(2 * p),
+      0.068 * Math.cos(p - 0.22),
+      0.022 * Math.sin(p),
+    ]),
+    // Clavicles / shoulders roll naturally with opposite arm swing
+    sampleEulerTrack('shoulderL', walkDur, N, (_u, p) => [
+      0,
+      -0.045 * Math.cos(p),
+      0.018 * Math.sin(p),
+    ]),
+    sampleEulerTrack('shoulderR', walkDur, N, (_u, p) => [
+      0,
+      0.045 * Math.cos(p),
+      -0.018 * Math.sin(p),
+    ]),
+    // Neck & head stabilize gaze forward against thoracic counter-rotation
+    sampleEulerTrack('neck', walkDur, N, (_u, p) => [
+      -0.018 + 0.010 * Math.cos(2 * p),
+      -0.038 * Math.cos(p - 0.2),
+      -0.015 * Math.sin(p),
+    ]),
+    sampleEulerTrack('head', walkDur, N, (_u, p) => [
+      -0.015 + 0.014 * Math.sin(2 * p - 0.4),
+      -0.042 * Math.cos(p - 0.25),
+      -0.012 * Math.sin(p),
+    ]),
+    // Left Arm: swings forward when Right Leg steps forward (at p = π, cos(p) = -1 -> rx negative = forward)
+    sampleEulerTrack('upperArmL', walkDur, N, (_u, p) => [
+      0.34 * Math.cos(p) - 0.04,
+      -0.06 * Math.cos(p),
+      -0.075 - 0.015 * Math.sin(p),
+    ]),
+    // Left Elbow: bends more on forward swing, relaxes on backswing with phase lag
+    sampleEulerTrack('lowerArmL', walkDur, N, (_u, p) => [
+      -0.36 + 0.19 * Math.cos(p - 0.35),
+      0.08,
+      0,
+    ]),
+    // Left Wrist: relaxed lagging follow-through
+    sampleEulerTrack('handL', walkDur, N, (_u, p) => [
+      -0.05 + 0.11 * Math.cos(p - 0.75),
+      0.04,
+      0.04 + 0.03 * Math.sin(p - 0.5),
+    ]),
+    // Right Arm: 180° opposite phase to Left Arm (swings forward at p = 0 when Left Leg steps forward)
+    sampleEulerTrack('upperArmR', walkDur, N, (_u, p) => [
+      0.34 * Math.cos(p + Math.PI) - 0.04,
+      0.06 * Math.cos(p + Math.PI),
+      0.075 - 0.015 * Math.sin(p + Math.PI),
+    ]),
+    sampleEulerTrack('lowerArmR', walkDur, N, (_u, p) => [
+      -0.36 + 0.19 * Math.cos(p + Math.PI - 0.35),
+      -0.08,
+      0,
+    ]),
+    sampleEulerTrack('handR', walkDur, N, (_u, p) => [
+      -0.05 + 0.11 * Math.cos(p + Math.PI - 0.75),
+      -0.04,
+      -0.04 - 0.03 * Math.sin(p + Math.PI - 0.5),
+    ]),
+    // Left Leg biomechanical cycle (heel strike at p = 0)
+    sampleEulerTrack('thighL', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait(p, 1).thigh),
+    sampleEulerTrack('shinL', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait(p, 1).shin),
+    sampleEulerTrack('footL', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait(p, 1).foot),
+    sampleEulerTrack('toeL', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait(p, 1).toe),
+    // Right Leg biomechanical cycle (heel strike at p = π)
+    sampleEulerTrack('thighR', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait((p + Math.PI) % (Math.PI * 2), -1).thigh),
+    sampleEulerTrack('shinR', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait((p + Math.PI) % (Math.PI * 2), -1).shin),
+    sampleEulerTrack('footR', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait((p + Math.PI) % (Math.PI * 2), -1).foot),
+    sampleEulerTrack('toeR', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait((p + Math.PI) % (Math.PI * 2), -1).toe),
+  ];
+  const walkClip = new THREE.AnimationClip('walk', walkDur, walkTracks);
+
+  // ============================================================================
+  // 3. FRIENDLY WAVE CLIP (2.8s loop: weight shift, raised elbow, forearm + wrist wave)
+  // ============================================================================
+  const waveDur = 2.8;
+  const waveTracks: THREE.KeyframeTrack[] = [
+    sampleVectorTrack('pelvis', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5); // Smooth envelope peaking mid-clip
+      return [
+        0.028 * env + 0.005 * Math.sin(3 * p),
+        0.955 - 0.004 * env,
+        0.006 * env,
+      ];
+    }),
+    sampleEulerTrack('pelvis', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [0.01 * env, 0.04 * env, -0.042 * env];
+    }),
+    sampleEulerTrack('spine', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [-0.015 * env, 0.045 * env, 0.035 * env];
+    }),
+    sampleEulerTrack('chest', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [-0.03 * env, 0.065 * env, 0.032 * env + 0.012 * Math.sin(3 * p)];
+    }),
+    // Right shoulder lifts naturally to support raised waving arm
+    sampleEulerTrack('shoulderR', waveDur, N, (_u, p) => {
+      const env = Math.pow(Math.sin(p * 0.5), 0.75);
+      return [-0.04 * env, 0.06 * env, 0.18 * env];
+    }),
+    sampleEulerTrack('shoulderL', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [0, 0, -0.03 * env];
+    }),
+    // Neck & head tilt warmly with slight friendly nod
+    sampleEulerTrack('neck', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [-0.025 * env, 0.06 * env, -0.038 * env];
+    }),
+    sampleEulerTrack('head', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [
+        -0.035 * env + 0.025 * Math.sin(2 * p),
+        0.095 * env,
+        -0.065 * env - 0.02 * Math.sin(3 * p),
+      ];
+    }),
+    // Right Upper Arm: raises smoothly to a natural open greeting posture
+    sampleEulerTrack('upperArmR', waveDur, N, (_u, p) => {
+      const lift = Math.sin(Math.min(1, Math.sin(p * 0.5) * 1.35) * (Math.PI * 0.5));
+      return [
+        -0.58 * lift,
+        -0.22 * lift,
+        0.08 + 1.18 * lift + 0.06 * Math.sin(3 * p) * lift,
+      ];
+    }),
+    // Right Forearm: bent elbow + radial/ulnar waving oscillation (3 waves per clip)
+    sampleEulerTrack('lowerArmR', waveDur, N, (_u, p) => {
+      const lift = Math.sin(Math.min(1, Math.sin(p * 0.5) * 1.35) * (Math.PI * 0.5));
+      return [
+        -0.26 - 0.78 * lift,
+        -0.18 * lift,
+        0.32 * Math.sin(3 * p) * lift,
+      ];
+    }),
+    // Right Wrist: lagging fluid wrist flexion/abduction wave so hand doesn't look stiff
+    sampleEulerTrack('handR', waveDur, N, (_u, p) => {
+      const lift = Math.sin(Math.min(1, Math.sin(p * 0.5) * 1.35) * (Math.PI * 0.5));
+      return [
+        0.08 * lift + 0.08 * Math.cos(3 * p) * lift,
+        -0.12 * lift,
+        0.26 * Math.sin(3 * p - 0.55) * lift,
+      ];
+    }),
+    // Left arm balances naturally at side
+    sampleEulerTrack('upperArmL', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [0.05 + 0.03 * env, 0.04, -0.09 - 0.04 * env];
+    }),
+    sampleEulerTrack('lowerArmL', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [-0.24 - 0.06 * env, 0.08, 0];
+    }),
+    sampleEulerTrack('handL', waveDur, N, (_u, p) => [
+      -0.06,
+      0.05,
+      0.05 + 0.02 * Math.sin(p),
+    ]),
+    // Stance legs support hip weight shift
+    sampleEulerTrack('thighL', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [-0.02, 0.02, -0.035 * env];
+    }),
+    sampleEulerTrack('shinL', waveDur, N, () => [0.04, 0, 0]),
+    sampleEulerTrack('footL', waveDur, N, (_u, p) => [-0.02, 0, 0.025 * Math.sin(p * 0.5)]),
+    sampleEulerTrack('thighR', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [-0.04 * env, -0.04 * env, -0.03 * env];
+    }),
+    sampleEulerTrack('shinR', waveDur, N, (_u, p) => [0.05 + 0.05 * Math.sin(p * 0.5), 0, 0]),
+    sampleEulerTrack('footR', waveDur, N, () => [-0.02, 0, 0]),
+  ];
+  const waveClip = new THREE.AnimationClip('wave', waveDur, waveTracks);
+
+  // ============================================================================
+  // 4. CONVERSATIONAL GESTURES CLIP (3.8s loop: asymmetric 2-hand gestures, pauses, nods)
+  // ============================================================================
+  const convDur = 3.8;
+  const convTracks: THREE.KeyframeTrack[] = [
+    sampleVectorTrack('pelvis', convDur, N, (_u, p) => [
+      0.020 * Math.sin(p) - 0.008 * Math.cos(2 * p),
+      0.955 - 0.005 * Math.abs(Math.sin(p)),
+      0.010 * Math.sin(p - 0.3),
+    ]),
+    sampleEulerTrack('pelvis', convDur, N, (_u, p) => [
+      0.015 * Math.sin(p),
+      0.045 * Math.sin(p - 0.2),
+      -0.030 * Math.sin(p),
+    ]),
+    sampleEulerTrack('spine', convDur, N, (_u, p) => [
+      0.028 + 0.018 * Math.sin(2 * p),
+      0.042 * Math.sin(p),
+      0.022 * Math.sin(p),
+    ]),
+    sampleEulerTrack('chest', convDur, N, (_u, p) => [
+      0.020 + 0.022 * Math.sin(2 * p - 0.3),
+      0.058 * Math.sin(p + 0.25),
+      -0.018 * Math.cos(p),
+    ]),
+    sampleEulerTrack('shoulderL', convDur, N, (_u, p) => [
+      0,
+      -0.03 * Math.sin(p),
+      0.045 * Math.max(0, Math.sin(p)),
+    ]),
+    sampleEulerTrack('shoulderR', convDur, N, (_u, p) => [
+      0,
+      0.03 * Math.cos(p),
+      -0.045 * Math.max(0, -Math.sin(p - 0.4)),
+    ]),
+    // Multi-joint conversational head nods & engaged gaze shifts
+    sampleEulerTrack('neck', convDur, N, (_u, p) => [
+      0.032 * Math.sin(2 * p) + 0.015 * Math.sin(3 * p),
+      0.065 * Math.sin(p + 0.2),
+      0.018 * Math.sin(p),
+    ]),
+    sampleEulerTrack('head', convDur, N, (_u, p) => [
+      0.055 * Math.sin(2 * p - 0.2) + 0.032 * Math.sin(3 * p),
+      0.105 * Math.sin(p + 0.3),
+      0.032 * Math.sin(p - 0.4),
+    ]),
+    // Left arm: expressive gesture peak during first half of cycle, gentle rest pause during second half
+    sampleEulerTrack('upperArmL', convDur, N, (_u, p) => {
+      const phraseA = Math.pow(Math.max(0, Math.sin(p)), 1.3);
+      const phraseB = 0.35 * Math.max(0, Math.sin(2 * p - 0.8));
+      const g = phraseA + phraseB;
+      return [
+        -0.26 - 0.28 * g,
+        0.10 + 0.16 * g,
+        -0.11 - 0.14 * g,
+      ];
+    }),
+    sampleEulerTrack('lowerArmL', convDur, N, (_u, p) => {
+      const phraseA = Math.pow(Math.max(0, Math.sin(p - 0.2)), 1.2);
+      const phraseB = 0.4 * Math.max(0, Math.sin(2 * p - 1.0));
+      const g = phraseA + phraseB;
+      return [
+        -0.58 - 0.52 * g,
+        0.18 + 0.22 * g,
+        -0.08 * g,
+      ];
+    }),
+    sampleEulerTrack('handL', convDur, N, (_u, p) => {
+      const g = Math.max(0, Math.sin(p - 0.45));
+      return [
+        0.08 * Math.sin(2 * p - 0.5),
+        0.22 * g,
+        0.06 + 0.16 * Math.sin(2 * p - 0.6),
+      ];
+    }),
+    // Right arm: expressive gesture peak during second half of cycle (alternating with left hand)
+    sampleEulerTrack('upperArmR', convDur, N, (_u, p) => {
+      const phraseA = Math.pow(Math.max(0, -Math.sin(p - 0.25)), 1.3);
+      const phraseB = 0.35 * Math.max(0, Math.cos(2 * p));
+      const g = phraseA + phraseB;
+      return [
+        -0.24 - 0.30 * g,
+        -0.10 - 0.16 * g,
+        0.11 + 0.15 * g,
+      ];
+    }),
+    sampleEulerTrack('lowerArmR', convDur, N, (_u, p) => {
+      const phraseA = Math.pow(Math.max(0, -Math.sin(p - 0.05)), 1.2);
+      const phraseB = 0.4 * Math.max(0, Math.cos(2 * p - 0.2));
+      const g = phraseA + phraseB;
+      return [
+        -0.55 - 0.54 * g,
+        -0.18 - 0.24 * g,
+        0.08 * g,
+      ];
+    }),
+    sampleEulerTrack('handR', convDur, N, (_u, p) => {
+      const g = Math.max(0, -Math.sin(p - 0.2));
+      return [
+        0.08 * Math.cos(2 * p - 0.3),
+        -0.24 * g,
+        -0.06 - 0.16 * Math.cos(2 * p - 0.4),
+      ];
+    }),
+    // Subtle lower-body stance engagement
+    sampleEulerTrack('thighL', convDur, N, (_u, p) => [-0.03 + 0.02 * Math.sin(p), 0.02, -0.022 * Math.sin(p)]),
+    sampleEulerTrack('shinL', convDur, N, (_u, p) => [0.06 - 0.025 * Math.sin(p), 0, 0]),
+    sampleEulerTrack('footL', convDur, N, () => [-0.02, 0, 0]),
+    sampleEulerTrack('thighR', convDur, N, (_u, p) => [-0.03 - 0.02 * Math.sin(p), -0.02, -0.022 * Math.sin(p)]),
+    sampleEulerTrack('shinR', convDur, N, (_u, p) => [0.06 + 0.025 * Math.sin(p), 0, 0]),
+    sampleEulerTrack('footR', convDur, N, () => [-0.02, 0, 0]),
+  ];
+  const converseClip = new THREE.AnimationClip('converse', convDur, convTracks);
+
+  // ============================================================================
+  // 5. COORDINATED HEAD-TURN & ARCHITECTURAL LOOK CLIP (3.6s loop)
+  // Distributes turn across Pelvis + Spine + Chest + Neck + Head (no stiff turret rotation)
+  // ============================================================================
+  const lookDur = 3.6;
+  const lookTracks: THREE.KeyframeTrack[] = [
+    sampleVectorTrack('pelvis', lookDur, N, (_u, p) => [
+      0.018 * Math.sin(p),
+      0.956 - 0.004 * Math.pow(Math.sin(p), 2),
+      0.005 * Math.sin(p * 0.5),
+    ]),
+    // 10% of gaze yaw originates in the pelvis
+    sampleEulerTrack('pelvis', lookDur, N, (_u, p) => [
+      -0.015 * Math.sin(p * 0.5),
+      0.055 * Math.sin(p),
+      -0.022 * Math.sin(p),
+    ]),
+    // 20% of gaze yaw + upward architectural tilt in the lumbar spine
+    sampleEulerTrack('spine', lookDur, N, (_u, p) => [
+      -0.035 * Math.sin(p * 0.5),
+      0.095 * Math.sin(p - 0.08),
+      0.018 * Math.sin(p),
+    ]),
+    // 25% of gaze yaw + thoracic extension in the chest
+    sampleEulerTrack('chest', lookDur, N, (_u, p) => [
+      -0.055 * Math.sin(p * 0.5) - 0.02 * Math.sin(2 * p),
+      0.135 * Math.sin(p - 0.14),
+      0.015 * Math.sin(p),
+    ]),
+    // Shoulders follow chest turn and open slightly as citizen looks up at Z-ONEAPP portal
+    sampleEulerTrack('shoulderL', lookDur, N, (_u, p) => [
+      -0.02 * Math.sin(p * 0.5),
+      -0.035 * Math.sin(p),
+      0.025 * Math.sin(p * 0.5),
+    ]),
+    sampleEulerTrack('shoulderR', lookDur, N, (_u, p) => [
+      -0.02 * Math.sin(p * 0.5),
+      -0.035 * Math.sin(p),
+      -0.025 * Math.sin(p * 0.5),
+    ]),
+    // 25% of gaze yaw + cervical pitch in the neck
+    sampleEulerTrack('neck', lookDur, N, (_u, p) => [
+      -0.085 * Math.sin(p * 0.5) - 0.025 * Math.cos(2 * p),
+      0.155 * Math.sin(p - 0.18),
+      0.022 * Math.sin(p),
+    ]),
+    // Leading 20% of gaze yaw + natural head tilt in the cranium
+    sampleEulerTrack('head', lookDur, N, (_u, p) => [
+      -0.125 * Math.sin(p * 0.5) - 0.035 * Math.cos(2 * p),
+      0.210 * Math.sin(p - 0.22),
+      0.038 * Math.sin(p),
+    ]),
+    // Arms respond softly to torso rotation with relaxed elbows and wrists
+    sampleEulerTrack('upperArmL', lookDur, N, (_u, p) => [
+      0.04 - 0.06 * Math.sin(p * 0.5),
+      0.05,
+      -0.085 - 0.035 * Math.sin(p * 0.5),
+    ]),
+    sampleEulerTrack('lowerArmL', lookDur, N, (_u, p) => [
+      -0.25 - 0.08 * Math.sin(p * 0.5),
+      0.08,
+      0,
+    ]),
+    sampleEulerTrack('handL', lookDur, N, (_u, p) => [
+      -0.05,
+      0.05,
+      0.05 + 0.03 * Math.sin(p),
+    ]),
+    sampleEulerTrack('upperArmR', lookDur, N, (_u, p) => [
+      0.04 - 0.06 * Math.sin(p * 0.5),
+      -0.05,
+      0.085 + 0.035 * Math.sin(p * 0.5),
+    ]),
+    sampleEulerTrack('lowerArmR', lookDur, N, (_u, p) => [
+      -0.25 - 0.08 * Math.sin(p * 0.5),
+      -0.08,
+      0,
+    ]),
+    sampleEulerTrack('handR', lookDur, N, (_u, p) => [
+      -0.05,
+      -0.05,
+      -0.05 - 0.03 * Math.sin(p),
+    ]),
+  ];
+  const lookClip = new THREE.AnimationClip('look', lookDur, lookTracks);
+
+  return {
+    idle: idleClip,
+    walk: walkClip,
+    wave: waveClip,
+    converse: converseClip,
+    look: lookClip,
+  };
+}
+
+/**
+ * Creates an organic holographic material that preserves Three.js hardware bone skinning (USE_SKINNING)
+ * while injecting cyan/blue/violet Fresnel edge glow, soft subsurface luminance, and fine scanlines
+ * that keep the human silhouette soft, organic, and recognizable.
+ */
+export function createHolographicSkinnedMaterial(
+  primaryHex: string,
+  secondaryHex: string,
+  liteMode: boolean
+): { material: THREE.MeshStandardMaterial; uniforms: HoloShaderUniforms } {
+  const uniforms: HoloShaderUniforms = {
+    uTime: { value: 0 },
+    uPrimaryColor: { value: new THREE.Color(primaryHex) },
+    uSecondaryColor: { value: new THREE.Color(secondaryHex) },
+    uScanlineDensity: { value: liteMode ? 32.0 : 54.0 },
+    uOpacity: { value: 0.86 },
+  };
+
+  const material = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(primaryHex).multiplyScalar(0.42),
+    emissive: new THREE.Color(primaryHex),
+    emissiveIntensity: 0.64,
+    roughness: 0.28,
+    metalness: 0.38,
+    transparent: true,
+    opacity: 0.88,
+    depthWrite: true,
+  });
+
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = uniforms.uTime;
+    shader.uniforms.uPrimaryColor = uniforms.uPrimaryColor;
+    shader.uniforms.uSecondaryColor = uniforms.uSecondaryColor;
+    shader.uniforms.uScanlineDensity = uniforms.uScanlineDensity;
+    shader.uniforms.uOpacity = uniforms.uOpacity;
+
+    shader.vertexShader =
+      `
+      varying vec3 vHoloWorldPos;
+      varying float vHoloLocalY;
+      ` +
+      shader.vertexShader.replace(
+        '#include <worldpos_vertex>',
+        `
+        #include <worldpos_vertex>
+        vec4 holoWp = modelMatrix * vec4(transformed, 1.0);
+        vHoloWorldPos = holoWp.xyz;
+        vHoloLocalY = transformed.y;
+        `
+      );
+
+    shader.fragmentShader =
+      `
+      uniform float uTime;
+      uniform vec3 uPrimaryColor;
+      uniform vec3 uSecondaryColor;
+      uniform float uScanlineDensity;
+      uniform float uOpacity;
+      varying vec3 vHoloWorldPos;
+      varying float vHoloLocalY;
+      ` +
+      shader.fragmentShader.replace(
+        '#include <dithering_fragment>',
+        `
+        #include <dithering_fragment>
+        vec3 viewDir = normalize(cameraPosition - vHoloWorldPos);
+        float ndotv = abs(dot(normalize(vNormal), viewDir));
+        float fresnel = pow(1.0 - ndotv, 2.0);
+        float softCore = smoothstep(0.0, 0.85, ndotv) * 0.18;
+        float scanWave = 0.5 + 0.5 * sin(vHoloLocalY * uScanlineDensity - uTime * 4.2);
+        float slowPulse = 0.5 + 0.5 * sin(vHoloLocalY * 3.8 - uTime * 1.6);
+        vec3 holoAccent = mix(uPrimaryColor, uSecondaryColor, clamp(vHoloLocalY * 0.55, 0.0, 1.0));
+        gl_FragColor.rgb += holoAccent * (fresnel * 1.25 + softCore + scanWave * 0.15 + slowPulse * 0.12);
+        gl_FragColor.a = clamp(uOpacity * (0.66 + fresnel * 0.42 + scanWave * 0.08), 0.48, 0.96);
+        `
+      );
+  };
+
+  return { material, uniforms };
+}
+
+/**
+ * Controller for an individual articulated holographic citizen with:
+ * - 21-bone THREE.Skeleton + organic lofted THREE.SkinnedMesh
+ * - THREE.AnimationMixer with smooth crossfading (no snapping)
+ * - Smooth acceleration/deceleration and stride-matched walk playback speed
+ * - Desynchronized pause durations, gesture cycles, and turn speeds
+ */
+export class HoloCitizenController {
+  public readonly config: HoloCitizenConfig;
+  public readonly rootGroup: THREE.Group;
+  public readonly skinnedMesh: THREE.SkinnedMesh;
+  public readonly skeleton: THREE.Skeleton;
+  public readonly mixer: THREE.AnimationMixer;
+  public readonly uniforms: HoloShaderUniforms;
+
+  private readonly actions: Record<HoloClipName, THREE.AnimationAction>;
+  private currentClip: HoloClipName = 'walk';
+  private manualOverride: HoloClipName | null = null;
+  private waypointIndex: number;
+  private stateTimer = 0;
+  private pauseDuration = 0;
+  private pauseSequenceCounter = 0;
+  private currentVelocity = 0;
+  private baseRingMesh: THREE.Mesh;
+  private disposedResources: Array<{ dispose: () => void }> = [];
+
+  constructor(
+    config: HoloCitizenConfig,
+    clips: Record<HoloClipName, THREE.AnimationClip>,
+    liteMode: boolean
+  ) {
+    this.config = config;
+    this.waypointIndex = config.initialWaypointIndex % config.waypoints.length;
+    this.currentVelocity = config.walkSpeed * 0.85;
+
+    this.rootGroup = new THREE.Group();
+    this.rootGroup.name = `HoloCitizen_${config.id}`;
+
+    const startPos = config.waypoints[this.waypointIndex].clone();
+    this.rootGroup.position.copy(startPos);
+    this.rootGroup.scale.setScalar(config.heightScale);
+
+    // Orient initially toward next waypoint so citizen doesn't spin on frame 1
+    const nextWp = config.waypoints[(this.waypointIndex + 1) % config.waypoints.length];
+    const initDir = new THREE.Vector3().subVectors(nextWp, startPos);
+    initDir.y = 0;
+    if (initDir.lengthSq() > 0.001) {
+      this.rootGroup.rotation.y = Math.atan2(initDir.x, initDir.z);
+    }
+    this.waypointIndex = (this.waypointIndex + 1) % config.waypoints.length;
+
+    // Build 21-bone hierarchy & organic lofted skinned geometry with individualized proportions
+    const bones = createHumanoidBones(config.proportions);
+    this.skeleton = new THREE.Skeleton(bones);
+
+    const geometry = buildUnifiedSkinnedHumanoidGeometry(liteMode, config.proportions);
+    const { material, uniforms } = createHolographicSkinnedMaterial(
+      config.primaryColor,
+      config.secondaryColor,
+      liteMode
+    );
+    this.uniforms = uniforms;
+
+    this.skinnedMesh = new THREE.SkinnedMesh(geometry, material);
+    this.skinnedMesh.castShadow = !liteMode;
+    this.skinnedMesh.receiveShadow = false;
+    this.skinnedMesh.frustumCulled = false;
+
+    // Attach root pelvis bone to SkinnedMesh and bind skeleton
+    this.skinnedMesh.add(bones[0]);
+    this.skinnedMesh.bind(this.skeleton);
+    this.rootGroup.add(this.skinnedMesh);
+
+    // Subtle holographic Emitter Ring under feet
+    const ringGeo = new THREE.RingGeometry(0.18, 0.25, liteMode ? 16 : 28);
+    ringGeo.rotateX(-Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(config.primaryColor),
+      transparent: true,
+      opacity: 0.42,
+      side: THREE.DoubleSide,
+    });
+    this.baseRingMesh = new THREE.Mesh(ringGeo, ringMat);
+    this.baseRingMesh.position.y = 0.012;
+    this.rootGroup.add(this.baseRingMesh);
+
+    this.disposedResources.push(geometry, material, ringGeo, ringMat);
+
+    // Setup AnimationMixer & Actions
+    this.mixer = new THREE.AnimationMixer(this.skinnedMesh);
+    this.actions = {
+      idle: this.mixer.clipAction(clips.idle),
+      walk: this.mixer.clipAction(clips.walk),
+      wave: this.mixer.clipAction(clips.wave),
+      converse: this.mixer.clipAction(clips.converse),
+      look: this.mixer.clipAction(clips.look),
+    };
+
+    (Object.keys(this.actions) as HoloClipName[]).forEach((name) => {
+      const action = this.actions[name];
+      action.enabled = true;
+      action.setEffectiveWeight(name === 'walk' ? 1 : 0);
+      if (name === 'walk') {
+        action.setEffectiveTimeScale(config.strideScale);
+        action.play();
+      }
+    });
+
+    this.currentClip = 'walk';
+    // Desynchronize initial mixer clock so citizens never move in robotic lockstep
+    this.mixer.update(config.phaseOffset);
+  }
+
+  public getCurrentClip(): HoloClipName {
+    return this.currentClip;
+  }
+
+  /**
+   * Smoothly crossfades from the active skeletal animation clip to targetClip
+   * over `duration` seconds without joint snapping.
+   */
+  public crossFadeTo(targetClip: HoloClipName, duration = 0.52): void {
+    if (this.currentClip === targetClip) return;
+
+    const prevAction = this.actions[this.currentClip];
+    const nextAction = this.actions[targetClip];
+
+    nextAction.reset();
+    nextAction.enabled = true;
+    const rate =
+      targetClip === 'walk'
+        ? this.config.strideScale
+        : 0.92 + ((this.config.phaseOffset * 0.13) % 0.18);
+    nextAction.setEffectiveTimeScale(rate);
+    nextAction.setEffectiveWeight(1);
+    nextAction.play();
+
+    prevAction.crossFadeTo(nextAction, duration, false);
+    this.currentClip = targetClip;
+  }
+
+  public setManualOverride(clip: HoloClipName | null): void {
+    this.manualOverride = clip;
+    if (clip) {
+      this.crossFadeTo(clip, 0.5);
+    }
+  }
+
+  public update(deltaSeconds: number, elapsedSeconds: number): void {
+    const dt = Math.min(deltaSeconds, 0.1);
+    this.uniforms.uTime.value = elapsedSeconds + this.config.phaseOffset;
+
+    // Pulse emitter foot ring
+    const ringScale = 0.94 + 0.07 * Math.sin(elapsedSeconds * 2.6 + this.config.phaseOffset);
+    this.baseRingMesh.scale.set(ringScale, ringScale, 1);
+
+    if (this.manualOverride) {
+      this.mixer.update(dt);
+      return;
+    }
+
+    // Autonomous plaza behavior state machine with smooth stopping & starting
+    if (this.pauseDuration > 0) {
+      this.stateTimer += dt;
+      this.currentVelocity = THREE.MathUtils.lerp(this.currentVelocity, 0, Math.min(1, dt * 6.0));
+      if (this.stateTimer >= this.pauseDuration) {
+        this.pauseDuration = 0;
+        this.stateTimer = 0;
+        this.waypointIndex = (this.waypointIndex + 1) % this.config.waypoints.length;
+        this.crossFadeTo('walk', 0.55);
+      }
+      this.mixer.update(dt);
+      return;
+    }
+
+    const target = this.config.waypoints[this.waypointIndex];
+    const currentPos = this.rootGroup.position;
+    const toTarget = new THREE.Vector3().subVectors(target, currentPos);
+    toTarget.y = 0;
+    const dist = toTarget.length();
+
+    if (dist < 0.20) {
+      // Smoothly decelerate into waypoint and select an individualized social/ambient gesture
+      this.stateTimer = 0;
+      this.currentVelocity = 0;
+      const gestureList = this.config.gestureOrder;
+      const chosenClip = gestureList[this.pauseSequenceCounter % gestureList.length] || 'idle';
+      this.pauseSequenceCounter++;
+
+      this.crossFadeTo(chosenClip, 0.55);
+
+      // Deterministic pseudo-random pause duration within citizen's individualized window
+      const frac =
+        0.5 +
+        0.5 *
+          Math.sin(
+            this.config.phaseOffset * 3.7 + this.pauseSequenceCounter * 2.3 + this.waypointIndex
+          );
+      this.pauseDuration = THREE.MathUtils.lerp(
+        this.config.pauseMinSeconds,
+        this.config.pauseMaxSeconds,
+        frac
+      );
+    } else {
+      if (this.currentClip !== 'walk') {
+        this.crossFadeTo('walk', 0.50);
+      }
+
+      // Smoothly ease velocity down when approaching waypoint (within 0.95m) and ease up when starting
+      const slowDownFactor = THREE.MathUtils.clamp(dist / 0.95, 0.38, 1.0);
+      const desiredSpeed = this.config.walkSpeed * slowDownFactor;
+      this.currentVelocity = THREE.MathUtils.lerp(
+        this.currentVelocity,
+        desiredSpeed,
+        Math.min(1, dt * 4.5)
+      );
+
+      // Modulate walk animation playback rate to match actual ground velocity (prevents foot sliding)
+      const speedRatio = THREE.MathUtils.clamp(
+        this.currentVelocity / Math.max(0.1, this.config.walkSpeed),
+        0.55,
+        1.15
+      );
+      this.actions.walk.setEffectiveTimeScale(this.config.strideScale * speedRatio);
+
+      toTarget.normalize();
+      const step = Math.min(dist, this.currentVelocity * dt);
+      currentPos.addScaledVector(toTarget, step);
+
+      // Smoothly slerp character heading toward walking direction using individualized turnSpeed
+      const desiredYaw = Math.atan2(toTarget.x, toTarget.z);
+      const targetQuat = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        desiredYaw
+      );
+      this.rootGroup.quaternion.slerp(targetQuat, Math.min(1, dt * this.config.turnSpeed));
+    }
+
+    this.mixer.update(dt);
+  }
+
+  public dispose(): void {
+    this.mixer.stopAllAction();
+    this.mixer.uncacheRoot(this.skinnedMesh);
+    this.skeleton.dispose();
+    for (const res of this.disposedResources) {
+      res.dispose();
+    }
+    this.disposedResources = [];
+  }
+}
+
+/**
+ * Default 6 holographic citizens with individualized body proportions, stride scales,
+ * walking speeds, turn rates, pause timings, and gesture sequences.
+ */
+export function getDefaultHoloCitizenConfigs(): HoloCitizenConfig[] {
+  return [
+    {
+      id: 'citizen-alpha',
+      label: 'Holo Citizen 01',
+      roleTag: 'Plaza Greeter (21-Bone Organic Rig)',
+      primaryColor: '#00f2fe',
+      secondaryColor: '#38bdf8',
+      heightScale: 1.0,
+      walkSpeed: 1.16,
+      strideScale: 1.02,
+      turnSpeed: 5.2,
+      pauseMinSeconds: 2.6,
+      pauseMaxSeconds: 3.8,
+      gestureOrder: ['wave', 'idle', 'converse', 'look'],
+      proportions: {
+        shoulderWidthScale: 1.02,
+        torsoDepthScale: 1.0,
+        hipWidthScale: 0.98,
+        limbThicknessScale: 1.0,
+        headScale: 1.0,
+      },
+      phaseOffset: 0.0,
+      initialWaypointIndex: 0,
+      waypoints: [
+        new THREE.Vector3(-2.6, 0, 5.2),
+        new THREE.Vector3(-1.3, 0, 2.8),
+        new THREE.Vector3(-0.9, 0, 1.4),
+        new THREE.Vector3(-2.4, 0, 3.2),
+      ],
+    },
+    {
+      id: 'citizen-beta',
+      label: 'Holo Citizen 02',
+      roleTag: 'Portal Guide (21-Bone Organic Rig)',
+      primaryColor: '#38bdf8',
+      secondaryColor: '#a855f7',
+      heightScale: 0.96,
+      walkSpeed: 1.08,
+      strideScale: 0.96,
+      turnSpeed: 4.8,
+      pauseMinSeconds: 2.9,
+      pauseMaxSeconds: 4.2,
+      gestureOrder: ['converse', 'look', 'wave', 'idle'],
+      proportions: {
+        shoulderWidthScale: 0.94,
+        torsoDepthScale: 0.96,
+        hipWidthScale: 1.04,
+        limbThicknessScale: 0.95,
+        headScale: 1.01,
+      },
+      phaseOffset: 1.47,
+      initialWaypointIndex: 1,
+      waypoints: [
+        new THREE.Vector3(2.6, 0, 5.0),
+        new THREE.Vector3(1.3, 0, 2.6),
+        new THREE.Vector3(0.95, 0, 1.35),
+        new THREE.Vector3(2.3, 0, 3.4),
+      ],
+    },
+    {
+      id: 'citizen-gamma',
+      label: 'Holo Citizen 03',
+      roleTag: 'Concourse Walker (21-Bone Organic Rig)',
+      primaryColor: '#a855f7',
+      secondaryColor: '#00f2fe',
+      heightScale: 1.04,
+      walkSpeed: 1.24,
+      strideScale: 1.08,
+      turnSpeed: 5.8,
+      pauseMinSeconds: 2.2,
+      pauseMaxSeconds: 3.4,
+      gestureOrder: ['look', 'wave', 'idle', 'converse'],
+      proportions: {
+        shoulderWidthScale: 1.06,
+        torsoDepthScale: 1.03,
+        hipWidthScale: 0.97,
+        limbThicknessScale: 1.03,
+        headScale: 0.98,
+      },
+      phaseOffset: 2.83,
+      initialWaypointIndex: 0,
+      waypoints: [
+        new THREE.Vector3(-4.2, 0, 4.4),
+        new THREE.Vector3(-1.6, 0, 4.6),
+        new THREE.Vector3(1.6, 0, 4.6),
+        new THREE.Vector3(4.2, 0, 4.4),
+      ],
+    },
+    {
+      id: 'citizen-delta',
+      label: 'Holo Citizen 04',
+      roleTag: 'Atrium Envoy (21-Bone Organic Rig)',
+      primaryColor: '#22d3ee',
+      secondaryColor: '#818cf8',
+      heightScale: 0.94,
+      walkSpeed: 1.05,
+      strideScale: 0.93,
+      turnSpeed: 4.5,
+      pauseMinSeconds: 3.1,
+      pauseMaxSeconds: 4.5,
+      gestureOrder: ['idle', 'converse', 'look', 'wave'],
+      proportions: {
+        shoulderWidthScale: 0.92,
+        torsoDepthScale: 0.95,
+        hipWidthScale: 1.03,
+        limbThicknessScale: 0.94,
+        headScale: 1.02,
+      },
+      phaseOffset: 4.19,
+      initialWaypointIndex: 2,
+      waypoints: [
+        new THREE.Vector3(3.8, 0, 6.2),
+        new THREE.Vector3(1.8, 0, 4.8),
+        new THREE.Vector3(0.0, 0, 3.6),
+        new THREE.Vector3(2.4, 0, 5.8),
+      ],
+    },
+    {
+      id: 'citizen-epsilon',
+      label: 'Holo Citizen 05',
+      roleTag: 'West Terrace Citizen (21-Bone Organic Rig)',
+      primaryColor: '#60a5fa',
+      secondaryColor: '#c084fc',
+      heightScale: 1.02,
+      walkSpeed: 1.14,
+      strideScale: 1.0,
+      turnSpeed: 5.0,
+      pauseMinSeconds: 2.5,
+      pauseMaxSeconds: 3.9,
+      gestureOrder: ['converse', 'wave', 'idle', 'look'],
+      proportions: {
+        shoulderWidthScale: 1.04,
+        torsoDepthScale: 1.01,
+        hipWidthScale: 0.99,
+        limbThicknessScale: 1.01,
+        headScale: 0.99,
+      },
+      phaseOffset: 5.51,
+      initialWaypointIndex: 1,
+      waypoints: [
+        new THREE.Vector3(-3.8, 0, 6.4),
+        new THREE.Vector3(-2.1, 0, 4.9),
+        new THREE.Vector3(-0.6, 0, 3.8),
+        new THREE.Vector3(-2.8, 0, 6.0),
+      ],
+    },
+    {
+      id: 'citizen-zeta',
+      label: 'Holo Citizen 06',
+      roleTag: 'Portal Forecourt Citizen (21-Bone Organic Rig)',
+      primaryColor: '#06b6d4',
+      secondaryColor: '#a855f7',
+      heightScale: 0.98,
+      walkSpeed: 1.19,
+      strideScale: 1.04,
+      turnSpeed: 5.5,
+      pauseMinSeconds: 2.4,
+      pauseMaxSeconds: 3.6,
+      gestureOrder: ['look', 'converse', 'wave', 'idle'],
+      proportions: {
+        shoulderWidthScale: 0.97,
+        torsoDepthScale: 0.98,
+        hipWidthScale: 1.02,
+        limbThicknessScale: 0.98,
+        headScale: 1.0,
+      },
+      phaseOffset: 6.89,
+      initialWaypointIndex: 0,
+      waypoints: [
+        new THREE.Vector3(-1.4, 0, 6.8),
+        new THREE.Vector3(0.0, 0, 5.2),
+        new THREE.Vector3(1.4, 0, 6.8),
+        new THREE.Vector3(0.0, 0, 7.2),
+      ],
+    },
+  ];
+}

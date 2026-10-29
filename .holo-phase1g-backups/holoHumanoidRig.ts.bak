@@ -1,0 +1,3195 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+
+export type HoloClipName = 'idle' | 'walk' | 'wave' | 'converse' | 'look';
+
+export type HoloArchetypeStyle =
+  | 'executive_coat'
+  | 'fitted_jacket'
+  | 'draped_tunic'
+  | 'athletic_vest'
+  | 'tailored_blazer'
+  | 'sculpted_envoy';
+
+export type HoloHairStyle =
+  | 'swept_crest'
+  | 'sculpted_bob'
+  | 'short_crop'
+  | 'flowing_waves'
+  | 'tapered_undercut'
+  | 'parted_crown';
+
+export interface HoloBodyProportions {
+  shoulderWidthScale: number;
+  torsoDepthScale: number;
+  hipWidthScale: number;
+  waistWidthScale: number;
+  chestFullness: number;
+  limbThicknessScale: number;
+  headScale: number;
+  jawWidthScale: number;
+  neckLengthScale: number;
+  garmentStyle: HoloArchetypeStyle;
+  hairStyle: HoloHairStyle;
+}
+
+export interface HoloCitizenConfig {
+  id: string;
+  label: string;
+  roleTag: string;
+  primaryColor: string;
+  secondaryColor: string;
+  heightScale: number;
+  walkSpeed: number;
+  strideScale: number;
+  turnSpeed: number;
+  pauseMinSeconds: number;
+  pauseMaxSeconds: number;
+  gestureOrder: HoloClipName[];
+  proportions: HoloBodyProportions;
+  waypoints: THREE.Vector3[];
+  initialWaypointIndex: number;
+  phaseOffset: number;
+}
+
+export interface HoloShaderUniforms {
+  uTime: { value: number };
+  uPrimaryColor: { value: THREE.Color };
+  uSecondaryColor: { value: THREE.Color };
+  uScanlineDensity: { value: number };
+  uOpacity: { value: number };
+  uBlinkFactor: { value: number };
+  uHoloIntensity: { value: number };
+}
+
+/**
+ * Bone indices in the 21-bone anatomical humanoid skeleton:
+ * 0: pelvis (root hip center)
+ * 1: spine (lumbar waist pivot)
+ * 2: chest (thoracic ribcage pivot)
+ * 3: neck (cervical base pivot)
+ * 4: head (cranium/jaw pivot)
+ * 5: shoulderL (left clavicle)
+ * 6: upperArmL (left glenohumeral shoulder)
+ * 7: lowerArmL (left elbow)
+ * 8: handL (left wrist/palm)
+ * 9: shoulderR (right clavicle)
+ * 10: upperArmR (right glenohumeral shoulder)
+ * 11: lowerArmR (right elbow)
+ * 12: handR (right wrist/palm)
+ * 13: thighL (left hip socket)
+ * 14: shinL (left knee)
+ * 15: footL (left ankle)
+ * 16: toeL (left ball-of-foot / forefoot roll)
+ * 17: thighR (right hip socket)
+ * 18: shinR (right knee)
+ * 19: footR (right ankle)
+ * 20: toeR (right ball-of-foot / forefoot roll)
+ */
+export const BONE_INDEX = {
+  pelvis: 0,
+  spine: 1,
+  chest: 2,
+  neck: 3,
+  head: 4,
+  shoulderL: 5,
+  upperArmL: 6,
+  lowerArmL: 7,
+  handL: 8,
+  shoulderR: 9,
+  upperArmR: 10,
+  lowerArmR: 11,
+  handR: 12,
+  thighL: 13,
+  shinL: 14,
+  footL: 15,
+  toeL: 16,
+  thighR: 17,
+  shinR: 18,
+  footR: 19,
+  toeR: 20,
+} as const;
+
+export const BONE_COUNT_PER_CITIZEN = 21;
+
+/**
+ * Material & Sub-Surface Zone encoding stored in vertex Color.r:
+ * 0.15 = Sculpted Human Skin (Face, Neck, Hands) -> warm inner core luminance, delicate scanlines
+ * 0.45 = Tailored Futuristic Attire (Coat, Jacket, Tunic, Trousers, Boots) -> rich fabric/collar shading
+ * 0.72 = Sculpted Hair Volume -> soft strand highlight & rim glow
+ * 0.96 = Luminous Holographic Accents (Eyes/Irises, Collar Lapel Trim, Cuff & Chest Emblems)
+ *
+ * Vertex Color.g encodes Eye Eyelid Blink Mask (1.0 on upper/lower iris/eyelid zone, 0.0 elsewhere).
+ * Vertex Color.b encodes Anatomical Ambient Occlusion / Crease Depth (0.35 in deep folds -> 1.0 on raised contours).
+ */
+const ZONE_SKIN = 0.15;
+const ZONE_ATTIRE = 0.45;
+const ZONE_HAIR = 0.72;
+const ZONE_LUMINOUS = 0.96;
+
+interface SculptedCrossSection {
+  y: number;
+  cx: number;
+  cz: number;
+  rx: number;
+  rz: number;
+  boneA: number;
+  boneB: number;
+  weightB: number;
+  zoneId: number;
+  /** Optional custom radial displacement (theta in [0, 2pi], cosT = X-axis, sinT = Z-axis where +Z is front) */
+  profileFn?: (theta: number, cosT: number, sinT: number) => {
+    drx?: number;
+    drz?: number;
+    dy?: number;
+    zoneOverride?: number;
+    blinkMask?: number;
+    ao?: number;
+  };
+}
+
+/**
+ * Builds a high-resolution, indexed, smooth-shaded organic lofted mesh from anatomical cross-sections.
+ * Uses shared vertex indices across rings and polar seams (with averaged seam normals) so Three.js
+ * computes true continuous vertex normals across the entire human surface instead of faceted flat triangles.
+ */
+function buildSmoothAnatomicalLoft(
+  slices: SculptedCrossSection[],
+  radialSegments: number,
+  capBottom = true,
+  capTop = true
+): THREE.BufferGeometry {
+  const ringCount = slices.length;
+  const cols = radialSegments + 1;
+
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const colors: number[] = [];
+  const skinIndices: number[] = [];
+  const skinWeights: number[] = [];
+  const indices: number[] = [];
+
+  for (let r = 0; r < ringCount; r++) {
+    const s = slices[r];
+    const v = r / Math.max(1, ringCount - 1);
+    const wB = THREE.MathUtils.clamp(s.weightB, 0, 1);
+    const wA = 1.0 - wB;
+
+    for (let c = 0; c <= radialSegments; c++) {
+      // Ensure exact seam closure between c = 0 and c = radialSegments
+      const u = c / radialSegments;
+      const cWrapped = c === radialSegments ? 0 : c;
+      const theta = (cWrapped / radialSegments) * Math.PI * 2;
+      const cosT = Math.cos(theta);
+      const sinT = Math.sin(theta);
+
+      let rx = s.rx;
+      let rz = s.rz;
+      let dy = 0;
+      let zone = s.zoneId;
+      let blink = 0.0;
+      let ao = 0.88;
+
+      if (s.profileFn) {
+        const mod = s.profileFn(theta, cosT, sinT);
+        if (mod.drx !== undefined) rx += mod.drx;
+        if (mod.drz !== undefined) rz += mod.drz;
+        if (mod.dy !== undefined) dy += mod.dy;
+        if (mod.zoneOverride !== undefined) zone = mod.zoneOverride;
+        if (mod.blinkMask !== undefined) blink = mod.blinkMask;
+        if (mod.ao !== undefined) ao = mod.ao;
+      }
+
+      const x = s.cx + rx * cosT;
+      const y = s.y + dy;
+      const z = s.cz + rz * sinT;
+
+      positions.push(x, y, z);
+      uvs.push(u, v);
+      colors.push(zone, blink, ao);
+      skinIndices.push(s.boneA, s.boneB, 0, 0);
+      skinWeights.push(wA, wB, 0, 0);
+    }
+  }
+
+  for (let r = 0; r < ringCount - 1; r++) {
+    for (let c = 0; c < radialSegments; c++) {
+      const a = r * cols + c;
+      const b = (r + 1) * cols + c;
+      const d = (r + 1) * cols + (c + 1);
+      const e = r * cols + (c + 1);
+
+      indices.push(a, b, e);
+      indices.push(b, d, e);
+    }
+  }
+
+  if (capBottom && slices.length > 0) {
+    const first = slices[0];
+    const centerIdx = positions.length / 3;
+    positions.push(first.cx, first.y, first.cz);
+    uvs.push(0.5, 0);
+    colors.push(first.zoneId, 0, 0.75);
+    const wB = THREE.MathUtils.clamp(first.weightB, 0, 1);
+    skinIndices.push(first.boneA, first.boneB, 0, 0);
+    skinWeights.push(1.0 - wB, wB, 0, 0);
+
+    for (let c = 0; c < radialSegments; c++) {
+      indices.push(centerIdx, c + 1, c);
+    }
+  }
+
+  if (capTop && slices.length > 0) {
+    const lastIdx = slices.length - 1;
+    const last = slices[lastIdx];
+    const baseRingOffset = lastIdx * cols;
+    const centerIdx = positions.length / 3;
+    positions.push(last.cx, last.y, last.cz);
+    uvs.push(0.5, 1);
+    colors.push(last.zoneId, 0, 0.95);
+    const wB = THREE.MathUtils.clamp(last.weightB, 0, 1);
+    skinIndices.push(last.boneA, last.boneB, 0, 0);
+    skinWeights.push(1.0 - wB, wB, 0, 0);
+
+    for (let c = 0; c < radialSegments; c++) {
+      indices.push(baseRingOffset + c, baseRingOffset + c + 1, centerIdx);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
+  geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  // Stitch seam normals between column 0 and column radialSegments so there is zero vertical shading seam
+  const normAttr = geo.attributes.normal;
+  const nArr = normAttr.array as Float32Array;
+  for (let r = 0; r < ringCount; r++) {
+    const idx0 = (r * cols + 0) * 3;
+    const idxLast = (r * cols + radialSegments) * 3;
+    const nx = nArr[idx0] + nArr[idxLast];
+    const ny = nArr[idx0 + 1] + nArr[idxLast + 1];
+    const nz = nArr[idx0 + 2] + nArr[idxLast + 2];
+    const len = Math.hypot(nx, ny, nz) || 1;
+    nArr[idx0] = nArr[idxLast] = nx / len;
+    nArr[idx0 + 1] = nArr[idxLast + 1] = ny / len;
+    nArr[idx0 + 2] = nArr[idxLast + 2] = nz / len;
+  }
+  normAttr.needsUpdate = true;
+
+  return geo;
+}
+
+/**
+ * Builds an anatomical 3D sculpted human head & neck with:
+ * - Sternocleidomastoid neck contour & trapezius blend
+ * - Defined chin, mandibular jawline, philtrum, upper & lower lips
+ * - Sculpted zygomatic cheekbones, nasal bridge, nose tip, and nostrils
+ * - Orbital eye sockets, upper/lower eyelids (with blink mask), glowing holographic irises, and brow ridge
+ * - Sculpted left & right ears (helix/lobule)
+ * - Individualized 3D hairstyle volume (swept crest, sculpted bob, short crop, flowing waves, tapered undercut, parted crown)
+ */
+function buildSculptedHeadAndHair(
+  liteMode: boolean,
+  proportions: HoloBodyProportions
+): THREE.BufferGeometry {
+  const segs = liteMode ? 20 : 36;
+  const hs = proportions.headScale;
+  const jw = proportions.jawWidthScale;
+  const nl = proportions.neckLengthScale;
+  const sw = proportions.shoulderWidthScale;
+  const td = proportions.torsoDepthScale;
+  const hairStyle = proportions.hairStyle;
+
+  // Facial landmark angular helper: front of face is theta = PI/2 (cosT = 0, sinT = +1)
+  // Left side of face is cosT > 0, Right side of face is cosT < 0
+  const gaussian = (val: number, center: number, sigma: number) =>
+    Math.exp(-Math.pow(val - center, 2) / (2 * sigma * sigma));
+
+  // Hair volume sculpting function based on citizen's hairstyle
+  const evalHairDisplacement = (
+    yNorm: number, // 0 at temple/nape (y=1.64), 1 at crown (y=1.82)
+    cosT: number,
+    sinT: number
+  ): { drx: number; drz: number; dy: number; isHair: boolean } => {
+    // Hair covers back of head (sinT < 0.25), sides above ears (abs(cosT) > 0.65 && yNorm > 0.35), and crown (yNorm > 0.68)
+    const backCoverage = sinT < 0.18 ? 1.0 : 0.0;
+    const sideBurnCoverage = Math.abs(cosT) > 0.62 && yNorm > 0.28 && sinT < 0.52 ? 1.0 : 0.0;
+    const crownCoverage = yNorm > 0.68 ? 1.0 : 0.0;
+    const fringeCoverage =
+      yNorm > 0.56 &&
+      sinT > 0.45 &&
+      (hairStyle === 'swept_crest' ||
+        hairStyle === 'sculpted_bob' ||
+        hairStyle === 'flowing_waves' ||
+        hairStyle === 'parted_crown')
+        ? 1.0
+        : 0.0;
+
+    const isHair = backCoverage > 0 || sideBurnCoverage > 0 || crownCoverage > 0 || fringeCoverage > 0;
+    if (!isHair) {
+      return { drx: 0, drz: 0, dy: 0, isHair: false };
+    }
+
+    let drx = 0.008 * hs;
+    let drz = 0.010 * hs;
+    let dy = 0;
+
+    if (hairStyle === 'swept_crest') {
+      // Swept-back futuristic crest with sculpted side taper
+      const crest = Math.max(0, 1.0 - Math.abs(cosT) * 1.35) * Math.max(0, yNorm - 0.45);
+      drx += 0.007 * hs * (1.0 - 0.3 * Math.abs(cosT));
+      drz += (0.022 * crest + (sinT < 0 ? 0.016 : 0.012)) * hs;
+      dy += 0.024 * crest * hs;
+    } else if (hairStyle === 'sculpted_bob') {
+      // Chin-length sleek geometric bob framing jawline and cheeks
+      const bobSide = Math.pow(Math.abs(cosT), 0.8) * (1.0 - Math.max(0, sinT - 0.35));
+      const sidePart = cosT > 0.15 && sinT > 0.5 ? 0.012 : 0.0;
+      drx += (0.020 * bobSide + 0.010) * hs;
+      drz += (sinT < 0 ? 0.022 : 0.012 + sidePart) * hs;
+      dy += 0.012 * yNorm * hs;
+    } else if (hairStyle === 'flowing_waves') {
+      // Longer layered holographic waves with fuller side & back volume
+      const waveRipple = 0.004 * Math.sin(yNorm * 14.0 + cosT * 6.0);
+      const backFullness = sinT < 0.2 ? 0.026 : 0.010;
+      drx += (0.022 * Math.abs(cosT) + 0.010 + waveRipple) * hs;
+      drz += (backFullness + waveRipple) * hs;
+      dy += 0.016 * yNorm * hs;
+    } else if (hairStyle === 'tapered_undercut') {
+      // Clean undercut sides with textured top volume
+      const topOnly = Math.max(0, yNorm - 0.58) * 2.2;
+      drx += (0.004 + 0.010 * topOnly) * hs;
+      drz += (0.006 + 0.020 * topOnly) * hs;
+      dy += 0.022 * topOnly * hs;
+    } else if (hairStyle === 'parted_crown') {
+      // Asymmetric side-parted holographic waves
+      const partDip = gaussian(cosT, -0.32, 0.12) * Math.max(0, yNorm - 0.55);
+      const sweepRight = cosT > -0.2 ? 0.016 : 0.009;
+      drx += (0.013 + sweepRight * Math.abs(cosT)) * hs;
+      drz += (0.015 - 0.008 * partDip) * hs;
+      dy += (0.018 * Math.max(0, yNorm - 0.5) - 0.009 * partDip) * hs;
+    } else {
+      // short_crop: clean athletic sculpted crop
+      drx += 0.007 * hs;
+      drz += 0.009 * hs;
+      dy += 0.010 * Math.max(0, yNorm - 0.5) * hs;
+    }
+
+    return { drx, drz, dy, isHair: true };
+  };
+
+  const slices: SculptedCrossSection[] = [
+    // 0. Base of cervical neck blending into collar/clavicle
+    {
+      y: 1.468,
+      cx: 0,
+      cz: -0.002,
+      rx: 0.072 * sw,
+      rz: 0.064 * td,
+      boneA: BONE_INDEX.chest,
+      boneB: BONE_INDEX.neck,
+      weightB: 0.65,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, cosT, sinT) => {
+        // Sternocleidomastoid V-tendons at front of neck & trapezius slope on sides
+        const scm = sinT > 0.3 ? 0.004 * Math.cos(cosT * 3.2) : 0;
+        return {
+          drx: 0.006 * Math.pow(Math.abs(cosT), 2),
+          drz: scm,
+          ao: 0.78,
+        };
+      },
+    },
+    // 1. Lower-mid neck cylinder
+    {
+      y: 1.505,
+      cx: 0,
+      cz: 0.000,
+      rx: 0.053 * hs,
+      rz: 0.055 * hs,
+      boneA: BONE_INDEX.neck,
+      boneB: BONE_INDEX.chest,
+      weightB: 0.18,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, cosT, sinT) => {
+        // Subtle laryngeal / throat contour in front, nape muscle at back
+        const throat = sinT > 0.65 ? 0.003 * gaussian(cosT, 0, 0.25) : 0;
+        const hairNape =
+          sinT < -0.35 && (hairStyle === 'flowing_waves' || hairStyle === 'sculpted_bob')
+            ? 0.014 * hs
+            : 0;
+        return {
+          drz: (throat + hairNape) * (sinT < 0 ? 1 : 1),
+          zoneOverride: hairNape > 0 ? ZONE_HAIR : ZONE_SKIN,
+          ao: 0.80,
+        };
+      },
+    },
+    // 2. Upper cervical neck (sub-mandibular shadow under chin)
+    {
+      y: 1.548 + 0.006 * (nl - 1),
+      cx: 0,
+      cz: 0.002,
+      rx: 0.050 * hs,
+      rz: 0.053 * hs,
+      boneA: BONE_INDEX.neck,
+      boneB: BONE_INDEX.head,
+      weightB: 0.42,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, _cosT, sinT) => {
+        const hairBack =
+          sinT < -0.25 && (hairStyle === 'flowing_waves' || hairStyle === 'sculpted_bob')
+            ? 0.018 * hs
+            : 0;
+        return {
+          drz: hairBack,
+          zoneOverride: hairBack > 0 ? ZONE_HAIR : ZONE_SKIN,
+          ao: sinT > 0.4 ? 0.62 : 0.82, // natural under-chin shadow
+        };
+      },
+    },
+    // 3. Mentum / Chin point & Lower Mandible Line
+    {
+      y: 1.578 + 0.008 * (nl - 1),
+      cx: 0,
+      cz: 0.014 * hs,
+      rx: 0.064 * hs * jw,
+      rz: 0.078 * hs,
+      boneA: BONE_INDEX.head,
+      boneB: BONE_INDEX.neck,
+      weightB: 0.15,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, cosT, sinT) => {
+        // Rounded forward chin prominence at sinT ≈ 1, cosT ≈ 0, tapering cleanly along the jaw ramus
+        const chinProminence = sinT > 0 ? 0.018 * hs * gaussian(cosT, 0, 0.34) * Math.pow(sinT, 1.5) : 0;
+        const jawAngle = sinT > -0.2 && sinT < 0.6 ? 0.007 * hs * jw * Math.pow(Math.abs(cosT), 1.4) : 0;
+        const hairBob =
+          sinT < 0.15 && (hairStyle === 'flowing_waves' || hairStyle === 'sculpted_bob')
+            ? 0.018 * hs
+            : 0;
+        return {
+          drx: jawAngle + (hairBob > 0 ? 0.012 * hs : 0),
+          drz: chinProminence + hairBob,
+          zoneOverride: hairBob > 0 ? ZONE_HAIR : ZONE_SKIN,
+          ao: 0.88,
+        };
+      },
+    },
+    // 4. Labiomental fold (subtle indentation between chin and lower lip) & Jaw Gonial Angle
+    {
+      y: 1.596 + 0.008 * (nl - 1),
+      cx: 0,
+      cz: 0.015 * hs,
+      rx: 0.075 * hs * jw,
+      rz: 0.086 * hs,
+      boneA: BONE_INDEX.head,
+      boneB: BONE_INDEX.neck,
+      weightB: 0.05,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, cosT, sinT) => {
+        const foldIndent = sinT > 0.7 ? -0.004 * hs * gaussian(cosT, 0, 0.28) : 0;
+        const jawLine = 0.008 * hs * jw * gaussian(sinT, 0.1, 0.45);
+        const hairBack = sinT < -0.15 ? 0.010 * hs : 0;
+        return {
+          drx: jawLine,
+          drz: foldIndent + hairBack,
+          zoneOverride: sinT < -0.25 ? ZONE_HAIR : ZONE_SKIN,
+          ao: foldIndent < 0 ? 0.72 : 0.90,
+        };
+      },
+    },
+    // 5. Lower & Upper Lips / Oral Commissure Contour
+    {
+      y: 1.615 + 0.008 * (nl - 1),
+      cx: 0,
+      cz: 0.017 * hs,
+      rx: 0.082 * hs * jw,
+      rz: 0.092 * hs,
+      boneA: BONE_INDEX.head,
+      boneB: BONE_INDEX.head,
+      weightB: 0.0,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, cosT, sinT) => {
+        // Sculpted full lips in front (+Z) with subtle cupid's bow & corner dimples
+        let lipProtrusion = 0;
+        let ao = 0.92;
+        if (sinT > 0.65) {
+          const mouthCenter = gaussian(cosT, 0, 0.24);
+          const mouthCorners = gaussian(Math.abs(cosT), 0.28, 0.07);
+          lipProtrusion = (0.013 * mouthCenter - 0.003 * mouthCorners) * hs;
+          ao = mouthCorners > 0.5 ? 0.74 : 0.95;
+        }
+        const hairInfo = evalHairDisplacement(0.12, cosT, sinT);
+        return {
+          drx: hairInfo.drx,
+          drz: lipProtrusion + hairInfo.drz,
+          zoneOverride: hairInfo.isHair ? ZONE_HAIR : ZONE_SKIN,
+          ao,
+        };
+      },
+    },
+    // 6. Subnasale / Nostril Base & Lower CheekHollows + Ear Lobules
+    {
+      y: 1.636 + 0.008 * (nl - 1),
+      cx: 0,
+      cz: 0.016 * hs,
+      rx: 0.086 * hs,
+      rz: 0.095 * hs,
+      boneA: BONE_INDEX.head,
+      boneB: BONE_INDEX.head,
+      weightB: 0.0,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, cosT, sinT) => {
+        // Nose tip base / alar wings at front center
+        let noseBase = 0;
+        if (sinT > 0.72) {
+          const tip = gaussian(cosT, 0, 0.11);
+          const alarWings = gaussian(Math.abs(cosT), 0.14, 0.06);
+          noseBase = (0.022 * tip + 0.010 * alarWings) * hs;
+        }
+        // Lower ear lobule at side (cosT ≈ ±1, sinT ≈ -0.05)
+        const earLobule = gaussian(sinT, -0.05, 0.11) * Math.pow(Math.abs(cosT), 3) * 0.012 * hs;
+        const hairInfo = evalHairDisplacement(0.24, cosT, sinT);
+        return {
+          drx: earLobule + hairInfo.drx,
+          drz: noseBase + hairInfo.drz,
+          zoneOverride: hairInfo.isHair ? ZONE_HAIR : ZONE_SKIN,
+          ao: 0.92,
+        };
+      },
+    },
+    // 7. Pronasale (Sculpted Nose Tip), Zygomatic Cheekbone Prominence & Mid-Ear Helix
+    {
+      y: 1.658 + 0.008 * (nl - 1),
+      cx: 0,
+      cz: 0.015 * hs,
+      rx: 0.091 * hs,
+      rz: 0.098 * hs,
+      boneA: BONE_INDEX.head,
+      boneB: BONE_INDEX.head,
+      weightB: 0.0,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, cosT, sinT) => {
+        // Pronounced sculpted nose tip & bridge at cosT ≈ 0, sinT > 0.75
+        let frontContour = 0;
+        if (sinT > 0.5) {
+          const noseTip = gaussian(cosT, 0, 0.095) * Math.pow(sinT, 2);
+          // Zygomatic arch / cheekbone fullness at cosT ≈ ±0.56
+          const cheekbone = gaussian(Math.abs(cosT), 0.56, 0.18) * sinT;
+          frontContour = (0.027 * noseTip + 0.009 * cheekbone) * hs;
+        }
+        // Sculpted outer ear helix on left/right sides
+        const earHelix = gaussian(sinT, -0.06, 0.13) * Math.pow(Math.abs(cosT), 3) * 0.018 * hs;
+        const hairInfo = evalHairDisplacement(0.38, cosT, sinT);
+        return {
+          drx: earHelix + hairInfo.drx + (sinT > 0.2 ? 0.005 * hs * gaussian(Math.abs(cosT), 0.65, 0.2) : 0),
+          drz: frontContour + hairInfo.drz,
+          zoneOverride: hairInfo.isHair ? ZONE_HAIR : ZONE_SKIN,
+          ao: 0.96,
+        };
+      },
+    },
+    // 8. Orbital Eye Sockets, Glowing Holographic Irises, Upper/Lower Eyelids & Nasal Bridge
+    {
+      y: 1.684 + 0.008 * (nl - 1),
+      cx: 0,
+      cz: 0.012 * hs,
+      rx: 0.090 * hs,
+      rz: 0.097 * hs,
+      boneA: BONE_INDEX.head,
+      boneB: BONE_INDEX.head,
+      weightB: 0.0,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, cosT, sinT) => {
+        let drz = 0;
+        let zoneOverride = ZONE_SKIN;
+        let blinkMask = 0.0;
+        let ao = 0.92;
+
+        if (sinT > 0.55) {
+          // Nasal dorsum (bridge between eyes)
+          const nasalBridge = gaussian(cosT, 0, 0.085) * Math.pow(sinT, 2) * 0.020 * hs;
+          // Left and Right orbital sockets centered at cosT = ±0.34
+          const eyeSocketEnv = gaussian(Math.abs(cosT), 0.34, 0.13);
+          // Eyeball / cornea gentle dome inside the recessed socket
+          const irisCenter = gaussian(Math.abs(cosT), 0.34, 0.065);
+
+          drz = nasalBridge - 0.009 * hs * eyeSocketEnv + 0.006 * hs * irisCenter;
+          ao = 0.92 - 0.22 * eyeSocketEnv + 0.25 * irisCenter;
+
+          if (irisCenter > 0.52) {
+            zoneOverride = ZONE_LUMINOUS; // Luminous holographic iris/cornea
+            blinkMask = 1.0; // Modulated by periodic natural eye blink uniform
+          }
+        }
+
+        const earTop = gaussian(sinT, -0.07, 0.11) * Math.pow(Math.abs(cosT), 3) * 0.014 * hs;
+        const hairInfo = evalHairDisplacement(0.54, cosT, sinT);
+        if (hairInfo.isHair && zoneOverride !== ZONE_LUMINOUS) {
+          zoneOverride = ZONE_HAIR;
+        }
+
+        return {
+          drx: earTop + hairInfo.drx,
+          drz: drz + hairInfo.drz,
+          zoneOverride,
+          blinkMask,
+          ao,
+        };
+      },
+    },
+    // 9. Supraorbital Brow Ridge, Glabella & Temples
+    {
+      y: 1.710 + 0.008 * (nl - 1),
+      cx: 0,
+      cz: 0.011 * hs,
+      rx: 0.089 * hs,
+      rz: 0.099 * hs,
+      boneA: BONE_INDEX.head,
+      boneB: BONE_INDEX.head,
+      weightB: 0.0,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, cosT, sinT) => {
+        // Sculpted brow arches over each eye + glabellar bridge
+        let browArch = 0;
+        if (sinT > 0.55) {
+          const browCurve = gaussian(Math.abs(cosT), 0.32, 0.18) + 0.45 * gaussian(cosT, 0, 0.10);
+          browArch = 0.009 * hs * browCurve * sinT;
+        }
+        const hairInfo = evalHairDisplacement(0.68, cosT, sinT);
+        return {
+          drx: hairInfo.drx,
+          drz: browArch + hairInfo.drz,
+          dy: hairInfo.dy * 0.35,
+          zoneOverride: hairInfo.isHair ? ZONE_HAIR : ZONE_SKIN,
+          ao: 0.95,
+        };
+      },
+    },
+    // 10. Frontal Forehead & Hairline Transition
+    {
+      y: 1.744 + 0.008 * (nl - 1),
+      cx: 0,
+      cz: 0.006 * hs,
+      rx: 0.084 * hs,
+      rz: 0.096 * hs,
+      boneA: BONE_INDEX.head,
+      boneB: BONE_INDEX.head,
+      weightB: 0.0,
+      zoneId: ZONE_HAIR,
+      profileFn: (_theta, cosT, sinT) => {
+        const hairInfo = evalHairDisplacement(0.84, cosT, sinT);
+        // Leave upper center forehead skin visible unless bangs/fringe cover it
+        const isForeheadSkin =
+          sinT > 0.68 &&
+          Math.abs(cosT) < 0.48 &&
+          (hairStyle === 'short_crop' || hairStyle === 'tapered_undercut');
+        return {
+          drx: isForeheadSkin ? 0 : hairInfo.drx,
+          drz: isForeheadSkin ? 0.003 * hs : hairInfo.drz,
+          dy: isForeheadSkin ? 0 : hairInfo.dy * 0.7,
+          zoneOverride: isForeheadSkin ? ZONE_SKIN : ZONE_HAIR,
+          ao: 0.96,
+        };
+      },
+    },
+    // 11. Parietal Cranium & Sculpted Hair Crown Volume
+    {
+      y: 1.782 + 0.008 * (nl - 1),
+      cx: 0,
+      cz: -0.002 * hs,
+      rx: 0.068 * hs,
+      rz: 0.082 * hs,
+      boneA: BONE_INDEX.head,
+      boneB: BONE_INDEX.head,
+      weightB: 0.0,
+      zoneId: ZONE_HAIR,
+      profileFn: (_theta, cosT, sinT) => {
+        const hairInfo = evalHairDisplacement(0.95, cosT, sinT);
+        return {
+          drx: hairInfo.drx * 0.85,
+          drz: hairInfo.drz * 0.90,
+          dy: hairInfo.dy,
+          zoneOverride: ZONE_HAIR,
+          ao: 0.98,
+        };
+      },
+    },
+    // 12. Superior Crown Apex
+    {
+      y: 1.812 + 0.008 * (nl - 1),
+      cx: 0,
+      cz: -0.006 * hs,
+      rx: 0.032 * hs,
+      rz: 0.040 * hs,
+      boneA: BONE_INDEX.head,
+      boneB: BONE_INDEX.head,
+      weightB: 0.0,
+      zoneId: ZONE_HAIR,
+      profileFn: (_theta, cosT, sinT) => {
+        const hairInfo = evalHairDisplacement(1.0, cosT, sinT);
+        return {
+          drx: hairInfo.drx * 0.4,
+          drz: hairInfo.drz * 0.5,
+          dy: hairInfo.dy,
+          zoneOverride: ZONE_HAIR,
+          ao: 1.0,
+        };
+      },
+    },
+  ];
+
+  return buildSmoothAnatomicalLoft(slices, segs, false, true);
+}
+
+/**
+ * Builds the continuous sculpted human torso & futuristic attire (pelvis -> hips -> waist -> ribcage -> chest -> collar/shoulders)
+ * with authentic anatomical muscular contours and distinct futuristic silhouette styling per citizen archetype.
+ */
+function buildSculptedTorsoAndAttire(
+  liteMode: boolean,
+  proportions: HoloBodyProportions
+): THREE.BufferGeometry {
+  const segs = liteMode ? 16 : 30;
+  const sw = proportions.shoulderWidthScale;
+  const td = proportions.torsoDepthScale;
+  const hw = proportions.hipWidthScale;
+  const ww = proportions.waistWidthScale;
+  const cf = proportions.chestFullness;
+  const style = proportions.garmentStyle;
+
+  const gaussian = (val: number, center: number, sigma: number) =>
+    Math.exp(-Math.pow(val - center, 2) / (2 * sigma * sigma));
+
+  // Style-specific garment flare at lower hem (pelvis/hip level)
+  const coatFlare =
+    style === 'executive_coat'
+      ? 0.018
+      : style === 'draped_tunic'
+      ? 0.014
+      : style === 'tailored_blazer'
+      ? 0.010
+      : 0.003;
+
+  const slices: SculptedCrossSection[] = [
+    // 0. Lower pelvis / hip base
+    {
+      y: 0.880,
+      cx: 0,
+      cz: -0.006,
+      rx: (0.122 * hw) + coatFlare * 0.4,
+      rz: 0.090 * td,
+      boneA: BONE_INDEX.pelvis,
+      boneB: BONE_INDEX.spine,
+      weightB: 0.0,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, cosT, sinT) => {
+        // Gluteal cleft & bilateral gluteus maximus contour on back (-Z)
+        const glute = sinT < 0 ? 0.018 * td * Math.pow(-sinT, 1.4) * (1.0 - 0.35 * gaussian(cosT, 0, 0.14)) : 0;
+        return { drz: glute, ao: 0.82 };
+      },
+    },
+    // 1. Full hip / gluteal contour + coat/tunic hem trim
+    {
+      y: 0.945,
+      cx: 0,
+      cz: -0.008,
+      rx: (0.146 * hw) + coatFlare,
+      rz: (0.105 * td) + coatFlare * 0.6,
+      boneA: BONE_INDEX.pelvis,
+      boneB: BONE_INDEX.spine,
+      weightB: 0.08,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, cosT, sinT) => {
+        const glute = sinT < 0 ? 0.022 * td * Math.pow(-sinT, 1.3) * (1.0 - 0.3 * gaussian(cosT, 0, 0.15)) : 0;
+        const hipCrest = 0.006 * hw * Math.pow(Math.abs(cosT), 2);
+        // Subtle luminous belt/hem accent on executive coat & tunic
+        const isTrim =
+          (style === 'executive_coat' || style === 'draped_tunic') && Math.abs(sinT) > 0.88;
+        return {
+          drx: hipCrest,
+          drz: glute,
+          zoneOverride: isTrim ? ZONE_LUMINOUS : ZONE_ATTIRE,
+          ao: 0.90,
+        };
+      },
+    },
+    // 2. Iliac crest / upper hip transition
+    {
+      y: 1.015,
+      cx: 0,
+      cz: -0.003,
+      rx: 0.138 * hw,
+      rz: 0.096 * td,
+      boneA: BONE_INDEX.pelvis,
+      boneB: BONE_INDEX.spine,
+      weightB: 0.42,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, cosT, sinT) => {
+        // Futuristic waist belt / sash detail
+        const isBeltAccent = sinT > 0.82 && Math.abs(cosT) < 0.25;
+        return {
+          drz: sinT < 0 ? 0.010 * td * (-sinT) : 0.005 * td * sinT,
+          zoneOverride: isBeltAccent ? ZONE_LUMINOUS : ZONE_ATTIRE,
+          ao: 0.86,
+        };
+      },
+    },
+    // 3. Anatomical lumbar waist taper (natural inward curve at waist & lower spine)
+    {
+      y: 1.095,
+      cx: 0,
+      cz: 0.005,
+      rx: 0.120 * ww,
+      rz: 0.085 * td,
+      boneA: BONE_INDEX.spine,
+      boneB: BONE_INDEX.pelvis,
+      weightB: 0.18,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, cosT, sinT) => {
+        // Spinal erector groove in back (-Z), rectus abdominis tone in front (+Z)
+        const lumbarGroove = sinT < -0.6 ? -0.006 * td * gaussian(cosT, 0, 0.18) : 0;
+        const abdomen = sinT > 0.3 ? 0.006 * td * sinT : 0;
+        return {
+          drz: lumbarGroove + abdomen,
+          ao: 0.84,
+        };
+      },
+    },
+    // 4. Lower ribcage / upper abdomen transition
+    {
+      y: 1.185,
+      cx: 0,
+      cz: 0.007,
+      rx: 0.136 * ((sw + ww) * 0.5),
+      rz: 0.095 * td,
+      boneA: BONE_INDEX.spine,
+      boneB: BONE_INDEX.chest,
+      weightB: 0.38,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, cosT, sinT) => {
+        // Jacket/coat center lapel seam
+        const lapelEdge = sinT > 0.85 && Math.abs(Math.abs(cosT) - 0.14) < 0.05;
+        return {
+          drz: sinT > 0 ? 0.010 * td * sinT : 0.006 * td * (-sinT),
+          zoneOverride: lapelEdge ? ZONE_LUMINOUS : ZONE_ATTIRE,
+          ao: 0.90,
+        };
+      },
+    },
+    // 5. Mid thoracic ribcage & latissimus dorsi V-taper
+    {
+      y: 1.275,
+      cx: 0,
+      cz: 0.009,
+      rx: 0.154 * sw,
+      rz: 0.108 * td,
+      boneA: BONE_INDEX.chest,
+      boneB: BONE_INDEX.spine,
+      weightB: 0.18,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, cosT, sinT) => {
+        // Bilateral pectoral contour in front (+Z), shoulder blades (scapulae) in back (-Z)
+        const pecs =
+          sinT > 0.35
+            ? 0.016 * td * cf * sinT * (gaussian(Math.abs(cosT), 0.42, 0.24) + 0.35)
+            : 0;
+        const scapulae =
+          sinT < -0.35
+            ? 0.011 * td * (-sinT) * gaussian(Math.abs(cosT), 0.45, 0.25)
+            : 0;
+        return {
+          drz: pecs + scapulae,
+          ao: 0.94,
+        };
+      },
+    },
+    // 6. Full Pectoral & Broad Deltoid/Clavicle Chest Contour + Futuristic Lapel/Emblem
+    {
+      y: 1.362,
+      cx: 0,
+      cz: 0.010,
+      rx: 0.174 * sw,
+      rz: 0.114 * td,
+      boneA: BONE_INDEX.chest,
+      boneB: BONE_INDEX.spine,
+      weightB: 0.0,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, cosT, sinT) => {
+        const pecs =
+          sinT > 0.3
+            ? 0.020 * td * cf * sinT * (gaussian(Math.abs(cosT), 0.44, 0.26) + 0.3)
+            : 0;
+        const sternumDip = sinT > 0.85 ? -0.004 * td * gaussian(cosT, 0, 0.12) : 0;
+        // Luminous holographic lapel / collar emblem on upper chest
+        const isLapelGlow =
+          sinT > 0.78 && Math.abs(Math.abs(cosT) - 0.24) < 0.065;
+        return {
+          drz: pecs + sternumDip,
+          zoneOverride: isLapelGlow ? ZONE_LUMINOUS : ZONE_ATTIRE,
+          ao: 0.96,
+        };
+      },
+    },
+    // 7. Clavicle Shelf & Sculpted Futuristic Stand-Collar / Neckline
+    {
+      y: 1.432,
+      cx: 0,
+      cz: 0.003,
+      rx: 0.168 * sw,
+      rz: 0.096 * td,
+      boneA: BONE_INDEX.chest,
+      boneB: BONE_INDEX.neck,
+      weightB: 0.15,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, cosT, sinT) => {
+        // High sculpted cyber-collar on sides and back, open V-neckline in front
+        const collarRise =
+          sinT < 0.55 ? 0.014 * Math.pow(1.0 - Math.max(0, sinT), 0.8) : -0.004;
+        const isVNeckSkin = sinT > 0.76 && Math.abs(cosT) < 0.26;
+        const isCollarRim =
+          !isVNeckSkin && sinT > 0.52 && Math.abs(Math.abs(cosT) - 0.32) < 0.08;
+        return {
+          dy: collarRise,
+          zoneOverride: isVNeckSkin
+            ? ZONE_SKIN
+            : isCollarRim
+            ? ZONE_LUMINOUS
+            : ZONE_ATTIRE,
+          ao: isVNeckSkin ? 0.86 : 0.96,
+        };
+      },
+    },
+    // 8. Upper Trapezius & Collar Crown blending seamlessly into Cervical Neck
+    {
+      y: 1.472,
+      cx: 0,
+      cz: -0.002,
+      rx: 0.088 * sw,
+      rz: 0.070 * td,
+      boneA: BONE_INDEX.chest,
+      boneB: BONE_INDEX.neck,
+      weightB: 0.58,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, cosT, sinT) => {
+        const isHighCollar =
+          (style === 'executive_coat' || style === 'sculpted_envoy' || style === 'fitted_jacket') &&
+          sinT < 0.35;
+        return {
+          drx: isHighCollar ? 0.008 * sw : 0,
+          drz: isHighCollar ? 0.008 * td : 0,
+          dy: isHighCollar ? 0.012 : 0,
+          zoneOverride: isHighCollar ? ZONE_LUMINOUS : ZONE_SKIN,
+          ao: 0.88,
+        };
+      },
+    },
+  ];
+
+  return buildSmoothAnatomicalLoft(slices, segs, true, false);
+}
+
+/**
+ * Builds sculpted left/right human arms with deltoid caps, bicep/tricep anatomy,
+ * elbow articulation, forearm taper, slender wrists, and multi-digit sculpted hands (thumb + fingers).
+ */
+function buildSculptedArmAndHand(
+  sideSign: number,
+  liteMode: boolean,
+  proportions: HoloBodyProportions
+): THREE.BufferGeometry {
+  const segs = liteMode ? 12 : 22;
+  const sw = proportions.shoulderWidthScale;
+  const lt = proportions.limbThicknessScale;
+
+  const shBone = sideSign > 0 ? BONE_INDEX.shoulderL : BONE_INDEX.shoulderR;
+  const uaBone = sideSign > 0 ? BONE_INDEX.upperArmL : BONE_INDEX.upperArmR;
+  const laBone = sideSign > 0 ? BONE_INDEX.lowerArmL : BONE_INDEX.lowerArmR;
+  const hdBone = sideSign > 0 ? BONE_INDEX.handL : BONE_INDEX.handR;
+
+  const armX = sideSign * 0.194 * sw;
+  const elbowX = sideSign * 0.205 * sw;
+  const wristX = sideSign * 0.213 * sw;
+
+  const slices: SculptedCrossSection[] = [
+    // 0. Inner clavicle / deltoid origin blending smoothly into upper chest
+    {
+      y: 1.454,
+      cx: sideSign * 0.158 * sw,
+      cz: 0.000,
+      rx: 0.052 * lt,
+      rz: 0.050 * lt,
+      boneA: shBone,
+      boneB: BONE_INDEX.chest,
+      weightB: 0.48,
+      zoneId: ZONE_ATTIRE,
+    },
+    // 1. Sculpted Lateral Deltoid Shoulder Cap
+    {
+      y: 1.414,
+      cx: armX,
+      cz: 0.000,
+      rx: 0.062 * lt,
+      rz: 0.058 * lt,
+      boneA: uaBone,
+      boneB: shBone,
+      weightB: 0.38,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, cosT) => ({
+        // Lateral deltoid fullness on outer shoulder
+        drx: (sideSign * cosT > 0 ? 0.008 : 0.0) * lt,
+        ao: 0.96,
+      }),
+    },
+    // 2. Upper Bicep & Tricep Contour
+    {
+      y: 1.320,
+      cx: armX + sideSign * 0.003,
+      cz: -0.003,
+      rx: 0.050 * lt,
+      rz: 0.053 * lt,
+      boneA: uaBone,
+      boneB: shBone,
+      weightB: 0.0,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, _cosT, sinT) => ({
+        // Bicep curve in front (+Z), tricep horseshoe in back (-Z)
+        drz: (sinT > 0 ? 0.007 * sinT : 0.008 * (-sinT)) * lt,
+        ao: 0.92,
+      }),
+    },
+    // 3. Distal Upper Arm tapering into Elbow
+    {
+      y: 1.215,
+      cx: elbowX - sideSign * 0.002,
+      cz: -0.005,
+      rx: 0.043 * lt,
+      rz: 0.045 * lt,
+      boneA: uaBone,
+      boneB: laBone,
+      weightB: 0.22,
+      zoneId: ZONE_ATTIRE,
+    },
+    // 4. Elbow Joint (Olecranon tip at back, cubital fossa crease in front)
+    {
+      y: 1.150,
+      cx: elbowX,
+      cz: -0.007,
+      rx: 0.040 * lt,
+      rz: 0.041 * lt,
+      boneA: uaBone,
+      boneB: laBone,
+      weightB: 0.50,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, _cosT, sinT) => ({
+        drz: (sinT < -0.5 ? 0.006 * (-sinT) : sinT > 0.5 ? -0.004 * sinT : 0) * lt,
+        ao: sinT > 0.5 ? 0.76 : 0.90,
+      }),
+    },
+    // 5. Proximal Forearm (Brachioradialis & Extensor muscle belly)
+    {
+      y: 1.080,
+      cx: elbowX + sideSign * 0.002,
+      cz: 0.000,
+      rx: 0.044 * lt,
+      rz: 0.046 * lt,
+      boneA: laBone,
+      boneB: uaBone,
+      weightB: 0.14,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, _cosT, sinT) => ({
+        drz: (sinT > 0 ? 0.006 * sinT : 0.004 * (-sinT)) * lt,
+        ao: 0.92,
+      }),
+    },
+    // 6. Mid-Lower Forearm & Futuristic Sleeve Cuff Band
+    {
+      y: 0.965,
+      cx: wristX - sideSign * 0.001,
+      cz: 0.008,
+      rx: 0.035 * lt,
+      rz: 0.037 * lt,
+      boneA: laBone,
+      boneB: hdBone,
+      weightB: 0.18,
+      zoneId: ZONE_LUMINOUS,
+    },
+    // 7. Slender Anatomical Wrist (Carpus)
+    {
+      y: 0.905,
+      cx: wristX,
+      cz: 0.014,
+      rx: 0.025 * lt,
+      rz: 0.031 * lt,
+      boneA: laBone,
+      boneB: hdBone,
+      weightB: 0.52,
+      zoneId: ZONE_SKIN,
+    },
+    // 8. Upper Palm & Thenar Thumb Base (flattening on X axis, broadening on Z axis)
+    {
+      y: 0.865,
+      cx: wristX + sideSign * 0.002,
+      cz: 0.020,
+      rx: 0.019 * lt,
+      rz: 0.042 * lt,
+      boneA: hdBone,
+      boneB: laBone,
+      weightB: 0.16,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, _cosT, sinT) => ({
+        // Anterior thumb muscle eminence (sinT > 0.5)
+        drz: sinT > 0.4 ? 0.009 * lt * Math.pow(sinT, 1.5) : 0,
+        ao: 0.92,
+      }),
+    },
+    // 9. Mid Palm + Distinct Thumb Projection on Anterior (+Z) Edge
+    {
+      y: 0.822,
+      cx: wristX + sideSign * 0.003,
+      cz: 0.022,
+      rx: 0.017 * lt,
+      rz: 0.044 * lt,
+      boneA: hdBone,
+      boneB: hdBone,
+      weightB: 0.0,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, cosT, sinT) => {
+        // Distinct thumb silhouette extending forward (+Z) and slightly inward
+        const thumbPeak = sinT > 0.68 ? 0.018 * lt * Math.pow(sinT, 3) : 0;
+        // Concave inner palm hollow
+        const palmCup = sideSign * cosT < -0.5 && Math.abs(sinT) < 0.5 ? -0.004 * lt : 0;
+        return {
+          drx: palmCup,
+          drz: thumbPeak,
+          ao: palmCup < 0 ? 0.78 : 0.94,
+        };
+      },
+    },
+    // 10. Metacarpal Knuckles & 4-Finger Articulated Silhouette Ridges
+    {
+      y: 0.778,
+      cx: wristX + sideSign * 0.001,
+      cz: 0.017,
+      rx: 0.014 * lt,
+      rz: 0.036 * lt,
+      boneA: hdBone,
+      boneB: hdBone,
+      weightB: 0.0,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, _cosT, sinT) => {
+        // 4 subtle finger ridges along the Z span of the hand
+        const fingerGrooves = 0.0025 * lt * Math.cos(sinT * Math.PI * 3.8);
+        return {
+          drx: fingerGrooves,
+          ao: 0.92,
+        };
+      },
+    },
+    // 11. Tapered Natural Fingertips (longest middle finger at center Z, shorter index/pinky at edges)
+    {
+      y: 0.742,
+      cx: wristX - sideSign * 0.002,
+      cz: 0.015,
+      rx: 0.009 * lt,
+      rz: 0.024 * lt,
+      boneA: hdBone,
+      boneB: hdBone,
+      weightB: 0.0,
+      zoneId: ZONE_SKIN,
+      profileFn: (_theta, _cosT, sinT) => ({
+        // Natural curved fingertip arc (middle finger extends slightly lower in Y)
+        dy: -0.008 * (1.0 - sinT * sinT),
+        ao: 0.96,
+      }),
+    },
+  ];
+
+  return buildSmoothAnatomicalLoft(slices, segs, true, true);
+}
+
+/**
+ * Builds sculpted human legs (quadriceps, hamstrings, patella knee, gastrocnemius calf, Achilles ankle)
+ * and sculpted horizontal feet (heel, arch, ball, forefoot toes).
+ */
+function buildSculptedLegAndFoot(
+  sideSign: number,
+  liteMode: boolean,
+  proportions: HoloBodyProportions
+): THREE.BufferGeometry[] {
+  const segs = liteMode ? 12 : 22;
+  const hw = proportions.hipWidthScale;
+  const lt = proportions.limbThicknessScale;
+
+  const thighBone = sideSign > 0 ? BONE_INDEX.thighL : BONE_INDEX.thighR;
+  const shinBone = sideSign > 0 ? BONE_INDEX.shinL : BONE_INDEX.shinR;
+  const footBone = sideSign > 0 ? BONE_INDEX.footL : BONE_INDEX.footR;
+  const toeBone = sideSign > 0 ? BONE_INDEX.toeL : BONE_INDEX.toeR;
+
+  const hipX = sideSign * 0.098 * hw;
+
+  const legSlices: SculptedCrossSection[] = [
+    // 0. Upper Thigh & Hip Socket blending into Pelvis
+    {
+      y: 0.935,
+      cx: hipX,
+      cz: -0.006,
+      rx: 0.078 * lt,
+      rz: 0.082 * lt,
+      boneA: thighBone,
+      boneB: BONE_INDEX.pelvis,
+      weightB: 0.45,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, _cosT, sinT) => ({
+        drz: sinT < 0 ? 0.016 * lt * (-sinT) : 0,
+        ao: 0.85,
+      }),
+    },
+    // 1. Proximal Quadriceps & Hamstring Fullness
+    {
+      y: 0.810,
+      cx: hipX,
+      cz: 0.004,
+      rx: 0.075 * lt,
+      rz: 0.080 * lt,
+      boneA: thighBone,
+      boneB: BONE_INDEX.pelvis,
+      weightB: 0.08,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, cosT, sinT) => ({
+        // Rectus femoris & vastus lateralis sweep
+        drz: (sinT > 0 ? 0.015 * sinT : 0.012 * (-sinT)) * lt,
+        drx: (sideSign * cosT > 0 ? 0.005 : 0) * lt,
+        ao: 0.92,
+      }),
+    },
+    // 2. Mid-Thigh Anatomical Taper
+    {
+      y: 0.655,
+      cx: hipX,
+      cz: 0.006,
+      rx: 0.065 * lt,
+      rz: 0.068 * lt,
+      boneA: thighBone,
+      boneB: shinBone,
+      weightB: 0.12,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, _cosT, sinT) => ({
+        drz: (sinT > 0 ? 0.010 * sinT : 0.006 * (-sinT)) * lt,
+        ao: 0.92,
+      }),
+    },
+    // 3. Distal Quadriceps (Vastus Medialis / Tear-drop above Knee)
+    {
+      y: 0.545,
+      cx: hipX,
+      cz: 0.004,
+      rx: 0.055 * lt,
+      rz: 0.058 * lt,
+      boneA: thighBone,
+      boneB: shinBone,
+      weightB: 0.35,
+      zoneId: ZONE_ATTIRE,
+    },
+    // 4. Patella Knee Cap & Popliteal Fossa Crease
+    {
+      y: 0.490,
+      cx: hipX,
+      cz: 0.002,
+      rx: 0.052 * lt,
+      rz: 0.056 * lt,
+      boneA: thighBone,
+      boneB: shinBone,
+      weightB: 0.50,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, _cosT, sinT) => ({
+        // Sculpted patella cap in front (+Z), knee bend hollow in back (-Z)
+        drz: (sinT > 0.5 ? 0.009 * sinT : sinT < -0.5 ? -0.005 * (-sinT) : 0) * lt,
+        ao: sinT < -0.5 ? 0.76 : 0.94,
+      }),
+    },
+    // 5. Tibial Tuberosity (Below Knee)
+    {
+      y: 0.430,
+      cx: hipX,
+      cz: -0.003,
+      rx: 0.050 * lt,
+      rz: 0.054 * lt,
+      boneA: shinBone,
+      boneB: thighBone,
+      weightB: 0.20,
+      zoneId: ZONE_ATTIRE,
+    },
+    // 6. High Gastrocnemius Calf Muscle Belly (Natural Asymmetric Lower Leg Silhouette)
+    {
+      y: 0.345,
+      cx: hipX,
+      cz: -0.009,
+      rx: 0.056 * lt,
+      rz: 0.062 * lt,
+      boneA: shinBone,
+      boneB: shinBone,
+      weightB: 0.0,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, _cosT, sinT) => ({
+        drz: (sinT < 0 ? 0.020 * Math.pow(-sinT, 1.3) : 0.003 * sinT) * lt,
+        ao: 0.94,
+      }),
+    },
+    // 7. Soleus Lower Calf Taper & Boot Cuff Trim
+    {
+      y: 0.225,
+      cx: hipX,
+      cz: -0.006,
+      rx: 0.043 * lt,
+      rz: 0.047 * lt,
+      boneA: shinBone,
+      boneB: footBone,
+      weightB: 0.12,
+      zoneId: ZONE_LUMINOUS,
+      profileFn: (_theta, _cosT, sinT) => ({
+        drz: (sinT < 0 ? 0.008 * (-sinT) : 0) * lt,
+        ao: 0.92,
+      }),
+    },
+    // 8. Slender Achilles Tendon & Ankle Taper
+    {
+      y: 0.120,
+      cx: hipX,
+      cz: -0.004,
+      rx: 0.035 * lt,
+      rz: 0.040 * lt,
+      boneA: shinBone,
+      boneB: footBone,
+      weightB: 0.36,
+      zoneId: ZONE_ATTIRE,
+      profileFn: (_theta, _cosT, sinT) => ({
+        drz: (sinT < -0.6 ? 0.005 * (-sinT) : 0) * lt,
+        ao: 0.88,
+      }),
+    },
+    // 9. Lateral/Medial Malleolus Ankle Joint
+    {
+      y: 0.068,
+      cx: hipX,
+      cz: 0.002,
+      rx: 0.038 * lt,
+      rz: 0.043 * lt,
+      boneA: footBone,
+      boneB: shinBone,
+      weightB: 0.34,
+      zoneId: ZONE_ATTIRE,
+    },
+  ];
+
+  const legGeo = buildSmoothAnatomicalLoft(legSlices, segs, false, true);
+
+  // Horizontal sculpted human foot loft (heel -> arch -> ball -> tapered toes) with shared vertices
+  interface FootCrossSection {
+    z: number;
+    cy: number;
+    cxOffset: number;
+    rx: number;
+    ry: number;
+    boneA: number;
+    boneB: number;
+    weightB: number;
+    zoneId: number;
+  }
+
+  const footSections: FootCrossSection[] = [
+    { z: -0.058, cy: 0.042, cxOffset: 0.0, rx: 0.017, ry: 0.019, boneA: footBone, boneB: shinBone, weightB: 0.15, zoneId: ZONE_ATTIRE },
+    { z: -0.038, cy: 0.042, cxOffset: 0.0, rx: 0.036, ry: 0.038, boneA: footBone, boneB: shinBone, weightB: 0.22, zoneId: ZONE_ATTIRE },
+    { z: -0.005, cy: 0.046, cxOffset: 0.0, rx: 0.040, ry: 0.044, boneA: footBone, boneB: shinBone, weightB: 0.25, zoneId: ZONE_ATTIRE },
+    { z: 0.038, cy: 0.038, cxOffset: sideSign * 0.002, rx: 0.041, ry: 0.035, boneA: footBone, boneB: toeBone, weightB: 0.18, zoneId: ZONE_ATTIRE },
+    { z: 0.085, cy: 0.028, cxOffset: sideSign * 0.004, rx: 0.046, ry: 0.025, boneA: footBone, boneB: toeBone, weightB: 0.65, zoneId: ZONE_ATTIRE },
+    { z: 0.128, cy: 0.022, cxOffset: sideSign * 0.002, rx: 0.041, ry: 0.019, boneA: toeBone, boneB: footBone, weightB: 0.15, zoneId: ZONE_LUMINOUS },
+    { z: 0.160, cy: 0.018, cxOffset: -sideSign * 0.003, rx: 0.024, ry: 0.012, boneA: toeBone, boneB: footBone, weightB: 0.0, zoneId: ZONE_LUMINOUS },
+  ];
+
+  const ringCount = footSections.length;
+  const cols = segs + 1;
+  const fPos: number[] = [];
+  const fUvs: number[] = [];
+  const fCol: number[] = [];
+  const fSi: number[] = [];
+  const fSw: number[] = [];
+  const fIdx: number[] = [];
+
+  for (let r = 0; r < ringCount; r++) {
+    const s = footSections[r];
+    const v = r / Math.max(1, ringCount - 1);
+    const wB = THREE.MathUtils.clamp(s.weightB, 0, 1);
+    const wA = 1.0 - wB;
+
+    for (let c = 0; c <= segs; c++) {
+      const u = c / segs;
+      const cWrapped = c === segs ? 0 : c;
+      const theta = (cWrapped / segs) * Math.PI * 2;
+      const cosT = Math.cos(theta);
+      const sinT = Math.sin(theta);
+
+      const x = hipX + s.cxOffset + s.rx * cosT;
+      const rawY = s.cy + s.ry * sinT;
+      const y = sinT < 0 ? Math.max(0.004, s.cy + s.ry * sinT * 0.62) : rawY;
+      const z = s.z;
+
+      fPos.push(x, y, z);
+      fUvs.push(u, v);
+      fCol.push(s.zoneId, 0, sinT < 0 ? 0.68 : 0.92);
+      fSi.push(s.boneA, s.boneB, 0, 0);
+      fSw.push(wA, wB, 0, 0);
+    }
+  }
+
+  for (let r = 0; r < ringCount - 1; r++) {
+    for (let c = 0; c < segs; c++) {
+      const a = r * cols + c;
+      const b = (r + 1) * cols + c;
+      const d = (r + 1) * cols + (c + 1);
+      const e = r * cols + (c + 1);
+      fIdx.push(a, e, b);
+      fIdx.push(b, e, d);
+    }
+  }
+
+  const first = footSections[0];
+  const heelCenterIdx = fPos.length / 3;
+  fPos.push(hipX + first.cxOffset, first.cy, first.z);
+  fUvs.push(0.5, 0);
+  fCol.push(first.zoneId, 0, 0.85);
+  fSi.push(first.boneA, first.boneB, 0, 0);
+  fSw.push(1 - first.weightB, first.weightB, 0, 0);
+  for (let c = 0; c < segs; c++) {
+    fIdx.push(heelCenterIdx, c, c + 1);
+  }
+
+  const lastIdx = footSections.length - 1;
+  const last = footSections[lastIdx];
+  const baseRingOffset = lastIdx * cols;
+  const toeCenterIdx = fPos.length / 3;
+  fPos.push(hipX + last.cxOffset, last.cy, last.z);
+  fUvs.push(0.5, 1);
+  fCol.push(last.zoneId, 0, 0.92);
+  fSi.push(last.boneA, last.boneB, 0, 0);
+  fSw.push(1 - last.weightB, last.weightB, 0, 0);
+  for (let c = 0; c < segs; c++) {
+    fIdx.push(baseRingOffset + c + 1, baseRingOffset + c, toeCenterIdx);
+  }
+
+  const footGeo = new THREE.BufferGeometry();
+  footGeo.setAttribute('position', new THREE.Float32BufferAttribute(fPos, 3));
+  footGeo.setAttribute('uv', new THREE.Float32BufferAttribute(fUvs, 2));
+  footGeo.setAttribute('color', new THREE.Float32BufferAttribute(fCol, 3));
+  footGeo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(fSi, 4));
+  footGeo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(fSw, 4));
+  footGeo.setIndex(fIdx);
+  footGeo.computeVertexNormals();
+
+  return [legGeo, footGeo];
+}
+
+/**
+ * Merges all indexed smooth-shaded anatomical sub-geometries into a single unified indexed BufferGeometry
+ * so each citizen renders in 1 SkinnedMesh draw call with continuous smooth vertex normals.
+ */
+function buildUnifiedSkinnedHumanoidGeometry(
+  liteMode: boolean,
+  proportions: HoloBodyProportions
+): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [
+    buildSculptedTorsoAndAttire(liteMode, proportions),
+    buildSculptedHeadAndHair(liteMode, proportions),
+    buildSculptedArmAndHand(1, liteMode, proportions),
+    buildSculptedArmAndHand(-1, liteMode, proportions),
+    ...buildSculptedLegAndFoot(1, liteMode, proportions),
+    ...buildSculptedLegAndFoot(-1, liteMode, proportions),
+  ];
+
+  let totalVertices = 0;
+  let totalIndices = 0;
+  for (const part of parts) {
+    totalVertices += part.attributes.position.count;
+    totalIndices += part.index ? part.index.count : 0;
+  }
+
+  const positions = new Float32Array(totalVertices * 3);
+  const normals = new Float32Array(totalVertices * 3);
+  const uvs = new Float32Array(totalVertices * 2);
+  const colors = new Float32Array(totalVertices * 3);
+  const skinIndices = new Uint16Array(totalVertices * 4);
+  const skinWeights = new Float32Array(totalVertices * 4);
+  const indices = new Uint32Array(totalIndices);
+
+  let vOffset = 0;
+  let iOffset = 0;
+
+  for (const part of parts) {
+    const count = part.attributes.position.count;
+    positions.set(part.attributes.position.array as Float32Array, vOffset * 3);
+    normals.set(part.attributes.normal.array as Float32Array, vOffset * 3);
+    uvs.set(part.attributes.uv.array as Float32Array, vOffset * 2);
+    colors.set(part.attributes.color.array as Float32Array, vOffset * 3);
+    skinIndices.set(part.attributes.skinIndex.array as Uint16Array, vOffset * 4);
+    skinWeights.set(part.attributes.skinWeight.array as Float32Array, vOffset * 4);
+
+    if (part.index) {
+      const idxArr = part.index.array;
+      for (let i = 0; i < idxArr.length; i++) {
+        indices[iOffset + i] = idxArr[i] + vOffset;
+      }
+      iOffset += idxArr.length;
+    }
+
+    vOffset += count;
+    part.dispose();
+  }
+
+  const unified = new THREE.BufferGeometry();
+  unified.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  unified.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  unified.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  unified.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  unified.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndices, 4));
+  unified.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeights, 4));
+  unified.setIndex(new THREE.BufferAttribute(indices, 1));
+  unified.computeBoundingSphere();
+
+  return unified;
+}
+
+/**
+ * Creates the 21-bone hierarchy matching the anatomical bind-pose coordinates.
+ */
+function createHumanoidBones(proportions: HoloBodyProportions): THREE.Bone[] {
+  const bones: THREE.Bone[] = [];
+  const sw = proportions.shoulderWidthScale;
+  const hw = proportions.hipWidthScale;
+
+  const makeBone = (name: string, x: number, y: number, z: number, parent?: THREE.Bone) => {
+    const bone = new THREE.Bone();
+    bone.name = name;
+    bone.position.set(x, y, z);
+    if (parent) {
+      parent.add(bone);
+    }
+    bones.push(bone);
+    return bone;
+  };
+
+  // 0: pelvis at world (0, 0.96, 0)
+  const pelvis = makeBone('pelvis', 0, 0.96, 0);
+  // 1: spine at world (0, 1.09, 0) -> local (0, 0.13, 0)
+  const spine = makeBone('spine', 0, 0.13, 0, pelvis);
+  // 2: chest at world (0, 1.26, 0) -> local (0, 0.17, 0)
+  const chest = makeBone('chest', 0, 0.17, 0, spine);
+  // 3: neck at world (0, 1.48, 0) -> local (0, 0.22, 0)
+  const neck = makeBone('neck', 0, 0.22, 0, chest);
+  // 4: head at world (0, 1.57, 0) -> local (0, 0.09, 0)
+  makeBone('head', 0, 0.09, 0, neck);
+
+  // 5: shoulderL (clavicle) at world (0.08 * sw, 1.44, 0) -> local (0.08 * sw, 0.18, 0)
+  const shoulderL = makeBone('shoulderL', 0.08 * sw, 0.18, 0, chest);
+  // 6: upperArmL at world (0.194 * sw, 1.42, 0) -> local (0.114 * sw, -0.02, 0)
+  const upperArmL = makeBone('upperArmL', 0.114 * sw, -0.02, 0, shoulderL);
+  // 7: lowerArmL (elbow) at world (0.205 * sw, 1.15, 0) -> local (0.011 * sw, -0.27, 0)
+  const lowerArmL = makeBone('lowerArmL', 0.011 * sw, -0.27, 0, upperArmL);
+  // 8: handL (wrist) at world (0.213 * sw, 0.90, 0.014) -> local (0.008 * sw, -0.25, 0.014)
+  makeBone('handL', 0.008 * sw, -0.25, 0.014, lowerArmL);
+
+  // 9: shoulderR (clavicle) at world (-0.08 * sw, 1.44, 0) -> local (-0.08 * sw, 0.18, 0)
+  const shoulderR = makeBone('shoulderR', -0.08 * sw, 0.18, 0, chest);
+  // 10: upperArmR at world (-0.194 * sw, 1.42, 0) -> local (-0.114 * sw, -0.02, 0)
+  const upperArmR = makeBone('upperArmR', -0.114 * sw, -0.02, 0, shoulderR);
+  // 11: lowerArmR (elbow) at world (-0.205 * sw, 1.15, 0) -> local (-0.011 * sw, -0.27, 0)
+  const lowerArmR = makeBone('lowerArmR', -0.011 * sw, -0.27, 0, upperArmR);
+  // 12: handR (wrist) at world (-0.213 * sw, 0.90, 0.014) -> local (-0.008 * sw, -0.25, 0.014)
+  makeBone('handR', -0.008 * sw, -0.25, 0.014, lowerArmR);
+
+  // 13: thighL at world (0.098 * hw, 0.91, 0) -> local (0.098 * hw, -0.05, 0)
+  const thighL = makeBone('thighL', 0.098 * hw, -0.05, 0, pelvis);
+  // 14: shinL (knee) at world (0.098 * hw, 0.49, 0) -> local (0, -0.42, 0)
+  const shinL = makeBone('shinL', 0, -0.42, 0, thighL);
+  // 15: footL (ankle) at world (0.098 * hw, 0.08, 0) -> local (0, -0.41, 0)
+  const footL = makeBone('footL', 0, -0.41, 0, shinL);
+  // 16: toeL (forefoot ball) at world (0.098 * hw, 0.028, 0.085) -> local (0, -0.052, 0.085)
+  makeBone('toeL', 0, -0.052, 0.085, footL);
+
+  // 17: thighR at world (-0.098 * hw, 0.91, 0) -> local (-0.098 * hw, -0.05, 0)
+  const thighR = makeBone('thighR', -0.098 * hw, -0.05, 0, pelvis);
+  // 18: shinR (knee) at world (-0.098 * hw, 0.49, 0) -> local (0, -0.42, 0)
+  const shinR = makeBone('shinR', 0, -0.42, 0, thighR);
+  // 19: footR (ankle) at world (-0.098 * hw, 0.08, 0) -> local (0, -0.41, 0)
+  const footR = makeBone('footR', 0, -0.41, 0, shinR);
+  // 20: toeR (forefoot ball) at world (-0.098 * hw, 0.028, 0.085) -> local (0, -0.052, 0.085)
+  makeBone('toeR', 0, -0.052, 0.085, footR);
+
+  return bones;
+}
+
+/**
+ * Samples a continuous Euler (XYZ) function over [0, duration] into a smooth QuaternionKeyframeTrack.
+ */
+function sampleEulerTrack(
+  boneName: string,
+  duration: number,
+  sampleCount: number,
+  evalFn: (u: number, phaseRad: number) => [number, number, number]
+): THREE.QuaternionKeyframeTrack {
+  const times: number[] = [];
+  const values: number[] = [];
+  const euler = new THREE.Euler();
+  const quat = new THREE.Quaternion();
+
+  for (let i = 0; i < sampleCount; i++) {
+    const u = i / (sampleCount - 1);
+    const uWrapped = i === sampleCount - 1 ? 0 : u;
+    const phaseRad = uWrapped * Math.PI * 2;
+    const [rx, ry, rz] = evalFn(uWrapped, phaseRad);
+
+    times.push(u * duration);
+    euler.set(rx, ry, rz, 'XYZ');
+    quat.setFromEuler(euler);
+    values.push(quat.x, quat.y, quat.z, quat.w);
+  }
+
+  return new THREE.QuaternionKeyframeTrack(`${boneName}.quaternion`, times, values);
+}
+
+/**
+ * Samples a continuous Vector3 position function over [0, duration] into a VectorKeyframeTrack.
+ */
+function sampleVectorTrack(
+  boneName: string,
+  duration: number,
+  sampleCount: number,
+  evalFn: (u: number, phaseRad: number) => [number, number, number]
+): THREE.VectorKeyframeTrack {
+  const times: number[] = [];
+  const values: number[] = [];
+
+  for (let i = 0; i < sampleCount; i++) {
+    const u = i / (sampleCount - 1);
+    const uWrapped = i === sampleCount - 1 ? 0 : u;
+    const p = uWrapped * Math.PI * 2;
+    const [x, y, z] = evalFn(uWrapped, p);
+
+    times.push(u * duration);
+    values.push(x, y, z);
+  }
+
+  return new THREE.VectorKeyframeTrack(`${boneName}.position`, times, values);
+}
+
+/**
+ * Biomechanical gait helper for a single leg over phase p in [0, 2π):
+ * p = 0: Left Heel Strike
+ * p = π/2: Left Mid-Stance (flat foot carrying body weight, right leg swinging)
+ * p = π: Left Terminal Stance / Heel Rise & Toe-Off (Right Heel Strike)
+ * p = 3π/2: Left Mid-Swing (high knee flexion for ground clearance)
+ */
+function evaluateBiomechanicalLegGait(p: number, sideSign: number): {
+  thigh: [number, number, number];
+  shin: [number, number, number];
+  foot: [number, number, number];
+  toe: [number, number, number];
+} {
+  // 1. Hip flexion/extension: asymmetric stance-to-swing harmonic (60% stance / 40% swing feel)
+  const hipFlex = -0.38 * Math.cos(p) - 0.062 * Math.sin(2 * p) + 0.018;
+  const hipAdduct = sideSign * (-0.025 * Math.sin(p) + 0.008);
+  const hipYaw = sideSign * (0.028 * Math.cos(p));
+
+  // 2. Dual-peak knee flexion:
+  // - Stance impact absorption peak (~0.19 rad) right after heel strike (p ≈ 0.82 rad)
+  // - Swing clearance peak (~0.76 rad) during toe-off & mid-swing (p ≈ 4.35 rad)
+  const stanceAbsorb =
+    0.18 * Math.exp(-Math.pow(((p - 0.82 + Math.PI * 3) % (Math.PI * 2)) - Math.PI, 2) / 0.42);
+  const swingClearance = 0.74 * Math.pow(Math.max(0, -Math.sin(p - 0.30)), 1.42);
+  const kneeFlex = 0.055 + stanceAbsorb + swingClearance;
+
+  // 3. Ankle dorsiflexion / plantarflexion + subtalar ankle roll
+  const anklePitch =
+    -0.17 * Math.cos(p) +
+    0.15 * Math.sin(p - 0.62) +
+    0.085 * Math.sin(2 * p - 0.38);
+  const ankleRoll = sideSign * (0.034 * Math.sin(p));
+
+  // 4. Forefoot / Toe metatarsal roll during terminal stance push-off
+  const pushOffWindow = Math.max(0, Math.sin(p - 1.12));
+  const toePitch = -0.28 * Math.pow(pushOffWindow, 2.1) - 0.04 * Math.cos(p);
+
+  return {
+    thigh: [hipFlex, hipYaw, hipAdduct],
+    shin: [kneeFlex, 0, 0],
+    foot: [anklePitch, 0, ankleRoll],
+    toe: [toePitch, 0, 0],
+  };
+}
+
+/**
+ * Builds the 5 natural biomechanical AnimationClips using 25-point high-resolution periodic curves:
+ * 1. idle (thoracic breathing, collarbone lift, contrapposto weight shift, relaxed wrists/elbows, micro gaze)
+ * 2. walk (alternating heel-to-toe steps, knee cushioning & swing flexion, ankle roll, hip sway, spine/shoulder counter-rotation, relaxed wrist lag)
+ * 3. wave (weight shift, chest/shoulder engagement, bent elbow, natural forearm + lagging wrist wave, warm head tilt)
+ * 4. converse (expressive asymmetric two-hand gestures, natural pauses, wrist articulation, head nods, torso engagement)
+ * 5. look (coordinated pelvis + spine + chest + neck + head turn instead of stiff isolated head rotation)
+ */
+export function buildHumanoidAnimationClips(): Record<HoloClipName, THREE.AnimationClip> {
+  const N = 25; // High-density keyframe sampling for fluid motion
+
+  // ============================================================================
+  // 1. NATURAL IDLE BREATHING & CONTRAPPOSTO MICRO-POSTURE CLIP (4.6s loop)
+  // ============================================================================
+  const idleDur = 4.6;
+  const idleTracks: THREE.KeyframeTrack[] = [
+    sampleVectorTrack('pelvis', idleDur, N, (_u, p) => [
+      0.025 * Math.sin(p) + 0.007 * Math.sin(2 * p),
+      0.956 - 0.005 * Math.pow(Math.sin(p), 2) + 0.003 * Math.sin(2 * p),
+      0.006 * Math.cos(p),
+    ]),
+    sampleEulerTrack('pelvis', idleDur, N, (_u, p) => [
+      0.012 * Math.sin(2 * p),
+      0.040 * Math.sin(p),
+      -0.038 * Math.sin(p),
+    ]),
+    sampleEulerTrack('spine', idleDur, N, (_u, p) => [
+      0.018 - 0.022 * Math.sin(2 * p),
+      -0.025 * Math.sin(p),
+      0.030 * Math.sin(p),
+    ]),
+    sampleEulerTrack('chest', idleDur, N, (_u, p) => [
+      -0.016 - 0.038 * Math.sin(2 * p - 0.3),
+      -0.020 * Math.sin(p - 0.2),
+      0.018 * Math.sin(p),
+    ]),
+    sampleEulerTrack('shoulderL', idleDur, N, (_u, p) => [
+      0.012 * Math.sin(2 * p),
+      -0.016 * Math.sin(2 * p),
+      0.030 * Math.sin(2 * p - 0.2),
+    ]),
+    sampleEulerTrack('shoulderR', idleDur, N, (_u, p) => [
+      0.012 * Math.sin(2 * p),
+      0.016 * Math.sin(2 * p),
+      -0.030 * Math.sin(2 * p - 0.2),
+    ]),
+    sampleEulerTrack('neck', idleDur, N, (_u, p) => [
+      0.015 * Math.sin(2 * p) - 0.016 * Math.cos(p),
+      0.048 * Math.sin(p + 0.3),
+      -0.014 * Math.sin(p),
+    ]),
+    sampleEulerTrack('head', idleDur, N, (_u, p) => [
+      0.022 * Math.sin(2 * p - 0.4) - 0.024 * Math.cos(p),
+      0.072 * Math.sin(p + 0.45),
+      0.020 * Math.sin(p - 0.3),
+    ]),
+    sampleEulerTrack('upperArmL', idleDur, N, (_u, p) => [
+      0.046 + 0.024 * Math.sin(p),
+      0.045,
+      -0.078 - 0.018 * Math.sin(2 * p),
+    ]),
+    sampleEulerTrack('lowerArmL', idleDur, N, (_u, p) => [
+      -0.25 - 0.038 * Math.sin(2 * p - 0.4),
+      0.085,
+      0.02,
+    ]),
+    sampleEulerTrack('handL', idleDur, N, (_u, p) => [
+      -0.06 - 0.032 * Math.sin(2 * p - 0.8),
+      0.055,
+      0.05 + 0.022 * Math.sin(p),
+    ]),
+    sampleEulerTrack('upperArmR', idleDur, N, (_u, p) => [
+      0.036 - 0.024 * Math.sin(p),
+      -0.045,
+      0.078 + 0.018 * Math.sin(2 * p),
+    ]),
+    sampleEulerTrack('lowerArmR', idleDur, N, (_u, p) => [
+      -0.27 - 0.038 * Math.sin(2 * p - 0.6),
+      -0.085,
+      -0.02,
+    ]),
+    sampleEulerTrack('handR', idleDur, N, (_u, p) => [
+      -0.06 - 0.032 * Math.sin(2 * p - 1.0),
+      -0.055,
+      -0.05 - 0.022 * Math.sin(p),
+    ]),
+    sampleEulerTrack('thighL', idleDur, N, (_u, p) => [
+      -0.026 + 0.030 * Math.sin(p),
+      0.022,
+      -0.030 * Math.sin(p),
+    ]),
+    sampleEulerTrack('shinL', idleDur, N, (_u, p) => [
+      0.058 - 0.036 * Math.sin(p),
+      0,
+      0,
+    ]),
+    sampleEulerTrack('footL', idleDur, N, (_u, p) => [
+      -0.026 + 0.014 * Math.sin(p),
+      0,
+      0.024 * Math.sin(p),
+    ]),
+    sampleEulerTrack('toeL', idleDur, N, () => [0, 0, 0]),
+    sampleEulerTrack('thighR', idleDur, N, (_u, p) => [
+      -0.026 - 0.030 * Math.sin(p),
+      -0.022,
+      -0.030 * Math.sin(p),
+    ]),
+    sampleEulerTrack('shinR', idleDur, N, (_u, p) => [
+      0.058 + 0.036 * Math.sin(p),
+      0,
+      0,
+    ]),
+    sampleEulerTrack('footR', idleDur, N, (_u, p) => [
+      -0.026 - 0.014 * Math.sin(p),
+      0,
+      0.024 * Math.sin(p),
+    ]),
+    sampleEulerTrack('toeR', idleDur, N, () => [0, 0, 0]),
+  ];
+  const idleClip = new THREE.AnimationClip('idle', idleDur, idleTracks);
+
+  // ============================================================================
+  // 2. NATURAL BIOMECHANICAL WALK CLIP (1.26s full gait cycle)
+  // ============================================================================
+  const walkDur = 1.26;
+  const walkTracks: THREE.KeyframeTrack[] = [
+    sampleVectorTrack('pelvis', walkDur, N, (_u, p) => [
+      0.023 * Math.sin(p),
+      0.951 - 0.021 * Math.cos(2 * p - 0.25),
+      0.009 * Math.sin(2 * p),
+    ]),
+    sampleEulerTrack('pelvis', walkDur, N, (_u, p) => [
+      0.034 + 0.017 * Math.sin(2 * p),
+      -0.076 * Math.cos(p),
+      -0.046 * Math.sin(p),
+    ]),
+    sampleEulerTrack('spine', walkDur, N, (_u, p) => [
+      0.036 + 0.015 * Math.cos(2 * p),
+      0.054 * Math.cos(p - 0.15),
+      0.034 * Math.sin(p),
+    ]),
+    sampleEulerTrack('chest', walkDur, N, (_u, p) => [
+      0.030 - 0.013 * Math.cos(2 * p),
+      0.072 * Math.cos(p - 0.22),
+      0.024 * Math.sin(p),
+    ]),
+    sampleEulerTrack('shoulderL', walkDur, N, (_u, p) => [
+      0,
+      -0.048 * Math.cos(p),
+      0.020 * Math.sin(p),
+    ]),
+    sampleEulerTrack('shoulderR', walkDur, N, (_u, p) => [
+      0,
+      0.048 * Math.cos(p),
+      -0.020 * Math.sin(p),
+    ]),
+    sampleEulerTrack('neck', walkDur, N, (_u, p) => [
+      -0.018 + 0.010 * Math.cos(2 * p),
+      -0.040 * Math.cos(p - 0.2),
+      -0.016 * Math.sin(p),
+    ]),
+    sampleEulerTrack('head', walkDur, N, (_u, p) => [
+      -0.015 + 0.014 * Math.sin(2 * p - 0.4),
+      -0.044 * Math.cos(p - 0.25),
+      -0.013 * Math.sin(p),
+    ]),
+    sampleEulerTrack('upperArmL', walkDur, N, (_u, p) => [
+      0.35 * Math.cos(p) - 0.04,
+      -0.065 * Math.cos(p),
+      -0.078 - 0.016 * Math.sin(p),
+    ]),
+    sampleEulerTrack('lowerArmL', walkDur, N, (_u, p) => [
+      -0.37 + 0.20 * Math.cos(p - 0.36),
+      0.085,
+      0,
+    ]),
+    sampleEulerTrack('handL', walkDur, N, (_u, p) => [
+      -0.05 + 0.12 * Math.cos(p - 0.78),
+      0.045,
+      0.04 + 0.032 * Math.sin(p - 0.5),
+    ]),
+    sampleEulerTrack('upperArmR', walkDur, N, (_u, p) => [
+      0.35 * Math.cos(p + Math.PI) - 0.04,
+      0.065 * Math.cos(p + Math.PI),
+      0.078 - 0.016 * Math.sin(p + Math.PI),
+    ]),
+    sampleEulerTrack('lowerArmR', walkDur, N, (_u, p) => [
+      -0.37 + 0.20 * Math.cos(p + Math.PI - 0.36),
+      -0.085,
+      0,
+    ]),
+    sampleEulerTrack('handR', walkDur, N, (_u, p) => [
+      -0.05 + 0.12 * Math.cos(p + Math.PI - 0.78),
+      -0.045,
+      -0.04 - 0.032 * Math.sin(p + Math.PI - 0.5),
+    ]),
+    sampleEulerTrack('thighL', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait(p, 1).thigh),
+    sampleEulerTrack('shinL', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait(p, 1).shin),
+    sampleEulerTrack('footL', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait(p, 1).foot),
+    sampleEulerTrack('toeL', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait(p, 1).toe),
+    sampleEulerTrack('thighR', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait((p + Math.PI) % (Math.PI * 2), -1).thigh),
+    sampleEulerTrack('shinR', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait((p + Math.PI) % (Math.PI * 2), -1).shin),
+    sampleEulerTrack('footR', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait((p + Math.PI) % (Math.PI * 2), -1).foot),
+    sampleEulerTrack('toeR', walkDur, N, (_u, p) => evaluateBiomechanicalLegGait((p + Math.PI) % (Math.PI * 2), -1).toe),
+  ];
+  const walkClip = new THREE.AnimationClip('walk', walkDur, walkTracks);
+
+  // ============================================================================
+  // 3. FRIENDLY WAVE CLIP (2.8s loop: weight shift, raised elbow, forearm + wrist wave)
+  // ============================================================================
+  const waveDur = 2.8;
+  const waveTracks: THREE.KeyframeTrack[] = [
+    sampleVectorTrack('pelvis', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [
+        0.028 * env + 0.005 * Math.sin(3 * p),
+        0.955 - 0.004 * env,
+        0.006 * env,
+      ];
+    }),
+    sampleEulerTrack('pelvis', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [0.01 * env, 0.042 * env, -0.044 * env];
+    }),
+    sampleEulerTrack('spine', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [-0.015 * env, 0.046 * env, 0.036 * env];
+    }),
+    sampleEulerTrack('chest', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [-0.032 * env, 0.068 * env, 0.034 * env + 0.012 * Math.sin(3 * p)];
+    }),
+    sampleEulerTrack('shoulderR', waveDur, N, (_u, p) => {
+      const env = Math.pow(Math.sin(p * 0.5), 0.75);
+      return [-0.04 * env, 0.06 * env, 0.18 * env];
+    }),
+    sampleEulerTrack('shoulderL', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [0, 0, -0.03 * env];
+    }),
+    sampleEulerTrack('neck', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [-0.025 * env, 0.062 * env, -0.040 * env];
+    }),
+    sampleEulerTrack('head', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [
+        -0.035 * env + 0.025 * Math.sin(2 * p),
+        0.098 * env,
+        -0.068 * env - 0.02 * Math.sin(3 * p),
+      ];
+    }),
+    sampleEulerTrack('upperArmR', waveDur, N, (_u, p) => {
+      const lift = Math.sin(Math.min(1, Math.sin(p * 0.5) * 1.35) * (Math.PI * 0.5));
+      return [
+        -0.58 * lift,
+        -0.22 * lift,
+        0.08 + 1.18 * lift + 0.06 * Math.sin(3 * p) * lift,
+      ];
+    }),
+    sampleEulerTrack('lowerArmR', waveDur, N, (_u, p) => {
+      const lift = Math.sin(Math.min(1, Math.sin(p * 0.5) * 1.35) * (Math.PI * 0.5));
+      return [
+        -0.26 - 0.78 * lift,
+        -0.18 * lift,
+        0.33 * Math.sin(3 * p) * lift,
+      ];
+    }),
+    sampleEulerTrack('handR', waveDur, N, (_u, p) => {
+      const lift = Math.sin(Math.min(1, Math.sin(p * 0.5) * 1.35) * (Math.PI * 0.5));
+      return [
+        0.08 * lift + 0.08 * Math.cos(3 * p) * lift,
+        -0.12 * lift,
+        0.27 * Math.sin(3 * p - 0.55) * lift,
+      ];
+    }),
+    sampleEulerTrack('upperArmL', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [0.05 + 0.03 * env, 0.04, -0.09 - 0.04 * env];
+    }),
+    sampleEulerTrack('lowerArmL', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [-0.24 - 0.06 * env, 0.08, 0];
+    }),
+    sampleEulerTrack('handL', waveDur, N, (_u, p) => [
+      -0.06,
+      0.05,
+      0.05 + 0.02 * Math.sin(p),
+    ]),
+    sampleEulerTrack('thighL', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [-0.02, 0.02, -0.035 * env];
+    }),
+    sampleEulerTrack('shinL', waveDur, N, () => [0.04, 0, 0]),
+    sampleEulerTrack('footL', waveDur, N, (_u, p) => [-0.02, 0, 0.025 * Math.sin(p * 0.5)]),
+    sampleEulerTrack('thighR', waveDur, N, (_u, p) => {
+      const env = Math.sin(p * 0.5);
+      return [-0.04 * env, -0.04 * env, -0.03 * env];
+    }),
+    sampleEulerTrack('shinR', waveDur, N, (_u, p) => [0.05 + 0.05 * Math.sin(p * 0.5), 0, 0]),
+    sampleEulerTrack('footR', waveDur, N, () => [-0.02, 0, 0]),
+  ];
+  const waveClip = new THREE.AnimationClip('wave', waveDur, waveTracks);
+
+  // ============================================================================
+  // 4. CONVERSATIONAL GESTURES CLIP (3.8s loop: asymmetric 2-hand gestures, pauses, nods)
+  // ============================================================================
+  const convDur = 3.8;
+  const convTracks: THREE.KeyframeTrack[] = [
+    sampleVectorTrack('pelvis', convDur, N, (_u, p) => [
+      0.020 * Math.sin(p) - 0.008 * Math.cos(2 * p),
+      0.955 - 0.005 * Math.abs(Math.sin(p)),
+      0.010 * Math.sin(p - 0.3),
+    ]),
+    sampleEulerTrack('pelvis', convDur, N, (_u, p) => [
+      0.015 * Math.sin(p),
+      0.045 * Math.sin(p - 0.2),
+      -0.030 * Math.sin(p),
+    ]),
+    sampleEulerTrack('spine', convDur, N, (_u, p) => [
+      0.028 + 0.018 * Math.sin(2 * p),
+      0.042 * Math.sin(p),
+      0.022 * Math.sin(p),
+    ]),
+    sampleEulerTrack('chest', convDur, N, (_u, p) => [
+      0.020 + 0.022 * Math.sin(2 * p - 0.3),
+      0.058 * Math.sin(p + 0.25),
+      -0.018 * Math.cos(p),
+    ]),
+    sampleEulerTrack('shoulderL', convDur, N, (_u, p) => [
+      0,
+      -0.03 * Math.sin(p),
+      0.045 * Math.max(0, Math.sin(p)),
+    ]),
+    sampleEulerTrack('shoulderR', convDur, N, (_u, p) => [
+      0,
+      0.03 * Math.cos(p),
+      -0.045 * Math.max(0, -Math.sin(p - 0.4)),
+    ]),
+    sampleEulerTrack('neck', convDur, N, (_u, p) => [
+      0.032 * Math.sin(2 * p) + 0.015 * Math.sin(3 * p),
+      0.065 * Math.sin(p + 0.2),
+      0.018 * Math.sin(p),
+    ]),
+    sampleEulerTrack('head', convDur, N, (_u, p) => [
+      0.055 * Math.sin(2 * p - 0.2) + 0.032 * Math.sin(3 * p),
+      0.105 * Math.sin(p + 0.3),
+      0.032 * Math.sin(p - 0.4),
+    ]),
+    sampleEulerTrack('upperArmL', convDur, N, (_u, p) => {
+      const phraseA = Math.pow(Math.max(0, Math.sin(p)), 1.3);
+      const phraseB = 0.35 * Math.max(0, Math.sin(2 * p - 0.8));
+      const g = phraseA + phraseB;
+      return [
+        -0.26 - 0.28 * g,
+        0.10 + 0.16 * g,
+        -0.11 - 0.14 * g,
+      ];
+    }),
+    sampleEulerTrack('lowerArmL', convDur, N, (_u, p) => {
+      const phraseA = Math.pow(Math.max(0, Math.sin(p - 0.2)), 1.2);
+      const phraseB = 0.4 * Math.max(0, Math.sin(2 * p - 1.0));
+      const g = phraseA + phraseB;
+      return [
+        -0.58 - 0.52 * g,
+        0.18 + 0.22 * g,
+        -0.08 * g,
+      ];
+    }),
+    sampleEulerTrack('handL', convDur, N, (_u, p) => {
+      const g = Math.max(0, Math.sin(p - 0.45));
+      return [
+        0.08 * Math.sin(2 * p - 0.5),
+        0.22 * g,
+        0.06 + 0.16 * Math.sin(2 * p - 0.6),
+      ];
+    }),
+    sampleEulerTrack('upperArmR', convDur, N, (_u, p) => {
+      const phraseA = Math.pow(Math.max(0, -Math.sin(p - 0.25)), 1.3);
+      const phraseB = 0.35 * Math.max(0, Math.cos(2 * p));
+      const g = phraseA + phraseB;
+      return [
+        -0.24 - 0.30 * g,
+        -0.10 - 0.16 * g,
+        0.11 + 0.15 * g,
+      ];
+    }),
+    sampleEulerTrack('lowerArmR', convDur, N, (_u, p) => {
+      const phraseA = Math.pow(Math.max(0, -Math.sin(p - 0.05)), 1.2);
+      const phraseB = 0.4 * Math.max(0, Math.cos(2 * p - 0.2));
+      const g = phraseA + phraseB;
+      return [
+        -0.55 - 0.54 * g,
+        -0.18 - 0.24 * g,
+        0.08 * g,
+      ];
+    }),
+    sampleEulerTrack('handR', convDur, N, (_u, p) => {
+      const g = Math.max(0, -Math.sin(p - 0.2));
+      return [
+        0.08 * Math.cos(2 * p - 0.3),
+        -0.24 * g,
+        -0.06 - 0.16 * Math.cos(2 * p - 0.4),
+      ];
+    }),
+    sampleEulerTrack('thighL', convDur, N, (_u, p) => [-0.03 + 0.02 * Math.sin(p), 0.02, -0.022 * Math.sin(p)]),
+    sampleEulerTrack('shinL', convDur, N, (_u, p) => [0.06 - 0.025 * Math.sin(p), 0, 0]),
+    sampleEulerTrack('footL', convDur, N, () => [-0.02, 0, 0]),
+    sampleEulerTrack('thighR', convDur, N, (_u, p) => [-0.03 - 0.02 * Math.sin(p), -0.02, -0.022 * Math.sin(p)]),
+    sampleEulerTrack('shinR', convDur, N, (_u, p) => [0.06 + 0.025 * Math.sin(p), 0, 0]),
+    sampleEulerTrack('footR', convDur, N, () => [-0.02, 0, 0]),
+  ];
+  const converseClip = new THREE.AnimationClip('converse', convDur, convTracks);
+
+  // ============================================================================
+  // 5. COORDINATED HEAD-TURN & ARCHITECTURAL LOOK CLIP (3.6s loop)
+  // Distributes turn across Pelvis + Spine + Chest + Neck + Head (no stiff turret rotation)
+  // ============================================================================
+  const lookDur = 3.6;
+  const lookTracks: THREE.KeyframeTrack[] = [
+    sampleVectorTrack('pelvis', lookDur, N, (_u, p) => [
+      0.018 * Math.sin(p),
+      0.956 - 0.004 * Math.pow(Math.sin(p), 2),
+      0.005 * Math.sin(p * 0.5),
+    ]),
+    sampleEulerTrack('pelvis', lookDur, N, (_u, p) => [
+      -0.015 * Math.sin(p * 0.5),
+      0.055 * Math.sin(p),
+      -0.022 * Math.sin(p),
+    ]),
+    sampleEulerTrack('spine', lookDur, N, (_u, p) => [
+      -0.035 * Math.sin(p * 0.5),
+      0.095 * Math.sin(p - 0.08),
+      0.018 * Math.sin(p),
+    ]),
+    sampleEulerTrack('chest', lookDur, N, (_u, p) => [
+      -0.055 * Math.sin(p * 0.5) - 0.02 * Math.sin(2 * p),
+      0.135 * Math.sin(p - 0.14),
+      0.015 * Math.sin(p),
+    ]),
+    sampleEulerTrack('shoulderL', lookDur, N, (_u, p) => [
+      -0.02 * Math.sin(p * 0.5),
+      -0.035 * Math.sin(p),
+      0.025 * Math.sin(p * 0.5),
+    ]),
+    sampleEulerTrack('shoulderR', lookDur, N, (_u, p) => [
+      -0.02 * Math.sin(p * 0.5),
+      -0.035 * Math.sin(p),
+      -0.025 * Math.sin(p * 0.5),
+    ]),
+    sampleEulerTrack('neck', lookDur, N, (_u, p) => [
+      -0.085 * Math.sin(p * 0.5) - 0.025 * Math.cos(2 * p),
+      0.155 * Math.sin(p - 0.18),
+      0.022 * Math.sin(p),
+    ]),
+    sampleEulerTrack('head', lookDur, N, (_u, p) => [
+      -0.125 * Math.sin(p * 0.5) - 0.035 * Math.cos(2 * p),
+      0.210 * Math.sin(p - 0.22),
+      0.038 * Math.sin(p),
+    ]),
+    sampleEulerTrack('upperArmL', lookDur, N, (_u, p) => [
+      0.04 - 0.06 * Math.sin(p * 0.5),
+      0.05,
+      -0.085 - 0.035 * Math.sin(p * 0.5),
+    ]),
+    sampleEulerTrack('lowerArmL', lookDur, N, (_u, p) => [
+      -0.25 - 0.08 * Math.sin(p * 0.5),
+      0.08,
+      0,
+    ]),
+    sampleEulerTrack('handL', lookDur, N, (_u, p) => [
+      -0.05,
+      0.05,
+      0.05 + 0.03 * Math.sin(p),
+    ]),
+    sampleEulerTrack('upperArmR', lookDur, N, (_u, p) => [
+      0.04 - 0.06 * Math.sin(p * 0.5),
+      -0.05,
+      0.085 + 0.035 * Math.sin(p * 0.5),
+    ]),
+    sampleEulerTrack('lowerArmR', lookDur, N, (_u, p) => [
+      -0.25 - 0.08 * Math.sin(p * 0.5),
+      -0.08,
+      0,
+    ]),
+    sampleEulerTrack('handR', lookDur, N, (_u, p) => [
+      -0.05,
+      -0.05,
+      -0.05 - 0.03 * Math.sin(p),
+    ]),
+  ];
+  const lookClip = new THREE.AnimationClip('look', lookDur, lookTracks);
+
+  return {
+    idle: idleClip,
+    walk: walkClip,
+    wave: waveClip,
+    converse: converseClip,
+    look: lookClip,
+  };
+}
+
+/**
+ * Creates a multi-zone holographic material that preserves Three.js hardware bone skinning (USE_SKINNING)
+ * while differentiating:
+ * - Sculpted Skin/Face/Hands (warm inner core luminance, smooth anatomical shading, subtle scanlines)
+ * - Tailored Futuristic Attire (rich dual-tone holographic weave, crisp lapel/collar contours)
+ * - Sculpted Hair Volume (anisotropic crown sheen & rim highlight)
+ * - Luminous Features (blinking holographic eyes/irises, collar lapels, and cuff emblems)
+ */
+export function createHolographicSkinnedMaterial(
+  primaryHex: string,
+  secondaryHex: string,
+  liteMode: boolean
+): { material: THREE.MeshStandardMaterial; uniforms: HoloShaderUniforms } {
+  const uniforms: HoloShaderUniforms = {
+    uTime: { value: 0 },
+    uPrimaryColor: { value: new THREE.Color(primaryHex) },
+    uSecondaryColor: { value: new THREE.Color(secondaryHex) },
+    uScanlineDensity: { value: liteMode ? 30.0 : 52.0 },
+    uOpacity: { value: 0.94 },
+    uBlinkFactor: { value: 1.0 },
+    uHoloIntensity: { value: 0.34 },
+  };
+
+  const material = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(primaryHex).multiplyScalar(0.46),
+    emissive: new THREE.Color(primaryHex),
+    emissiveIntensity: 0.56,
+    roughness: 0.26,
+    metalness: 0.34,
+    transparent: true,
+    opacity: 0.90,
+    depthWrite: true,
+    vertexColors: true,
+  });
+
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = uniforms.uTime;
+    shader.uniforms.uPrimaryColor = uniforms.uPrimaryColor;
+    shader.uniforms.uSecondaryColor = uniforms.uSecondaryColor;
+    shader.uniforms.uScanlineDensity = uniforms.uScanlineDensity;
+    shader.uniforms.uOpacity = uniforms.uOpacity;
+    shader.uniforms.uBlinkFactor = uniforms.uBlinkFactor;
+
+    shader.vertexShader =
+      `
+      varying vec3 vHoloWorldPos;
+      varying float vHoloLocalY;
+      varying vec3 vHoloZoneColor;
+      ` +
+      shader.vertexShader.replace(
+        '#include <worldpos_vertex>',
+        `
+        #include <worldpos_vertex>
+        vec4 holoWp = modelMatrix * vec4(transformed, 1.0);
+        vHoloWorldPos = holoWp.xyz;
+        vHoloLocalY = transformed.y;
+        #ifdef USE_COLOR
+          vHoloZoneColor = vColor.rgb;
+        #else
+          vHoloZoneColor = vec3(0.45, 0.0, 0.9);
+        #endif
+        `
+      );
+
+    shader.fragmentShader =
+      `
+      uniform float uTime;
+      uniform vec3 uPrimaryColor;
+      uniform vec3 uSecondaryColor;
+      uniform float uScanlineDensity;
+      uniform float uOpacity;
+      uniform float uBlinkFactor;
+      varying vec3 vHoloWorldPos;
+      varying float vHoloLocalY;
+      varying vec3 vHoloZoneColor;
+      ` +
+      shader.fragmentShader.replace(
+        '#include <dithering_fragment>',
+        `
+        #include <dithering_fragment>
+        float zoneId = vHoloZoneColor.r;
+        float blinkMask = vHoloZoneColor.g;
+        float anatomicalAo = clamp(vHoloZoneColor.b, 0.35, 1.05);
+
+        vec3 viewDir = normalize(cameraPosition - vHoloWorldPos);
+        float ndotv = abs(dot(normalize(vNormal), viewDir));
+        float fresnel = pow(1.0 - ndotv, 2.1);
+        float softCore = smoothstep(0.0, 0.88, ndotv);
+
+        float scanWave = 0.5 + 0.5 * sin(vHoloLocalY * uScanlineDensity - uTime * 4.0);
+        float slowPulse = 0.5 + 0.5 * sin(vHoloLocalY * 3.6 - uTime * 1.5);
+        vec3 holoGradient = mix(uPrimaryColor, uSecondaryColor, clamp(vHoloLocalY * 0.56, 0.0, 1.0));
+
+        // Differentiate Skin, Attire, Hair, and Luminous Eyes/Trim
+        vec3 skinWarmCore = mix(holoGradient, vec3(0.88, 0.97, 1.0), 0.38);
+        vec3 attireTone = mix(uPrimaryColor * 0.65, uSecondaryColor * 0.85, clamp((vHoloLocalY - 0.7) * 0.9, 0.0, 1.0));
+        vec3 hairTone = mix(uSecondaryColor * 0.55, uPrimaryColor * 0.9, 0.45 + 0.35 * fresnel);
+        vec3 luminousTone = mix(uPrimaryColor, vec3(0.94, 0.99, 1.0), 0.62);
+
+        vec3 zoneAlbedo = attireTone;
+        float scanStrength = 0.14;
+        if (zoneId < 0.28) {
+          // Sculpted Face, Neck & Hands: softer scanlines and clear anatomical facial shading
+          zoneAlbedo = skinWarmCore * (0.42 + 0.52 * softCore);
+          scanStrength = 0.06;
+        } else if (zoneId > 0.60 && zoneId < 0.84) {
+          // Sculpted Hair Volume
+          zoneAlbedo = hairTone * (0.35 + 0.45 * softCore);
+          scanStrength = 0.09;
+        } else if (zoneId >= 0.84) {
+          // Luminous Eyes/Irises & Collar/Cuff Trim (modulated by natural eye blink on eyes)
+          float eyeOpen = mix(1.0, uBlinkFactor, blinkMask);
+          zoneAlbedo = mix(skinWarmCore * 0.32, luminousTone * 1.45, eyeOpen);
+          scanStrength = 0.04;
+        } else {
+          // Tailored Futuristic Attire
+          zoneAlbedo = attireTone * (0.36 + 0.42 * softCore);
+          scanStrength = 0.14;
+        }
+
+        vec3 finalRgb = zoneAlbedo * anatomicalAo
+          + holoGradient * (fresnel * 1.18 + scanWave * scanStrength + slowPulse * 0.09) * anatomicalAo;
+
+        gl_FragColor.rgb = finalRgb;
+        gl_FragColor.a = clamp(uOpacity * (0.68 + fresnel * 0.38 + scanWave * 0.06), 0.54, 0.96);
+        `
+      );
+  };
+
+  return { material, uniforms };
+}
+
+export interface LoadedHoloHumanAsset {
+  scene: THREE.Group;
+  clips: Record<HoloClipName, THREE.AnimationClip>;
+  meshCount: number;
+  jointCount: number;
+  vertexCount: number;
+  triangleCount: number;
+}
+
+let cachedHoloHumanAsset: LoadedHoloHumanAsset | null = null;
+let loadingHoloHumanPromise: Promise<LoadedHoloHumanAsset | null> | null = null;
+
+/**
+ * Preloads the locally bundled, rigged 3D human `.glb` character asset
+ * (`/models/holo/human_citizen.glb`) with baked natural motion-captured clips.
+ * Returns `null` cleanly if WebGL/network fails so the prototype can fall back safely.
+ */
+export function preloadHoloHumanAssetTemplate(
+  url = '/models/holo/human_citizen.glb'
+): Promise<LoadedHoloHumanAsset | null> {
+  if (cachedHoloHumanAsset) {
+    return Promise.resolve(cachedHoloHumanAsset);
+  }
+  if (loadingHoloHumanPromise) {
+    return loadingHoloHumanPromise;
+  }
+
+  loadingHoloHumanPromise = new Promise<LoadedHoloHumanAsset | null>((resolve) => {
+    try {
+      const loader = new GLTFLoader();
+      loader.load(
+        url,
+        (gltf) => {
+          try {
+            let meshCount = 0;
+            let jointCount = 0;
+            let vertexCount = 0;
+            let triangleCount = 0;
+
+            gltf.scene.traverse((obj) => {
+              if ((obj as THREE.SkinnedMesh).isSkinnedMesh) {
+                const sm = obj as THREE.SkinnedMesh;
+                meshCount++;
+                if (sm.skeleton && sm.skeleton.bones.length > jointCount) {
+                  jointCount = sm.skeleton.bones.length;
+                }
+                const pos = sm.geometry.getAttribute('position');
+                if (pos) vertexCount += pos.count;
+                if (sm.geometry.index) {
+                  triangleCount += Math.floor(sm.geometry.index.count / 3);
+                } else if (pos) {
+                  triangleCount += Math.floor(pos.count / 3);
+                }
+
+                // Ensure all baseColor textures use accurate sRGB color space and anisotropic filtering
+                const mats = Array.isArray(sm.material) ? sm.material : sm.material ? [sm.material] : [];
+                for (const m of mats) {
+                  const stdMat = m as THREE.MeshStandardMaterial;
+                  if (stdMat.map) {
+                    stdMat.map.colorSpace = THREE.SRGBColorSpace;
+                    stdMat.map.anisotropy = 4;
+                    stdMat.map.needsUpdate = true;
+                  }
+                }
+              }
+            });
+
+            const clipMap: Partial<Record<HoloClipName, THREE.AnimationClip>> = {};
+            for (const anim of gltf.animations || []) {
+              if (
+                anim.name === 'idle' ||
+                anim.name === 'walk' ||
+                anim.name === 'wave' ||
+                anim.name === 'converse' ||
+                anim.name === 'look'
+              ) {
+                clipMap[anim.name] = anim;
+              }
+            }
+
+            if (
+              meshCount > 0 &&
+              clipMap.idle &&
+              clipMap.walk &&
+              clipMap.wave &&
+              clipMap.converse &&
+              clipMap.look
+            ) {
+              cachedHoloHumanAsset = {
+                scene: gltf.scene,
+                clips: clipMap as Record<HoloClipName, THREE.AnimationClip>,
+                meshCount,
+                jointCount,
+                vertexCount,
+                triangleCount,
+              };
+              resolve(cachedHoloHumanAsset);
+            } else {
+              resolve(null);
+            }
+          } catch {
+            resolve(null);
+          }
+        },
+        undefined,
+        () => {
+          resolve(null);
+        }
+      );
+    } catch {
+      resolve(null);
+    }
+  });
+
+  return loadingHoloHumanPromise;
+}
+
+export function getCachedHoloHumanAsset(): LoadedHoloHumanAsset | null {
+  return cachedHoloHumanAsset;
+}
+
+/**
+ * Applies a realistic human + natural hologram shader treatment to a cloned GLTF SkinnedMesh
+ * sub-material (Skin/Face/Body, Eyes, Teeth, Beard, Hair/Headwear, Top, Bottom, Footwear),
+ * preserving its authentic sRGB UV baseColor texture detail (natural human skin tones, eyes,
+ * lips, brows, hair, and tailored fabric folds) while adding a refined cyan/blue/violet
+ * optical Fresnel rim, subtle horizontal micro-scanlines, and natural eye-blink modulation.
+ */
+function createRealisticGltfHoloMaterial(
+  sourceMat: THREE.MeshStandardMaterial,
+  meshName: string,
+  primaryHex: string,
+  secondaryHex: string,
+  uniforms: HoloShaderUniforms
+): THREE.MeshStandardMaterial {
+  const matName = `${sourceMat.name || ''} ${meshName || ''}`.toLowerCase();
+  const isEye = matName.includes('eye');
+  const isTeeth = matName.includes('teeth');
+  const isSkin =
+    !isEye &&
+    !isTeeth &&
+    (matName.includes('skin') || matName.includes('head') || matName.includes('body'));
+  const isHair =
+    matName.includes('hair') || matName.includes('headwear') || matName.includes('beard');
+
+  const mat = sourceMat.clone();
+  if (mat.map) {
+    mat.map.colorSpace = THREE.SRGBColorSpace;
+  }
+
+  // Preserve 100% authentic GLB baseColor textures on skin, eyes, teeth, hair, and clothing
+  // so no cyan/violet base tint obscures facial features, hair strands, or garment details.
+  mat.color = new THREE.Color('#ffffff');
+
+  mat.transparent = true;
+  mat.opacity = 0.99;
+  mat.depthWrite = true;
+
+  // Natural dielectric surface roughness & non-metallic skin/eyes so faces and clothing read clearly
+  mat.roughness = isEye ? 0.12 : isTeeth ? 0.22 : isSkin ? 0.46 : isHair ? 0.50 : 0.44;
+  mat.metalness = isSkin || isEye || isTeeth ? 0.01 : isHair ? 0.04 : 0.06;
+
+  // Minimal emissive wash so natural textures, shadows, and lower-body footwear remain crisp
+  mat.emissive = new THREE.Color(primaryHex).lerp(new THREE.Color(secondaryHex), 0.30);
+  mat.emissiveIntensity = isSkin || isTeeth || isEye ? 0.01 : 0.025;
+
+  // Zone types: 0 = Skin/Face/Hands, 1 = Tailored Outfit/Footwear, 2 = Hair/Beard/Headwear, 3 = Eyes, 4 = Teeth
+  const zoneType = isEye ? 3.0 : isTeeth ? 4.0 : isSkin ? 0.0 : isHair ? 2.0 : 1.0;
+
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = uniforms.uTime;
+    shader.uniforms.uPrimaryColor = uniforms.uPrimaryColor;
+    shader.uniforms.uSecondaryColor = uniforms.uSecondaryColor;
+    shader.uniforms.uScanlineDensity = uniforms.uScanlineDensity;
+    shader.uniforms.uOpacity = uniforms.uOpacity;
+    shader.uniforms.uBlinkFactor = uniforms.uBlinkFactor;
+    shader.uniforms.uHoloIntensity = uniforms.uHoloIntensity;
+    shader.uniforms.uHoloZoneType = { value: zoneType };
+
+    shader.vertexShader =
+      `
+      varying vec3 vHoloWorldPos;
+      varying float vHoloLocalY;
+      ` +
+      shader.vertexShader.replace(
+        '#include <worldpos_vertex>',
+        `
+        #include <worldpos_vertex>
+        vec4 holoWp = modelMatrix * vec4(transformed, 1.0);
+        vHoloWorldPos = holoWp.xyz;
+        vHoloLocalY = transformed.y;
+        `
+      );
+
+    shader.fragmentShader =
+      `
+      uniform float uTime;
+      uniform vec3 uPrimaryColor;
+      uniform vec3 uSecondaryColor;
+      uniform float uScanlineDensity;
+      uniform float uOpacity;
+      uniform float uBlinkFactor;
+      uniform float uHoloIntensity;
+      uniform float uHoloZoneType;
+      varying vec3 vHoloWorldPos;
+      varying float vHoloLocalY;
+      ` +
+      shader.fragmentShader.replace(
+        '#include <dithering_fragment>',
+        `
+        #include <dithering_fragment>
+        vec3 viewDir = normalize(cameraPosition - vHoloWorldPos);
+        float ndotv = clamp(abs(dot(normalize(vNormal), viewDir)), 0.0, 1.0);
+        // Tight silhouette Fresnel rim: zero tint across front-facing skin/hair/clothing, crisp holographic rim at grazing edges
+        float fresnelRim = pow(1.0 - ndotv, 3.15);
+        float grazingEdge = pow(1.0 - ndotv, 2.35);
+        float scanWave = 0.5 + 0.5 * sin(vHoloLocalY * uScanlineDensity - uTime * 3.0);
+        vec3 holoGrad = mix(uPrimaryColor, uSecondaryColor, clamp(vHoloLocalY * 0.56, 0.0, 1.0));
+
+        vec3 baseTexRgb = gl_FragColor.rgb;
+        float luma = dot(baseTexRgb, vec3(0.299, 0.587, 0.114));
+        float holoAmt = clamp(uHoloIntensity, 0.04, 0.75);
+
+        vec3 finalRgb = baseTexRgb;
+        if (uHoloZoneType < 0.5) {
+          // 0: Realistic Human Face, Skin & Hands — preserve natural warm human skin tones; rim-only holographic contour
+          vec3 naturalSkin = baseTexRgb * vec3(1.05, 1.01, 0.98);
+          vec3 subtleEdge = mix(naturalSkin, holoGrad * (0.60 + 0.55 * luma), holoAmt * 0.08 * grazingEdge);
+          float rimStrength = (0.28 + 0.45 * holoAmt) * fresnelRim;
+          float scanStrength = 0.008 * holoAmt * scanWave * grazingEdge;
+          finalRgb = subtleEdge + holoGrad * (rimStrength + scanStrength);
+        } else if (uHoloZoneType > 3.5) {
+          // 4: Realistic Teeth — clean natural ivory shading
+          finalRgb = baseTexRgb * 1.03 + holoGrad * (fresnelRim * 0.12 * holoAmt);
+        } else if (uHoloZoneType > 2.5) {
+          // 3: Realistic Human Eyes — clear sclera, iris detail, and corneal catchlight
+          vec3 naturalEye = baseTexRgb * 1.05 + vec3(0.05) * pow(ndotv, 7.0);
+          vec3 eyeOpenRgb = naturalEye + holoGrad * (fresnelRim * 0.18 * holoAmt);
+          vec3 eyelidClosedRgb = mix(vec3(0.58, 0.43, 0.36), holoGrad * 0.30, holoAmt * 0.15);
+          finalRgb = mix(eyelidClosedRgb, eyeOpenRgb, uBlinkFactor);
+        } else if (uHoloZoneType > 1.5) {
+          // 2: Hair, Beard & Headwear — preserve natural hair color & strand contrast with silhouette rim
+          vec3 naturalHair = baseTexRgb * 1.03;
+          vec3 hairEdge = mix(naturalHair, holoGrad * (0.50 + 0.60 * luma), holoAmt * 0.12 * grazingEdge);
+          finalRgb = hairEdge + holoGrad * (fresnelRim * (0.34 + 0.46 * holoAmt) + scanWave * 0.014 * holoAmt * grazingEdge);
+        } else {
+          // 1: Tailored Attire, Trousers & Footwear — preserve natural garment colors & folds with clean holographic silhouette rim
+          vec3 naturalFabric = baseTexRgb * 1.04;
+          vec3 fabricEdge = mix(naturalFabric, holoGrad * (0.52 + 0.62 * luma), holoAmt * 0.14 * grazingEdge);
+          finalRgb = fabricEdge + holoGrad * (fresnelRim * (0.42 + 0.54 * holoAmt) + scanWave * 0.028 * holoAmt * grazingEdge);
+        }
+
+        gl_FragColor.rgb = finalRgb;
+        gl_FragColor.a = clamp(uOpacity * mix(0.99, 0.96 + fresnelRim * 0.04, holoAmt), 0.92, 1.0);
+        `
+      );
+  };
+
+  return mat;
+}
+
+/**
+ * Controller for an individual articulated holographic citizen:
+ * - Uses the realistic rigged 3D human `.glb` model (`human_citizen.glb`, 67-joint skeleton,
+ *   10,164 triangles across Eyes, Head, Teeth, Beard, Hair, Body, Top, Bottom, Footwear)
+ *   cloned via `SkeletonUtils.clone` when loaded, with automatic fallback to procedural rig.
+ * - THREE.AnimationMixer with smooth crossfading (no snapping)
+ * - Smooth acceleration/deceleration and stride-matched walk playback speed
+ * - Desynchronized pause durations, gesture cycles, and turn speeds
+ */
+export class HoloCitizenController {
+  public readonly config: HoloCitizenConfig;
+  public readonly rootGroup: THREE.Group;
+  public readonly skinnedMesh: THREE.SkinnedMesh;
+  public readonly skeleton: THREE.Skeleton;
+  public readonly mixer: THREE.AnimationMixer;
+  public readonly uniforms: HoloShaderUniforms;
+  public readonly usingRealisticGlb: boolean;
+
+  private readonly actions: Record<HoloClipName, THREE.AnimationAction>;
+  private currentClip: HoloClipName = 'walk';
+  private manualOverride: HoloClipName | null = null;
+  private waypointIndex: number;
+  private stateTimer = 0;
+  private pauseDuration = 0;
+  private pauseSequenceCounter = 0;
+  private currentVelocity = 0;
+  private baseRingMesh: THREE.Mesh;
+  private mixerRoot: THREE.Object3D;
+  private disposedResources: Array<{ dispose: () => void }> = [];
+
+  constructor(
+    config: HoloCitizenConfig,
+    proceduralClips: Record<HoloClipName, THREE.AnimationClip>,
+    liteMode: boolean,
+    realisticAsset?: LoadedHoloHumanAsset | null
+  ) {
+    this.config = config;
+    this.waypointIndex = config.initialWaypointIndex % config.waypoints.length;
+    this.currentVelocity = config.walkSpeed * 0.85;
+
+    this.rootGroup = new THREE.Group();
+    this.rootGroup.name = `HoloCitizen_${config.id}`;
+
+    const startPos = config.waypoints[this.waypointIndex].clone();
+    this.rootGroup.position.copy(startPos);
+    this.rootGroup.scale.setScalar(config.heightScale);
+
+    // Orient initially toward next waypoint so citizen doesn't spin on frame 1
+    const nextWp = config.waypoints[(this.waypointIndex + 1) % config.waypoints.length];
+    const initDir = new THREE.Vector3().subVectors(nextWp, startPos);
+    initDir.y = 0;
+    if (initDir.lengthSq() > 0.001) {
+      this.rootGroup.rotation.y = Math.atan2(initDir.x, initDir.z);
+    }
+    this.waypointIndex = (this.waypointIndex + 1) % config.waypoints.length;
+
+    const asset = realisticAsset !== undefined ? realisticAsset : cachedHoloHumanAsset;
+
+    if (asset) {
+      this.usingRealisticGlb = true;
+      this.uniforms = {
+        uTime: { value: 0 },
+        uPrimaryColor: { value: new THREE.Color(config.primaryColor) },
+        uSecondaryColor: { value: new THREE.Color(config.secondaryColor) },
+        uScanlineDensity: { value: liteMode ? 28.0 : 44.0 },
+        uOpacity: { value: 0.99 },
+        uBlinkFactor: { value: 1.0 },
+        uHoloIntensity: { value: 0.22 },
+      };
+
+      const clonedScene = SkeletonUtils.clone(asset.scene) as THREE.Group;
+      let primarySkinnedMesh: THREE.SkinnedMesh | null = null;
+
+      // Apply subtle individualized proportion nuances to key skeletal joints while preserving natural anatomy
+      const p = config.proportions;
+      clonedScene.traverse((obj) => {
+        if ((obj as THREE.Bone).isBone) {
+          const bone = obj as THREE.Bone;
+          if (bone.name === 'LeftShoulder' || bone.name === 'RightShoulder') {
+            bone.scale.setScalar(THREE.MathUtils.clamp(p.shoulderWidthScale, 0.96, 1.04));
+          } else if (bone.name === 'Head') {
+            bone.scale.setScalar(THREE.MathUtils.clamp(p.headScale, 0.98, 1.02));
+          }
+        }
+        if ((obj as THREE.SkinnedMesh).isSkinnedMesh) {
+          const sm = obj as THREE.SkinnedMesh;
+          if (!primarySkinnedMesh) primarySkinnedMesh = sm;
+          sm.castShadow = !liteMode;
+          sm.receiveShadow = false;
+          sm.frustumCulled = false;
+
+          // Optional visibility variety across citizens for beard/headwear so characters look distinct
+          if (sm.name === 'Wolf3D_Beard' && (p.jawWidthScale < 0.98 || p.hairStyle === 'sculpted_bob' || p.hairStyle === 'flowing_waves')) {
+            sm.visible = false;
+          }
+
+          if (Array.isArray(sm.material)) {
+            sm.material = sm.material.map((m) => {
+              const holoMat = createRealisticGltfHoloMaterial(
+                m as THREE.MeshStandardMaterial,
+                sm.name,
+                config.primaryColor,
+                config.secondaryColor,
+                this.uniforms
+              );
+              this.disposedResources.push(holoMat);
+              return holoMat;
+            });
+          } else if (sm.material) {
+            const holoMat = createRealisticGltfHoloMaterial(
+              sm.material as THREE.MeshStandardMaterial,
+              sm.name,
+              config.primaryColor,
+              config.secondaryColor,
+              this.uniforms
+            );
+            this.disposedResources.push(holoMat);
+            sm.material = holoMat;
+          }
+        }
+      });
+
+      this.skinnedMesh = primarySkinnedMesh!;
+      this.skeleton = this.skinnedMesh.skeleton;
+      this.mixerRoot = clonedScene;
+      this.rootGroup.add(clonedScene);
+    } else {
+      this.usingRealisticGlb = false;
+      const bones = createHumanoidBones(config.proportions);
+      this.skeleton = new THREE.Skeleton(bones);
+
+      const geometry = buildUnifiedSkinnedHumanoidGeometry(liteMode, config.proportions);
+      const { material, uniforms } = createHolographicSkinnedMaterial(
+        config.primaryColor,
+        config.secondaryColor,
+        liteMode
+      );
+      this.uniforms = uniforms;
+
+      this.skinnedMesh = new THREE.SkinnedMesh(geometry, material);
+      this.skinnedMesh.castShadow = !liteMode;
+      this.skinnedMesh.receiveShadow = false;
+      this.skinnedMesh.frustumCulled = false;
+
+      this.skinnedMesh.add(bones[0]);
+      this.skinnedMesh.bind(this.skeleton);
+      this.mixerRoot = this.skinnedMesh;
+      this.rootGroup.add(this.skinnedMesh);
+      this.disposedResources.push(geometry, material);
+    }
+
+    // Subtle holographic Emitter Ring under feet
+    const ringGeo = new THREE.RingGeometry(0.18, 0.25, liteMode ? 16 : 28);
+    ringGeo.rotateX(-Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(config.primaryColor),
+      transparent: true,
+      opacity: 0.42,
+      side: THREE.DoubleSide,
+    });
+    this.baseRingMesh = new THREE.Mesh(ringGeo, ringMat);
+    this.baseRingMesh.position.y = 0.012;
+    this.rootGroup.add(this.baseRingMesh);
+
+    this.disposedResources.push(ringGeo, ringMat);
+
+    const activeClips = this.usingRealisticGlb && asset ? asset.clips : proceduralClips;
+
+    // Setup AnimationMixer & Actions
+    this.mixer = new THREE.AnimationMixer(this.mixerRoot);
+    this.actions = {
+      idle: this.mixer.clipAction(activeClips.idle),
+      walk: this.mixer.clipAction(activeClips.walk),
+      wave: this.mixer.clipAction(activeClips.wave),
+      converse: this.mixer.clipAction(activeClips.converse),
+      look: this.mixer.clipAction(activeClips.look),
+    };
+
+    (Object.keys(this.actions) as HoloClipName[]).forEach((name) => {
+      const action = this.actions[name];
+      action.enabled = true;
+      action.setEffectiveWeight(name === 'walk' ? 1 : 0);
+      if (name === 'walk') {
+        action.setEffectiveTimeScale(config.strideScale);
+        action.play();
+      }
+    });
+
+    this.currentClip = 'walk';
+    // Desynchronize initial mixer clock so citizens never move in robotic lockstep
+    this.mixer.update(config.phaseOffset);
+  }
+
+  public getCurrentClip(): HoloClipName {
+    return this.currentClip;
+  }
+
+  /**
+   * Smoothly crossfades from the active skeletal animation clip to targetClip
+   * over `duration` seconds without joint snapping.
+   */
+  public crossFadeTo(targetClip: HoloClipName, duration = 0.52): void {
+    if (this.currentClip === targetClip) return;
+
+    const prevAction = this.actions[this.currentClip];
+    const nextAction = this.actions[targetClip];
+
+    nextAction.reset();
+    nextAction.enabled = true;
+    const rate =
+      targetClip === 'walk'
+        ? this.config.strideScale
+        : 0.92 + ((this.config.phaseOffset * 0.13) % 0.18);
+    nextAction.setEffectiveTimeScale(rate);
+    nextAction.setEffectiveWeight(1);
+    nextAction.play();
+
+    prevAction.crossFadeTo(nextAction, duration, false);
+    this.currentClip = targetClip;
+  }
+
+  public setManualOverride(clip: HoloClipName | null): void {
+    this.manualOverride = clip;
+    if (clip) {
+      this.crossFadeTo(clip, 0.5);
+    }
+  }
+
+  public setHoloIntensity(intensity: number): void {
+    this.uniforms.uHoloIntensity.value = THREE.MathUtils.clamp(intensity, 0.05, 0.85);
+  }
+
+  public getForwardYaw(): number {
+    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(this.rootGroup.quaternion);
+    return Math.atan2(fwd.x, fwd.z);
+  }
+
+  public update(deltaSeconds: number, elapsedSeconds: number): void {
+    const dt = Math.min(deltaSeconds, 0.1);
+    const localTime = elapsedSeconds + this.config.phaseOffset * 1.37;
+    this.uniforms.uTime.value = localTime;
+
+    // Natural desynchronized human eye blink every ~3.9 seconds (140ms smooth eyelid closure & reopen)
+    const blinkCycle = localTime % (3.7 + (this.config.phaseOffset % 0.9));
+    const blinkDip = Math.exp(-Math.pow((blinkCycle - 0.12) / 0.048, 2));
+    this.uniforms.uBlinkFactor.value = THREE.MathUtils.clamp(1.0 - blinkDip * 0.92, 0.08, 1.0);
+
+    // Pulse emitter foot ring
+    const ringScale = 0.94 + 0.07 * Math.sin(elapsedSeconds * 2.6 + this.config.phaseOffset);
+    this.baseRingMesh.scale.set(ringScale, ringScale, 1);
+
+    if (this.manualOverride) {
+      this.mixer.update(dt);
+      return;
+    }
+
+    // Autonomous plaza behavior state machine with smooth stopping & starting
+    if (this.pauseDuration > 0) {
+      this.stateTimer += dt;
+      this.currentVelocity = THREE.MathUtils.lerp(this.currentVelocity, 0, Math.min(1, dt * 6.0));
+      if (this.stateTimer >= this.pauseDuration) {
+        this.pauseDuration = 0;
+        this.stateTimer = 0;
+        this.waypointIndex = (this.waypointIndex + 1) % this.config.waypoints.length;
+        this.crossFadeTo('walk', 0.55);
+      }
+      this.mixer.update(dt);
+      return;
+    }
+
+    const target = this.config.waypoints[this.waypointIndex];
+    const currentPos = this.rootGroup.position;
+    const toTarget = new THREE.Vector3().subVectors(target, currentPos);
+    toTarget.y = 0;
+    const dist = toTarget.length();
+
+    if (dist < 0.20) {
+      // Smoothly decelerate into waypoint and select an individualized social/ambient gesture
+      this.stateTimer = 0;
+      this.currentVelocity = 0;
+      const gestureList = this.config.gestureOrder;
+      const chosenClip = gestureList[this.pauseSequenceCounter % gestureList.length] || 'idle';
+      this.pauseSequenceCounter++;
+
+      this.crossFadeTo(chosenClip, 0.55);
+
+      // Deterministic pseudo-random pause duration within citizen's individualized window
+      const frac =
+        0.5 +
+        0.5 *
+          Math.sin(
+            this.config.phaseOffset * 3.7 + this.pauseSequenceCounter * 2.3 + this.waypointIndex
+          );
+      this.pauseDuration = THREE.MathUtils.lerp(
+        this.config.pauseMinSeconds,
+        this.config.pauseMaxSeconds,
+        frac
+      );
+    } else {
+      if (this.currentClip !== 'walk') {
+        this.crossFadeTo('walk', 0.50);
+      }
+
+      // Smoothly ease velocity down when approaching waypoint (within 0.95m) and ease up when starting
+      const slowDownFactor = THREE.MathUtils.clamp(dist / 0.95, 0.38, 1.0);
+      const desiredSpeed = this.config.walkSpeed * slowDownFactor;
+      this.currentVelocity = THREE.MathUtils.lerp(
+        this.currentVelocity,
+        desiredSpeed,
+        Math.min(1, dt * 4.5)
+      );
+
+      // Modulate walk animation playback rate to match actual ground velocity (prevents foot sliding)
+      const speedRatio = THREE.MathUtils.clamp(
+        this.currentVelocity / Math.max(0.1, this.config.walkSpeed),
+        0.55,
+        1.15
+      );
+      this.actions.walk.setEffectiveTimeScale(this.config.strideScale * speedRatio);
+
+      toTarget.normalize();
+      const step = Math.min(dist, this.currentVelocity * dt);
+      currentPos.addScaledVector(toTarget, step);
+
+      // Smoothly slerp character heading toward walking direction using individualized turnSpeed
+      const desiredYaw = Math.atan2(toTarget.x, toTarget.z);
+      const targetQuat = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        desiredYaw
+      );
+      this.rootGroup.quaternion.slerp(targetQuat, Math.min(1, dt * this.config.turnSpeed));
+    }
+
+    this.mixer.update(dt);
+  }
+
+  public dispose(): void {
+    this.mixer.stopAllAction();
+    this.mixer.uncacheRoot(this.mixerRoot);
+    this.skeleton.dispose();
+    for (const res of this.disposedResources) {
+      res.dispose();
+    }
+    this.disposedResources = [];
+  }
+}
+
+/**
+ * Default 6 holographic citizens with individualized body proportions, facial/jaw geometry,
+ * sculpted hairstyles, tailored futuristic attire silhouettes, stride scales, walking speeds,
+ * turn rates, pause timings, and gesture sequences.
+ */
+export function getDefaultHoloCitizenConfigs(): HoloCitizenConfig[] {
+  return [
+    {
+      id: 'citizen-alpha',
+      label: 'Holo Citizen 01',
+      roleTag: 'Plaza Greeter • Realistic 3D Human GLB Rig',
+      primaryColor: '#00f2fe',
+      secondaryColor: '#38bdf8',
+      heightScale: 1.01,
+      walkSpeed: 1.16,
+      strideScale: 1.02,
+      turnSpeed: 5.2,
+      pauseMinSeconds: 2.6,
+      pauseMaxSeconds: 3.8,
+      gestureOrder: ['wave', 'idle', 'converse', 'look'],
+      proportions: {
+        shoulderWidthScale: 1.04,
+        torsoDepthScale: 1.01,
+        hipWidthScale: 0.97,
+        waistWidthScale: 0.94,
+        chestFullness: 1.02,
+        limbThicknessScale: 1.0,
+        headScale: 1.0,
+        jawWidthScale: 1.03,
+        neckLengthScale: 1.0,
+        garmentStyle: 'executive_coat',
+        hairStyle: 'swept_crest',
+      },
+      phaseOffset: 0.0,
+      initialWaypointIndex: 0,
+      waypoints: [
+        new THREE.Vector3(-1.35, 0, 4.5),
+        new THREE.Vector3(-0.85, 0, 2.5),
+        new THREE.Vector3(-0.55, 0, 1.8),
+        new THREE.Vector3(-1.25, 0, 3.4),
+      ],
+    },
+    {
+      id: 'citizen-beta',
+      label: 'Holo Citizen 02',
+      roleTag: 'Portal Guide • Realistic 3D Human GLB Rig',
+      primaryColor: '#38bdf8',
+      secondaryColor: '#a855f7',
+      heightScale: 0.95,
+      walkSpeed: 1.08,
+      strideScale: 0.96,
+      turnSpeed: 4.8,
+      pauseMinSeconds: 2.9,
+      pauseMaxSeconds: 4.2,
+      gestureOrder: ['converse', 'look', 'wave', 'idle'],
+      proportions: {
+        shoulderWidthScale: 0.94,
+        torsoDepthScale: 0.95,
+        hipWidthScale: 1.05,
+        waistWidthScale: 0.87,
+        chestFullness: 1.08,
+        limbThicknessScale: 0.93,
+        headScale: 1.01,
+        jawWidthScale: 0.92,
+        neckLengthScale: 1.05,
+        garmentStyle: 'draped_tunic',
+        hairStyle: 'sculpted_bob',
+      },
+      phaseOffset: 1.47,
+      initialWaypointIndex: 1,
+      waypoints: [
+        new THREE.Vector3(1.35, 0, 4.4),
+        new THREE.Vector3(0.85, 0, 2.4),
+        new THREE.Vector3(0.55, 0, 1.8),
+        new THREE.Vector3(1.20, 0, 3.3),
+      ],
+    },
+    {
+      id: 'citizen-gamma',
+      label: 'Holo Citizen 03',
+      roleTag: 'Concourse Walker • Realistic 3D Human GLB Rig',
+      primaryColor: '#a855f7',
+      secondaryColor: '#00f2fe',
+      heightScale: 1.05,
+      walkSpeed: 1.24,
+      strideScale: 1.08,
+      turnSpeed: 5.8,
+      pauseMinSeconds: 2.2,
+      pauseMaxSeconds: 3.4,
+      gestureOrder: ['look', 'wave', 'idle', 'converse'],
+      proportions: {
+        shoulderWidthScale: 1.06,
+        torsoDepthScale: 1.04,
+        hipWidthScale: 0.96,
+        waistWidthScale: 0.92,
+        chestFullness: 1.05,
+        limbThicknessScale: 1.05,
+        headScale: 0.98,
+        jawWidthScale: 1.06,
+        neckLengthScale: 0.97,
+        garmentStyle: 'athletic_vest',
+        hairStyle: 'tapered_undercut',
+      },
+      phaseOffset: 2.83,
+      initialWaypointIndex: 0,
+      waypoints: [
+        new THREE.Vector3(-1.60, 0, 3.9),
+        new THREE.Vector3(-0.45, 0, 4.1),
+        new THREE.Vector3(0.65, 0, 4.1),
+        new THREE.Vector3(1.60, 0, 3.9),
+      ],
+    },
+    {
+      id: 'citizen-delta',
+      label: 'Holo Citizen 04',
+      roleTag: 'Atrium Envoy • Realistic 3D Human GLB Rig',
+      primaryColor: '#22d3ee',
+      secondaryColor: '#818cf8',
+      heightScale: 0.94,
+      walkSpeed: 1.05,
+      strideScale: 0.93,
+      turnSpeed: 4.5,
+      pauseMinSeconds: 3.1,
+      pauseMaxSeconds: 4.5,
+      gestureOrder: ['idle', 'converse', 'look', 'wave'],
+      proportions: {
+        shoulderWidthScale: 0.93,
+        torsoDepthScale: 0.94,
+        hipWidthScale: 1.04,
+        waistWidthScale: 0.86,
+        chestFullness: 1.06,
+        limbThicknessScale: 0.92,
+        headScale: 1.01,
+        jawWidthScale: 0.91,
+        neckLengthScale: 1.06,
+        garmentStyle: 'sculpted_envoy',
+        hairStyle: 'flowing_waves',
+      },
+      phaseOffset: 4.19,
+      initialWaypointIndex: 2,
+      waypoints: [
+        new THREE.Vector3(1.48, 0, 4.9),
+        new THREE.Vector3(0.75, 0, 3.7),
+        new THREE.Vector3(0.0, 0, 2.8),
+        new THREE.Vector3(1.10, 0, 4.5),
+      ],
+    },
+    {
+      id: 'citizen-epsilon',
+      label: 'Holo Citizen 05',
+      roleTag: 'West Terrace Citizen • Realistic 3D Human GLB Rig',
+      primaryColor: '#60a5fa',
+      secondaryColor: '#c084fc',
+      heightScale: 1.02,
+      walkSpeed: 1.14,
+      strideScale: 1.0,
+      turnSpeed: 5.0,
+      pauseMinSeconds: 2.5,
+      pauseMaxSeconds: 3.9,
+      gestureOrder: ['converse', 'wave', 'idle', 'look'],
+      proportions: {
+        shoulderWidthScale: 1.03,
+        torsoDepthScale: 1.01,
+        hipWidthScale: 0.98,
+        waistWidthScale: 0.95,
+        chestFullness: 1.0,
+        limbThicknessScale: 1.01,
+        headScale: 0.99,
+        jawWidthScale: 1.02,
+        neckLengthScale: 1.0,
+        garmentStyle: 'tailored_blazer',
+        hairStyle: 'parted_crown',
+      },
+      phaseOffset: 5.51,
+      initialWaypointIndex: 1,
+      waypoints: [
+        new THREE.Vector3(-1.48, 0, 5.0),
+        new THREE.Vector3(-0.75, 0, 3.8),
+        new THREE.Vector3(-0.20, 0, 2.9),
+        new THREE.Vector3(-1.10, 0, 4.6),
+      ],
+    },
+    {
+      id: 'citizen-zeta',
+      label: 'Holo Citizen 06',
+      roleTag: 'Portal Forecourt Citizen • Realistic 3D Human GLB Rig',
+      primaryColor: '#06b6d4',
+      secondaryColor: '#a855f7',
+      heightScale: 0.98,
+      walkSpeed: 1.19,
+      strideScale: 1.04,
+      turnSpeed: 5.5,
+      pauseMinSeconds: 2.4,
+      pauseMaxSeconds: 3.6,
+      gestureOrder: ['look', 'converse', 'wave', 'idle'],
+      proportions: {
+        shoulderWidthScale: 0.97,
+        torsoDepthScale: 0.98,
+        hipWidthScale: 1.02,
+        waistWidthScale: 0.90,
+        chestFullness: 1.03,
+        limbThicknessScale: 0.97,
+        headScale: 1.0,
+        jawWidthScale: 0.96,
+        neckLengthScale: 1.02,
+        garmentStyle: 'fitted_jacket',
+        hairStyle: 'short_crop',
+      },
+      phaseOffset: 6.89,
+      initialWaypointIndex: 0,
+      waypoints: [
+        new THREE.Vector3(-0.80, 0, 5.1),
+        new THREE.Vector3(0.0, 0, 4.1),
+        new THREE.Vector3(0.80, 0, 5.1),
+        new THREE.Vector3(0.0, 0, 4.8),
+      ],
+    },
+  ];
+}
+

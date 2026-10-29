@@ -83,6 +83,7 @@ import SpinWheel from './components/SpinWheel';
 import PayoutMarquee from './components/PayoutMarquee';
 import ReelsFloatingWidget, { parseVideoUrl } from './components/ReelsFloatingWidget';
 import { ZoneCreateStudioModal } from './components/reels/ZoneCreateStudioModal';
+import { ZoneComicStudioModal } from './components/comic/ZoneComicStudioModal';
 import ZoneAppBanner from './components/ZoneAppBanner';
 import { SmartphoneAppLauncher } from './components/SmartphoneAppLauncher';
 import { PromoAdBannerModal } from './components/PromoAdBannerModal';
@@ -297,6 +298,10 @@ export default function App() {
     if (typeof window !== 'undefined') {
       try {
         const p = new URLSearchParams(window.location.search);
+        const tabParam = p.get('tab');
+        if (tabParam && ['earn', 'cashout', 'zone', 'guide', 'admin', 'negosyo', 'va_shop', 'kiddie', 'challenges'].includes(tabParam)) {
+          return tabParam as any;
+        }
         if (p.get('shopProduct') || p.get('product') || p.get('shop')) return 'va_shop';
       } catch (e) {}
     }
@@ -304,11 +309,18 @@ export default function App() {
   });
   const [showSocialMenuDrawer, setShowSocialMenuDrawer] = useState<boolean>(false);
   const [showZoneCreateStudio, setShowZoneCreateStudio] = useState<boolean>(false);
+  const [showComicStudio, setShowComicStudio] = useState<boolean>(false);
+  const [showZoneCreateMenu, setShowZoneCreateMenu] = useState<boolean>(false);
 
   useEffect(() => {
     const handleOpenCreateStudio = () => setShowZoneCreateStudio(true);
+    const handleOpenComicStudio = () => setShowComicStudio(true);
     window.addEventListener('open-zone-create-studio', handleOpenCreateStudio);
-    return () => window.removeEventListener('open-zone-create-studio', handleOpenCreateStudio);
+    window.addEventListener('open-comic-studio', handleOpenComicStudio);
+    return () => {
+      window.removeEventListener('open-zone-create-studio', handleOpenCreateStudio);
+      window.removeEventListener('open-comic-studio', handleOpenComicStudio);
+    };
   }, []);
 
   const [showVerificationModal, setShowVerificationModal] = useState<boolean>(false);
@@ -458,17 +470,55 @@ export default function App() {
       if (tag) setActiveHashtagQuery(tag);
       setIsHashtagModalOpen(true);
     };
+    const handleSetActiveTab = (e: any) => {
+      const tab = e.detail?.tab;
+      if (tab && ['earn', 'cashout', 'zone', 'guide', 'admin', 'negosyo', 'va_shop', 'kiddie', 'challenges'].includes(tab)) {
+        setActiveTab(tab);
+      }
+    };
+    const handleOpenMyProfile = () => {
+      const currentUid = user?.id || (() => {
+        try {
+          const b = localStorage.getItem('gcash_user_backup_profile');
+          return b ? JSON.parse(b)?.id : null;
+        } catch { return null; }
+      })();
+      if (currentUid) {
+        setViewingProfileUserId(currentUid);
+        setIsViewingProfileOpen(true);
+      }
+    };
+    const handlePopStateNav = () => {
+      try {
+        const p = new URLSearchParams(window.location.search);
+        const tabParam = p.get('tab');
+        if (tabParam && ['earn', 'cashout', 'zone', 'guide', 'admin', 'negosyo', 'va_shop', 'kiddie', 'challenges'].includes(tabParam)) {
+          setActiveTab(tabParam as any);
+        }
+        const v = p.get('view');
+        if (v === 'profile') {
+          handleOpenMyProfile();
+        }
+      } catch {}
+    };
+
     window.addEventListener('open-unified-search', handleSearchEvent);
     window.addEventListener('open-shop-product-detail', handleOpenProduct);
     window.addEventListener('open-user-profile-modal', handleOpenProfile);
     window.addEventListener('open-hashtag-modal', handleOpenHashtag);
+    window.addEventListener('zone-set-active-tab', handleSetActiveTab);
+    window.addEventListener('open-my-profile-modal', handleOpenMyProfile);
+    window.addEventListener('popstate', handlePopStateNav);
     return () => {
       window.removeEventListener('open-unified-search', handleSearchEvent);
       window.removeEventListener('open-shop-product-detail', handleOpenProduct);
       window.removeEventListener('open-user-profile-modal', handleOpenProfile);
       window.removeEventListener('open-hashtag-modal', handleOpenHashtag);
+      window.removeEventListener('zone-set-active-tab', handleSetActiveTab);
+      window.removeEventListener('open-my-profile-modal', handleOpenMyProfile);
+      window.removeEventListener('popstate', handlePopStateNav);
     };
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     if (!publicShopProductParam?.productId) return;
@@ -3639,7 +3689,7 @@ export default function App() {
               id="bottom-nav-create"
               onClick={() => {
                 try { soundEffects.playClick(); } catch (e) {}
-                setShowZoneCreateStudio(true);
+                setShowZoneCreateMenu(prev => !prev);
               }}
               className="flex flex-col items-center justify-center py-1 px-3 rounded-xl transition cursor-pointer text-slate-700 font-bold active:scale-90"
             >
@@ -3685,6 +3735,153 @@ export default function App() {
               <span className="text-[10px] mt-0.5">Menu</span>
             </button>
           </nav>
+
+          {/* ＋ Z-ONE CREATE ACTION HUB POPOVER / SHEET */}
+          <AnimatePresence>
+            {showZoneCreateMenu && (
+              <div 
+                className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/70 backdrop-blur-xs p-3 sm:p-4 pb-20 animate-fadeIn"
+                onClick={() => setShowZoneCreateMenu(false)}
+              >
+                <motion.div
+                  initial={{ opacity: 0, y: 30, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 20, scale: 0.96 }}
+                  transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+                  className="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-md w-full mx-auto p-4 sm:p-5 shadow-2xl space-y-4 text-white"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-md shadow-blue-500/20">
+                        <Sparkles className="w-4 h-4 text-white" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-white">Create on Z-oneApp</h3>
+                        <p className="text-[10px] text-slate-400">Pumili ng paraan para makapag-share</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowZoneCreateMenu(false)}
+                      className="p-1.5 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Actions List */}
+                  <div className="space-y-2">
+                    {/* 1. AI Comic Video (NEW FEATURE) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowZoneCreateMenu(false);
+                        try { soundEffects.playClick(); } catch (e) {}
+                        setShowComicStudio(true);
+                      }}
+                      className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-cyan-950/80 via-slate-800/90 to-violet-950/80 border border-cyan-500/40 hover:border-cyan-400 transition cursor-pointer flex items-center justify-between group shadow-lg shadow-cyan-950/50 text-left active:scale-[0.99]"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-cyan-500 via-blue-600 to-violet-600 flex items-center justify-center text-white shadow-md shadow-cyan-500/30 shrink-0 group-hover:scale-105 transition">
+                          <span className="text-xl">⚡</span>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black text-white group-hover:text-cyan-300 transition">AI Comic Video</span>
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wider">
+                              New • AI
+                            </span>
+                          </div>
+                          <p className="text-[10.5px] text-slate-300 mt-0.5">
+                            Turn your video into a comic-style clip with Z-ONE frame & marquee
+                          </p>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-cyan-400 group-hover:translate-x-0.5 transition shrink-0 ml-2" />
+                    </button>
+
+                    {/* 2. Reel Studio */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowZoneCreateMenu(false);
+                        try { soundEffects.playClick(); } catch (e) {}
+                        setShowZoneCreateStudio(true);
+                      }}
+                      className="w-full p-3.5 rounded-2xl bg-slate-800/70 hover:bg-slate-800 border border-slate-700/60 hover:border-slate-600 transition cursor-pointer flex items-center justify-between group text-left active:scale-[0.99]"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-xl bg-rose-600 flex items-center justify-center text-white shadow-md shadow-rose-600/30 shrink-0 group-hover:scale-105 transition">
+                          <Film className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-black text-white group-hover:text-rose-300 transition">Reel Studio Camera</span>
+                          <p className="text-[10.5px] text-slate-400 mt-0.5">
+                            Record short video, add filters, music, and text overlays
+                          </p>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-500 group-hover:translate-x-0.5 transition shrink-0 ml-2" />
+                    </button>
+
+                    {/* 3. Social Post */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowZoneCreateMenu(false);
+                        try { soundEffects.playClick(); } catch (e) {}
+                        if (activeTab !== 'zone') {
+                          setActiveTab('zone');
+                          setTimeout(() => window.dispatchEvent(new Event('zone-focus-composer')), 150);
+                        } else {
+                          window.dispatchEvent(new Event('zone-focus-composer'));
+                        }
+                      }}
+                      className="w-full p-3.5 rounded-2xl bg-slate-800/70 hover:bg-slate-800 border border-slate-700/60 hover:border-slate-600 transition cursor-pointer flex items-center justify-between group text-left active:scale-[0.99]"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-600/30 shrink-0 group-hover:scale-105 transition">
+                          <MessageSquare className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-black text-white group-hover:text-blue-300 transition">Social Post</span>
+                          <p className="text-[10.5px] text-slate-400 mt-0.5">
+                            Share photos, announcements, or thoughts to the Community Feed
+                          </p>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-500 group-hover:translate-x-0.5 transition shrink-0 ml-2" />
+                    </button>
+
+                    {/* 4. Classic Upload */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowZoneCreateMenu(false);
+                        try { soundEffects.playClick(); } catch (e) {}
+                        window.dispatchEvent(new Event('open-reels-upload-modal'));
+                      }}
+                      className="w-full p-3.5 rounded-2xl bg-slate-800/70 hover:bg-slate-800 border border-slate-700/60 hover:border-slate-600 transition cursor-pointer flex items-center justify-between group text-left active:scale-[0.99]"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-xl bg-emerald-600 flex items-center justify-center text-white shadow-md shadow-emerald-600/30 shrink-0 group-hover:scale-105 transition">
+                          <Upload className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-black text-white group-hover:text-emerald-300 transition">Paste Video Link / Upload</span>
+                          <p className="text-[10.5px] text-slate-400 mt-0.5">
+                            Direct import via TikTok, FB, YouTube Shorts link
+                          </p>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-500 group-hover:translate-x-0.5 transition shrink-0 ml-2" />
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
 
           {/* ☰ FACEBOOK-STYLE MENU / MORE DRAWER (Secondary Features & Tools) */}
           <AnimatePresence>
@@ -4226,7 +4423,28 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
         onSwitchToClassicUpload={() => {
           window.dispatchEvent(new Event('open-reels-upload-modal'));
         }}
+        onSwitchToComicStudio={() => {
+          setShowComicStudio(true);
+        }}
         triggerNotification={triggerNotification}
+      />
+
+      {/* ⚡ Z-ONE COMIC STUDIO MODAL — Turn Your Video Into a Comic */}
+      <ZoneComicStudioModal
+        isOpen={showComicStudio}
+        onClose={() => setShowComicStudio(false)}
+        token={token || ''}
+        currentUserId={user?.id}
+        currentUserName={user?.name}
+        language={language}
+        triggerNotification={triggerNotification}
+        onPublishReelSuccess={(newReel) => {
+          setReels((prev) => [newReel, ...prev.filter((r) => r.id !== newReel.id)]);
+          fetchReels();
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('open-reel-detail', { detail: { reelId: newReel.id } }));
+          }, 150);
+        }}
       />
 
       {/* 🔍 UNIFIED SEARCH & DISCOVERY MODAL */}
