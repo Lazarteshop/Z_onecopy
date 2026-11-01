@@ -83,7 +83,7 @@ import SpinWheel from './components/SpinWheel';
 import PayoutMarquee from './components/PayoutMarquee';
 import ReelsFloatingWidget, { parseVideoUrl } from './components/ReelsFloatingWidget';
 import { ZoneCreateStudioModal } from './components/reels/ZoneCreateStudioModal';
-import { ZoneComicStudioModal } from './components/comic/ZoneComicStudioModal';
+import { ZoneAIVideoCreatorModal } from './components/aivideo/ZoneAIVideoCreatorModal';
 import ZoneAppBanner from './components/ZoneAppBanner';
 import { SmartphoneAppLauncher } from './components/SmartphoneAppLauncher';
 import { PromoAdBannerModal } from './components/PromoAdBannerModal';
@@ -309,17 +309,19 @@ export default function App() {
   });
   const [showSocialMenuDrawer, setShowSocialMenuDrawer] = useState<boolean>(false);
   const [showZoneCreateStudio, setShowZoneCreateStudio] = useState<boolean>(false);
-  const [showComicStudio, setShowComicStudio] = useState<boolean>(false);
+  const [showAIVideoCreator, setShowAIVideoCreator] = useState<boolean>(false);
   const [showZoneCreateMenu, setShowZoneCreateMenu] = useState<boolean>(false);
 
   useEffect(() => {
     const handleOpenCreateStudio = () => setShowZoneCreateStudio(true);
-    const handleOpenComicStudio = () => setShowComicStudio(true);
+    const handleOpenAIVideoCreator = () => setShowAIVideoCreator(true);
     window.addEventListener('open-zone-create-studio', handleOpenCreateStudio);
-    window.addEventListener('open-comic-studio', handleOpenComicStudio);
+    window.addEventListener('open-comic-studio', handleOpenAIVideoCreator);
+    window.addEventListener('open-ai-video-creator', handleOpenAIVideoCreator);
     return () => {
       window.removeEventListener('open-zone-create-studio', handleOpenCreateStudio);
-      window.removeEventListener('open-comic-studio', handleOpenComicStudio);
+      window.removeEventListener('open-comic-studio', handleOpenAIVideoCreator);
+      window.removeEventListener('open-ai-video-creator', handleOpenAIVideoCreator);
     };
   }, []);
 
@@ -3772,33 +3774,33 @@ export default function App() {
 
                   {/* Actions List */}
                   <div className="space-y-2">
-                    {/* 1. AI Comic Video (NEW FEATURE) */}
+                    {/* 1. AI Video Creator (NEW FEATURE) */}
                     <button
                       type="button"
                       onClick={() => {
                         setShowZoneCreateMenu(false);
                         try { soundEffects.playClick(); } catch (e) {}
-                        setShowComicStudio(true);
+                        setShowAIVideoCreator(true);
                       }}
-                      className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-cyan-950/80 via-slate-800/90 to-violet-950/80 border border-cyan-500/40 hover:border-cyan-400 transition cursor-pointer flex items-center justify-between group shadow-lg shadow-cyan-950/50 text-left active:scale-[0.99]"
+                      className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-violet-950/90 via-slate-800/90 to-indigo-950/90 border border-violet-500/40 hover:border-violet-400 transition cursor-pointer flex items-center justify-between group shadow-lg shadow-violet-950/50 text-left active:scale-[0.99]"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-cyan-500 via-blue-600 to-violet-600 flex items-center justify-center text-white shadow-md shadow-cyan-500/30 shrink-0 group-hover:scale-105 transition">
-                          <span className="text-xl">⚡</span>
+                        <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-violet-600 via-indigo-600 to-cyan-500 flex items-center justify-center text-white shadow-md shadow-violet-500/30 shrink-0 group-hover:scale-105 transition">
+                          <Sparkles className="w-5 h-5 text-yellow-300" />
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-black text-white group-hover:text-cyan-300 transition">AI Comic Video</span>
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wider">
-                              New • AI
+                            <span className="text-xs font-black text-white group-hover:text-violet-300 transition">AI Video Creator</span>
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-violet-500/20 text-violet-300 border border-violet-500/30 uppercase tracking-wider">
+                              Free • AI
                             </span>
                           </div>
                           <p className="text-[10.5px] text-slate-300 mt-0.5">
-                            Turn your video into a comic-style clip with Z-ONE frame & marquee
+                            Gawing talking video ang litrato gamit ang AI speech at lip-sync
                           </p>
                         </div>
                       </div>
-                      <ChevronRight className="w-4 h-4 text-cyan-400 group-hover:translate-x-0.5 transition shrink-0 ml-2" />
+                      <ChevronRight className="w-4 h-4 text-violet-400 group-hover:translate-x-0.5 transition shrink-0 ml-2" />
                     </button>
 
                     {/* 2. Reel Studio */}
@@ -4424,15 +4426,15 @@ Ang paggamit ng platform ay napapailalim sa aming Terms of Use, Community Guidel
           window.dispatchEvent(new Event('open-reels-upload-modal'));
         }}
         onSwitchToComicStudio={() => {
-          setShowComicStudio(true);
+          setShowAIVideoCreator(true);
         }}
         triggerNotification={triggerNotification}
       />
 
-      {/* ⚡ Z-ONE COMIC STUDIO MODAL — Turn Your Video Into a Comic */}
-      <ZoneComicStudioModal
-        isOpen={showComicStudio}
-        onClose={() => setShowComicStudio(false)}
+      {/* 🎬 Z-ONE AI VIDEO CREATOR MODAL — Talking Photo & Video Generator */}
+      <ZoneAIVideoCreatorModal
+        isOpen={showAIVideoCreator}
+        onClose={() => setShowAIVideoCreator(false)}
         token={token || ''}
         currentUserId={user?.id}
         currentUserName={user?.name}

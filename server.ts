@@ -28,6 +28,7 @@ import vm from 'vm';
 import { BilibiliFeedItem, BilibiliFeedConfig } from './src/types';
 import { extractProductFromUrl } from './server/affiliateExtractor';
 import { handleComicStudioImportUrl, handleComicStudioAnalyzeVideo, handleComicStudioFinalizeVideo } from './server/comicStudio';
+import { handleAIVideoGenerateTTS, handleAIVideoGenerateAnimation, handleAIVideoFinalize } from './server/aiVideoCreator';
 import http from 'http';
 import { initChatWebSocket, notifyNewDirectMessage, getChatDiagnostics } from './server/chatSocket';
 import {
@@ -7356,6 +7357,13 @@ function formatEmbedUrlServer(rawUrl: string) {
 app.post('/api/comic-studio/import-url', handleComicStudioImportUrl);
 app.post('/api/comic-studio/analyze-video', handleComicStudioAnalyzeVideo);
 app.post('/api/comic-studio/finalize-video', handleComicStudioFinalizeVideo);
+
+// ==========================================
+// 🎬 Z-ONE AI VIDEO CREATOR APIS
+// ==========================================
+app.post('/api/ai-video-creator/tts', handleAIVideoGenerateTTS);
+app.post('/api/ai-video-creator/generate-animation', handleAIVideoGenerateAnimation);
+app.post('/api/ai-video-creator/finalize-video', handleAIVideoFinalize);
 
 app.get('/api/reels', (req, res) => {
   const db = loadDB();
